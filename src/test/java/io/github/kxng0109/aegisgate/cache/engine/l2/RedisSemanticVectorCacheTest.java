@@ -6,6 +6,7 @@ import io.github.kxng0109.aegisgate.cache.contracts.CacheScope;
 import io.github.kxng0109.aegisgate.cache.contracts.CompoundCacheKey;
 import io.github.kxng0109.aegisgate.cache.engine.CacheGuardrails;
 import io.github.kxng0109.aegisgate.proxy.embeddings.EmbeddingService;
+import io.github.kxng0109.aegisgate.proxy.embeddings.OnnxLocalEmbedder;
 import io.github.kxng0109.aegisgate.proxy.embeddings.VectorEncodingUtils;
 import io.github.kxng0109.aegisgate.proxy.embeddings.dto.EmbeddingData;
 import io.github.kxng0109.aegisgate.proxy.embeddings.dto.EmbeddingResponse;
@@ -348,5 +349,63 @@ class RedisSemanticVectorCacheTest {
 				eq(RedisSemanticVectorCache.PREFIX),
 				eq(768)
 		);
+	}
+
+	@Test
+	@DisplayName("local ONNX embedder serves the query vector without touching the upstream provider")
+	void localOnnxEmbedderBypassesUpstream() throws Exception {
+		OnnxLocalEmbedder local = mock(OnnxLocalEmbedder.class);
+		cache.setOnnxLocalEmbedder(local);
+		when(local.embed(anyString())).thenReturn(new float[]{0.1f, 0.2f});
+		when(vectorClient.searchKnn(anyString(), anyString(), any(), eq(2))).thenReturn(List.of());
+
+		CompoundCacheKey key = new CompoundCacheKey(
+				"tenant1", CacheScope.TENANT, "gpt-4o", "exactHash", "", "", "How to reset password"
+		);
+		cache.findSemanticMatch(key);
+
+		verify(local).embed("How to reset password");
+		verify(embeddingService, never()).processEmbedding(any(), anyString());
+	}
+
+	@Test
+	@DisplayName("a failing local ONNX embedder falls back to the upstream provider")
+	void localOnnxFailureFallsBackToUpstream() throws Exception {
+		OnnxLocalEmbedder local = mock(OnnxLocalEmbedder.class);
+		cache.setOnnxLocalEmbedder(local);
+		when(local.embed(anyString())).thenThrow(new IllegalStateException("native backend gone"));
+		when(vectorClient.searchKnn(anyString(), anyString(), any(), eq(2))).thenReturn(List.of());
+		EmbeddingResponse upstreamEmbedding = new EmbeddingResponse(
+				"list", List.of(EmbeddingData.of(0, new float[]{0.1f, 0.2f})), "local-embed", null
+		);
+		when(embeddingService.processEmbedding(any(), eq("tenant1"))).thenReturn(upstreamEmbedding);
+
+		CompoundCacheKey key = new CompoundCacheKey(
+				"tenant1", CacheScope.TENANT, "gpt-4o", "exactHash", "", "", "How to reset password"
+		);
+		cache.findSemanticMatch(key);
+
+		verify(local).embed("How to reset password");
+		verify(embeddingService).processEmbedding(any(), eq("tenant1"));
+	}
+
+	@Test
+	@DisplayName("a zero-length local vector falls back to the upstream provider")
+	void localOnnxZeroLengthFallsBackToUpstream() throws Exception {
+		OnnxLocalEmbedder local = mock(OnnxLocalEmbedder.class);
+		cache.setOnnxLocalEmbedder(local);
+		when(local.embed(anyString())).thenReturn(new float[0]);
+		when(vectorClient.searchKnn(anyString(), anyString(), any(), eq(2))).thenReturn(List.of());
+		EmbeddingResponse upstreamEmbedding = new EmbeddingResponse(
+				"list", List.of(EmbeddingData.of(0, new float[]{0.1f, 0.2f})), "local-embed", null
+		);
+		when(embeddingService.processEmbedding(any(), eq("tenant1"))).thenReturn(upstreamEmbedding);
+
+		CompoundCacheKey key = new CompoundCacheKey(
+				"tenant1", CacheScope.TENANT, "gpt-4o", "exactHash", "", "", "How to reset password"
+		);
+		cache.findSemanticMatch(key);
+
+		verify(embeddingService).processEmbedding(any(), eq("tenant1"));
 	}
 }

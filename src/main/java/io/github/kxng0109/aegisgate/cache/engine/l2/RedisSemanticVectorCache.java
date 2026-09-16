@@ -5,6 +5,7 @@ import io.github.kxng0109.aegisgate.cache.contracts.CacheEntry;
 import io.github.kxng0109.aegisgate.cache.contracts.CompoundCacheKey;
 import io.github.kxng0109.aegisgate.cache.engine.CacheGuardrails;
 import io.github.kxng0109.aegisgate.proxy.embeddings.EmbeddingService;
+import io.github.kxng0109.aegisgate.proxy.embeddings.OnnxLocalEmbedder;
 import io.github.kxng0109.aegisgate.proxy.embeddings.VectorEncodingUtils;
 import io.github.kxng0109.aegisgate.proxy.embeddings.dto.EmbeddingData;
 import io.github.kxng0109.aegisgate.proxy.embeddings.dto.EmbeddingRequest;
@@ -12,6 +13,7 @@ import io.github.kxng0109.aegisgate.proxy.embeddings.dto.EmbeddingResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.Nullable;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -42,6 +44,20 @@ public class RedisSemanticVectorCache {
 	private final EmbeddingService embeddingService;
 	private final CacheGuardrails guardrails;
 	private final AegisCacheProperties properties;
+
+	private volatile @Nullable OnnxLocalEmbedder onnxLocalEmbedder;
+
+	/**
+	 * Wires the opt-in in-process ONNX embedder when the
+	 * {@code gateway.embeddings.local-onnx.enabled} bean is present. Optional on purpose:
+	 * unit-constructed caches and default deployments keep the upstream HTTP embedding path.
+	 *
+	 * @param onnxLocalEmbedder the local embedder, if enabled
+	 */
+	@Autowired(required = false)
+	public void setOnnxLocalEmbedder(@Nullable OnnxLocalEmbedder onnxLocalEmbedder) {
+		this.onnxLocalEmbedder = onnxLocalEmbedder;
+	}
 
 	/**
 	 * Initializes the RediSearch index on startup at the dimension resolved for the
@@ -306,6 +322,17 @@ public class RedisSemanticVectorCache {
 	}
 
 	private @Nullable float[] generateEmbedding(String text, String ownerId) {
+		OnnxLocalEmbedder local = onnxLocalEmbedder;
+		if (local != null) {
+			try {
+				float[] vector = local.embed(text);
+				if (vector.length > 0) {
+					return vector;
+				}
+			} catch (Exception ex) {
+				log.warn("Local ONNX embedding failed; falling back to the upstream provider: {}", ex.getMessage());
+			}
+		}
 		String embeddingModel = properties.getSemantic().getEmbeddingModel();
 		EmbeddingRequest request = new EmbeddingRequest(List.of(text), embeddingModel, null, null, null);
 		try {

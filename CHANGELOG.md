@@ -123,6 +123,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   above- and below-threshold candidates, so the cosine band can be calibrated from production distributions
   instead of assumption. Decision logic unchanged (best match only).
 
+### Added
+
+- **Ollama keep-warm heartbeat (`OllamaKeepWarm`):** measured 2026-09-16 — steady embeddings run
+  18–33 ms on the local stack, but the iGPU deep-sleeps between requests and the first call after an
+  idle gap pays a ~2.2 s wake penalty (cold load ~3.9 s; `/api/embeddings` timing fields are all
+  zero — wall-clock only). The heartbeat pings the resolved Ollama `/api/embed` endpoint (same
+  alias-chain resolution as real cache embeddings via `EmbeddingService.resolveWarmTarget`) on a
+  fixed delay — `gateway.embeddings.keep-warm-interval` (default 5s) and
+  `gateway.embeddings.keep-warm-enabled` (default true; disable on battery-powered hosts).
+  Failures are swallowed by design (WARN on the first and every 50th consecutive failure); the
+  ping timeout is bounded to 5 s so a hung Ollama cannot starve the shared `@Scheduled` executor.
+- **Opt-in in-process ONNX embedder (`OnnxLocalEmbedder`):** `gateway.embeddings.local-onnx.*`
+  (default off) runs semantic-cache prompt embeddings in-process through ONNX Runtime 1.29.0 +
+  DJL tokenizers 0.38.0 — tokenize → forward pass → masked mean pooling → L2 normalization — with
+  the measured 18–33 ms steady profile and no HTTP round-trip or wake tax. The client-facing
+  `/v1/embeddings` proxy keeps the HTTP adapters unconditionally (contract preserved). Failures
+  fall back to the upstream provider. CAUTION: local scores sit ~0.03 cosine below Ollama GGUF
+  (r=0.994, 57-pair eval) — re-index and recalibrate the similarity threshold (0.77 local ⇔ 0.80
+  Ollama) before enabling on a populated index; construction fails fast on missing model/tokenizer
+  paths and logs the calibration warning at startup.
+
 ### Changed
 
 - **JVM/container memory bundle:** `SoftMaxHeapSize=768m`, `MaxDirectMemorySize`

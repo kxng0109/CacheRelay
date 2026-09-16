@@ -39,7 +39,7 @@ class CapacityReportRunnerTest {
 				new SseCapacityProperties(60_000, 5, 15_000L),
 				new LedgerExecutorProperties(8, 16, 10_000, 30),
 				new RateLimitProperties(30_000L, 1, 500_000, 100_000, 60),
-				new EmbeddingProperties(512, 8)
+				new EmbeddingProperties(512, 8, true)
 		);
 
 		String report = runner.formatReport();

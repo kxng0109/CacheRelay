@@ -442,6 +442,13 @@ All configuration lives in `src/main/resources/application.yml`. The most import
   `hold-ttl-seconds` (3600), `abort-grace-seconds` (30), `sweeper-batch` (500), `sweep-interval` (30s).
 - `gateway.budget.detection.*` controls the spend watchdog: `enabled`, `interval` (60s), `alertmanager-url`
   (blank = log-only), `dispatch-batch`, `dispatch-interval`.
+- `gateway.embeddings.keep-warm-enabled` and `gateway.embeddings.keep-warm-interval` control the Ollama
+  keep-warm heartbeat (default on, 5s) that prevents the measured iGPU deep-sleep wake penalty (~2.2 s
+  first-call tax, 18–33 ms steady) on the local stack; disable on battery-powered hosts.
+- `gateway.embeddings.local-onnx.*` opts the L2 semantic-cache embed path into an in-process ONNX
+  embedder (`enabled` default false, `model-path`, `tokenizer-path`, `intra-op-threads` default 2,
+  `max-tokens` default 2048). Local scores sit ~0.03 cosine below Ollama GGUF — re-index and
+  recalibrate the similarity threshold (0.77 local ⇔ 0.80 Ollama) before enabling on a populated index.
 - `gateway.redis.cache.host/port` points the cache tier at its dedicated evictable Redis
   (`REDIS_CACHE_HOST`/`REDIS_CACHE_PORT`, default `localhost:6380`); accounting stays on `spring.data.redis.*`.
 - `gateway.notify.email.graph.*` configures Microsoft Graph mail (`tenant-id`, `client-id`, `secret-ref`,

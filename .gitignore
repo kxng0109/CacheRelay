@@ -38,6 +38,11 @@ verify.*
 /logs/
 /node_modules/
 
+# Local-only reference docs (never push; cross-session working notes)
+AI_GATEWAY_LANDSCAPE.md
+REBRAND.md
+COMPETITORS/
+
 # Local compose secrets (never commit; see .env.docker.example)
 .env
 

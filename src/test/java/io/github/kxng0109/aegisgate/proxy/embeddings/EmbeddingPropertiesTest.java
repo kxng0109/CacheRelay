@@ -22,6 +22,7 @@ class EmbeddingPropertiesTest {
 
 		assertEquals(2_048, props.maxBatchItems());
 		assertEquals(4, props.maxConcurrentSubRequests());
+		assertTrue(props.keepWarmEnabled());
 		assertTrue(VALIDATOR.validate(props).isEmpty());
 	}
 
@@ -66,11 +67,12 @@ class EmbeddingPropertiesTest {
 	@Test
 	@DisplayName("out-of-range values violate the constraints")
 	void constraints() {
-		assertFalse(VALIDATOR.validate(new EmbeddingProperties(0, 4)).isEmpty());
-		assertFalse(VALIDATOR.validate(new EmbeddingProperties(100_001, 4)).isEmpty());
-		assertFalse(VALIDATOR.validate(new EmbeddingProperties(2_048, 0)).isEmpty());
-		assertFalse(VALIDATOR.validate(new EmbeddingProperties(2_048, 65)).isEmpty());
-		assertTrue(VALIDATOR.validate(new EmbeddingProperties(1, 1)).isEmpty());
-		assertTrue(VALIDATOR.validate(new EmbeddingProperties(100_000, 64)).isEmpty());
+		assertFalse(VALIDATOR.validate(new EmbeddingProperties(0, 4, true)).isEmpty());
+		assertFalse(VALIDATOR.validate(new EmbeddingProperties(100_001, 4, true)).isEmpty());
+		assertFalse(VALIDATOR.validate(new EmbeddingProperties(2_048, 0, true)).isEmpty());
+		assertFalse(VALIDATOR.validate(new EmbeddingProperties(2_048, 65, true)).isEmpty());
+		assertTrue(VALIDATOR.validate(new EmbeddingProperties(1, 1, true)).isEmpty());
+		assertTrue(VALIDATOR.validate(new EmbeddingProperties(100_000, 64, true)).isEmpty());
+		assertTrue(VALIDATOR.validate(new EmbeddingProperties(2_048, 4, false)).isEmpty());
 	}
 }

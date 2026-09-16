@@ -262,6 +262,31 @@ public class EmbeddingService {
 	private record ResolvedEmbeddingTarget(ProviderConfig config, String effectiveModel) {
 	}
 
+	/**
+	 * Warm-ping target handed to the keep-warm heartbeat: the resolved provider config, the effective
+	 * upstream model id, and the ready-to-post endpoint URI.
+	 */
+	public record WarmTarget(ProviderConfig config, String effectiveModel, URI targetUri) {
+	}
+
+	/**
+	 * Resolves the warm-ping target for a semantic embedding model alias without executing any request.
+	 * Reuses the exact request-path resolution (alias chain, provider match, endpoint mapping) so the
+	 * heartbeat pings the same endpoint and model that real embeddings use. Returns {@code null} when
+	 * nothing is configured — the heartbeat skips silently rather than failing.
+	 *
+	 * @param model semantic embedding model alias
+	 * @return the resolved warm target, or {@code null} when unresolvable
+	 */
+	public @Nullable WarmTarget resolveWarmTarget(String model) {
+		try {
+			ResolvedEmbeddingTarget target = resolveTarget(model);
+			return new WarmTarget(target.config(), target.effectiveModel(), resolveTargetUri(target.config()));
+		} catch (ResponseStatusException unresolved) {
+			return null;
+		}
+	}
+
 	private ResolvedEmbeddingTarget resolveTarget(String model) {
 		ModelAlias alias = gatewayProperties.getAliases().get(model);
 		if (alias != null && !alias.chain().isEmpty()) {

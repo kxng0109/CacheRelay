@@ -136,6 +136,23 @@
             <version>1.0.1</version>
         </dependency>
 
+        <!-- Keep-warm heartbeat + opt-in in-process ONNX embedder for the L2
+             semantic cache path. onnxruntime 1.29.0: latest stable (verified on
+             Maven Central 2026-09-16), zero transitive dependencies, MIT, no
+             known CVEs. tokenizers 0.38.0 (DJL): latest release, post-CVE-2026-85228
+             fix (0.37.0), Java 8 bytecode (runs on Java 25), Apache-2.0; pulls
+             ai.djl:api + 4 benign transitives (gson/jna/compress/slf4j). -->
+        <dependency>
+            <groupId>com.microsoft.onnxruntime</groupId>
+            <artifactId>onnxruntime</artifactId>
+            <version>1.29.0</version>
+        </dependency>
+        <dependency>
+            <groupId>ai.djl.huggingface</groupId>
+            <artifactId>tokenizers</artifactId>
+            <version>0.38.0</version>
+        </dependency>
+
         <!-- OpenAPI 3.1 & Interactive Swagger UI Documentation -->
         <dependency>
             <groupId>org.springdoc</groupId>
