@@ -31,7 +31,8 @@ jobs:
           cache: maven
 
       - name: Build the jar and SBOM
-        run: ./backend/mvnw -B -ntp package
+        working-directory: backend
+        run: ./mvnw -B -ntp package
 
       - name: Stage release artifacts
         run: |

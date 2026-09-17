@@ -121,10 +121,12 @@ jobs:
           cache: maven
 
       - name: Make the Maven wrapper executable
-        run: chmod +x backend/mvnw
+        working-directory: backend
+        run: chmod +x mvnw
 
       - name: Compile, test and package with coverage gate
-        run: ./backend/mvnw -B -ntp clean verify
+        working-directory: backend
+        run: ./mvnw -B -ntp clean verify
 
       - name: Summarize test results
         if: always()
@@ -191,11 +193,12 @@ jobs:
         continue-on-error: true
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        working-directory: backend
         run: |
           if [ -z "${NVD_API_KEY}" ]; then
             echo "NVD_API_KEY is not configured; skipping the dependency scan."
             exit 0
           fi
-          ./backend/mvnw -B -ntp org.owasp:dependency-check-maven:13.0.0:check \
+          ./mvnw -B -ntp org.owasp:dependency-check-maven:13.0.0:check \
             -DfailBuildOnCVSS=11 \
             -Dformat=HTML,SARIF
