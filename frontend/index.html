@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F7F5F0" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0E0D0B" />
+    <!--
+      CSP nonce placeholder: the edge replaces `CSP_NONCE_PLACEHOLDER`
+      (vite `html.cspNonce`) and `__CSP_NONCE__` (script-tag placeholder)
+      with a per-response random nonce and serves
+      `Content-Security-Policy: script-src 'nonce-<value>' ...` as an HTTP
+      header. Never serve this file with the placeholders intact.
+      Runtime product name resolves from `/v3/api-docs` `info.title`
+      ("CacheRelay AI Gateway & Resilient Reverse Proxy"); the static
+      `<title>` below is the offline fallback.
+    -->
+    <title>CacheRelay</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <main id="main">
+      <div id="root"></div>
+    </main>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

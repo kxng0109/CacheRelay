@@ -1,0 +1,36 @@
+# CacheRelay frontend quality gates (lefthook 2).
+#
+# Install once: `npx lefthook install` (binary comes from the pinned
+# `lefthook` devDependency). Budgets: pre-commit < 10s (staged-only,
+# fail-fast), pre-push < 2min (typecheck + unit tests).
+#
+# Secrets: no new dependency. The `secrets-scan` job uses pure-git pickaxe
+# (`git diff --cached -G <pattern>` exits 1 when staged lines match), so it
+# runs on any platform without gitleaks. For stronger coverage install
+# gitleaks and run `gitleaks protect --staged` alongside; see frontend README.
+min_version: 2.1.12
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: eslint-staged
+      glob: '*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}'
+      run: npx eslint --max-warnings=0 {staged_files}
+      fail_text: 'ESLint failed. Run `npx eslint --fix` on the listed files, then re-stage.'
+    - name: prettier-staged
+      glob: '*.{js,jsx,ts,tsx,mjs,cjs,mts,cts,json,css,html,md,yml,yaml}'
+      run: npx prettier --check {staged_files}
+      fail_text: 'Prettier check failed. Run `npx prettier --write` on the listed files, then re-stage.'
+    - name: secrets-scan
+      run: git diff --cached -G "(AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{80}|xox[bpas]-[A-Za-z0-9-]+|sk-(live|test)-[A-Za-z0-9]+|-----BEGIN [A-Z ]*PRIVATE KEY-----|password\\s*[:=]\\s*[^\\s]+|secret\\s*[:=]\\s*[^\\s]+)" --quiet --exit-code
+      fail_text: 'Possible secret in staged changes. Remove it, use env injection, then re-stage.'
+
+pre-push:
+  parallel: false
+  jobs:
+    - name: typecheck
+      run: npm run typecheck
+      fail_text: '`tsc --noEmit` failed. Fix type errors before pushing.'
+    - name: unit-tests
+      run: npm run test
+      fail_text: 'Vitest run failed. Fix failing tests before pushing.'
