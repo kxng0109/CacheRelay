@@ -4,6 +4,7 @@ import { useForm } from 'react-hook-form'
 import { useShallow } from 'zustand/react/shallow'
 import * as z from 'zod/v4'
 import { GatewayClient } from '../../shared/api/client.js'
+import { toErrorMessage } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 
 const schema = z.object({
@@ -53,7 +54,7 @@ export function EmbeddingsPage(): React.JSX.Element {
       const first = out.data[0]
       setDims(first === undefined ? 0 : first.embedding.length)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Embedding request failed.')
+      setError(toErrorMessage(e, 'Embedding request failed.'))
     }
   }
 

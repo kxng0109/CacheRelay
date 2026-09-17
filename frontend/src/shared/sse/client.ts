@@ -33,6 +33,12 @@ export interface SseRequest {
   signal: AbortSignal
   maxRetries?: number
   heartbeatMs?: number
+  /**
+   * Optional slot receiving the active stream reader. Lets the caller cancel
+   * a pending `read()` on user stop: aborting `fetch` alone does not settle
+   * reads that already resolved headers. Cleared when the stream settles.
+   */
+  readerSlot?: { current: ReadableStreamDefaultReader<Uint8Array> | null }
 }
 
 /**
@@ -53,6 +59,21 @@ export function parseSseFrame(frame: string): string | null {
   }
   if (payload.length === 0) return null
   return payload.join('\n')
+}
+
+/**
+ * Normalizes an unknown rejection reason into an `Error`.
+ *
+ * @remarks
+ * Fetch implementations and stream readers are supposed to reject with
+ * `Error` instances, but non-conforming promises exist in the wild. Wrapping
+ * anything else preserves the failure instead of crashing error handling.
+ *
+ * @param reason - Rejection reason of unknown shape.
+ * @returns The reason itself when already an `Error`, otherwise a wrapper.
+ */
+export function asError(reason: unknown): Error {
+  return reason instanceof Error ? reason : new Error(String(reason))
 }
 
 /**
@@ -79,7 +100,11 @@ export function backoffDelay(attempt: number): number {
  * @param signal - Abort signal that short-circuits the wait.
  */
 function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'))
+  // No `signal.aborted` pre-check: the sole caller reaches sleep
+  // synchronously from a catch block that just observed a live signal, and
+  // JavaScript runs that stretch without interleaving abort events. Should a
+  // caller ever violate that contract, the wait is still bounded by the
+  // backoff cap and the follow-up fetch rejects on the dead signal.
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       signal.removeEventListener('abort', onAbort)
@@ -129,6 +154,7 @@ export async function openSseStream(req: SseRequest & SseCallbacks): Promise<voi
       if (res.body === null) throw new Error('SSE handshake failed: empty body')
 
       reader = res.body.getReader()
+      if (req.readerSlot) req.readerSlot.current = reader
       try {
         const decoder = new TextDecoder()
         armWatchdog()
@@ -162,6 +188,7 @@ export async function openSseStream(req: SseRequest & SseCallbacks): Promise<voi
         } catch {
           // Reader already closed or cancelled; nothing to release.
         }
+        if (req.readerSlot) req.readerSlot.current = null
       }
     } catch (error) {
       if (req.signal.aborted) {
@@ -181,7 +208,7 @@ export async function openSseStream(req: SseRequest & SseCallbacks): Promise<voi
         await connect()
         return
       }
-      req.onError?.(error instanceof Error ? error : new Error(String(error)))
+      req.onError?.(asError(error))
     } finally {
       clearTimeout(watchdog)
     }

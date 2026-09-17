@@ -15,6 +15,17 @@ import type {
 } from './types.js'
 
 /**
+ * Extracts a user-safe message from an unknown throw.
+ *
+ * @param error - Caught value of unknown shape.
+ * @param fallback - Message when the value carries no usable text.
+ * @returns The error message, or the fallback.
+ */
+export function toErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback
+}
+
+/**
  * Base URL for gateway calls.
  *
  * @remarks

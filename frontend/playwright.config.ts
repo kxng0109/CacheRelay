@@ -18,6 +18,12 @@ export default defineConfig({
   use: {
     baseURL: 'http://localhost:3000',
     trace: 'on-first-retry',
+    // Local-only escape hatch: PLAYWRIGHT_CHANNEL=chrome runs specs against
+    // the installed branded browser when the Playwright CDN is unreachable.
+    // CI never sets it and uses the version-pinned bundled Chromium instead.
+    ...(process.env.PLAYWRIGHT_CHANNEL === undefined
+      ? {}
+      : { channel: process.env.PLAYWRIGHT_CHANNEL }),
   },
   projects: [
     {

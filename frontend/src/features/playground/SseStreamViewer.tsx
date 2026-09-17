@@ -7,6 +7,14 @@ interface SseStreamViewerProps {
   token: string
   model: string
   messages: ChatMessage[]
+  /**
+   * Stream tuning overrides. Production uses client defaults (5 retries,
+   * 30 s heartbeat); tests pin small values for fast determinism.
+   */
+  streamOptions?: {
+    maxRetries?: number
+    heartbeatMs?: number
+  }
 }
 
 /**
@@ -44,13 +52,14 @@ function extractPiece(data: string): string {
  * frames — no re-render per token, no unbounded arrays. Abort is wired to
  * the Stop button and to unmount.
  *
- * @param props - Bearer token, model, and messages for this run.
+ * @param props - Bearer token, model, messages, and optional stream tuning.
  * @returns The streaming transcript region with controls and counters.
  */
 export function SseStreamViewer({
   token,
   model,
   messages,
+  streamOptions,
 }: SseStreamViewerProps): React.JSX.Element {
   const [text, setText] = useState('')
   const [phase, setPhase] = useState<'streaming' | 'done' | 'error'>('streaming')
@@ -60,6 +69,21 @@ export function SseStreamViewer({
   const bufferRef = useRef('')
   const rafRef = useRef(0)
   const ctrlRef = useRef<AbortController | null>(null)
+  const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null)
+
+  /**
+   * Stops the active stream: cancels the pending reader first (an aborted
+   * fetch alone never settles reads that already resolved headers), then
+   * aborts the request itself.
+   */
+  const stopStream = (): void => {
+    const reader = readerRef.current
+    readerRef.current = null
+    if (reader) void reader.cancel(new Error('Stopped by user.'))
+    ctrlRef.current?.abort()
+  }
+
+  const { maxRetries, heartbeatMs } = streamOptions ?? {}
 
   useEffect(() => {
     const ctrl = new AbortController()
@@ -86,6 +110,9 @@ export function SseStreamViewer({
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: { model, messages, stream: true },
       signal: ctrl.signal,
+      readerSlot: readerRef,
+      ...(maxRetries === undefined ? {} : { maxRetries }),
+      ...(heartbeatMs === undefined ? {} : { heartbeatMs }),
       onMessage: (data) => {
         bufferRef.current += extractPiece(data)
         setTokens((n) => n + 1)
@@ -108,11 +135,14 @@ export function SseStreamViewer({
     })
 
     return () => {
+      const reader = readerRef.current
+      readerRef.current = null
+      ctrlRef.current = null
+      if (reader) void reader.cancel(new Error('Stream unmounted.'))
       ctrl.abort()
       cancelAnimationFrame(rafRef.current)
-      ctrlRef.current = null
     }
-  }, [token, model, messages])
+  }, [token, model, messages, maxRetries, heartbeatMs])
 
   return (
     <section
@@ -130,7 +160,7 @@ export function SseStreamViewer({
           <button
             type="button"
             onClick={() => {
-              ctrlRef.current?.abort()
+              stopStream()
             }}
             className="rounded-md bg-danger px-3 py-2 text-xs text-white"
           >

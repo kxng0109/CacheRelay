@@ -34,13 +34,43 @@ jobs:
         working-directory: backend
         run: ./mvnw -B -ntp package
 
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build the frontend bundle
+        working-directory: frontend
+        run: npm run build
+
       - name: Stage release artifacts
         run: |
           mkdir -p dist
           cp ./backend/target/*.jar dist/
           cp ./backend/target/classes/META-INF/sbom/application.cdx.json dist/bom.json
+
+      - name: Archive the frontend bundle
+        run: tar -czf "dist/cacherelay-frontend-${GITHUB_REF_NAME}.tar.gz" -C frontend/dist .
+
+      - name: Generate the frontend SBOM (CycloneDX)
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          path: ./frontend
+          format: cyclonedx-json
+          output-file: dist/frontend-bom.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Checksum all release artifacts
+        run: |
           cd dist
-          sha256sum ./*.jar ./*.json > checksums.sha256
+          sha256sum ./*.jar ./*.json ./*.tar.gz > checksums.sha256
           cd ..
 
       - name: Extract release notes from CHANGELOG
@@ -71,6 +101,16 @@ jobs:
         with:
           subject-path: dist/bom.json
 
+      - name: Attest frontend bundle provenance (SLSA Build L2)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/cacherelay-frontend-*.tar.gz
+
+      - name: Attest frontend SBOM provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/frontend-bom.json
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -80,4 +120,6 @@ jobs:
             --notes-file dist/RELEASE_NOTES.md \
             dist/*.jar \
             dist/bom.json \
+            dist/cacherelay-frontend-*.tar.gz \
+            dist/frontend-bom.json \
             dist/checksums.sha256

@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form'
 import { useShallow } from 'zustand/react/shallow'
 import * as z from 'zod/v4'
 import { GatewayClient } from '../../shared/api/client.js'
+import { toErrorMessage } from '../../shared/api/client.js'
 import type { ApiKeyCreated } from '../../shared/api/types.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 
@@ -17,24 +18,27 @@ const schema = z.object({
 
 type FormData = z.infer<typeof schema>
 
+interface KeysBoardProps {
+  /** Master admin key; the gate guarantees non-null before mounting. */
+  adminKey: string
+}
+
 /**
  * Virtual API key administration: list, single-exposure create, delete.
  *
  * @remarks Proof-type: live (real `/v1/admin/keys` CRUD).
  *
- * @returns The keys screen.
+ * @param props - The admin key for admin-surface calls.
+ * @returns The keys board.
  */
-export function KeysPage(): React.JSX.Element {
-  const { adminKey } = useAuthStore(useShallow((s) => ({ adminKey: s.adminKey })))
+function KeysBoard({ adminKey }: KeysBoardProps): React.JSX.Element {
   const qc = useQueryClient()
   const [created, setCreated] = useState<ApiKeyCreated | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const keys = useQuery({
-    queryKey: ['keys', adminKey !== null],
-    queryFn: ({ signal }) =>
-      new GatewayClient({ token: adminKey ?? '', adminKey }).listKeys({ signal }),
-    enabled: adminKey !== null,
+    queryKey: ['keys'],
+    queryFn: ({ signal }) => new GatewayClient({ token: adminKey, adminKey }).listKeys({ signal }),
   })
 
   const {
@@ -45,7 +49,6 @@ export function KeysPage(): React.JSX.Element {
   } = useForm<FormData>({ resolver: zodResolver(schema), mode: 'onSubmit' })
 
   const onCreate = async (d: FormData): Promise<void> => {
-    if (adminKey === null) return
     setError(null)
     setCreated(null)
     try {
@@ -60,27 +63,22 @@ export function KeysPage(): React.JSX.Element {
       reset()
       await qc.invalidateQueries({ queryKey: ['keys'] })
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Key creation failed.')
+      setError(toErrorMessage(e, 'Key creation failed.'))
     }
   }
 
   const onDelete = async (id: string): Promise<void> => {
-    if (adminKey === null) return
     setError(null)
     try {
       await new GatewayClient({ token: adminKey, adminKey }).deleteKey(id)
       await qc.invalidateQueries({ queryKey: ['keys'] })
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Key deletion failed.')
+      setError(toErrorMessage(e, 'Key deletion failed.'))
     }
   }
 
-  if (adminKey === null)
-    return <p className="text-sm">Unlock the admin key on the Circuits page first.</p>
-
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Keys</h1>
       {error === null ? null : (
         <p role="alert" className="text-sm text-danger">
           {error}
@@ -212,6 +210,26 @@ export function KeysPage(): React.JSX.Element {
             ))}
           </tbody>
         </table>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Virtual API key screen: admin-key gate plus the CRUD board.
+ *
+ * @returns The keys screen.
+ */
+export function KeysPage(): React.JSX.Element {
+  const { adminKey } = useAuthStore(useShallow((s) => ({ adminKey: s.adminKey })))
+
+  return (
+    <div className="space-y-4">
+      <h1 className="text-xl font-semibold tracking-tight">Keys</h1>
+      {adminKey === null ? (
+        <p className="text-sm">Unlock the admin key on the Circuits page first.</p>
+      ) : (
+        <KeysBoard adminKey={adminKey} />
       )}
     </div>
   )

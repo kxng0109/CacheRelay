@@ -51,6 +51,7 @@ frontend/.vite/
 frontend/coverage/
 frontend/test-results/
 frontend/playwright-report/
+frontend/storybook-static/
 frontend/.env.local
 
 # Local compose secrets (never commit; see .env.docker.example)

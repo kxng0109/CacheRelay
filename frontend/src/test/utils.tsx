@@ -1,0 +1,59 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { render } from '@testing-library/react'
+import type { ReactElement } from 'react'
+import { MemoryRouter, Route, Routes } from 'react-router'
+import { afterEach, beforeEach } from 'vitest'
+import { useAuthStore } from '../shared/auth/store.js'
+
+/**
+ * Creates an isolated query client per test: no retries (failures surface
+ * immediately) and no refetch timers leaking between tests.
+ *
+ * @returns A fresh query client.
+ */
+function freshClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
+  })
+}
+
+export interface RenderAppOptions {
+  /** Initial entries for the memory router. Defaults to `['/']`. */
+  route?: string
+  /** Gateway key seeded into the memory store before render. */
+  gatewayKey?: string
+  /** Admin key seeded into the memory store before render. */
+  adminKey?: string
+}
+
+/**
+ * Renders UI inside a fresh query client, a memory router, and a cleared
+ * auth store.
+ *
+ * @param ui - Element under test.
+ * @param options - Router route and credential overrides.
+ * @returns The Testing Library render result.
+ */
+export function renderApp(ui: ReactElement, options?: RenderAppOptions) {
+  useAuthStore.getState().clear()
+  if (options?.gatewayKey !== undefined) useAuthStore.getState().setGatewayKey(options.gatewayKey)
+  if (options?.adminKey !== undefined) useAuthStore.getState().setAdminKey(options.adminKey)
+  const client = freshClient()
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[options?.route ?? '/']}>
+        <Routes>
+          <Route path="*" element={ui} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+beforeEach(() => {
+  useAuthStore.getState().clear()
+})
+
+afterEach(() => {
+  useAuthStore.getState().clear()
+})

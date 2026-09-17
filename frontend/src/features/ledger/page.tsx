@@ -6,38 +6,35 @@ import { useAuthStore } from '../../shared/auth/store.js'
 
 const PAGE_SIZE = 25
 
+interface LedgerBoardProps {
+  /** Master admin key; the gate guarantees non-null before mounting. */
+  adminKey: string
+}
+
 /**
- * Ledger page: billed totals plus the paginated audit log.
+ * Billed totals plus the paginated audit log.
  *
  * @remarks Proof-type: recorded (real `/v1/admin/ledger/*` reads).
  *
- * @returns The ledger screen.
+ * @param props - The admin key for admin-surface calls.
+ * @returns The ledger board.
  */
-export function LedgerPage(): React.JSX.Element {
-  const { adminKey } = useAuthStore(useShallow((s) => ({ adminKey: s.adminKey })))
+function LedgerBoard({ adminKey }: LedgerBoardProps): React.JSX.Element {
   const [page, setPage] = useState(0)
 
   const summary = useQuery({
-    queryKey: ['ledger-summary', adminKey !== null],
+    queryKey: ['ledger-summary'],
     queryFn: ({ signal }) =>
-      new GatewayClient({ token: adminKey ?? '', adminKey }).ledgerSummary({ signal }),
-    enabled: adminKey !== null,
+      new GatewayClient({ token: adminKey, adminKey }).ledgerSummary({ signal }),
   })
   const logs = useQuery({
-    queryKey: ['ledger-logs', page, adminKey !== null],
+    queryKey: ['ledger-logs', page],
     queryFn: ({ signal }) =>
-      new GatewayClient({ token: adminKey ?? '', adminKey }).ledgerLogs(page, PAGE_SIZE, {
-        signal,
-      }),
-    enabled: adminKey !== null,
+      new GatewayClient({ token: adminKey, adminKey }).ledgerLogs(page, PAGE_SIZE, { signal }),
   })
-
-  if (adminKey === null)
-    return <p className="text-sm">Unlock the admin key on the Circuits page first.</p>
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Ledger</h1>
       {summary.isPending ? (
         <p role="status" className="text-sm">
           Loading summary…
@@ -123,6 +120,26 @@ export function LedgerPage(): React.JSX.Element {
             </button>
           </div>
         </>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Ledger page: billed totals plus the paginated audit log.
+ *
+ * @returns The ledger screen.
+ */
+export function LedgerPage(): React.JSX.Element {
+  const { adminKey } = useAuthStore(useShallow((s) => ({ adminKey: s.adminKey })))
+
+  return (
+    <div className="space-y-4">
+      <h1 className="text-xl font-semibold tracking-tight">Ledger</h1>
+      {adminKey === null ? (
+        <p className="text-sm">Unlock the admin key on the Circuits page first.</p>
+      ) : (
+        <LedgerBoard adminKey={adminKey} />
       )}
     </div>
   )

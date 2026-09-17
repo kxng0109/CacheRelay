@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from 'react-router'
 import { useShallow } from 'zustand/react/shallow'
+import { CommandPalette } from '../shared/components/CommandPalette.js'
 import { useUiStore } from '../shared/store.js'
 
 const NAV = [
@@ -36,6 +37,7 @@ export function Layout(): React.JSX.Element {
             Enterprise AI gateway console
           </p>
           <span className="flex-1" />
+          <CommandPalette />
           <button
             type="button"
             onClick={toggleDark}

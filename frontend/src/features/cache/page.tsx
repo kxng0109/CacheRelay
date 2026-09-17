@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form'
 import { useShallow } from 'zustand/react/shallow'
 import * as z from 'zod/v4'
 import { GatewayClient } from '../../shared/api/client.js'
+import { toErrorMessage } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 
 const schema = z.object({
@@ -23,20 +24,43 @@ type FormData = z.infer<typeof schema>
  */
 export function CachePage(): React.JSX.Element {
   const { adminKey } = useAuthStore(useShallow((s) => ({ adminKey: s.adminKey })))
+
+  return (
+    <div className="space-y-4">
+      <h1 className="text-xl font-semibold tracking-tight">Cache and budgets</h1>
+      {adminKey === null ? (
+        <p className="text-sm">Unlock the admin key on the Circuits page first.</p>
+      ) : (
+        <CacheBoard adminKey={adminKey} />
+      )}
+    </div>
+  )
+}
+
+interface CacheBoardProps {
+  /** Master admin key; the gate guarantees non-null before mounting. */
+  adminKey: string
+}
+
+/**
+ * Tier stats, purge, budget gauges, and budget creation.
+ *
+ * @param props - The admin key for admin-surface calls.
+ * @returns The cache board.
+ */
+function CacheBoard({ adminKey }: CacheBoardProps): React.JSX.Element {
   const qc = useQueryClient()
   const [notice, setNotice] = useState<string | null>(null)
 
   const stats = useQuery({
-    queryKey: ['cache-stats', adminKey !== null],
+    queryKey: ['cache-stats'],
     queryFn: ({ signal }) =>
-      new GatewayClient({ token: adminKey ?? '', adminKey }).cacheStats({ signal }),
-    enabled: adminKey !== null,
+      new GatewayClient({ token: adminKey, adminKey }).cacheStats({ signal }),
   })
   const budgets = useQuery({
-    queryKey: ['budgets', adminKey !== null],
+    queryKey: ['budgets'],
     queryFn: ({ signal }) =>
-      new GatewayClient({ token: adminKey ?? '', adminKey }).listBudgets({ signal }),
-    enabled: adminKey !== null,
+      new GatewayClient({ token: adminKey, adminKey }).listBudgets({ signal }),
   })
 
   const {
@@ -46,9 +70,6 @@ export function CachePage(): React.JSX.Element {
     formState: { errors, isSubmitting },
   } = useForm<FormData>({ resolver: zodResolver(schema), mode: 'onSubmit' })
 
-  if (adminKey === null)
-    return <p className="text-sm">Unlock the admin key on the Circuits page first.</p>
-
   const purge = async (): Promise<void> => {
     setNotice(null)
     try {
@@ -56,7 +77,7 @@ export function CachePage(): React.JSX.Element {
       setNotice('Cache purged.')
       await qc.invalidateQueries({ queryKey: ['cache-stats'] })
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : 'Purge failed.')
+      setNotice(toErrorMessage(e, 'Purge failed.'))
     }
   }
 
@@ -67,13 +88,12 @@ export function CachePage(): React.JSX.Element {
       reset()
       await qc.invalidateQueries({ queryKey: ['budgets'] })
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : 'Budget creation failed.')
+      setNotice(toErrorMessage(e, 'Budget creation failed.'))
     }
   }
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Cache and budgets</h1>
       {notice === null ? null : (
         <p role="status" className="text-xs">
           {notice}

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { backoffDelay, openSseStream, parseSseFrame } from './client.js'
+import { asError, backoffDelay, openSseStream, parseSseFrame } from './client.js'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -126,5 +126,175 @@ describe('openSseStream', () => {
     })
     expect(message).toContain('HTTP 500')
     expect(unexpected).toEqual([])
+  })
+
+  it('rejects non-event-stream content types', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('{}', { status: 200 }))),
+    )
+    let message = ''
+    await openSseStream({
+      url: 'http://x/stream',
+      headers: {},
+      signal: new AbortController().signal,
+      maxRetries: 0,
+      onMessage: () => {
+        throw new Error('must not receive messages')
+      },
+      onError: (e) => {
+        message = e.message
+      },
+    })
+    expect(message).toContain('handshake failed')
+  })
+
+  it('rejects empty bodies', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(null, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
+        ),
+      ),
+    )
+    let message = ''
+    await openSseStream({
+      url: 'http://x/stream',
+      headers: {},
+      signal: new AbortController().signal,
+      maxRetries: 0,
+      onMessage: () => {
+        throw new Error('must not receive messages')
+      },
+      onError: (e) => {
+        message = e.message
+      },
+    })
+    expect(message).toContain('empty body')
+  })
+
+  it('finishes cleanly when the server closes without [DONE]', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => sseResponse('data: tail\n\n')),
+    )
+    const seen: string[] = []
+    let done = false
+    await openSseStream({
+      url: 'http://x/stream',
+      headers: {},
+      signal: new AbortController().signal,
+      maxRetries: 0,
+      onMessage: (d) => {
+        seen.push(d)
+      },
+      onDone: () => {
+        done = true
+      },
+    })
+    expect(seen).toEqual(['tail'])
+    expect(done).toBe(true)
+  })
+
+  it('retries once after a failed handshake then streams', async () => {
+    const fetchMock = vi
+      .fn(() => Promise.resolve(new Response('boom', { status: 500 })))
+      .mockImplementationOnce(() => Promise.resolve(new Response('boom', { status: 500 })))
+    fetchMock.mockImplementation(() => sseResponse('data: back\n\ndata: [DONE]\n\n'))
+    vi.stubGlobal('fetch', fetchMock)
+    const seen: string[] = []
+    await openSseStream({
+      url: 'http://x/stream',
+      headers: {},
+      signal: new AbortController().signal,
+      maxRetries: 1,
+      onMessage: (d) => {
+        seen.push(d)
+      },
+    })
+    expect(seen).toEqual(['back'])
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports abort instead of reconnecting when stopped mid-backoff', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response('boom', { status: 500 })))
+    vi.stubGlobal('fetch', fetchMock)
+    const ctrl = new AbortController()
+    let message = ''
+    const pending = openSseStream({
+      url: 'http://x/stream',
+      headers: {},
+      signal: ctrl.signal,
+      maxRetries: 5,
+      onMessage: () => {
+        throw new Error('must not receive messages')
+      },
+      onError: (e) => {
+        message = e.message
+      },
+    })
+    setTimeout(() => {
+      ctrl.abort()
+    }, 100)
+    await pending
+    expect(message).toBe('Stream aborted.')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('times out silent streams with the heartbeat watchdog', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        const hanging = new ReadableStream<Uint8Array>({})
+        return Promise.resolve(
+          new Response(hanging, { headers: { 'content-type': 'text/event-stream' } }),
+        )
+      }),
+    )
+    let done = false
+    await openSseStream({
+      url: 'http://x/stream',
+      headers: {},
+      signal: new AbortController().signal,
+      maxRetries: 0,
+      heartbeatMs: 60,
+      onMessage: () => {
+        throw new Error('must not receive messages')
+      },
+      onDone: () => {
+        done = true
+      },
+    })
+    expect(done).toBe(true)
+  }, 10_000)
+
+  it('settles silently when pre-aborted without an error callback', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response('boom', { status: 500 })))
+    vi.stubGlobal('fetch', fetchMock)
+    const ctrl = new AbortController()
+    ctrl.abort()
+    await openSseStream({
+      url: 'http://x/stream',
+      headers: {},
+      signal: ctrl.signal,
+      maxRetries: 0,
+      onMessage: () => {
+        throw new Error('must not receive messages')
+      },
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('asError', () => {
+  it('passes errors through untouched', () => {
+    const err = new TypeError('x')
+    expect(asError(err)).toBe(err)
+  })
+
+  it('wraps non-error reasons into errors', () => {
+    expect(asError('string-throw')).toEqual(new Error('string-throw'))
+    expect(asError(null)).toEqual(new Error('null'))
   })
 })
