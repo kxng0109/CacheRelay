@@ -4,6 +4,12 @@
 
 CacheRelay is an AI gateway built in Java 25 on Spring Boot 4.1. It sits between your applications and large language model providers, exposing a single OpenAI compatible chat completions endpoint while handling authentication, rate limiting, secure upstream forwarding, protocol normalization, and usage based cost accounting.
 
+## Repository layout (monorepo)
+
+- `backend/` — the Java gateway (Maven): `src/`, `pom.xml`, `mvnw`, `Dockerfile`, `docs/`, `deploy/`, `loadtest/`, `monitoring/`. All backend commands below run from `backend/`; all source paths below are relative to `backend/` unless stated.
+- `frontend/` — the operator SPA (separate workspace, see `backend/docs/BACKEND_API_REFERENCE.md` for the contract it builds against).
+- Root — monorepo tooling only: `docker-compose.yml`, `.github/` workflows, `CHANGELOG.md`, commitlint, `.nvmrc` (Node `24.21.0`).
+
 The project is developed in phases. Phase 1 delivered a transparent SSE streaming proxy with SSRF defense and header
 sanitization. Phase 2 added virtual API key authentication and distributed rate limiting backed by Redis. Phase 3 added
 resilient multi provider failover with distributed circuit breakers, real-time streaming guardrails (ingress secret
@@ -141,7 +147,7 @@ gateway:
       strategy: SEQUENTIAL
 ```
 
-The `type` field selects the protocol dialect. `OPENAI` covers OpenAI itself, OpenRouter, Groq, DeepSeek, Mistral, Together, vLLM, and most local servers. `ANTHROPIC` speaks the Anthropic Messages API, and `OLLAMA` speaks the native Ollama chat API. The full set of shipped providers and aliases lives in `src/main/resources/application.yml`. The `model-override` on a chain step pins the concrete upstream model for that provider, which is how a client facing name maps to a provider specific id.
+The `type` field selects the protocol dialect. `OPENAI` covers OpenAI itself, OpenRouter, Groq, DeepSeek, Mistral, Together, vLLM, and most local servers. `ANTHROPIC` speaks the Anthropic Messages API, and `OLLAMA` speaks the native Ollama chat API. The full set of shipped providers and aliases lives in `backend/src/main/resources/application.yml`. The `model-override` on a chain step pins the concrete upstream model for that provider, which is how a client facing name maps to a provider specific id.
 
 The behavior of a chain is decided by the classification rules in `FailoverOrchestrator`:
 
@@ -277,13 +283,13 @@ Every completed stream that carries token usage is written to a PostgreSQL ledge
 3. **Spillway WAL Disk Journal (`SpillwayJournalManager`)**: If PostgreSQL experiences an outage, records are appended immediately to a resilient append-only WAL disk journal (`logs/ledger-deadletter.log`). When the database recovers, an automatic background worker rotates the active file via atomic staging rename and replays batched records with zero data loss.
 4. **FinOps FOCUS 1.4 Financial Calculation Engine (`FinOpsPromptCacheCalculator`)**: Usage records compute exact costs in 64-bit micro-dollar fixed-point integers ($\mu\text{USD}$) using `RoundingMode.HALF_UP`. It applies canonical prompt caching multipliers (Anthropic $1.25\times$ write / $0.10\times$ read, OpenAI $0.50\times$ read, DeepSeek $0.00\times$ write / $0.10\times$ read), reporting `uncached_prompt_tokens`, `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens`, `effective_cost_micros`, and `billed_cost_micros`.
 
-The schema is owned by Flyway migrations under `src/main/resources/db/migration` (`V1__init.sql` through `V4__finops_focus_prompt_caching.sql`). Boot's Flyway autoconfiguration is disabled, Hibernate never creates or validates the schema, and `config/DatabaseMigrator.java` applies the migrations once the database is reachable, retrying on a schedule. While the database is down, ledger writes gracefully divert to the Spillway journal and the proxy hot path keeps working.
+The schema is owned by Flyway migrations under `backend/src/main/resources/db/migration` (`V1__init.sql` through `V4__finops_focus_prompt_caching.sql`). Boot's Flyway autoconfiguration is disabled, Hibernate never creates or validates the schema, and `config/DatabaseMigrator.java` applies the migrations once the database is reachable, retrying on a schedule. While the database is down, ledger writes gracefully divert to the Spillway journal and the proxy hot path keeps working.
 
 Costs come from a pricing catalog. `ledger/PricingSyncService.java` fetches the LiteLLM model pricing file (the URL is configurable and can be pinned to a tag or commit), keeps the chat oriented entries, and upserts them into `model_pricing`. It runs at startup and then daily at 03:00. `ledger/ModelPriceCatalog.java` serves lookups from a short lived cache with exact id, provider composite, and longest prefix matching, and `ledger/CostCalculator.java` computes cost in micro dollars. The sync is strictly best effort. A failed fetch leaves the previous rows in place, and the seed rows in `V2__model_pricing.sql` cover the shipped aliases from the first migration.
 
 ## Project layout
 
-The code is organized by responsibility under `src/main/java/io/github/kxng0109/cacherelay`:
+The code is organized by responsibility under `backend/src/main/java/io/github/kxng0109/cacherelay`:
 
 - `contracts` contains shared immutable types: `SHA256Hash`, `VirtualApiKey`, `RateLimitDecision`, `RateLimitState`, `RejectionReason`, `BootstrapKey`, `ProviderConfig`, `ProviderRef`, `ModelAlias`, `ProviderType`, `FailoverStrategy`, and `GatewayProperties`.
 - `security` contains Phase 1 controls: `SsrfValidator`, `HeaderSanitizer`, and `CidrRange`.
@@ -327,7 +333,7 @@ The code is organized by responsibility under `src/main/java/io/github/kxng0109/
 - `proxy` contains `ProxyController` and shared `HttpClient` bean in `proxy/config/HttpClientConfig.java`.
 - `config` contains `SensitiveString`, OpenAPI configuration `OpenApiConfig`, and retrying `DatabaseMigrator`.
 
-The Lua script that implements the atomic RPM and TPM counters lives in `src/main/resources/rate_limit.lua`. The circuit breaker state machine lives in `src/main/resources/circuit_try_acquire.lua`, `circuit_record_failure.lua`, and `circuit_record_success.lua`. Runtime configuration lives in `src/main/resources/application.yml`, and the database schema is defined by the Flyway migrations under `src/main/resources/db/migration`.
+The Lua script that implements the atomic RPM and TPM counters lives in `backend/src/main/resources/rate_limit.lua`. The circuit breaker state machine lives in `backend/src/main/resources/circuit_try_acquire.lua`, `circuit_record_failure.lua`, and `circuit_record_success.lua`. Runtime configuration lives in `backend/src/main/resources/application.yml`, and the database schema is defined by the Flyway migrations under `backend/src/main/resources/db/migration`.
 
 ## Technology stack
 
@@ -346,7 +352,7 @@ The Lua script that implements the atomic RPM and TPM counters lives in `src/mai
 - JUnit Jupiter, Mockito, and Testcontainers for testing
 - JaCoCo with a strict coverage gate
 
-Dependency versions are managed by the Spring Boot 4.1 BOM. See `pom.xml`.
+Dependency versions are managed by the Spring Boot 4.1 BOM. See `backend/pom.xml`.
 
 ## Prerequisites
 
@@ -411,18 +417,18 @@ export GATEWAY_BOOTSTRAPKEYS_0_RPMLIMIT=60
 export GATEWAY_BOOTSTRAPKEYS_0_TPMLIMIT=100000
 ```
 
-Build and run:
+Build and run (from `backend/`):
 
 ```bash
-./mvnw clean verify
-./mvnw spring-boot:run
+cd backend && ./mvnw clean verify
+cd backend && ./mvnw spring-boot:run
 ```
 
 The service listens on port 8080.
 
 ## Configuration
 
-All configuration lives in `src/main/resources/application.yml`. The most important settings:
+All configuration lives in `backend/src/main/resources/application.yml`. The most important settings:
 
 - `gateway.providers` describes every upstream provider with its dialect, URL, key, and per request timeout.
 - `gateway.aliases` maps each client facing model name to a provider chain and a strategy. A step can pin its upstream model with `model-override`.
@@ -437,7 +443,7 @@ All configuration lives in `src/main/resources/application.yml`. The most import
   row); only a total PostgreSQL outage falls back to the per-pod file.
 - Clients may send `Idempotency-Key` (1–255 printable ASCII) per logical operation and reuse it on retry: the
   gateway derives a deterministic ledger id, so a retried request cannot duplicate rows on any instance. Malformed
-  keys are rejected with HTTP 400; see `docs/high-throughput/README.md` for the reconnect contract.
+  keys are rejected with HTTP 400; see `backend/docs/high-throughput/README.md` for the reconnect contract.
 - `gateway.database-migrate-enabled` and `gateway.database-migrate-interval` control the non fatal migration retry.
 - `gateway.bootstrap-keys-seed-interval` controls how often key seeding is retried if Redis was unavailable at startup.
 - `gateway.budget.settlement.*` controls hold-then-settle accounting: `enabled`, `max-tokens-ceiling` (default 4096),
@@ -470,12 +476,12 @@ All configuration lives in `src/main/resources/application.yml`. The most import
 - `JAVA_TOOL_OPTIONS` passes JVM flags into the compose app container (e.g.
   `-Djdk.virtualThreadScheduler.parallelism=8` for carrier A/B runs); empty by default, so the Dockerfile
   flags (`parallelism=4`) rule.
-- Kubernetes lives in `deploy/k8s/` (`kubectl kustomize` / `kubectl apply -k`): share-nothing Deployment
+- Kubernetes lives in `backend/deploy/k8s/` (`kubectl kustomize` / `kubectl apply -k`): share-nothing Deployment
   (2vCPU/2Gi floor), ClusterIP Service, workload-metric HPA, PDB, default-deny + allow NetworkPolicies.
   Secrets are operator-supplied (`cacherelay-secrets`) and never committed; manifests are render-validated
   only until a live cluster proves them.
-- Bare-metal/VM deploys use `docs/high-throughput/cacherelay.service` (`LimitNOFILE=131072` — systemd ignores
-  `limits.conf`); the ops guide (`docs/high-throughput/README.md`) and proof gate (`gate-checklist.md`) cover
+- Bare-metal/VM deploys use `backend/docs/high-throughput/cacherelay.service` (`LimitNOFILE=131072` — systemd ignores
+  `limits.conf`); the ops guide (`backend/docs/high-throughput/README.md`) and proof gate (`backend/docs/high-throughput/gate-checklist.md`) cover
   sysctl, Redis/PG references, and ceiling sign-off.
 
 The per provider `request-timeout` bounds the time to the first byte of the response for that attempt. It is the failover timer; it does not limit a long lived SSE stream. Per provider `connect-timeout` bounds connection establishment. The shared `HttpClient` in `proxy/config/HttpClientConfig.java` applies a conservative connect timeout and never follows redirects.
@@ -645,15 +651,15 @@ tracking, syntax highlighting, and live Try-It-Out execution:
 
 ## Testing
 
-Run the full suite with coverage and the packaging step:
+Run the full suite with coverage and the packaging step (from `backend/`):
 
 ```bash
-./mvnw clean verify
+cd backend && ./mvnw clean verify
 ```
 
 The suite currently has 1,589 tests (100% passing):
 
-JaCoCo coverage gates (BUNDLE, `target/site/jacoco/jacoco.xml` is single-session honest via
+JaCoCo coverage gates (BUNDLE, `backend/target/site/jacoco/jacoco.xml` is single-session honest via
 `<append>false</append>` on `prepare-agent`): INSTRUCTION/BRANCH/LINE/METHOD/CLASS ≥ 95%, COMPLEXITY ≥ 90%.
 
 - Enterprise Model Context Protocol (MCP) gateway tests in `mcp/*`: `McpContractsAndDtoTest`, `McpHeaderNormalizerTest`,
@@ -747,7 +753,7 @@ JaCoCo coverage gates (BUNDLE, `target/site/jacoco/jacoco.xml` is single-session
 - A gate-throughput tripwire in `budget/GateThroughputSmokeTest.java` that replays 2,000 `budget_limit.lua`
   decisions against real Redis (floor 200 decisions/s, 5s slowest-single-call ceiling) to catch
   order-of-magnitude hot-path regressions; the 200K ceiling itself needs the distributed k6 harness.
-- Gate-only k6 tripwires in `loadtest/k6/`: `01-gate-smoke.js` (60s @100rps local-404 probe that measures
+- Gate-only k6 tripwires in `backend/loadtest/k6/`: `01-gate-smoke.js` (60s @100rps local-404 probe that measures
   gateway latency, never upstream health) and `02-gate-burst.js` (3m @500rps measurement feeding the carrier
   A/B and the P3 bottleneck order).
 
@@ -758,11 +764,11 @@ reached deterministically; the state transitions and failover semantics themselv
 mock maker is attached as a Java agent through the `argLine` Maven property, so the suite is future proof against the
 JDK restriction on self attachment.
 
-> **Build hygiene note:** Maven never deletes stale files from `target/test-classes`. If a test resource is
-> deleted from `src/test/resources`, its ghost copy continues to shadow `src/main/resources` on the test
+> **Build hygiene note:** Maven never deletes stale files from `backend/target/test-classes`. If a test resource is
+> deleted from `backend/src/test/resources`, its ghost copy continues to shadow `backend/src/main/resources` on the test
 > classpath (this once silently blanked all `gateway.*` binding — diagnosed via `Environment.getProperty`
 > returning null while the YAML was correct). After deleting any test resource, manually remove its
-> `target/test-classes` copy or run `mvn clean`.
+> `backend/target/test-classes` copy or run `mvn clean`.
 
 ## Design notes
 

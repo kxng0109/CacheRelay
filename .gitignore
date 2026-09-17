@@ -32,7 +32,7 @@ build/
 
 ### VS Code ###
 .vscode/
-/src/main/resources/*.json
+/backend/src/main/resources/*.json
 
 verify.*
 /logs/
@@ -43,6 +43,15 @@ AI_GATEWAY_LANDSCAPE.md
 REBRAND.md
 COMPETITORS/
 docs/BACKEND_API_REFERENCE.md
+
+# Monorepo - frontend workspace artifacts (root /dist/ + /node_modules/ do not cover subdirs)
+frontend/dist/
+frontend/node_modules/
+frontend/.vite/
+frontend/coverage/
+frontend/test-results/
+frontend/playwright-report/
+frontend/.env.local
 
 # Local compose secrets (never commit; see .env.docker.example)
 .env

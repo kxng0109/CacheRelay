@@ -1,5 +1,5 @@
 # promtool unit tests for cacherelay_alerts.yml.
-# Run: docker run --rm -v <repo>/monitoring/prometheus/rules:/rules prom/prometheus:v3.2.1 \
+# Run: docker run --rm -v <repo>/backend/monitoring/prometheus/rules:/rules prom/prometheus:v3.2.1 \
 #        promtool test rules /rules/tests/cacherelay_alerts_test.yml
 rule_files:
   - ../cacherelay_alerts.yml

@@ -89,7 +89,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
 
       - name: Install commitlint (lockfile-pinned, deterministic)
@@ -121,18 +121,18 @@ jobs:
           cache: maven
 
       - name: Make the Maven wrapper executable
-        run: chmod +x mvnw
+        run: chmod +x backend/mvnw
 
       - name: Compile, test and package with coverage gate
-        run: ./mvnw -B -ntp clean verify
+        run: ./backend/mvnw -B -ntp clean verify
 
       - name: Summarize test results
         if: always()
         run: |
           {
             echo "### Test summary"
-            if compgen -G "target/surefire-reports/*.txt" > /dev/null; then
-              grep -h -E "Tests run:" target/surefire-reports/*.txt \
+            if compgen -G "backend/target/surefire-reports/*.txt" > /dev/null; then
+              grep -h -E "Tests run:" backend/target/surefire-reports/*.txt \
                 | awk -F'[:,]+' '{t+=$2; f+=$4; e+=$6; s+=$8} \
                    END {printf "Tests run: %d, Failures: %d, Errors: %d, Skipped: %d\n", t, f, e, s}'
             else
@@ -146,7 +146,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: jacoco-report
-          path: target/site/jacoco/
+          path: backend/target/site/jacoco/
           if-no-files-found: warn
 
       - name: Upload test reports
@@ -154,7 +154,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: surefire-reports
-          path: target/surefire-reports/
+          path: backend/target/surefire-reports/
           if-no-files-found: warn
 
       - name: Upload application jar
@@ -163,8 +163,8 @@ jobs:
         with:
           name: cacherelay-jar
           path: |
-            target/*.jar
-            !target/*.jar.original
+            backend/target/*.jar
+            !backend/target/*.jar.original
           if-no-files-found: warn
 
       - name: Check for a Codecov token
@@ -183,7 +183,7 @@ jobs:
         if: ${{ steps.codecov-token.outputs.run == 'true' }}
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
-          files: target/site/jacoco/jacoco.xml
+          files: backend/target/site/jacoco/jacoco.xml
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
@@ -196,6 +196,6 @@ jobs:
             echo "NVD_API_KEY is not configured; skipping the dependency scan."
             exit 0
           fi
-          ./mvnw -B -ntp org.owasp:dependency-check-maven:13.0.0:check \
+          ./backend/mvnw -B -ntp org.owasp:dependency-check-maven:13.0.0:check \
             -DfailBuildOnCVSS=11 \
             -Dformat=HTML,SARIF
