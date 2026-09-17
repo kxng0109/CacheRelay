@@ -1,5 +1,5 @@
 # ================================================================================
-# AegisGate JVM options — high-throughput (Java 25, Generational ZGC, 8g heap).
+# CacheRelay JVM options — high-throughput (Java 25, Generational ZGC, 8g heap).
 # JAVA_OPTS example: java $(cat docs/high-throughput/jvm.options.zgc) -jar app.jar
 # 8GB-floor variant: -Xms4g -Xmx4g -XX:SoftMaxHeapSize=3500m
 #   -XX:MaxDirectMemorySize=512m, SSE caps at 8KiB, OTel off-box.
@@ -19,4 +19,4 @@
 -Djdk.virtualThreadScheduler.parallelism=4
 -Djdk.virtualThreadScheduler.maxPoolSize=256
 -Dio.netty.leakDetection.level=simple
--Xlog:gc*,gc+phases=debug:file=/var/log/aegis/gc-%t.log:time,level,tags:filecount=5,filesize=100M
+-Xlog:gc*,gc+phases=debug:file=/var/log/cacherelay/gc-%t.log:time,level,tags:filecount=5,filesize=100M

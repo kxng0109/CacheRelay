@@ -1,0 +1,133 @@
+package io.github.kxng0109.cacherelay.cache.engine;
+
+import io.github.kxng0109.cacherelay.cache.config.CacheRelayCacheProperties;
+import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
+import io.github.kxng0109.cacherelay.proxy.protocol.OpenAiChatRequest;
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+
+import java.util.Locale;
+
+/**
+ * Evaluates HTTP RFC 9111 caching headers, gateway extension headers, and request parameters to decide caching
+ * eligibility, scope, and threshold overrides.
+ */
+@Component
+@RequiredArgsConstructor
+public class CachePolicyEngine {
+
+	private final CacheRelayCacheProperties properties;
+
+	/**
+	 * Determines whether cache lookup should be attempted for the incoming request.
+	 *
+	 * @param request     client chat request
+	 * @param httpRequest servlet HTTP request
+	 * @return true if cache evaluation is permitted, false to bypass
+	 */
+	public boolean shouldEvaluateCache(OpenAiChatRequest request, HttpServletRequest httpRequest) {
+		if (!properties.isEnabled()) {
+			return false;
+		}
+
+		String cacheControl = httpRequest.getHeader("Cache-Control");
+		if (cacheControl != null) {
+			String ccLower = cacheControl.toLowerCase(Locale.ROOT);
+			if (ccLower.contains("no-store") || ccLower.contains("no-cache") || ccLower.contains("max-age=0")) {
+				return false;
+			}
+		}
+
+		String cacherelayNoCache = httpRequest.getHeader("X-CacheRelay-No-Cache");
+		if ("true".equalsIgnoreCase(cacherelayNoCache)) {
+			return false;
+		}
+
+		String cacheMode = httpRequest.getHeader("X-CacheRelay-Cache-Mode");
+		if ("bypass".equalsIgnoreCase(cacheMode) || "write-only".equalsIgnoreCase(cacheMode)) {
+			return false;
+		}
+
+		// Temperature gating: High temperature requests (> temperatureFloor) bypass semantic caching
+		if (request.temperature() != null && request.temperature() > properties.getSemantic().getTemperatureFloor()) {
+			String allowStochastic = httpRequest.getHeader("X-CacheRelay-Cache-Stochastic");
+			return "true".equalsIgnoreCase(allowStochastic);
+		}
+
+		return true;
+	}
+
+	/**
+	 * Determines whether the response should be saved to cache upon completion.
+	 *
+	 * @param request     client chat request
+	 * @param httpRequest servlet HTTP request
+	 * @return true if caching the response is permitted, false otherwise
+	 */
+	public boolean shouldStoreInCache(OpenAiChatRequest request, HttpServletRequest httpRequest) {
+		if (!properties.isEnabled()) {
+			return false;
+		}
+
+		String cacheControl = httpRequest.getHeader("Cache-Control");
+		if (cacheControl != null && cacheControl.toLowerCase(Locale.ROOT).contains("no-store")) {
+			return false;
+		}
+
+		String cacheMode = httpRequest.getHeader("X-CacheRelay-Cache-Mode");
+		if ("bypass".equalsIgnoreCase(cacheMode) || "read-only".equalsIgnoreCase(cacheMode)) {
+			return false;
+		}
+
+		// Symmetric temperature gate (mirrors shouldEvaluateCache): high-temperature responses are
+		// only stored when the client explicitly opts in via X-CacheRelay-Cache-Stochastic. Without this,
+		// high-T stochastic responses would pollute the cache and be served to low-T deterministic
+		// requests. The opt-in is symmetric: the same header is required to store and to retrieve.
+		if (request.temperature() != null && request.temperature() > properties.getSemantic().getTemperatureFloor()) {
+			String allowStochastic = httpRequest.getHeader("X-CacheRelay-Cache-Stochastic");
+			if (!"true".equalsIgnoreCase(allowStochastic)) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Resolves the multi-tenant isolation scope for the request.
+	 *
+	 * @param httpRequest servlet HTTP request
+	 * @return resolved CacheScope
+	 */
+	public CacheScope resolveScope(HttpServletRequest httpRequest) {
+		String scopeHeader = httpRequest.getHeader("X-CacheRelay-Cache-Scope");
+		if (scopeHeader != null) {
+			try {
+				return CacheScope.valueOf(scopeHeader.trim().toUpperCase(Locale.ROOT));
+			} catch (IllegalArgumentException ignored) {
+			}
+		}
+		return properties.getDefaultScope();
+	}
+
+	/**
+	 * Resolves any custom similarity threshold override from client headers.
+	 *
+	 * @param httpRequest servlet HTTP request
+	 * @return threshold in range [0.0, 1.0]
+	 */
+	public double resolveSimilarityThreshold(HttpServletRequest httpRequest) {
+		String thresholdHeader = httpRequest.getHeader("X-CacheRelay-Semantic-Threshold");
+		if (thresholdHeader != null) {
+			try {
+				double parsed = Double.parseDouble(thresholdHeader.trim());
+				if (parsed >= 0.50 && parsed <= 1.00) {
+					return parsed;
+				}
+			} catch (NumberFormatException ignored) {
+			}
+		}
+		return properties.getSemantic().getSimilarityThreshold();
+	}
+}

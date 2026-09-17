@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+﻿# syntax=docker/dockerfile:1
 
 # -----------------------------------------------------------------------------
 # Stage 1: Build Application
@@ -21,9 +21,9 @@ RUN ./mvnw clean package -DskipTests -B -ntp
 # -----------------------------------------------------------------------------
 FROM eclipse-temurin:25-jre-noble AS runtime
 
-LABEL maintainer="AegisGate Team" \
+LABEL maintainer="CacheRelay Team" \
       description="Enterprise AI Gateway and Resilient Multi-Provider Reverse Proxy" \
-      org.opencontainers.image.source="https://github.com/kxng0109/AegisGate"
+      org.opencontainers.image.source="https://github.com/kxng0109/CacheRelay"
 
 # Install curl for health checking and update certificates
 RUN apt-get update && \
@@ -31,15 +31,15 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Create unprivileged system user and group
-RUN groupadd --system --gid 10001 aegisgate && \
-    useradd --system --uid 10001 --gid aegisgate --no-create-home --shell /usr/sbin/nologin aegisgate
+RUN groupadd --system --gid 10001 cacherelay && \
+    useradd --system --uid 10001 --gid cacherelay --no-create-home --shell /usr/sbin/nologin cacherelay
 
 WORKDIR /app
 
 # Copy application artifact with non-root ownership
-COPY --from=builder --chown=aegisgate:aegisgate /workspace/target/AegisGate-*.jar /app/aegisgate.jar
+COPY --from=builder --chown=cacherelay:cacherelay /workspace/target/CacheRelay-*.jar /app/cacherelay.jar
 
-USER aegisgate:aegisgate
+USER cacherelay:cacherelay
 
 EXPOSE 8080
 
@@ -57,4 +57,4 @@ ENTRYPOINT ["java", \
   "-XX:ZUncommitDelay=60", \
   "-Djdk.virtualThreadScheduler.parallelism=4", \
   "-Djava.security.egd=file:/dev/./urandom", \
-  "-jar", "/app/aegisgate.jar"]
+  "-jar", "/app/cacherelay.jar"]

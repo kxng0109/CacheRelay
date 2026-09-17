@@ -1,15 +1,15 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: aegisgate
-  namespace: aegisgate
+  name: cacherelay
+  namespace: cacherelay
   labels:
-    app.kubernetes.io/name: aegisgate
+    app.kubernetes.io/name: cacherelay
 spec:
   type: ClusterIP
   # Single ClusterIP (NOT headless): pods never call each other directly.
   selector:
-    app.kubernetes.io/name: aegisgate
+    app.kubernetes.io/name: cacherelay
   ports:
     - name: http
       port: 8080

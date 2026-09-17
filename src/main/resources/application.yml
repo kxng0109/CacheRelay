@@ -1,6 +1,6 @@
 spring:
   application:
-    name: AegisGate
+    name: CacheRelay
   threads:
     virtual:
       enabled: true
@@ -20,8 +20,8 @@ spring:
       # connection (optimal for sub-ms Lua gates). Boot's pool auto-config
       # backs off, so spring.data.redis.lettuce.pool.* would bind to nothing.
   datasource:
-    url: ${POSTGRES_URL:jdbc:postgresql://localhost:5432/aegisgate}
-    username: ${POSTGRES_USER:aegisgate}
+    url: ${POSTGRES_URL:jdbc:postgresql://localhost:5432/cacherelay}
+    username: ${POSTGRES_USER:cacherelay}
     password: ${POSTGRES_PASSWORD:}
     hikari:
       # The gateway starts without PostgreSQL. The pool initializes lazily,
@@ -270,37 +270,37 @@ gateway:
     catalog-cache-maximum-size: ${GATEWAY_MCP_CATALOG_CACHE_MAXIMUM_SIZE:16}
     legacy-sse-emitter-timeout-minutes: ${GATEWAY_MCP_LEGACY_SSE_EMITTER_TIMEOUT_MINUTES:30}
 
-aegisgate:
+cacherelay:
   sse:
     flush:
       # Adaptive dual-trigger SSE flushing: a flush is issued when this many lines
       # are buffered or when this many milliseconds elapsed since the last flush,
       # whichever comes first. Batching keeps the flush syscall rate flat at
       # 1000+ req/min while bounding downstream latency.
-      max-lines-per-flush: ${AEGIS_SSE_FLUSH_MAX_LINES_PER_FLUSH:16}
+      max-lines-per-flush: ${CACHERELAY_SSE_FLUSH_MAX_LINES_PER_FLUSH:16}
       # Tight interval for interactive TTFT (worst-case added latency 20ms).
       # The high-throughput profile deliberately keeps the looser 100ms record
       # default to favor fewer syscalls per stream at scale.
-      max-interval-ms: ${AEGIS_SSE_FLUSH_MAX_INTERVAL_MS:20}
+      max-interval-ms: ${CACHERELAY_SSE_FLUSH_MAX_INTERVAL_MS:20}
       # A flush slower than this counts as downstream backpressure; the stream is
       # aborted so the upstream exchange is cancelled instead of piling memory.
-      flush-backpressure-threshold-ms: ${AEGIS_SSE_FLUSH_BACKPRESSURE_THRESHOLD_MS:500}
+      flush-backpressure-threshold-ms: ${CACHERELAY_SSE_FLUSH_BACKPRESSURE_THRESHOLD_MS:500}
       # Per-connection cap on buffered-but-unflushed bytes; exceeding it aborts the
       # stream (guards against a malicious upstream flooding tiny lines).
-      max-buffer-bytes: ${AEGIS_SSE_FLUSH_MAX_BUFFER_BYTES:65536}
+      max-buffer-bytes: ${CACHERELAY_SSE_FLUSH_MAX_BUFFER_BYTES:65536}
       # Per-connection token-bucket cap on flush syscalls.
-      max-flushes-per-second: ${AEGIS_SSE_FLUSH_MAX_FLUSHES_PER_SECOND:1000}
-      enabled: ${AEGIS_SSE_FLUSH_ENABLED:true}
+      max-flushes-per-second: ${CACHERELAY_SSE_FLUSH_MAX_FLUSHES_PER_SECOND:1000}
+      enabled: ${CACHERELAY_SSE_FLUSH_ENABLED:true}
       # How often the hot-reload bridge re-binds this section from the Environment.
       # Not part of the flush record itself; read directly by the reloader.
-      reload-interval: ${AEGIS_SSE_FLUSH_RELOAD_INTERVAL:30s}
+      reload-interval: ${CACHERELAY_SSE_FLUSH_RELOAD_INTERVAL:30s}
     capacity:
       # Startup-only SSE ceilings (restart to apply): concurrent streams, registry
       # scan period, and watchdog timeout. Defaults serve light/moderate load; the
       # high-throughput profile raises max-connections for 50K-stream operation.
-      max-connections: ${AEGIS_SSE_CAPACITY_MAX_CONNECTIONS:10000}
-      tick-period-ms: ${AEGIS_SSE_CAPACITY_TICK_PERIOD_MS:10}
-      watchdog-timeout-ms: ${AEGIS_SSE_CAPACITY_WATCHDOG_TIMEOUT_MS:30000}
+      max-connections: ${CACHERELAY_SSE_CAPACITY_MAX_CONNECTIONS:10000}
+      tick-period-ms: ${CACHERELAY_SSE_CAPACITY_TICK_PERIOD_MS:10}
+      watchdog-timeout-ms: ${CACHERELAY_SSE_CAPACITY_WATCHDOG_TIMEOUT_MS:30000}
 
 management:
   endpoints:
@@ -318,7 +318,7 @@ management:
         jvm.gc.pause: true
         hikaricp.connections.acquire: true
     tags:
-      application: AegisGate
+      application: CacheRelay
 server:
   tomcat:
     mbeanregistry:

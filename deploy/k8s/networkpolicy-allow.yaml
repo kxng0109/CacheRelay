@@ -4,12 +4,12 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: aegisgate-allow
-  namespace: aegisgate
+  name: cacherelay-allow
+  namespace: cacherelay
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: aegisgate
+      app.kubernetes.io/name: cacherelay
   policyTypes:
     - Ingress
     - Egress

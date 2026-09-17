@@ -1,6 +1,6 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: aegisgate
+namespace: cacherelay
 resources:
   - namespace.yaml
   - deployment.yaml
@@ -9,5 +9,5 @@ resources:
   - pdb.yaml
   - networkpolicy-default-deny.yaml
   - networkpolicy-allow.yaml
-# Secrets (aegisgate-secrets: postgres-url/user/password) are operator-supplied
+# Secrets (cacherelay-secrets: postgres-url/user/password) are operator-supplied
 # and intentionally absent here — never commit secret values.

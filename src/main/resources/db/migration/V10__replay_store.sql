@@ -1,6 +1,6 @@
 -- Replay store (durable tier): exact re-delivery payloads for idempotent retries.
 --
--- Design (Track 4): Redis holds the 24h hot tier (`aegis:replay:*` hashes with TTL); this table is the durable
+-- Design (Track 4): Redis holds the 24h hot tier (`cacherelay:replay:*` hashes with TTL); this table is the durable
 -- tier for forensics and re-warm. The request path reads Redis only — a hot miss re-proxies (the budget
 -- dedupe still prevents double-charge), so this table is never on the latency path.
 --

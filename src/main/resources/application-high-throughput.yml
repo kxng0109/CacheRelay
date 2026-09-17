@@ -1,5 +1,5 @@
 # ================================================================================
-# AegisGate HIGH-THROUGHPUT profile: proven ceilings for extreme load.
+# CacheRelay HIGH-THROUGHPUT profile: proven ceilings for extreme load.
 #
 # Activate with:  java -jar ... --spring.profiles.active=high-throughput
 # or:            SPRING_PROFILES_ACTIVE=high-throughput
@@ -57,10 +57,10 @@ gateway:
   mcp:
     catalog-cache-maximum-size: ${GATEWAY_MCP_CATALOG_CACHE_MAXIMUM_SIZE:64}
 
-aegisgate:
+cacherelay:
   sse:
     capacity:
-      max-connections: ${AEGIS_SSE_CAPACITY_MAX_CONNECTIONS:60000}
+      max-connections: ${CACHERELAY_SSE_CAPACITY_MAX_CONNECTIONS:60000}
     flush:
       # Slightly looser batching at scale: fewer syscalls per stream.
-      max-lines-per-flush: ${AEGIS_SSE_FLUSH_MAX_LINES_PER_FLUSH:32}
+      max-lines-per-flush: ${CACHERELAY_SSE_FLUSH_MAX_LINES_PER_FLUSH:32}

@@ -1,5 +1,5 @@
 /*
- * AegisGate gate profile B (recommended): 80K small-JSON rps + 25K held SSE.
+ * CacheRelay gate profile B (recommended): 80K small-JSON rps + 25K held SSE.
  * Open-loop arrival rate (no coordinated omission) + HDR-aware thresholds.
  *
  * Topology: 4-5 generator hosts (16c/32GB, 10Gbps, unique source IPs) against

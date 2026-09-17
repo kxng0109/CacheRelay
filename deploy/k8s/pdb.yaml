@@ -4,10 +4,10 @@
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: aegisgate
-  namespace: aegisgate
+  name: cacherelay
+  namespace: cacherelay
 spec:
   maxUnavailable: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: aegisgate
+      app.kubernetes.io/name: cacherelay

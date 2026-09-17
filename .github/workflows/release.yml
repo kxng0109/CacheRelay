@@ -1,4 +1,4 @@
-name: Release
+﻿name: Release
 
 on:
   push:
@@ -57,7 +57,7 @@ jobs:
 
           if [ ! -s dist/RELEASE_NOTES.md ]; then
             echo "Warning: No specific section found in CHANGELOG.md for ${VERSION}. Falling back to default release message."
-            echo "AegisGate release ${VERSION}" > dist/RELEASE_NOTES.md
+            echo "CacheRelay release ${VERSION}" > dist/RELEASE_NOTES.md
           fi
 
       - name: Attest build provenance (SLSA Build L2)
@@ -75,7 +75,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${GITHUB_REF_NAME}" \
-            --title "AegisGate ${GITHUB_REF_NAME}" \
+            --title "CacheRelay ${GITHUB_REF_NAME}" \
             --notes-file dist/RELEASE_NOTES.md \
             dist/*.jar \
             dist/bom.json \

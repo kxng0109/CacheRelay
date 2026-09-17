@@ -1,4 +1,4 @@
-name: aegisgate
+name: cacherelay
 
 services:
   # ---------------------------------------------------------------------------
@@ -9,7 +9,7 @@ services:
   # ---------------------------------------------------------------------------
   redis:
     image: redis:8.10.1-alpine3.23
-    container_name: aegisgate-redis
+    container_name: cacherelay-redis
     restart: unless-stopped
     command: >
       redis-server
@@ -48,7 +48,7 @@ services:
     security_opt:
       - no-new-privileges:true
     networks:
-      - aegisgate-network
+      - cacherelay-network
 
   # ---------------------------------------------------------------------------
   # Redis 8 - CACHE TIER (L1 exact, L2 vectors, replay hot): allkeys-lru so cache
@@ -57,7 +57,7 @@ services:
   # ---------------------------------------------------------------------------
   redis-cache:
     image: redis:8.10.1-alpine3.23
-    container_name: aegisgate-redis-cache
+    container_name: cacherelay-redis-cache
     restart: unless-stopped
     command: >
       redis-server
@@ -95,14 +95,14 @@ services:
     security_opt:
       - no-new-privileges:true
     networks:
-      - aegisgate-network
+      - cacherelay-network
 
   # ---------------------------------------------------------------------------
   # PostgreSQL 16 - Usage & Cost Ledger and Model Pricing Catalog
   # ---------------------------------------------------------------------------
   postgres:
     image: postgres:16.15-alpine
-    container_name: aegisgate-postgres
+    container_name: cacherelay-postgres
     restart: unless-stopped
     # pg_stat_statements needs shared_preload_libraries (restart to apply);
     # track_io_timing reloads live but rides along. Scrape via postgres-exporter.
@@ -120,15 +120,15 @@ services:
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-aegisgate}
-      POSTGRES_USER: ${POSTGRES_USER:-aegisgate}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aegisgate_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-cacherelay}
+      POSTGRES_USER: ${POSTGRES_USER:-cacherelay}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cacherelay_secret}
       # Passthrough ONLY so one-off admin exec can reference the exporter
       # credentials without values ever leaving the container. Ignored by PG.
-      POSTGRES_EXPORTER_USER: ${POSTGRES_EXPORTER_USER:-aegisgate_exporter}
+      POSTGRES_EXPORTER_USER: ${POSTGRES_EXPORTER_USER:-cacherelay_exporter}
       POSTGRES_EXPORTER_PASSWORD: ${POSTGRES_EXPORTER_PASSWORD:?set POSTGRES_EXPORTER_PASSWORD in .env}
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-aegisgate} -d $${POSTGRES_DB:-aegisgate}" ]
+      test: [ "CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-cacherelay} -d $${POSTGRES_DB:-cacherelay}" ]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -154,17 +154,17 @@ services:
     security_opt:
       - no-new-privileges:true
     networks:
-      - aegisgate-network
+      - cacherelay-network
 
   # ---------------------------------------------------------------------------
-  # AegisGate - Reverse Proxy, Token Bucket Rate Limiter, Resilient Router
+  # CacheRelay - Reverse Proxy, Token Bucket Rate Limiter, Resilient Router
   # ---------------------------------------------------------------------------
-  aegisgate:
+  cacherelay:
     build:
       context: .
       dockerfile: Dockerfile
-    image: aegisgate:latest
-    container_name: aegisgate-app
+    image: cacherelay:latest
+    container_name: cacherelay-app
     restart: unless-stopped
     # File descriptors must cover concurrent streams + Redis/PG/upstream sockets.
     # Plain integers: Compose schema-types ulimits as integers, so ${}-interpolated
@@ -197,9 +197,9 @@ services:
       REDIS_CACHE_HOST: redis-cache
       REDIS_CACHE_PORT: 6379
       GATEWAY_BUDGET_DETECTION_ALERTMANAGER_URL: http://alertmanager:9093
-      POSTGRES_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-aegisgate}
-      POSTGRES_USER: ${POSTGRES_USER:-aegisgate}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aegisgate_secret}
+      POSTGRES_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-cacherelay}
+      POSTGRES_USER: ${POSTGRES_USER:-cacherelay}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cacherelay_secret}
       HIKARI_MAXIMUM_POOL_SIZE: ${HIKARI_MAXIMUM_POOL_SIZE:-10}
       HIKARI_MINIMUM_IDLE: ${HIKARI_MINIMUM_IDLE:-10}
 
@@ -219,7 +219,7 @@ services:
       GATEWAY_DEV_ALLOW_PRIVATE_HOSTS: ${GATEWAY_DEV_ALLOW_PRIVATE_HOSTS:-}
 
       # Master Admin Key (for /v1/admin/** APIs)
-      GATEWAY_ADMIN_MASTERKEY: ${GATEWAY_ADMIN_MASTERKEY:-aegisgate_admin_secret_key}
+      GATEWAY_ADMIN_MASTERKEY: ${GATEWAY_ADMIN_MASTERKEY:-cacherelay_admin_secret_key}
 
       # HITL AEAD secret (REQUIRED — the app refuses to start without 32+ bytes).
       # Generate with: openssl rand -base64 32
@@ -227,7 +227,7 @@ services:
 
       # Capacity ceilings (defaults serve light/moderate load; raise with the
       # high-throughput profile — see docs/high-throughput/README.md)
-      AEGIS_SSE_CAPACITY_MAX_CONNECTIONS: ${AEGIS_SSE_CAPACITY_MAX_CONNECTIONS:-10000}
+      CACHERELAY_SSE_CAPACITY_MAX_CONNECTIONS: ${CACHERELAY_SSE_CAPACITY_MAX_CONNECTIONS:-10000}
       GATEWAY_LEDGER_EXECUTOR_CORE_POOL_SIZE: ${GATEWAY_LEDGER_EXECUTOR_CORE_POOL_SIZE:-2}
       GATEWAY_LEDGER_EXECUTOR_MAX_POOL_SIZE: ${GATEWAY_LEDGER_EXECUTOR_MAX_POOL_SIZE:-4}
       GATEWAY_LEDGER_EXECUTOR_QUEUE_CAPACITY: ${GATEWAY_LEDGER_EXECUTOR_QUEUE_CAPACITY:-1000}
@@ -288,7 +288,7 @@ services:
     security_opt:
       - no-new-privileges:true
     networks:
-      - aegisgate-network
+      - cacherelay-network
 
   # ---------------------------------------------------------------------------
   # Redis Exporter - Redis internals for Prometheus (passwordless local Redis,
@@ -297,7 +297,7 @@ services:
   # ---------------------------------------------------------------------------
   redis-exporter:
     image: oliver006/redis_exporter:v1.89.0-alpine
-    container_name: aegisgate-redis-exporter
+    container_name: cacherelay-redis-exporter
     restart: unless-stopped
     command:
       - "--redis.addr=redis://redis:6379"
@@ -327,7 +327,7 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
-      - aegisgate-network
+      - cacherelay-network
 
   # ---------------------------------------------------------------------------
   # Redis Cache Exporter - cache-tier internals (evictions are normal here;
@@ -335,7 +335,7 @@ services:
   # ---------------------------------------------------------------------------
   redis-cache-exporter:
     image: oliver006/redis_exporter:v1.89.0-alpine
-    container_name: aegisgate-redis-cache-exporter
+    container_name: cacherelay-redis-cache-exporter
     restart: unless-stopped
     command:
       - "--redis.addr=redis://redis-cache:6379"
@@ -365,7 +365,7 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
-      - aegisgate-network
+      - cacherelay-network
 
   # ---------------------------------------------------------------------------
   # Postgres Exporter - Postgres internals for Prometheus. Auth via
@@ -374,14 +374,14 @@ services:
   # ---------------------------------------------------------------------------
   postgres-exporter:
     image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
-    container_name: aegisgate-postgres-exporter
+    container_name: cacherelay-postgres-exporter
     restart: unless-stopped
     command:
       - "--collector.stat_statements"
       - "--collector.stat_activity_autovacuum"
       - "--collector.long_running_transactions"
     environment:
-      DATA_SOURCE_NAME: "postgresql://${POSTGRES_EXPORTER_USER:-aegisgate_exporter}:${POSTGRES_EXPORTER_PASSWORD:?set POSTGRES_EXPORTER_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-aegisgate}?sslmode=disable"
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_EXPORTER_USER:-cacherelay_exporter}:${POSTGRES_EXPORTER_PASSWORD:?set POSTGRES_EXPORTER_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-cacherelay}?sslmode=disable"
     depends_on:
       postgres:
         condition: service_healthy
@@ -405,7 +405,7 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
-      - aegisgate-network
+      - cacherelay-network
 
   # ---------------------------------------------------------------------------
   # Alertmanager v0.34.0 - Alert routing for detector alerts (gateway POSTs to
@@ -414,7 +414,7 @@ services:
   # ---------------------------------------------------------------------------
   alertmanager:
     image: prom/alertmanager:v0.34.0
-    container_name: aegisgate-alertmanager
+    container_name: cacherelay-alertmanager
     restart: unless-stopped
     user: "65534:65534"
     command:
@@ -452,14 +452,14 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
-      - aegisgate-network
+      - cacherelay-network
 
   # ---------------------------------------------------------------------------
   # Prometheus 3 - Metrics Aggregator & Alerting Engine
   # ---------------------------------------------------------------------------
   prometheus:
     image: prom/prometheus:v3.2.1
-    container_name: aegisgate-prometheus
+    container_name: cacherelay-prometheus
     restart: unless-stopped
     user: "65534:65534"
     command:
@@ -502,19 +502,19 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
-      - aegisgate-network
+      - cacherelay-network
 
   # ---------------------------------------------------------------------------
   # Grafana 11 - Operational Dashboards & Real-Time Visualization
   # ---------------------------------------------------------------------------
   grafana:
     image: grafana/grafana-enterprise:11.5.2
-    container_name: aegisgate-grafana
+    container_name: cacherelay-grafana
     restart: unless-stopped
     user: "472:0"
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-aegisgate_secret}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-cacherelay_secret}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: ${GRAFANA_AUTH_ANONYMOUS_ENABLED:-true}
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
@@ -556,23 +556,23 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
-      - aegisgate-network
+      - cacherelay-network
 
 volumes:
   postgres_data:
-    name: aegisgate_postgres_data
+    name: cacherelay_postgres_data
   redis_data:
-    name: aegisgate_redis_data
+    name: cacherelay_redis_data
   redis_cache_data:
-    name: aegisgate_redis_cache_data
+    name: cacherelay_redis_cache_data
   alertmanager_data:
-    name: aegisgate_alertmanager_data
+    name: cacherelay_alertmanager_data
   prometheus_data:
-    name: aegisgate_prometheus_data
+    name: cacherelay_prometheus_data
   grafana_data:
-    name: aegisgate_grafana_data
+    name: cacherelay_grafana_data
 
 networks:
-  aegisgate-network:
-    name: aegisgate_network
+  cacherelay-network:
+    name: cacherelay_network
     driver: bridge

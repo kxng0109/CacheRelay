@@ -1,13 +1,13 @@
-# AegisGate gateway — 2vCPU/2G floor mirrored from docker-compose (app service).
+# CacheRelay gateway — 2vCPU/2G floor mirrored from docker-compose (app service).
 # Share-nothing pods: no headless service, no pod-to-pod calls (coordination
 # rides Redis + PG). Any pod serves/aborts/settles any stream by holdId.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: aegisgate
-  namespace: aegisgate
+  name: cacherelay
+  namespace: cacherelay
   labels:
-    app.kubernetes.io/name: aegisgate
+    app.kubernetes.io/name: cacherelay
 spec:
   replicas: 2
   strategy:
@@ -17,11 +17,11 @@ spec:
       maxUnavailable: 0
   selector:
     matchLabels:
-      app.kubernetes.io/name: aegisgate
+      app.kubernetes.io/name: cacherelay
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: aegisgate
+        app.kubernetes.io/name: cacherelay
     spec:
       topologySpreadConstraints:
         - maxSkew: 1
@@ -29,10 +29,10 @@ spec:
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
             matchLabels:
-              app.kubernetes.io/name: aegisgate
+              app.kubernetes.io/name: cacherelay
       containers:
-        - name: aegisgate
-          image: aegisgate:latest
+        - name: cacherelay
+          image: cacherelay:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -51,17 +51,17 @@ spec:
             - name: POSTGRES_URL
               valueFrom:
                 secretKeyRef:
-                  name: aegisgate-secrets
+                  name: cacherelay-secrets
                   key: postgres-url
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
-                  name: aegisgate-secrets
+                  name: cacherelay-secrets
                   key: postgres-user
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: aegisgate-secrets
+                  name: cacherelay-secrets
                   key: postgres-password
                   optional: false
             # P1: accept backlog matched to somaxconn (HT default 8192).

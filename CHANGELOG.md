@@ -64,16 +64,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   independently of upstream health. Full `verify` 1,589 green, branch 0.9505.
 - **Greenfield K8s manifests (`deploy/k8s/`):** share-nothing Deployment (2vCPU/2Gi floor), ClusterIP
   Service, workload-metric HPA, PDB, default-deny + allow NetworkPolicies, kustomization; secrets are
-  operator-supplied (`aegisgate-secrets`) and never committed. Render-validated only (`kustomize` clean) —
+  operator-supplied (`cacherelay-secrets`) and never committed. Render-validated only (`kustomize` clean) —
   no live cluster has applied them yet.
-- **systemd unit for non-Docker deploys (`docs/high-throughput/aegisgate.service`):** `LimitNOFILE=131072`
+- **systemd unit for non-Docker deploys (`docs/high-throughput/cacherelay.service`):** `LimitNOFILE=131072`
   (systemd ignores `limits.conf`), parallelism=4 flags, 2vCPU/2GB floor variant documented in comments.
 - **Track 3 — Opt-in alert delivery (V12–V14):** `notification_preferences` (email / Teams / Slack / webhook,
   secrets referenced by env var name, never stored), `notification_bounces` (hard-bounce suppression),
   `notification_dedupe` (per-alert per-channel claim), `notification_log` (send audit). `NotificationFanout`
   (AFTER_COMMIT) fans delivered alerts to every subscribed channel: SSRF-validated targets at save time
-  (`/v1/admin/notifications` CRUD), Stripe-style HMAC-SHA256 webhook signing (`X-Aegis-Timestamp`,
-  `X-Aegis-Signature`), Teams Power Automate `text` cards, Slack incoming webhooks, and Microsoft Graph
+  (`/v1/admin/notifications` CRUD), Stripe-style HMAC-SHA256 webhook signing (`X-CacheRelay-Timestamp`,
+  `X-CacheRelay-Signature`), Teams Power Automate `text` cards, Slack incoming webhooks, and Microsoft Graph
   `sendMail` via client-credentials (application permission `Mail.Send`, token cached to `expires_in` − 5m,
   ~25 msg/min cap, secret by env ref). PII-free `NotificationPayload` by construction. `budget_audit` is now a
   tamper-evident hash chain (V13: GENESIS-seeded `prev_hash`/`row_hash`, server-side trigger chaining with a
@@ -184,7 +184,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
    outage. Redis memory alert corrected to the real 256MB-cap ratio. Full
    `verify` 1,274 green.
 - **Tomcat accept queue sized to the kernel (HT profile):** `accept-count` 2000→8192, matching
-  `99-aegisgate-highconc.conf` `somaxconn=8192`; `TOMCAT_ACCEPT_COUNT`/`TOMCAT_MAX_CONNECTIONS` passthrough
+  `99-cacherelay-highconc.conf` `somaxconn=8192`; `TOMCAT_ACCEPT_COUNT`/`TOMCAT_MAX_CONNECTIONS` passthrough
   plus an empty-by-default `JAVA_TOOL_OPTIONS` harness for carrier A/B runs (Dockerfile `parallelism=4`
   rules unless overridden).
 - **Dead Lettuce pool keys removed (no behavior change):** the app defines its own
@@ -237,7 +237,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   local rate ceilings, and a verified run log.
 - **Capacity ceilings are now configuration, defaults unchanged:** every hardcoded
   limit is a config key with the identical default (zero behavior change).
-  New: `aegisgate.sse.capacity.*` (max-connections/tick/watchdog),
+  New: `cacherelay.sse.capacity.*` (max-connections/tick/watchdog),
   `gateway.ledger.executor.*`, `gateway.ledger.replay.*`,
   `gateway.ledger.shutdown-await-seconds`, `gateway.ledger.query.*`,
   `gateway.ratelimit.*` (window/clamps/key-cache), `gateway.embeddings.*`

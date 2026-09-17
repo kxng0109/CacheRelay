@@ -62,7 +62,7 @@ k6 run loadtest/k6/30-sse-smoke.js           # SSE wiring (stream start, close, 
 
 ```powershell
 docker compose exec -T redis redis-cli FLUSHDB
-docker compose exec -T postgres psql -U aegisgate -d aegisgate -c "TRUNCATE usage_ledger RESTART IDENTITY;"
+docker compose exec -T postgres psql -U cacherelay -d cacherelay -c "TRUNCATE usage_ledger RESTART IDENTITY;"
 ```
 
 Count-asserting runs need `docker compose down -v` first (fresh named volumes).
@@ -71,14 +71,14 @@ k6 series land next to SUT metrics when run with
 
 ## Chaos trims (separate shell, mid-hold)
 
-- `docker stop aegisgate-redis` → expect fast fail-closed 503s, no hangs; start, expect recovery without restart.
-- `docker stop aegisgate-postgres` → expect dead-letter growth (`logs/ledger-deadletter.log`), no thread-block; start,
+- `docker stop cacherelay-redis` → expect fast fail-closed 503s, no hangs; start, expect recovery without restart.
+- `docker stop cacherelay-postgres` → expect dead-letter growth (`logs/ledger-deadletter.log`), no thread-block; start,
   expect replay.
 - Slow-client: covered by `30-sse-smoke` stalls + backpressure aborts in app logs.
 
 ## Verified run log (2026-09-09, local Ollama stack)
 
-All four scenarios green against the rebuilt `aegisgate:latest` image:
+All four scenarios green against the rebuilt `cacherelay:latest` image:
 
 | Scenario              | Result                                    | Notes                                                                                                                                                       |
 |-----------------------|-------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|

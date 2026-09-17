@@ -1,0 +1,2933 @@
+{
+	"annotations": {
+		"list": [
+			{
+				"builtIn": 1,
+				"datasource": {
+					"type": "grafana",
+					"uid": "-- Grafana --"
+				},
+				"enable": true,
+				"hide": true,
+				"name": "Annotations & Alerts",
+				"type": "dashboard"
+			}
+		]
+	},
+	"editable": true,
+	"fiscalYearStartMonth": 0,
+	"graphTooltip": 1,
+	"id": null,
+	"links": [],
+	"panels": [
+		{
+			"collapsed": false,
+			"gridPos": {
+				"h": 1,
+				"w": 24,
+				"x": 0,
+				"y": 0
+			},
+			"id": 100,
+			"title": "System Overview & Key Health Indicators",
+			"type": "row"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"displayName": "Active connections",
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "yellow",
+								"value": 50
+							},
+							{
+								"color": "red",
+								"value": 200
+							}
+						]
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 4,
+				"w": 3,
+				"x": 0,
+				"y": 1
+			},
+			"id": 1,
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "auto",
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"fields": "",
+					"values": false
+				},
+				"textMode": "value",
+				"noValue": "-"
+			},
+			"pluginVersion": "11.1.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "sse_connection_active or on() vector(0)",
+					"instant": true,
+					"range": false,
+					"refId": "A"
+				}
+			],
+			"title": "Active SSE Connections",
+			"type": "stat"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"displayName": "Requests / second",
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "yellow",
+								"value": 10
+							},
+							{
+								"color": "red",
+								"value": 100
+							}
+						]
+					},
+					"unit": "reqps"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 4,
+				"w": 3,
+				"x": 3,
+				"y": 1
+			},
+			"id": 2,
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "auto",
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"fields": "",
+					"values": false
+				},
+				"textMode": "value",
+				"noValue": "-"
+			},
+			"pluginVersion": "11.1.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "sum(rate(http_server_requests_seconds_count[1m])) or on() vector(0)",
+					"instant": true,
+					"range": false,
+					"refId": "A"
+				}
+			],
+			"title": "Ingress Throughput (QPS)",
+			"type": "stat"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"displayName": "Server errors %",
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "yellow",
+								"value": 1
+							},
+							{
+								"color": "red",
+								"value": 5
+							}
+						]
+					},
+					"unit": "percent"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 4,
+				"w": 3,
+				"x": 6,
+				"y": 1
+			},
+			"id": 3,
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "auto",
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"fields": "",
+					"values": false
+				},
+				"textMode": "value",
+				"noValue": "-"
+			},
+			"pluginVersion": "11.1.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "((sum(rate(http_server_requests_seconds_count{status=~\"5..\"}[1m])) or on() vector(0)) / (sum(rate(http_server_requests_seconds_count[1m])) > 0 or vector(1))) * 100",
+					"instant": true,
+					"range": false,
+					"refId": "A"
+				}
+			],
+			"title": "Error Rate 5xx",
+			"type": "stat"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"displayName": "Throttled %",
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "yellow",
+								"value": 1
+							},
+							{
+								"color": "red",
+								"value": 5
+							}
+						]
+					},
+					"unit": "percent"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 4,
+				"w": 3,
+				"x": 9,
+				"y": 1
+			},
+			"id": 37,
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "auto",
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"fields": "",
+					"values": false
+				},
+				"textMode": "value",
+				"noValue": "-"
+			},
+			"pluginVersion": "11.1.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "((sum(rate(http_server_requests_seconds_count{status=\"429\"}[1m])) or on() vector(0)) / (sum(rate(http_server_requests_seconds_count[1m])) > 0 or vector(1))) * 100",
+					"instant": true,
+					"range": false,
+					"refId": "A"
+				}
+			],
+			"title": "Rate Limited 429",
+			"type": "stat"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"displayName": "Client errors %",
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "yellow",
+								"value": 2
+							},
+							{
+								"color": "red",
+								"value": 10
+							}
+						]
+					},
+					"unit": "percent"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 4,
+				"w": 3,
+				"x": 12,
+				"y": 1
+			},
+			"id": 38,
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "auto",
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"fields": "",
+					"values": false
+				},
+				"textMode": "value",
+				"noValue": "-"
+			},
+			"pluginVersion": "11.1.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "(((sum(rate(http_server_requests_seconds_count{status=~\"4..\"}[1m])) - sum(rate(http_server_requests_seconds_count{status=\"429\"}[1m]))) or on() vector(0)) / (sum(rate(http_server_requests_seconds_count[1m])) > 0 or vector(1))) * 100",
+					"instant": true,
+					"range": false,
+					"refId": "A"
+				}
+			],
+			"title": "Client Errors 4xx",
+			"type": "stat"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"displayName": "Open breakers",
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [
+						{
+							"options": {
+								"0": {
+									"color": "green",
+									"text": "All Closed (Healthy)"
+								}
+							},
+							"type": "value"
+						}
+					],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "red",
+								"value": 1
+							}
+						]
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 4,
+				"w": 3,
+				"x": 15,
+				"y": 1
+			},
+			"id": 4,
+			"options": {
+				"colorMode": "value",
+				"graphMode": "none",
+				"justifyMode": "auto",
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"fields": "",
+					"values": false
+				},
+				"textMode": "value",
+				"noValue": "-"
+			},
+			"pluginVersion": "11.1.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "count(cacherelay_circuit_breaker_state == 1) or on() vector(0)",
+					"instant": true,
+					"range": false,
+					"refId": "A"
+				}
+			],
+			"title": "Open Circuit Breakers",
+			"type": "stat"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"displayName": "Dollars / hour",
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "yellow",
+								"value": 10
+							},
+							{
+								"color": "red",
+								"value": 50
+							}
+						]
+					},
+					"unit": "currencyUSD"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 4,
+				"w": 6,
+				"x": 18,
+				"y": 1
+			},
+			"id": 5,
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "auto",
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"fields": "",
+					"values": false
+				},
+				"textMode": "value",
+				"noValue": "-"
+			},
+			"pluginVersion": "11.1.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "sum(rate(cacherelay_cost_micros_total[5m])) * 0.000001 * 3600 or on() vector(0)",
+					"instant": true,
+					"range": false,
+					"refId": "A"
+				}
+			],
+			"title": "Spend Velocity ($/hr)",
+			"type": "stat"
+		},
+		{
+			"collapsed": false,
+			"gridPos": {
+				"h": 1,
+				"w": 24,
+				"x": 0,
+				"y": 5
+			},
+			"id": 101,
+			"title": "Latency & Request Performance",
+			"type": "row"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"custom": {
+						"drawStyle": "line",
+						"lineInterpolation": "smooth",
+						"lineWidth": 2,
+						"pointSize": 5,
+						"showPoints": "never",
+						"spanNulls": false
+					},
+					"unit": "s"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 8,
+				"w": 12,
+				"x": 0,
+				"y": 6
+			},
+			"id": 6,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"max",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "histogram_quantile(0.50, sum by (le) (rate(http_server_requests_seconds_bucket{uri=~\"/v1/.*\"}[$__rate_interval]))) or on() vector(0)",
+					"legendFormat": "P50 Latency",
+					"refId": "A"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{uri=~\"/v1/.*\"}[$__rate_interval]))) or on() vector(0)",
+					"legendFormat": "P95 Latency",
+					"refId": "B"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "histogram_quantile(0.99, sum by (le) (rate(http_server_requests_seconds_bucket{uri=~\"/v1/.*\"}[$__rate_interval]))) or on() vector(0)",
+					"legendFormat": "P99 Latency",
+					"refId": "C"
+				}
+			],
+			"title": "HTTP Request Latency (P50, P95, P99)",
+			"type": "timeseries"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"custom": {
+						"drawStyle": "bars",
+						"lineInterpolation": "linear",
+						"lineWidth": 1,
+						"pointSize": 5,
+						"showPoints": "never",
+						"spanNulls": false,
+						"stacking": {
+							"group": "A",
+							"mode": "normal"
+						}
+					},
+					"unit": "reqps"
+				},
+				"overrides": [
+					{
+						"matcher": {
+							"id": "byRegexp",
+							"options": "/^Status 2..$/"
+						},
+						"properties": [
+							{
+								"id": "color",
+								"value": {
+									"fixedColor": "green",
+									"mode": "fixed"
+								}
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byRegexp",
+							"options": "/^Status 3..$/"
+						},
+						"properties": [
+							{
+								"id": "color",
+								"value": {
+									"fixedColor": "blue",
+									"mode": "fixed"
+								}
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byRegexp",
+							"options": "/^Status 4..$/"
+						},
+						"properties": [
+							{
+								"id": "color",
+								"value": {
+									"fixedColor": "yellow",
+									"mode": "fixed"
+								}
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byRegexp",
+							"options": "/^Status 429$/"
+						},
+						"properties": [
+							{
+								"id": "color",
+								"value": {
+									"fixedColor": "orange",
+									"mode": "fixed"
+								}
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byRegexp",
+							"options": "/^Status 5..$/"
+						},
+						"properties": [
+							{
+								"id": "color",
+								"value": {
+									"fixedColor": "red",
+									"mode": "fixed"
+								}
+							}
+						]
+					}
+				]
+			},
+			"gridPos": {
+				"h": 8,
+				"w": 12,
+				"x": 12,
+				"y": 6
+			},
+			"id": 7,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "sum by (status) (rate(http_server_requests_seconds_count[1m])) or on() vector(0)",
+					"legendFormat": "Status {{status}}",
+					"refId": "A"
+				}
+			],
+			"title": "Request Rate by HTTP Status",
+			"type": "timeseries"
+		},
+		{
+			"collapsed": false,
+			"gridPos": {
+				"h": 1,
+				"w": 24,
+				"x": 0,
+				"y": 14
+			},
+			"id": 106,
+			"title": "Rate Limiting (RED)",
+			"type": "row"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"displayName": "Denied %",
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "yellow",
+								"value": 1
+							},
+							{
+								"color": "red",
+								"value": 5
+							}
+						]
+					},
+					"unit": "percent"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 6,
+				"x": 0,
+				"y": 15
+			},
+			"id": 18,
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "auto",
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"fields": "",
+					"values": false
+				},
+				"textMode": "value",
+				"noValue": "-"
+			},
+			"pluginVersion": "11.1.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "(sum(rate(cacherelay_ratelimit_evaluations_total{decision=\"denied\"}[5m]))/clamp_min(sum(rate(cacherelay_ratelimit_evaluations_total[5m])), 1))*100 or on() vector(0)",
+					"instant": true,
+					"range": false,
+					"refId": "A"
+				}
+			],
+			"title": "Rate Limit Deny %",
+			"type": "stat"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							}
+						]
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 18,
+				"x": 6,
+				"y": 15
+			},
+			"id": 19,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"max",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "sum(rate(cacherelay_ratelimit_evaluations_total{decision=\"allowed\"}[1m])) or on() vector(0)",
+					"legendFormat": "Allowed",
+					"refId": "A"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "sum(rate(cacherelay_ratelimit_evaluations_total{decision=\"denied\"}[1m])) or on() vector(0)",
+					"legendFormat": "Denied",
+					"refId": "B"
+				}
+			],
+			"title": "Rate Limit Evaluations by Decision",
+			"type": "timeseries"
+		},
+		{
+			"collapsed": false,
+			"gridPos": {
+				"h": 1,
+				"w": 24,
+				"x": 0,
+				"y": 22
+			},
+			"id": 102,
+			"title": "LLM Token Economics & Cost Tracking",
+			"type": "row"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"custom": {
+						"drawStyle": "line",
+						"lineInterpolation": "smooth",
+						"lineWidth": 2,
+						"pointSize": 5,
+						"showPoints": "never",
+						"spanNulls": false
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 8,
+				"w": 12,
+				"x": 0,
+				"y": 23
+			},
+			"id": 8,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "sum by (model, type) (rate(cacherelay_tokens_total[$__rate_interval])) or on() vector(0)",
+					"legendFormat": "{{model}} ({{type}})",
+					"refId": "A"
+				}
+			],
+			"title": "Token Generation Rate by Model (tokens/sec)",
+			"type": "timeseries"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"custom": {
+						"drawStyle": "line",
+						"lineInterpolation": "smooth",
+						"lineWidth": 2,
+						"pointSize": 5,
+						"showPoints": "never",
+						"spanNulls": false
+					},
+					"unit": "currencyUSD"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 8,
+				"w": 12,
+				"x": 12,
+				"y": 23
+			},
+			"id": 9,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "sum by (provider) (rate(cacherelay_cost_micros_total[5m])) * 0.000001 * 3600 or on() vector(0)",
+					"legendFormat": "{{provider}} ($/hr)",
+					"refId": "A"
+				}
+			],
+			"title": "Cost Burn Rate by Provider ($/hr)",
+			"type": "timeseries"
+		},
+		{
+			"collapsed": false,
+			"gridPos": {
+				"h": 1,
+				"w": 24,
+				"x": 0,
+				"y": 31
+			},
+			"id": 103,
+			"title": "Resilience, Failover & Circuit Breakers",
+			"type": "row"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"custom": {
+						"fillOpacity": 80,
+						"lineWidth": 1
+					},
+					"mappings": [
+						{
+							"options": {
+								"0": {
+									"color": "green",
+									"text": "CLOSED (Healthy)"
+								},
+								"1": {
+									"color": "red",
+									"text": "OPEN (Failing Over)"
+								},
+								"2": {
+									"color": "yellow",
+									"text": "HALF-OPEN (Testing)"
+								}
+							},
+							"type": "value"
+						}
+					],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							}
+						]
+					}
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 6,
+				"w": 14,
+				"x": 0,
+				"y": 32
+			},
+			"id": 10,
+			"options": {
+				"alignValue": "left",
+				"legend": {
+					"displayMode": "list",
+					"placement": "bottom"
+				},
+				"mergeValues": true,
+				"rowHeight": 0.8,
+				"showValue": "auto",
+				"tooltip": {
+					"mode": "single",
+					"sort": "none"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "cacherelay_circuit_breaker_state",
+					"legendFormat": "{{provider}} Circuit",
+					"refId": "A"
+				}
+			],
+			"title": "Provider Circuit Breaker States",
+			"type": "state-timeline"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"custom": {
+						"drawStyle": "line",
+						"lineInterpolation": "linear",
+						"lineWidth": 2,
+						"pointSize": 5,
+						"showPoints": "auto",
+						"spanNulls": false
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 6,
+				"w": 10,
+				"x": 14,
+				"y": 32
+			},
+			"id": 11,
+			"options": {
+				"legend": {
+					"calcs": [
+						"sum",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "sum by (provider) (rate(sse_upstream_cancelled_count_total[1m])) or on() vector(0)",
+					"legendFormat": "{{provider}} Cancellations",
+					"refId": "A"
+				}
+			],
+			"title": "Upstream Exchange Cancellations (RST_STREAM)",
+			"type": "timeseries"
+		},
+		{
+			"collapsed": false,
+			"gridPos": {
+				"h": 1,
+				"w": 24,
+				"x": 0,
+				"y": 38
+			},
+			"id": 104,
+			"title": "Streaming Engine, SSE Flush Lag & Line Defense",
+			"type": "row"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"custom": {
+						"drawStyle": "line",
+						"lineInterpolation": "smooth",
+						"lineWidth": 2,
+						"pointSize": 5,
+						"showPoints": "never",
+						"spanNulls": false
+					},
+					"unit": "ms"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 8,
+				"w": 8,
+				"x": 0,
+				"y": 39
+			},
+			"id": 12,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"max",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "sse_flush_lag_max_ms",
+					"legendFormat": "Max Flush Lag (ms)",
+					"refId": "A"
+				}
+			],
+			"title": "SSE Flush Lag (ms)",
+			"type": "timeseries"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"custom": {
+						"drawStyle": "line",
+						"lineInterpolation": "smooth",
+						"lineWidth": 2,
+						"pointSize": 5,
+						"showPoints": "never",
+						"spanNulls": false
+					},
+					"unit": "bytes"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 8,
+				"w": 8,
+				"x": 8,
+				"y": 39
+			},
+			"id": 13,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"max",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "sse_buffer_bytes",
+					"legendFormat": "Buffered Unflushed Bytes",
+					"refId": "A"
+				}
+			],
+			"title": "SSE In-Flight Buffered Memory (Bytes)",
+			"type": "timeseries"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"custom": {
+						"drawStyle": "bars",
+						"lineInterpolation": "linear",
+						"lineWidth": 1,
+						"pointSize": 5,
+						"showPoints": "never",
+						"spanNulls": false,
+						"stacking": {
+							"group": "A",
+							"mode": "normal"
+						}
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 8,
+				"w": 8,
+				"x": 16,
+				"y": 39
+			},
+			"id": 14,
+			"options": {
+				"legend": {
+					"calcs": [
+						"sum",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "sum by (reason, provider) (rate(sse_line_rejected_count_total[1m])) or on() vector(0)",
+					"legendFormat": "{{provider}} ({{reason}})",
+					"refId": "A"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "sum by (provider) (rate(sse_flush_backpressure_count_total[1m])) or on() vector(0)",
+					"legendFormat": "{{provider}} Backpressure Aborts",
+					"refId": "B"
+				}
+			],
+			"title": "Line Guard Rejections & Backpressure Aborts",
+			"type": "timeseries"
+		},
+		{
+			"collapsed": false,
+			"gridPos": {
+				"h": 1,
+				"w": 24,
+				"x": 0,
+				"y": 47
+			},
+			"id": 107,
+			"title": "Ledger Pipeline (USE)",
+			"type": "row"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"displayName": "Queued events",
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "yellow",
+								"value": 10000
+							},
+							{
+								"color": "red",
+								"value": 50000
+							}
+						]
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 6,
+				"x": 0,
+				"y": 48
+			},
+			"id": 20,
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "auto",
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"fields": "",
+					"values": false
+				},
+				"textMode": "value",
+				"noValue": "-"
+			},
+			"pluginVersion": "11.1.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "cacherelay_ledger_queue_depth or on() vector(0)",
+					"instant": true,
+					"range": false,
+					"refId": "A"
+				}
+			],
+			"title": "Ledger Queue Depth",
+			"type": "stat"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							}
+						]
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 9,
+				"x": 6,
+				"y": 48
+			},
+			"id": 21,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"max",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "sum(rate(cacherelay_tokens_total[$__rate_interval])) or on() vector(0)",
+					"legendFormat": "Tokens/s Persisted",
+					"refId": "A"
+				}
+			],
+			"title": "Ledger Write Rate",
+			"type": "timeseries"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							}
+						]
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 9,
+				"x": 15,
+				"y": 48
+			},
+			"id": 22,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"max",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "sum(rate(cacherelay_ledger_dead_letter_total[1m])) or on() vector(0)",
+					"legendFormat": "Dead-Letter/s",
+					"refId": "A"
+				}
+			],
+			"title": "Ledger Dead-Letter Rate",
+			"type": "timeseries"
+		},
+		{
+			"collapsed": false,
+			"gridPos": {
+				"h": 1,
+				"w": 24,
+				"x": 0,
+				"y": 55
+			},
+			"id": 105,
+			"title": "JVM, Threads & Pools",
+			"type": "row"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"custom": {
+						"drawStyle": "line",
+						"lineInterpolation": "smooth",
+						"lineWidth": 2,
+						"pointSize": 5,
+						"showPoints": "never",
+						"spanNulls": false
+					},
+					"unit": "bytes"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 8,
+				"x": 0,
+				"y": 56
+			},
+			"id": 15,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"max",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "sum(jvm_memory_used_bytes{area=\"heap\"})",
+					"legendFormat": "Heap Memory Used",
+					"refId": "A"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "sum(jvm_memory_used_bytes{area=\"nonheap\"})",
+					"legendFormat": "Non-Heap Memory Used",
+					"refId": "B"
+				}
+			],
+			"title": "JVM Heap & Non-Heap Memory",
+			"type": "timeseries"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"custom": {
+						"drawStyle": "line",
+						"lineInterpolation": "smooth",
+						"lineWidth": 2,
+						"pointSize": 5,
+						"showPoints": "never",
+						"spanNulls": false
+					},
+					"unit": "s"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 8,
+				"x": 8,
+				"y": 56
+			},
+			"id": 16,
+			"options": {
+				"legend": {
+					"calcs": [
+						"sum",
+						"max",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "sum(rate(jvm_gc_pause_seconds_sum[1m])) or on() vector(0)",
+					"legendFormat": "GC Pause Rate (s/s)",
+					"refId": "A"
+				}
+			],
+			"title": "JVM Garbage Collection Pause Latency",
+			"type": "timeseries"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"custom": {
+						"drawStyle": "line",
+						"lineInterpolation": "stepAfter",
+						"lineWidth": 2,
+						"pointSize": 5,
+						"showPoints": "never",
+						"spanNulls": false
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 8,
+				"x": 16,
+				"y": 56
+			},
+			"id": 17,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"max",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "hikaricp_connections_active",
+					"legendFormat": "Active DB Connections",
+					"refId": "A"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "hikaricp_connections_idle",
+					"legendFormat": "Idle DB Connections",
+					"refId": "B"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "hikaricp_connections_pending",
+					"legendFormat": "Pending Threads Waiting",
+					"refId": "C"
+				}
+			],
+			"title": "HikariCP Connection Pool",
+			"type": "timeseries"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "yellow",
+								"value": 75
+							},
+							{
+								"color": "red",
+								"value": 90
+							}
+						]
+					},
+					"unit": "percent"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 8,
+				"x": 0,
+				"y": 63
+			},
+			"id": 23,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"max",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "sum(jvm_memory_used_bytes{area=\"heap\"})/sum(jvm_memory_max_bytes{area=\"heap\"})*100",
+					"legendFormat": "Heap Used %",
+					"refId": "A"
+				}
+			],
+			"title": "JVM Heap Used %",
+			"type": "timeseries"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "yellow",
+								"value": 0.1
+							},
+							{
+								"color": "red",
+								"value": 0.2
+							}
+						]
+					},
+					"unit": "s"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 8,
+				"x": 8,
+				"y": 63
+			},
+			"id": 24,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"max",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "histogram_quantile(0.99, sum by(le,gc)(rate(jvm_gc_pause_seconds_bucket[$__rate_interval]))) or on() vector(0)",
+					"legendFormat": "GC {{gc}} P99",
+					"refId": "A"
+				}
+			],
+			"title": "JVM GC Pause p99",
+			"type": "timeseries"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							}
+						]
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 8,
+				"x": 16,
+				"y": 63
+			},
+			"id": 25,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"max",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "jvm_threads_virtual_live_threads",
+					"legendFormat": "Virtual Live",
+					"refId": "A"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "jvm_threads_live_threads",
+					"legendFormat": "Platform Live",
+					"refId": "B"
+				}
+			],
+			"title": "JVM Threads Virtual vs Platform",
+			"type": "timeseries"
+		},
+		{
+			"collapsed": false,
+			"gridPos": {
+				"h": 1,
+				"w": 24,
+				"x": 0,
+				"y": 70
+			},
+			"id": 109,
+			"title": "Redis (USE)",
+			"type": "row"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"displayName": "Memory used %",
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "yellow",
+								"value": 70
+							},
+							{
+								"color": "red",
+								"value": 85
+							}
+						]
+					},
+					"unit": "percent"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 6,
+				"x": 0,
+				"y": 71
+			},
+			"id": 26,
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "auto",
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"fields": "",
+					"values": false
+				},
+				"textMode": "value",
+				"noValue": "-"
+			},
+			"pluginVersion": "11.1.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "(redis_memory_used_bytes/redis_memory_max_bytes)*100 or on() vector(0)",
+					"instant": true,
+					"range": false,
+					"refId": "A"
+				}
+			],
+			"title": "Redis Memory Used %",
+			"type": "stat"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"displayName": "Evicted / hour",
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "red",
+								"value": 1
+							}
+						]
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 6,
+				"x": 6,
+				"y": 71
+			},
+			"id": 27,
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "auto",
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"fields": "",
+					"values": false
+				},
+				"textMode": "value",
+				"noValue": "-"
+			},
+			"pluginVersion": "11.1.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "increase(redis_evicted_keys_total[1h]) or on() vector(0)",
+					"instant": true,
+					"range": false,
+					"refId": "A"
+				}
+			],
+			"title": "Redis Evicted Keys 1h",
+			"type": "stat"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							}
+						]
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 12,
+				"x": 12,
+				"y": 71
+			},
+			"id": 28,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"max",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "rate(redis_commands_processed_total[1m]) or on() vector(0)",
+					"legendFormat": "Ops/s",
+					"refId": "A"
+				}
+			],
+			"title": "Redis Throughput ops/s",
+			"type": "timeseries"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "yellow",
+								"value": 0.8
+							},
+							{
+								"color": "red",
+								"value": 0.95
+							}
+						]
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 8,
+				"x": 0,
+				"y": 78
+			},
+			"id": 29,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"max",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "rate(redis_cpu_user_main_thread_seconds_total[2m])+rate(redis_cpu_sys_main_thread_seconds_total[2m]) or on() vector(0)",
+					"legendFormat": "Main-Thread s/s",
+					"refId": "A"
+				}
+			],
+			"title": "Redis Main-Thread CPU",
+			"type": "timeseries"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "yellow",
+								"value": 100
+							}
+						]
+					},
+					"unit": "Âµs"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 8,
+				"x": 8,
+				"y": 78
+			},
+			"id": 30,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"max",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "rate(redis_commands_duration_seconds_total{cmd=\"evalsha\"}[$__rate_interval])/rate(redis_commands_total{cmd=\"evalsha\"}[$__rate_interval])*1e6 or on() vector(0)",
+					"legendFormat": "evalsha avg Âµs",
+					"refId": "A"
+				}
+			],
+			"title": "Redis EVALSHA Avg Latency",
+			"type": "timeseries"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "red",
+								"value": null
+							},
+							{
+								"color": "yellow",
+								"value": 80
+							},
+							{
+								"color": "green",
+								"value": 90
+							}
+						]
+					},
+					"unit": "percent"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 8,
+				"x": 16,
+				"y": 78
+			},
+			"id": 31,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"max",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "(sum(rate(redis_keyspace_hits_total[$__rate_interval]))/(sum(rate(redis_keyspace_hits_total[$__rate_interval]))+sum(rate(redis_keyspace_misses_total[$__rate_interval]))))*100 or on() vector(0)",
+					"legendFormat": "Hit %",
+					"refId": "A"
+				}
+			],
+			"title": "Redis Keyspace Hit %",
+			"type": "timeseries"
+		},
+		{
+			"collapsed": false,
+			"gridPos": {
+				"h": 1,
+				"w": 24,
+				"x": 0,
+				"y": 85
+			},
+			"id": 110,
+			"title": "Postgres (USE)",
+			"type": "row"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"displayName": "Buffer hit %",
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "red",
+								"value": null
+							},
+							{
+								"color": "yellow",
+								"value": 90
+							},
+							{
+								"color": "green",
+								"value": 95
+							}
+						]
+					},
+					"unit": "percent"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 6,
+				"x": 0,
+				"y": 86
+			},
+			"id": 32,
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "auto",
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"fields": "",
+					"values": false
+				},
+				"textMode": "value",
+				"noValue": "-"
+			},
+			"pluginVersion": "11.1.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "(sum(pg_stat_database_blks_hit)/(sum(pg_stat_database_blks_hit)+sum(pg_stat_database_blks_read)))*100 or on() vector(0)",
+					"instant": true,
+					"range": false,
+					"refId": "A"
+				}
+			],
+			"title": "PG Buffer Hit %",
+			"type": "stat"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"displayName": "Database up",
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "red",
+								"value": null
+							},
+							{
+								"color": "green",
+								"value": 1
+							}
+						]
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 6,
+				"x": 6,
+				"y": 86
+			},
+			"id": 33,
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "auto",
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"fields": "",
+					"values": false
+				},
+				"textMode": "value",
+				"noValue": "-"
+			},
+			"pluginVersion": "11.1.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "pg_up{job=\"postgres\"} or on() vector(0)",
+					"instant": true,
+					"range": false,
+					"refId": "A"
+				}
+			],
+			"title": "PG Up",
+			"type": "stat"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "yellow",
+								"value": 8
+							},
+							{
+								"color": "red",
+								"value": 10
+							}
+						]
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 12,
+				"x": 12,
+				"y": 86
+			},
+			"id": 34,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"max",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "sum(pg_stat_database_numbackends)",
+					"legendFormat": "Backends",
+					"refId": "A"
+				}
+			],
+			"title": "PG Connections",
+			"type": "timeseries"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							}
+						]
+					},
+					"unit": "bytes"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 12,
+				"x": 0,
+				"y": 93
+			},
+			"id": 35,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"max",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "pg_wal_size_bytes",
+					"legendFormat": "WAL Bytes",
+					"refId": "A"
+				}
+			],
+			"title": "PG WAL Size",
+			"type": "timeseries"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "red",
+								"value": 1
+							}
+						]
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 12,
+				"x": 12,
+				"y": 93
+			},
+			"id": 36,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"max",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "sum(pg_locks_count) or on() vector(0)",
+					"legendFormat": "Locks",
+					"refId": "A"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "increase(pg_stat_database_deadlocks[1h]) or on() vector(0)",
+					"legendFormat": "Deadlocks 1h",
+					"refId": "B"
+				}
+			],
+			"title": "PG Locks & Deadlocks",
+			"type": "timeseries"
+		},
+		{
+			"collapsed": false,
+			"gridPos": {
+				"h": 1,
+				"w": 24,
+				"x": 0,
+				"y": 101
+			},
+			"id": 111,
+			"title": "Client Connections (USE)",
+			"type": "row"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							}
+						]
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 12,
+				"x": 0,
+				"y": 102
+			},
+			"id": 39,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"max",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "tomcat_connections_current_connections",
+					"legendFormat": "Active HTTP",
+					"refId": "A"
+				}
+			],
+			"title": "Active Client Connections",
+			"type": "timeseries"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "cacherelay-prometheus"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							}
+						]
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 12,
+				"x": 12,
+				"y": 102
+			},
+			"id": 40,
+			"options": {
+				"legend": {
+					"calcs": [
+						"mean",
+						"max",
+						"lastNotNull"
+					],
+					"displayMode": "table",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "cacherelay-prometheus"
+					},
+					"editorMode": "code",
+					"expr": "tomcat_connections_keepalive_current_connections",
+					"legendFormat": "Keep-alive",
+					"refId": "A"
+				}
+			],
+			"title": "Keep-Alive Connections",
+			"type": "timeseries"
+		}
+	],
+	"templating": {
+		"list": []
+	},
+	"time": {
+		"from": "now-15m",
+		"to": "now"
+	},
+	"timepicker": {},
+	"timezone": "browser",
+	"title": "CacheRelay — Production Operations",
+	"uid": "cacherelay-overview",
+	"version": 1
+}
+
+
+
+
+

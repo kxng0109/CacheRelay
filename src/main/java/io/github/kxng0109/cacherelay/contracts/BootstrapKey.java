@@ -1,0 +1,82 @@
+package io.github.kxng0109.cacherelay.contracts;
+
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
+
+import java.util.Set;
+
+/**
+ * A virtual API key seeded at startup from configuration (used until the deferred admin/JWT path provides full CRUD).
+ * Bound from {@code gateway.bootstrap-keys}.
+ *
+ * @param ownerId          owner/tenant id
+ * @param name             label
+ * @param plaintextKey     raw key including the {@code gw-} prefix (must be a real secret in practice; here it is
+ *                         config-supplied)
+ * @param rpmLimit         requests-per-minute (0 = unlimited)
+ * @param tpmLimit         tokens-per-minute (0 = unlimited)
+ * @param allowedModels    empty means all
+ * @param allowedProviders empty means all
+ */
+public record BootstrapKey(
+		String ownerId,
+		String name,
+		String plaintextKey,
+		int rpmLimit,
+		int tpmLimit,
+		Set<String> allowedModels,
+		Set<String> allowedProviders,
+		Set<String> allowedTools,
+		Set<String> deniedTools
+) {
+	/**
+	 * Canonical constructor: stores immutable copies of the allow and deny lists so callers
+	 * cannot mutate the key after it is bound. Designated for configuration binding.
+	 */
+	@ConstructorBinding
+	public BootstrapKey(
+			String ownerId,
+			String name,
+			String plaintextKey,
+			int rpmLimit,
+			int tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools
+	) {
+		this.ownerId = ownerId;
+		this.name = name;
+		this.plaintextKey = plaintextKey;
+		this.rpmLimit = rpmLimit;
+		this.tpmLimit = tpmLimit;
+		this.allowedModels = allowedModels == null ? Set.of() : Set.copyOf(allowedModels);
+		this.allowedProviders = allowedProviders == null ? Set.of() : Set.copyOf(allowedProviders);
+		this.allowedTools = allowedTools == null ? Set.of() : Set.copyOf(allowedTools);
+		this.deniedTools = deniedTools == null ? Set.of() : Set.copyOf(deniedTools);
+	}
+
+	/**
+	 * Backwards-compatible constructor omitting tool-level RBAC/ABAC sets.
+	 */
+	public BootstrapKey(
+			String ownerId,
+			String name,
+			String plaintextKey,
+			int rpmLimit,
+			int tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders
+	) {
+		this(
+				ownerId,
+				name,
+				plaintextKey,
+				rpmLimit,
+				tpmLimit,
+				allowedModels,
+				allowedProviders,
+				Set.of(),
+				Set.of()
+		);
+	}
+}

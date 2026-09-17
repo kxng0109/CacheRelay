@@ -1,8 +1,8 @@
 {
-	"name": "aegisgate-commitlint",
+	"name": "cacherelay-commitlint",
 	"version": "1.4.0",
 	"private": true,
-	"description": "Conventional-commit linting for AegisGate (non-Node Maven project).",
+	"description": "Conventional-commit linting for CacheRelay (non-Node Maven project).",
 	"scripts": {
 		"commitlint": "commitlint --last --verbose"
 	},

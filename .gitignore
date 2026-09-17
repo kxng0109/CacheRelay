@@ -42,6 +42,7 @@ verify.*
 AI_GATEWAY_LANDSCAPE.md
 REBRAND.md
 COMPETITORS/
+docs/BACKEND_API_REFERENCE.md
 
 # Local compose secrets (never commit; see .env.docker.example)
 .env

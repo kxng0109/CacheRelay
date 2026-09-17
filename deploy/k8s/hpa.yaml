@@ -6,13 +6,13 @@
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: aegisgate
-  namespace: aegisgate
+  name: cacherelay
+  namespace: cacherelay
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: aegisgate
+    name: cacherelay
   minReplicas: 2
   maxReplicas: 20
   metrics:

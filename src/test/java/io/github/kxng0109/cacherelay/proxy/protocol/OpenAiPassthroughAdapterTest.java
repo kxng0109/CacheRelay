@@ -1,0 +1,122 @@
+package io.github.kxng0109.cacherelay.proxy.protocol;
+
+import io.github.kxng0109.cacherelay.config.SensitiveString;
+import io.github.kxng0109.cacherelay.contracts.ProviderConfig;
+import io.github.kxng0109.cacherelay.contracts.ProviderType;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+
+import java.net.URI;
+import java.time.Duration;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+/**
+ * Unit tests for {@link OpenAiPassthroughAdapter}: body edits (model override and forced usage reporting), headers, and
+ * URL building.
+ */
+@DisplayName("OpenAiPassthroughAdapter")
+class OpenAiPassthroughAdapterTest {
+
+	private final ObjectMapper objectMapper = new ObjectMapper();
+	private final OpenAiPassthroughAdapter adapter = new OpenAiPassthroughAdapter(objectMapper);
+
+	@Test
+	@DisplayName("injects include_usage on streaming requests while keeping the body intact")
+	void injectsUsageReporting() {
+		String body =
+				"{\"model\":\"gpt-5.6-luna\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+				+ "\"temperature\":0.7}";
+
+		JsonNode result = objectMapper.readTree(adapter.buildRequestBody(body, null));
+
+		assertEquals("gpt-5.6-luna", result.get("model").asString());
+		assertEquals("hi", result.path("messages").get(0).path("content").asString());
+		assertEquals(0.7, result.path("temperature").asDouble());
+		assertTrue(result.path("stream_options").path("include_usage").asBoolean());
+	}
+
+	@Test
+	@DisplayName("leaves non-streaming requests untouched (stream_options is stream-only)")
+	void nonStreamingUntouched() {
+		String body = "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+
+		JsonNode result = objectMapper.readTree(adapter.buildRequestBody(body, null));
+
+		assertTrue(result.path("stream_options").isMissingNode());
+	}
+
+	@Test
+	@DisplayName("explicit stream:false leaves the body without stream_options")
+	void explicitStreamFalseUntouched() {
+		String body = "{\"model\":\"m\",\"stream\":false}";
+
+		JsonNode result = objectMapper.readTree(adapter.buildRequestBody(body, null));
+
+		assertTrue(result.path("stream_options").isMissingNode());
+	}
+
+	@Test
+	@DisplayName("keeps client stream options and forces include_usage on streams")
+	void preservesStreamOptions() {
+		String body = "{\"model\":\"m\",\"stream\":true,\"stream_options\":{\"include_obfuscation\":false}}";
+
+		JsonNode result = objectMapper.readTree(adapter.buildRequestBody(body, null));
+
+		assertFalse(result.path("stream_options").path("include_obfuscation").asBoolean());
+		assertTrue(result.path("stream_options").path("include_usage").asBoolean());
+	}
+
+	@Test
+	@DisplayName("applies the model override")
+	void appliesModelOverride() {
+		JsonNode result = objectMapper.readTree(
+				adapter.buildRequestBody("{\"model\":\"m\"}", "gpt-5.6-sol"));
+		assertEquals("gpt-5.6-sol", result.get("model").asString());
+	}
+
+	@Test
+	@DisplayName("builds the chat completions URL from the base")
+	void buildsUpstreamUrl() {
+		ProviderConfig config = new ProviderConfig(
+				"p", ProviderType.OPENAI, URI.create("https://api.openai.com/"), null,
+				Duration.ofSeconds(3), Duration.ofSeconds(30)
+		);
+		assertEquals(
+				"https://api.openai.com/v1/chat/completions",
+				adapter.buildUpstreamUrl(config).toString()
+		);
+	}
+
+	@Test
+	@DisplayName("a fresh normalizer is produced per stream")
+	void createsFreshNormalizer() {
+		SseNormalizer first = adapter.newNormalizer(false, "m");
+		SseNormalizer second = adapter.newNormalizer(true, "m");
+		assertNotSame(first, second);
+		assertInstanceOf(OpenAiSseNormalizer.class, first);
+	}
+
+	@Test
+	@DisplayName("a non blank key becomes a bearer header")
+	void bearerHeaderForRealKey() {
+		ProviderConfig config = new ProviderConfig(
+				"p", ProviderType.OPENAI, URI.create("https://api.openai.com"),
+				new SensitiveString("sk-live"), Duration.ofSeconds(3), Duration.ofSeconds(30)
+		);
+		Map<String, String> headers = adapter.buildRequestHeaders(config);
+		assertEquals("Bearer sk-live", headers.get("Authorization"));
+	}
+
+	@Test
+	@DisplayName("a non object stream_options field is replaced on streams")
+	void malformedStreamOptionsReplaced() {
+		JsonNode result = objectMapper.readTree(
+				adapter.buildRequestBody("{\"model\":\"m\",\"stream\":true,\"stream_options\":\"bad\"}", null));
+		assertTrue(result.path("stream_options").isObject());
+		assertTrue(result.path("stream_options").path("include_usage").asBoolean());
+	}
+}

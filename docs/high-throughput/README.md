@@ -1,4 +1,4 @@
-# AegisGate high-throughput operations guide
+# CacheRelay high-throughput operations guide
 
 > **Honest ceiling (1Gbps = 125MB/s ≈ 100MB/s usable):**
 > ceiling = tuple, never a single number.
@@ -19,16 +19,16 @@
 | File                         | Purpose                                                                                                                       |
 |------------------------------|-------------------------------------------------------------------------------------------------------------------------------|
 | `redis.conf`                 | Two-tier reference (accounting 384MB `noeviction` AOF-everysec, cache 512MB `allkeys-lru`, `io-threads 1`, buffer caps) |
-| `aegisgate.service`          | systemd unit for non-Docker deploys (`LimitNOFILE=131072`; limits.conf is ignored by systemd) |
+| `cacherelay.service`          | systemd unit for non-Docker deploys (`LimitNOFILE=131072`; limits.conf is ignored by systemd) |
 | `postgresql.conf`            | Ledger primary reference (shared 2.5GB, async ledger scope, checkpoints, autovacuum, replication senders)                     |
-| `99-aegisgate-highconc.conf` | sysctl for 50K concurrent connections + systemd `LimitNOFILE` notes                                                           |
+| `99-cacherelay-highconc.conf` | sysctl for 50K concurrent connections + systemd `LimitNOFILE` notes                                                           |
 | `jvm.options.zgc`            | Java 25 Generational ZGC flags (8g heap, direct-memory cap, vthread scheduler) + 8GB-floor variant                            |
 | `replicas.md`                | Redis + PostgreSQL read-replica topology, routing rules, lag monitoring, failover                                             |
 | `gate-checklist.md`          | Proof-harness pass/fail criteria for signing off a ceiling                                                                    |
 
 ## Admission-gate tripwires (P1.0/P2)
 
-- JUnit: `src/test/java/io/github/kxng0109/aegisgate/budget/GateThroughputSmokeTest.java`
+- JUnit: `src/test/java/io/github/kxng0109/cacherelay/budget/GateThroughputSmokeTest.java`
   (2,000 `budget_limit.lua` decisions vs real Redis; floor + single-call ceiling).
 - k6: `loadtest/k6/01-gate-smoke.js` (60s gate-only tripwire) + `02-gate-burst.js` (3m measurement).
 - Short carrier A/B verdict (keep parallelism 4) + transient-noise analysis: the P2 note in
@@ -56,8 +56,8 @@ SSE caps at 8KiB, OTel off-box, ZGC headroom violated → cap concurrency, do no
 ## Key-design rules (Cluster-ready, no rework later)
 
 - `{tag}` every multi-key group: `ratelimit:{hex}:rpm|:tpm` (single-slot Lua).
-- Prefixes: `ratelimit:` / `apikey:` / `admin:keys` / `aegis:cache:exact:` /
-  `aegis:cache:vec:` / `mcp:hitl:` / `circuit:`.
+- Prefixes: `ratelimit:` / `apikey:` / `admin:keys` / `cacherelay:cache:exact:` /
+  `cacherelay:cache:vec:` / `mcp:hitl:` / `circuit:`.
 - All cache/vector/HITL keys carry TTL (`allkeys-lru`-evictable); `apikey:*` and
   `admin:keys` live on the accounting tier (protected under `noeviction`).
 

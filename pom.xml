@@ -9,9 +9,9 @@
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
     <groupId>io.github.kxng0109</groupId>
-    <artifactId>AegisGate</artifactId>
+    <artifactId>CacheRelay</artifactId>
     <version>1.7.0</version>
-    <name>AegisGate</name>
+    <name>CacheRelay</name>
     <description>Enterprise-Grade AI Reverse Proxy Gateway with Virtual Threads and Semantic Caching</description>
     <url/>
     <licenses>
@@ -237,8 +237,8 @@
                 <version>0.8.15</version>
                 <configuration>
                     <excludes>
-                        <exclude>**/AegisGateApplication.*</exclude>
-                        <exclude>**/AegisGateApplication$*</exclude>
+                        <exclude>**/CacheRelayApplication.*</exclude>
+                        <exclude>**/CacheRelayApplication$*</exclude>
                         <!-- The circuit breaker and orchestrator retry/race
                              coordination branches (compare-and-set spins, winner
                              and loser race interleavings) cannot be reached

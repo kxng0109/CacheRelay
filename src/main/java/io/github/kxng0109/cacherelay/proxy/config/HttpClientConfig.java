@@ -1,0 +1,45 @@
+package io.github.kxng0109.cacherelay.proxy.config;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
+
+import java.net.http.HttpClient;
+import java.time.Duration;
+import java.util.concurrent.Executors;
+
+/**
+ * Configuration for the shared upstream {@link HttpClient} bean.
+ *
+ * <p>One client serves every provider so TCP connections and HTTP/2 sessions
+ * are pooled and reused. Redirects are never followed, which is a core SSRF control. Virtual threads carry the
+ * asynchronous work.</p>
+ *
+ * <p>The connect timeout is a fixed conservative default because the JDK
+ * client applies connect timeouts per client rather than per request. Per provider responsiveness is enforced per
+ * request through {@code HttpRequest.Builder.timeout}, which bounds the time to the first byte including the connection
+ * establishment.</p>
+ */
+@Configuration
+public class HttpClientConfig {
+
+	/**
+	 * Creates the shared proxy HTTP client bean.
+	 *
+	 * @param connectTimeoutSeconds bound for establishing a connection in seconds
+	 * @return the shared client
+	 */
+	@Primary
+	@Bean("proxyHttpClient")
+	public HttpClient proxyHttpClient(
+			@Value("${gateway.proxy.connect-timeout-seconds:5}") long connectTimeoutSeconds
+	) {
+		return HttpClient.newBuilder()
+		                 .version(HttpClient.Version.HTTP_2)
+		                 .connectTimeout(Duration.ofSeconds(Math.max(1L, connectTimeoutSeconds)))
+		                 .executor(Executors.newVirtualThreadPerTaskExecutor())
+		                 .followRedirects(HttpClient.Redirect.NEVER)
+		                 .build();
+	}
+}

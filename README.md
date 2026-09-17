@@ -1,6 +1,8 @@
-# AegisGate
+# CacheRelay — formerly AegisGate
 
-AegisGate is an AI gateway built in Java 25 on Spring Boot 4.1. It sits between your applications and large language model providers, exposing a single OpenAI compatible chat completions endpoint while handling authentication, rate limiting, secure upstream forwarding, protocol normalization, and usage based cost accounting.
+> **CacheRelay — Cache *then* relay:** the hot path checks `L0 → L1 → L2` (`X-Cache: HIT` → serve), and only on `MISS` relays to upstream (`relayJson`/`relaySse`).
+
+CacheRelay is an AI gateway built in Java 25 on Spring Boot 4.1. It sits between your applications and large language model providers, exposing a single OpenAI compatible chat completions endpoint while handling authentication, rate limiting, secure upstream forwarding, protocol normalization, and usage based cost accounting.
 
 The project is developed in phases. Phase 1 delivered a transparent SSE streaming proxy with SSRF defense and header
 sanitization. Phase 2 added virtual API key authentication and distributed rate limiting backed by Redis. Phase 3 added
@@ -76,7 +78,7 @@ An incoming request to `/v1/chat/completions` passes through several stages:
    `SOVEREIGN_CASCADE`, `PERMISSIVE_FAILOVER_WITH_AUDIT`), walks the chain, and returns the streaming response. During
    streaming relay, the controller incrementally validates JSON outputs via `StreamingJsonPdaValidator`, de-anonymizes
    surrogates in real-time via `SlidingWindowAhoCorasick`, monitors for system prompt exfiltration, injects
-   `X-Aegis-Audit-Receipt` and Zero Data Retention headers, and executes a mid-stream kill-switch
+   `X-CacheRelay-Audit-Receipt` and Zero Data Retention headers, and executes a mid-stream kill-switch
    (`TERMINATE_WITH_ERROR`) if violations occur. See `proxy/ProxyController.java`, `security/guardrail/*`, and
    `security/compliance/*`.
 
@@ -155,7 +157,7 @@ When every provider fails, the client sees a clean error: 502 when providers ret
 
 ## Protocol normalization
 
-AegisGate keeps one client contract, the OpenAI chat completions shape, and translates each provider's native protocol behind it. The `type` field on a provider selects the dialect:
+CacheRelay keeps one client contract, the OpenAI chat completions shape, and translates each provider's native protocol behind it. The `type` field on a provider selects the dialect:
 
 - `OPENAI` speaks the OpenAI chat completions protocol directly. This covers OpenAI itself, OpenRouter, Groq, Mistral,
   Together, vLLM, and most local servers.
@@ -178,7 +180,7 @@ which feed the ledger. See `proxy/protocol/UniversalToolNormalizer.java`, `proxy
 
 ### Extended Reasoning & `<think>` Tag Stream Normalization
 
-AegisGate provides zero-buffer streaming normalization of extended reasoning and thinking traces across model providers:
+CacheRelay provides zero-buffer streaming normalization of extended reasoning and thinking traces across model providers:
 
 - **Sliding-Window State Machine (`ThinkingStreamStateNormalizer`)**: Inspects upstream chunk deltas using a bounded $O(1)$ carry window ($\le 8$ characters) to detect `<think>` and `</think>` tags across arbitrary chunk boundaries.
 - **Reasoning Content Separation**: Strips `<think>` tags and routes reasoning tokens exclusively to `choices[0].delta.reasoning_content` while emitting final output to `choices[0].delta.content`.
@@ -187,7 +189,7 @@ AegisGate provides zero-buffer streaming normalization of extended reasoning and
 
 ### Universal Tool & Function Calling Normalization
 
-AegisGate provides universal tool and function calling across all upstream providers:
+CacheRelay provides universal tool and function calling across all upstream providers:
 
 - Translates canonical OpenAI `tools` definitions to Anthropic `input_schema` and Google Gemini OpenAPI 3.0 UPPERCASE
   types (`OBJECT`, `STRING`, `INTEGER`, `NUMBER`, `BOOLEAN`, `ARRAY`).
@@ -201,7 +203,7 @@ Cost is attributed against the model the provider reports, falling back to the r
 
 ## Model Context Protocol (MCP) Gateway
 
-AegisGate acts as an enterprise Model Context Protocol (MCP) security and tool governance gateway between MCP clients
+CacheRelay acts as an enterprise Model Context Protocol (MCP) security and tool governance gateway between MCP clients
 (Claude Desktop, Cursor-class IDE integrations, custom MCP SDKs) and any number of upstream MCP servers (PostgreSQL,
 GitHub, local sandboxes, SaaS tools). It exposes one client-facing endpoint per protocol era:
 
@@ -281,7 +283,7 @@ Costs come from a pricing catalog. `ledger/PricingSyncService.java` fetches the 
 
 ## Project layout
 
-The code is organized by responsibility under `src/main/java/io/github/kxng0109/aegisgate`:
+The code is organized by responsibility under `src/main/java/io/github/kxng0109/cacherelay`:
 
 - `contracts` contains shared immutable types: `SHA256Hash`, `VirtualApiKey`, `RateLimitDecision`, `RateLimitState`, `RejectionReason`, `BootstrapKey`, `ProviderConfig`, `ProviderRef`, `ModelAlias`, `ProviderType`, `FailoverStrategy`, and `GatewayProperties`.
 - `security` contains Phase 1 controls: `SsrfValidator`, `HeaderSanitizer`, and `CidrRange`.
@@ -289,7 +291,7 @@ The code is organized by responsibility under `src/main/java/io/github/kxng0109/
 - `security/ratelimit` contains the distributed rate limiter: `RateLimitEngine`, `RateLimitScriptConfig`, `KeyManagementService`, and `BootstrapKeySeeder`.
 - `security/guardrail` contains real-time security scanners: `IngressSecretScanner`, `ShannonEntropyCalculator`, `LuhnValidator`, `ConfusablesFilter`, `PiiScanner`, `EphemeralPiiVault`, `PiiDisambiguationEngine`, `PromptInjectionScanner`, `SystemPromptProtectionEngine`, `StreamingJsonPdaValidator`, `SlidingWindowAhoCorasick`, `MidStreamKillSwitch`, `IbanValidator`, `BytePrefixTrie`, and `SecretScannerRuleDatabase`.
 - `security/compliance` contains residency and audit controls: `GeoSovereigntyRouter`, `Jurisdiction`, `ResidencyPolicy`, `MerkleAuditLedger`, and `ZeroDataRetentionEnforcer`.
-- `cache` contains the multi-tier caching engine: `AegisCacheService`, `InMemoryExactCache`, `RedisExactCache`, `RediSearchVectorClient`, `RedisSemanticVectorCache`, `SingleFlightManager`, `CachedStreamReconstitution`, `CachePolicyEngine`, `CacheGuardrails`, `CacheKeyGenerator`, `AdminCacheController`, and `AegisCacheProperties`.
+- `cache` contains the multi-tier caching engine: `CacheRelayCacheService`, `InMemoryExactCache`, `RedisExactCache`, `RediSearchVectorClient`, `RedisSemanticVectorCache`, `SingleFlightManager`, `CachedStreamReconstitution`, `CachePolicyEngine`, `CacheGuardrails`, `CacheKeyGenerator`, `AdminCacheController`, and `CacheRelayCacheProperties`.
 - `proxy/embeddings` contains the embedding gateway: `EmbeddingService`, `EmbeddingBatchOrchestrator`, `EmbeddingAdapterResolver`, `OpenAiEmbeddingAdapter`, `CohereEmbeddingAdapter`, `OllamaEmbeddingAdapter`, `EmbeddingController`, and `VectorEncodingUtils`.
 - `proxy/failover` contains the routing and resilience layer: `FailoverOrchestrator`, `CircuitBreaker`, `CircuitBreakerFactory`, `RedisCircuitBreaker`, `RedisCircuitBreakerFactory`, `ProviderCircuitBreaker`, `CircuitBreakerConfig`, `CircuitBreakerMetrics`, `CircuitBreakerProperties`, `InstanceId`, `ProviderClientAdapter`, `ProviderResponse`, `UpstreamUnavailableException`, and `GatewayExceptionHandler`.
 - `proxy/protocol` contains dialect adapters and SSE normalizers: `ProtocolAdapterResolver`, `OpenAiPassthroughAdapter`, `AnthropicAdapter`, `GeminiAdapter`, `DeepSeekAdapter`, `OllamaAdapter`, `UniversalToolNormalizer`, `ThinkingStreamStateNormalizer`, `AnthropicSseNormalizer`, `GeminiSseNormalizer`, `DeepSeekSseNormalizer`, `OllamaSseNormalizer`, and `OpenAiSseNormalizer`.
@@ -375,8 +377,8 @@ docker compose --profile all up -d --build
 
 Copy `.env.docker.example` to `.env` to configure ports, provider API keys, and Grafana credentials:
 
-- **AegisGate Gateway**: `http://localhost:8080` (Actuator & Health: `http://localhost:8080/actuator/health`)
-- **Grafana Dashboard**: `http://localhost:3000` (Pre-configured `AegisGate — Production Operations` dashboard, 51 panels across 12 rows: request path, rate limiting, ledger, JVM, pools, Redis, Postgres, client connections)
+- **CacheRelay Gateway**: `http://localhost:8080` (Actuator & Health: `http://localhost:8080/actuator/health`)
+- **Grafana Dashboard**: `http://localhost:3000` (Pre-configured `CacheRelay — Production Operations` dashboard, 51 panels across 12 rows: request path, rate limiting, ledger, JVM, pools, Redis, Postgres, client connections)
 - **Prometheus TSDB**: `http://localhost:9090` (Scraping the app plus `redis-exporter:9121` and `postgres-exporter:9187`, with 20 pre-loaded alert rules)
 
 One extra setup line is required for the Postgres exporter (least-privilege `pg_monitor` user; fail-fast if unset):
@@ -390,8 +392,8 @@ POSTGRES_EXPORTER_PASSWORD=<a real value in your .env>
 If you prefer starting containers individually:
 
 ```bash
-docker run -d --name aegisgate-redis -p 6379:6379 redis:8.10.1-alpine3.23
-docker run -d --name aegisgate-postgres -p 5432:5432 -e POSTGRES_USER=aegisgate -e POSTGRES_PASSWORD=<your-password> -e POSTGRES_DB=aegisgate postgres:16.15-alpine
+docker run -d --name cacherelay-redis -p 6379:6379 redis:8.10.1-alpine3.23
+docker run -d --name cacherelay-postgres -p 5432:5432 -e POSTGRES_USER=cacherelay -e POSTGRES_PASSWORD=<your-password> -e POSTGRES_DB=cacherelay postgres:16.15-alpine
 ```
 
 Provide your provider keys and, optionally, a bootstrap key for local testing:
@@ -399,8 +401,8 @@ Provide your provider keys and, optionally, a bootstrap key for local testing:
 ```bash
 export OPENAI_API_KEY=your-provider-key
 export ANTHROPIC_API_KEY=your-provider-key
-export POSTGRES_URL=jdbc:postgresql://localhost:5432/aegisgate
-export POSTGRES_USER=aegisgate
+export POSTGRES_URL=jdbc:postgresql://localhost:5432/cacherelay
+export POSTGRES_USER=cacherelay
 export POSTGRES_PASSWORD=<your-password>
 export GATEWAY_BOOTSTRAPKEYS_0_OWNERID=local
 export GATEWAY_BOOTSTRAPKEYS_0_NAME=local-dev
@@ -455,10 +457,10 @@ All configuration lives in `src/main/resources/application.yml`. The most import
   `mailbox`, `per-minute-cap`); all blank disables the email channel.
 - `gateway.maintenance.*` controls the monthly retention janitor (`retention-enabled`, `retention-batch`,
   `retention-cron`).
-- `aegisgate.sse.flush.*` controls the adaptive downstream SSE flush strategy: `max-lines-per-flush` (default 16),
+- `cacherelay.sse.flush.*` controls the adaptive downstream SSE flush strategy: `max-lines-per-flush` (default 16),
   `max-interval-ms` (default 20ms), `flush-backpressure-threshold-ms` (default 500ms), `max-buffer-bytes` (default
   64KB), `max-flushes-per-second` (default 1000), `enabled` (default true), and `reload-interval` (default 30s).
-- `aegisgate.sse.line-guard.*` controls the upstream SSE line guard: `global-default-bytes` (default 16KB),
+- `cacherelay.sse.line-guard.*` controls the upstream SSE line guard: `global-default-bytes` (default 16KB),
   `safety-margin-percent` (default 10%), `action` (`REJECT_LINE_AND_CLOSE` or `REJECT_LINE_CONTINUE`), `per-provider`
   (overrides for `OPENAI`, `ANTHROPIC`, `OLLAMA`), `write-timeout` (default 30s), `write-timeout-check-interval`
   (default 5s), and `reload-interval` (default 30s).
@@ -470,9 +472,9 @@ All configuration lives in `src/main/resources/application.yml`. The most import
   flags (`parallelism=4`) rule.
 - Kubernetes lives in `deploy/k8s/` (`kubectl kustomize` / `kubectl apply -k`): share-nothing Deployment
   (2vCPU/2Gi floor), ClusterIP Service, workload-metric HPA, PDB, default-deny + allow NetworkPolicies.
-  Secrets are operator-supplied (`aegisgate-secrets`) and never committed; manifests are render-validated
+  Secrets are operator-supplied (`cacherelay-secrets`) and never committed; manifests are render-validated
   only until a live cluster proves them.
-- Bare-metal/VM deploys use `docs/high-throughput/aegisgate.service` (`LimitNOFILE=131072` — systemd ignores
+- Bare-metal/VM deploys use `docs/high-throughput/cacherelay.service` (`LimitNOFILE=131072` — systemd ignores
   `limits.conf`); the ops guide (`docs/high-throughput/README.md`) and proof gate (`gate-checklist.md`) cover
   sysctl, Redis/PG references, and ceiling sign-off.
 
@@ -598,12 +600,12 @@ body is 422, and a concurrent duplicate is 409.
 
 ### Multi-Tier Semantic Caching Layer
 
-AegisGate provides an enterprise-grade, high-throughput (2,000+ concurrent users) multi-tiered caching architecture:
+CacheRelay provides an enterprise-grade, high-throughput (2,000+ concurrent users) multi-tiered caching architecture:
 
 - **L0 (In-Memory)**: Bounded Caffeine cache for sub-millisecond ($<0.1\text{ms}$) exact-match hot prompt lookups.
 - **L1 (Distributed Exact Match)**: Redis key-value store partitioned by SHA-256 compound keys.
 - **L2 (Vector Similarity Search)**: RediSearch / Redis VSS HNSW vector search executing cosine distance queries over
-  dense float32 vectors generated by AegisGate's configured embedding model.
+  dense float32 vectors generated by CacheRelay's configured embedding model.
 - **Multi-Turn Prefix Partitioning**: Employs hybrid prefix-exact hashing ($H_{\text{prefix}}$) over prior
   turns $[0..N-2]$
   and dense vector embedding on the active user turn $[N-1]$, preventing context drift and infinite replay loops.
@@ -616,7 +618,7 @@ AegisGate provides an enterprise-grade, high-throughput (2,000+ concurrent users
 
 ### Interactive Swagger & OpenAPI 3.1 Documentation
 
-AegisGate provides rich, interactive Swagger UI and OpenAPI 3.1 documentation with group switching, request duration
+CacheRelay provides rich, interactive Swagger UI and OpenAPI 3.1 documentation with group switching, request duration
 tracking, syntax highlighting, and live Try-It-Out execution:
 
 - **Swagger UI**: [`http://localhost:8080/swagger-ui.html`](http://localhost:8080/swagger-ui.html)
@@ -696,7 +698,7 @@ JaCoCo coverage gates (BUNDLE, `target/site/jacoco/jacoco.xml` is single-session
   memory wiping, bounded lookahead SSE chunk reassembly, and upstream HTTP/2 RST_STREAM cancellation.
 - Geo-sovereignty & compliance tests in `security/compliance/*`: `JurisdictionAdequacyTest`,
   `GeoSovereigntyRouterTest`, `MerkleAuditLedgerTest`, and `ZeroDataRetentionEnforcerTest` covering GDPR Art. 45 & NDPA
-  2023 cross-border adequacy DAGs, forward-secure SHA-256 hash chains, HMAC-SHA256 receipts (`X-Aegis-Audit-Receipt`),
+  2023 cross-border adequacy DAGs, forward-secure SHA-256 hash chains, HMAC-SHA256 receipts (`X-CacheRelay-Audit-Receipt`),
   and `X-No-Storage` zero-retention headers.
 - Ingress filter pipeline tests in `security/filter/*`: `IngressSecurityFilterTest`,
   `SecurityFilterConfigTest`, and `AnonymizedBodyHttpServletRequestTest` covering order 0 -> 1 -> 2 filter chaining, RFC
@@ -707,8 +709,8 @@ JaCoCo coverage gates (BUNDLE, `target/site/jacoco/jacoco.xml` is single-session
   `CacheGuardrailsAdversarialTest`, `TemperatureIsolationTest`,
   `RedisSemanticVectorCacheTest`, `RediSearchVectorClientTest`, `InMemoryExactCacheTest`,
   `RedisExactCacheTest`, `SingleFlightManagerTest`, `CachedStreamReconstitutionTest`,
-  `CachePolicyEngineTest`, `AegisCacheServiceTest`, `AdminCacheControllerTest`, `CacheContractsTest`,
-  `AegisCachePropertiesTest`, `CacheFullCoverageTest`, and `SemanticCacheIntegrationTest` covering L0 in-memory caching,
+  `CachePolicyEngineTest`, `CacheRelayCacheServiceTest`, `AdminCacheControllerTest`, `CacheContractsTest`,
+  `CacheRelayCachePropertiesTest`, `CacheFullCoverageTest`, and `SemanticCacheIntegrationTest` covering L0 in-memory caching,
   L1 Redis exact matching, L2 RediSearch HNSW vector search, multi-turn prefix partitioning, polarity and
   slot-aligned entity-contradiction guardrails, temperature-gated store/lookup symmetry with L2 tag filtering,
   RFC 9111 directive inspection, single-flight stampede prevention, synthetic SSE stream reconstitution, and
@@ -780,4 +782,4 @@ The ledger uses a lock-free, zero-allocation circular ring buffer (`DisruptorUsa
 
 ## Maintainer
 
-AegisGate is maintained by Joshua Ike.
+CacheRelay is maintained by Joshua Ike.
