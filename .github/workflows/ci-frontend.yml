@@ -213,7 +213,10 @@ jobs:
         run: |
           gh release download --repo google/osv-scanner v2.6.0 \
             --pattern 'osv-scanner_linux_amd64' --dir /tmp/osv-scanner
+          # v0.2 predicate: osv-scanner publishes SLSA v0.2 provenance while
+          # gh defaults the lookup to v1 (which 404s).
           gh attestation verify -R google/osv-scanner \
+            --predicate-type https://slsa.dev/provenance/v0.2 \
             /tmp/osv-scanner/osv-scanner_linux_amd64
           chmod +x /tmp/osv-scanner/osv-scanner_linux_amd64
 
