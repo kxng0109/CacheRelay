@@ -1,4 +1,4 @@
-# CacheRelay — formerly AegisGate
+# CacheRelay
 
 > **CacheRelay — Cache *then* relay:** the hot path checks `L0 → L1 → L2` (`X-Cache: HIT` → serve), and only on `MISS` relays to upstream (`relayJson`/`relaySse`).
 
