@@ -10,6 +10,8 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.header.HeaderWriterFilter;
 
+import io.github.kxng0109.cacherelay.web.SpaFallbackController;
+
 /**
  * Fail-closed authorization boundary for the gateway.
  *
@@ -43,6 +45,9 @@ import org.springframework.security.web.header.HeaderWriterFilter;
  *       {@code /v1/embeddings} (authenticated, rate-limited, and budget-gated by
  *       {@code KeyAuthFilter}); {@code /v1/admin/**} (master-key authenticated by
  *       {@code AdminAuthFilter}).</li>
+ *   <li><b>Operator SPA shell:</b> {@code /}, {@code /index.html}, {@code /assets/**},
+ *       {@code /error}, and {@code SpaFallbackController#SPA_PATH_PATTERN} (extensionless
+ *       non-API routes forward to the shell; reserved first segments stay denied).</li>
  * </ul>
  *
  * <h2>Security posture</h2>
@@ -87,6 +92,13 @@ public class SecurityConfig {
 								"/v1/chat/completions",
 								"/v1/embeddings",
 								"/v1/admin/**"
+						).permitAll()
+						.requestMatchers(
+								"/",
+								"/index.html",
+								"/assets/**",
+								"/error",
+								SpaFallbackController.SPA_PATH_PATTERN
 						).permitAll()
 						.anyRequest().denyAll()
 				)

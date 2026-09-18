@@ -1,0 +1,1 @@
+cacherelay-test-asset

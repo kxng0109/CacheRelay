@@ -81,6 +81,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   expired replay partitions, rolls old alerts to the 1-year archive, and trims logs/dedupe. Full `verify` 1,583
   green, branch 0.9505.
 
+- **Ollama keep-warm heartbeat (`OllamaKeepWarm`):** measured 2026-09-16 — steady embeddings run
+  18–33 ms on the local stack, but the iGPU deep-sleeps between requests and the first call after an
+  idle gap pays a ~2.2 s wake penalty (cold load ~3.9 s; `/api/embeddings` timing fields are all
+  zero — wall-clock only). The heartbeat pings the resolved Ollama `/api/embed` endpoint (same
+  alias-chain resolution as real cache embeddings via `EmbeddingService.resolveWarmTarget`) on a
+  fixed delay — `gateway.embeddings.keep-warm-interval` (default 5s) and
+  `gateway.embeddings.keep-warm-enabled` (default true; disable on battery-powered hosts).
+  Failures are swallowed by design (WARN on the first and every 50th consecutive failure); the
+  ping timeout is bounded to 5 s so a hung Ollama cannot starve the shared `@Scheduled` executor.
+- **Opt-in in-process ONNX embedder (`OnnxLocalEmbedder`):** `gateway.embeddings.local-onnx.*`
+  (default off) runs semantic-cache prompt embeddings in-process through ONNX Runtime 1.29.0 +
+  DJL tokenizers 0.38.0 — tokenize → forward pass → masked mean pooling → L2 normalization — with
+  the measured 18–33 ms steady profile and no HTTP round-trip or wake tax. The client-facing
+  `/v1/embeddings` proxy keeps the HTTP adapters unconditionally (contract preserved). Failures
+  fall back to the upstream provider. CAUTION: local scores sit ~0.03 cosine below Ollama GGUF
+  (r=0.994, 57-pair eval) — re-index and recalibrate the similarity threshold (0.77 local ⇔ 0.80
+  Ollama) before enabling on a populated index; construction fails fast on missing model/tokenizer
+  paths and logs the calibration warning at startup.
+- **Dev-only CORS for the Vite operator UI (`DevCorsConfig`):** a `@Profile("dev")`
+  `CorsConfigurationSource` allow-lists exactly `http://localhost:5173` (credentials on, API
+  headers, 1h preflight cache) for `/v1/**` only — Spring Security auto-registers the bean, so the
+  filter chain is byte-identical in production and cross-origin browser traffic stays default-denied
+  there. Pinned by 3 live-server tests (dev preflight 200 + echo, unlisted origin 403, prod-profile
+  preflight carries no CORS headers). Full `verify` 1,661 green, branch 0.9507.
+- **Operator SPA shell serving + fallback (`SpaFallbackController`):** extensionless non-API routes
+  forward to `/index.html` so deep links survive refresh; reserved first segments (`v1`, `actuator`,
+  `v3`, `swagger-ui`, `error`, `assets`) are excluded by a lookahead-constrained path pattern (proven
+  by an 18-case match matrix, no capture groups) mirrored as a chain `permitAll` alongside `/`,
+  `/index.html`, `/assets/**` and `/error` — unknown `/v1/**` still 403s at the boundary first, locked
+  by the existing boundary suite. Vite-hashed `/assets/**` serve immutable (365d) while the shell is
+  `no-store`, so a stale shell can never pin rotated asset hashes. Pinned by 6 live-server tests
+  (deep links at depth 1–2, cache policies, boundary preservation, clean error dispatch). The
+  `backend/src/main/resources/static/` output dir is gitignored; release overlays `frontend/dist`
+  there at package time.
+
 ### Fixed
 
 - **RediSearch KNN desync (live-captured):** `FT.SEARCH` multiplex failures now surface their cause chain
@@ -122,27 +157,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **L2 score/gap observability:** `findSemanticMatch` fetches K=2 and logs `score/threshold/gap` at debug for
   above- and below-threshold candidates, so the cosine band can be calibrated from production distributions
   instead of assumption. Decision logic unchanged (best match only).
-
-### Added
-
-- **Ollama keep-warm heartbeat (`OllamaKeepWarm`):** measured 2026-09-16 — steady embeddings run
-  18–33 ms on the local stack, but the iGPU deep-sleeps between requests and the first call after an
-  idle gap pays a ~2.2 s wake penalty (cold load ~3.9 s; `/api/embeddings` timing fields are all
-  zero — wall-clock only). The heartbeat pings the resolved Ollama `/api/embed` endpoint (same
-  alias-chain resolution as real cache embeddings via `EmbeddingService.resolveWarmTarget`) on a
-  fixed delay — `gateway.embeddings.keep-warm-interval` (default 5s) and
-  `gateway.embeddings.keep-warm-enabled` (default true; disable on battery-powered hosts).
-  Failures are swallowed by design (WARN on the first and every 50th consecutive failure); the
-  ping timeout is bounded to 5 s so a hung Ollama cannot starve the shared `@Scheduled` executor.
-- **Opt-in in-process ONNX embedder (`OnnxLocalEmbedder`):** `gateway.embeddings.local-onnx.*`
-  (default off) runs semantic-cache prompt embeddings in-process through ONNX Runtime 1.29.0 +
-  DJL tokenizers 0.38.0 — tokenize → forward pass → masked mean pooling → L2 normalization — with
-  the measured 18–33 ms steady profile and no HTTP round-trip or wake tax. The client-facing
-  `/v1/embeddings` proxy keeps the HTTP adapters unconditionally (contract preserved). Failures
-  fall back to the upstream provider. CAUTION: local scores sit ~0.03 cosine below Ollama GGUF
-  (r=0.994, 57-pair eval) — re-index and recalibrate the similarity threshold (0.77 local ⇔ 0.80
-  Ollama) before enabling on a populated index; construction fails fast on missing model/tokenizer
-  paths and logs the calibration warning at startup.
 
 ### Changed
 
@@ -200,6 +214,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   held for follow-up once production score logs confirm). Same eval falsified the Ettin in-band gate
   (F1 0.857 < status-quo 0.902 — relevance-reranker is negation-blind), so no model was added. Default,
   admin example payloads, and fallback asserts updated; per-request header override unchanged.
+- **Monorepo layout (`backend/` + `frontend/`):** the Java gateway (`src`, `pom`, `mvnw`, `Dockerfile`,
+  `docs`, `deploy`, `loadtest`, `monitoring`) moved under `backend/` via history-preserving renames;
+  repo root keeps compose, workflows, README, CHANGELOG and Node tooling, plus an empty `frontend/`
+  placeholder for the SPA workspace. Companion fixes in the same commit: compose context/volumes, CI
+  and release Maven paths (Node 22→24, matching `.nvmrc` 24.21.0), `.gitattributes`/`.gitignore`
+  anchors, README layout section with backend-prefixed commands. Verified: full `verify` green from
+  `backend/`, `compose config` valid, CI green on push.
 
 ## [1.7.0] - 2026-09-10
 

@@ -424,6 +424,11 @@ cd backend && ./mvnw clean verify
 cd backend && ./mvnw spring-boot:run
 ```
 
+Operate the UI against it: run the Vite dev server (`frontend/`) and set `SPRING_PROFILES_ACTIVE=dev` on the gateway (same variable
+`docker-compose.yml` already reads) so the dev-only CORS allow-list (`http://localhost:5173`) activates. Production has no CORS:
+it serves the built SPA same-origin from `backend/src/main/resources/static/` (populated at release time from `frontend/dist`;
+that directory is gitignored build output, never committed).
+
 The service listens on port 8080.
 
 ## Configuration
@@ -648,6 +653,10 @@ tracking, syntax highlighting, and live Try-It-Out execution:
 - Every provider URL is validated against a private address block list before its first use, and redirects are never followed.
 - Client supplied headers that could spoof identity are stripped before forwarding.
 - Error responses carry only generic messages. Internal details never reach the client.
+- No CORS in production: the operator SPA is served same-origin, and cross-origin browser traffic stays
+  default-denied. Local UI development uses a `dev`-profile-only allow-list for `http://localhost:5173`.
+- Operator SPA shell (`/`, `/index.html`, `/assets/**` + extensionless deep links) is served with immutable
+  caching on versioned assets and `no-store` on the shell; unknown `/v1/**` routes still refuse with 403.
 
 ## Testing
 
@@ -657,7 +666,7 @@ Run the full suite with coverage and the packaging step (from `backend/`):
 cd backend && ./mvnw clean verify
 ```
 
-The suite currently has 1,589 tests (100% passing):
+The suite currently has 1,661 tests (100% passing):
 
 JaCoCo coverage gates (BUNDLE, `backend/target/site/jacoco/jacoco.xml` is single-session honest via
 `<append>false</append>` on `prepare-agent`): INSTRUCTION/BRANCH/LINE/METHOD/CLASS ≥ 95%, COMPLEXITY ≥ 90%.

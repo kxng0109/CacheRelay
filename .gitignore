@@ -33,6 +33,7 @@ build/
 ### VS Code ###
 .vscode/
 /backend/src/main/resources/*.json
+/backend/src/main/resources/static/
 
 verify.*
 /logs/
