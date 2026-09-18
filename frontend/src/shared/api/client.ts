@@ -37,8 +37,26 @@ export function toErrorMessage(error: unknown, fallback: string): string {
  */
 export function resolveApiBase(): string {
   const raw: unknown = import.meta.env.VITE_API_BASE_URL
-  if (typeof raw === 'string' && raw.length > 0) return raw.replace(/\/+$/, '')
+  if (typeof raw !== 'string') return ''
+  const trimmed = raw.trim()
+  if (trimmed.length > 0) return trimmed.replace(/\/+$/, '')
   return ''
+}
+
+/**
+ * Whether the console may open SSE streams.
+ *
+ * @remarks
+ * Kill-switch for constrained networks: when `VITE_FEATURE_STREAMING` is
+ * exactly `false` (any casing), the playground falls back to non-streaming
+ * JSON completions. Anything else — including unset — streams.
+ *
+ * @returns False only when the flag explicitly disables streaming.
+ */
+export function isStreamingEnabled(): boolean {
+  const raw: unknown = import.meta.env.VITE_FEATURE_STREAMING
+  if (typeof raw !== 'string') return true
+  return raw.toLowerCase() !== 'false'
 }
 
 /**

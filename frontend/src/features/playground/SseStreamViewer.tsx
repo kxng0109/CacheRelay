@@ -169,7 +169,7 @@ export function SseStreamViewer({
         ) : null}
       </div>
       {error === null ? null : (
-        <p role="alert" className="mb-2 text-xs text-danger">
+        <p role="alert" className="mb-2 text-xs text-danger dark:text-danger-soft">
           {error}
         </p>
       )}

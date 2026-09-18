@@ -3,6 +3,9 @@ import { useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useShallow } from 'zustand/react/shallow'
 import * as z from 'zod/v4'
+import { GatewayClient } from '../../shared/api/client.js'
+import { isStreamingEnabled } from '../../shared/api/client.js'
+import { toErrorMessage } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { SseStreamViewer } from './SseStreamViewer.js'
 
@@ -27,6 +30,9 @@ export function PlaygroundPage(): React.JSX.Element {
   )
   const [runId, setRunId] = useState(0)
   const [submitted, setSubmitted] = useState<FormData | null>(null)
+  const [staticText, setStaticText] = useState<string | null>(null)
+  const [staticError, setStaticError] = useState<string | null>(null)
+  const streaming = isStreamingEnabled()
 
   const {
     register,
@@ -47,6 +53,19 @@ export function PlaygroundPage(): React.JSX.Element {
     setGatewayKey(d.key)
     setSubmitted(d)
     setRunId((n) => n + 1)
+    setStaticText(null)
+    setStaticError(null)
+    if (!streaming) {
+      void new GatewayClient({ token: d.key })
+        .chat({ model: d.model, messages: [{ role: 'user', content: d.prompt }] })
+        .then((out) => {
+          const first = out.choices[0]
+          setStaticText(first === undefined ? '(empty completion)' : first.message.content)
+        })
+        .catch((e: unknown) => {
+          setStaticError(toErrorMessage(e, 'Completion failed.'))
+        })
+    }
   }
 
   return (
@@ -71,7 +90,7 @@ export function PlaygroundPage(): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
           />
           {errors.key === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger">
+            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
               {errors.key.message}
             </p>
           )}
@@ -87,7 +106,7 @@ export function PlaygroundPage(): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
           />
           {errors.model === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger">
+            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
               {errors.model.message}
             </p>
           )}
@@ -104,7 +123,7 @@ export function PlaygroundPage(): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
           />
           {errors.prompt === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger">
+            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
               {errors.prompt.message}
             </p>
           )}
@@ -114,16 +133,34 @@ export function PlaygroundPage(): React.JSX.Element {
           disabled={isSubmitting}
           className="rounded-md bg-ember px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
         >
-          {isSubmitting ? 'Starting…' : 'Stream completion'}
+          {isSubmitting ? 'Starting…' : streaming ? 'Stream completion' : 'Send completion'}
         </button>
       </form>
-      {submitted === null ? null : (
+      {submitted === null ? null : streaming ? (
         <SseStreamViewer
           key={runId}
           token={submitted.key}
           model={submitted.model}
           messages={messages}
         />
+      ) : (
+        <section aria-label="Completion result" className="space-y-2">
+          {staticError === null ? null : (
+            <p role="alert" className="text-sm text-danger dark:text-danger-soft">
+              {staticError}
+            </p>
+          )}
+          {staticText === null ? null : (
+            <div
+              role="log"
+              aria-live="polite"
+              aria-label="Non-streamed completion"
+              className="min-h-32 font-mono text-sm whitespace-pre-wrap"
+            >
+              {staticText}
+            </div>
+          )}
+        </section>
       )}
     </div>
   )

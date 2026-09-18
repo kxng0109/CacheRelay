@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ApiError,
   GatewayClient,
+  isStreamingEnabled,
   parseRateLimit,
   resolveApiBase,
   safeErrorMessage,
@@ -84,6 +85,32 @@ describe('resolveApiBase', () => {
   it('falls back to same-origin when unconfigured', () => {
     vi.stubEnv('VITE_API_BASE_URL', '')
     expect(resolveApiBase()).toBe('')
+  })
+
+  it('falls back to same-origin when absent', () => {
+    vi.stubEnv('VITE_API_BASE_URL', undefined)
+    expect(resolveApiBase()).toBe('')
+  })
+})
+
+describe('isStreamingEnabled', () => {
+  it('streams by default', () => {
+    vi.stubEnv('VITE_FEATURE_STREAMING', undefined)
+    expect(isStreamingEnabled()).toBe(true)
+  })
+
+  it('disables on explicit false in any casing', () => {
+    vi.stubEnv('VITE_FEATURE_STREAMING', 'false')
+    expect(isStreamingEnabled()).toBe(false)
+    vi.stubEnv('VITE_FEATURE_STREAMING', 'FALSE')
+    expect(isStreamingEnabled()).toBe(false)
+  })
+
+  it('streams for any other value', () => {
+    vi.stubEnv('VITE_FEATURE_STREAMING', 'true')
+    expect(isStreamingEnabled()).toBe(true)
+    vi.stubEnv('VITE_FEATURE_STREAMING', '')
+    expect(isStreamingEnabled()).toBe(true)
   })
 })
 

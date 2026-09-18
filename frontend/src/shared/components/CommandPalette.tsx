@@ -126,7 +126,9 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
             >
               {a.label}
               {a.hint === undefined ? null : (
-                <span className="ml-2 text-xs tnum opacity-60">{a.hint}</span>
+                <span className="ml-2 text-xs text-ink-soft tnum dark:text-parchment-soft">
+                  {a.hint}
+                </span>
               )}
             </Command.Item>
           ))}

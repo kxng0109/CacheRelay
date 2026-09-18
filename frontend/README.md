@@ -87,7 +87,10 @@ stylisticTypeChecked + `eslint-plugin-react-hooks` flat recommended +
 ### Git hooks (lefthook 2)
 
 `lefthook.yml` (`min_version: 2.1.12`). Install once:
-`npx lefthook install`. Pre-commit runs parallel under 10s on staged
+`npx lefthook install`. Windows note: the hooks shell out to `npx`/`npm`,
+which resolve to blocked `.ps1` shims under PowerShell's default policy —
+run hooks from Git Bash, or invoke the same commands with `npx.cmd`
+directly. Pre-commit runs parallel under 10s on staged
 files only: ESLint, Prettier check, and a pure-git secrets pickaxe
 (`git diff --cached -G <pattern>` fails the hook when staged lines look
 like keys/tokens). No gitleaks dependency; for stronger coverage install
@@ -157,7 +160,10 @@ Syft, CycloneDX) with SLSA attestations and checksums next to the jar.
 ## Tokens & a11y
 
 `src/index.css` defines the `@theme` baseline (paper `#F7F5F0` / ink
-`#16130E`, night `#0E0D0B` / parchment `#F5F1E8`, ember `#E4572E`, cyan
-`#2AA198`, success / warn / danger / slate info), `@custom-variant dark`,
-`.tnum` / `.operational-nums` tabular figures, a 3:1 `:focus-visible` ring,
-and 24px minimum pointer targets. No global margin/padding reset.
+`#16130E`, night `#0E0D0B` / parchment `#F5F1E8`, ember `#C7431F`, status
+success `#2E7D32` / warn `#8A5E14` / danger `#C0392B` with `-soft` variants
+for dark-mode text, muted `ink-soft`/`parchment-soft`), `@custom-variant dark`,
+`.tnum` tabular figures, a 3:1 `:focus-visible` ring, and 24px minimum
+pointer targets. Every text/background pair holds WCAG 2.2 AA 4.5:1 in both
+themes (verified by computation; the Playwright axe suite re-proves it on
+every run). No global margin/padding reset.

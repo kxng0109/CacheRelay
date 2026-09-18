@@ -6,10 +6,14 @@ import { resolveApiBase } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 
-const STATE_META: Record<string, { badge: string; label: string }> = {
-  CLOSED: { badge: 'bg-success/15 text-success', label: '● Closed' },
-  OPEN: { badge: 'bg-danger/15 text-danger', label: '■ Open' },
-  HALF_OPEN: { badge: 'bg-warn/15 text-warn', label: '▲ Half-open' },
+const STATE_META: Record<string, { badge: string; dark: string; label: string }> = {
+  CLOSED: {
+    badge: 'bg-success/15 text-success',
+    dark: 'dark:text-success-soft',
+    label: '● Closed',
+  },
+  OPEN: { badge: 'bg-danger/15 text-danger', dark: 'dark:text-danger-soft', label: '■ Open' },
+  HALF_OPEN: { badge: 'bg-warn/15 text-warn', dark: 'dark:text-warn-soft', label: '▲ Half-open' },
 }
 
 /**
@@ -17,11 +21,11 @@ const STATE_META: Record<string, { badge: string; label: string }> = {
  * newer backend may introduce.
  *
  * @param state - Raw state string from the gateway.
- * @returns Badge classes plus an icon+text label; unknown states get an
- * explicit Unknown badge instead of being mislabeled.
+ * @returns Badge classes (plus dark-mode text class) and an icon+text label;
+ * unknown states get an explicit Unknown badge instead of being mislabeled.
  */
-function stateMeta(state: string): { badge: string; label: string } {
-  return STATE_META[state] ?? { badge: '', label: '? Unknown' }
+function stateMeta(state: string): { badge: string; dark: string; label: string } {
+  return STATE_META[state] ?? { badge: '', dark: '', label: '? Unknown' }
 }
 
 interface CircuitsBoardProps {
@@ -72,12 +76,12 @@ function CircuitsBoard({ adminKey }: CircuitsBoardProps): React.JSX.Element {
         </p>
       ) : null}
       {query.error instanceof Error ? (
-        <p role="alert" className="text-sm text-danger">
+        <p role="alert" className="text-sm text-danger dark:text-danger-soft">
           {query.error.message}
         </p>
       ) : null}
       {query.data === undefined || query.data.circuits.length === 0 ? (
-        <p className="text-sm opacity-70">
+        <p className="text-sm text-ink-soft dark:text-parchment-soft">
           No providers reported. Configure providers in the backend to populate this board.
         </p>
       ) : (
@@ -100,7 +104,7 @@ function CircuitsBoard({ adminKey }: CircuitsBoardProps): React.JSX.Element {
                 <tr key={c.provider} className="border-t border-ink/10 dark:border-parchment/10">
                   <td className="py-2 font-mono">{c.provider}</td>
                   <td className="py-2">
-                    <span className={`rounded px-2 py-1 text-xs tnum ${meta.badge}`}>
+                    <span className={`rounded px-2 py-1 text-xs tnum ${meta.badge} ${meta.dark}`}>
                       {meta.label}
                     </span>
                   </td>
@@ -122,7 +126,7 @@ function CircuitsBoard({ adminKey }: CircuitsBoardProps): React.JSX.Element {
           </tbody>
         </table>
       )}
-      <p className="text-xs opacity-60">
+      <p className="text-xs text-ink-soft dark:text-parchment-soft">
         Base: {resolveApiBase() === '' ? 'same-origin' : resolveApiBase()}
       </p>
     </div>

@@ -10,15 +10,23 @@
   --color-night: #0e0d0b;
   --color-parchment: #f5f1e8;
 
-  /* Accents: ember #E4572E (primary moment-of-confirmation), cyan #2AA198. */
-  --color-ember: #e4572e;
-  --color-lagoon: #2aa198;
+  /* Accent: ember (primary moment-of-confirmation). White text on ember
+     is 4.9:1; ember text on paper is 4.5:1. */
+  --color-ember: #c7431f;
 
-  /* Status: success / warn / danger keep operational meaning only. */
+  /* Status: success / warn / danger keep operational meaning only.
+     Base variants pass 4.5:1 on paper; `-soft` variants pass on night. */
   --color-success: #2e7d32;
-  --color-warn: #b7791f;
+  --color-success-soft: #81c784;
+  --color-warn: #8a5e14;
+  --color-warn-soft: #d9a441;
   --color-danger: #c0392b;
-  --color-info: #64748b;
+  --color-danger-soft: #e08073;
+
+  /* Muted text: solid mixes that keep 4.5:1 (never opacity-faded text,
+     which drops below the floor once flattened). */
+  --color-ink-soft: #57534a;
+  --color-parchment-soft: #a8a094;
 
   --font-sans: system-ui, 'Segoe UI', Roboto, sans-serif;
   --font-mono: ui-monospace, Consolas, monospace;
@@ -41,10 +49,6 @@ body {
 
 /* Operational data always uses tabular figures; units render lighter. */
 @utility tnum {
-  font-variant-numeric: tabular-nums;
-}
-
-.operational-nums {
   font-variant-numeric: tabular-nums;
 }
 

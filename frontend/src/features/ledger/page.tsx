@@ -40,21 +40,21 @@ function LedgerBoard({ adminKey }: LedgerBoardProps): React.JSX.Element {
           Loading summary…
         </p>
       ) : summary.error instanceof Error ? (
-        <p role="alert" className="text-sm text-danger">
+        <p role="alert" className="text-sm text-danger dark:text-danger-soft">
           {summary.error.message}
         </p>
       ) : summary.data === undefined ? null : (
         <dl className="grid grid-cols-3 gap-3">
           <div className="rounded-lg border border-ink/10 p-3 dark:border-parchment/10">
-            <dt className="text-xs opacity-70">Requests</dt>
+            <dt className="text-xs text-ink-soft dark:text-parchment-soft">Requests</dt>
             <dd className="text-lg tnum">{summary.data.totalRequests}</dd>
           </div>
           <div className="rounded-lg border border-ink/10 p-3 dark:border-parchment/10">
-            <dt className="text-xs opacity-70">Billed (µ$)</dt>
+            <dt className="text-xs text-ink-soft dark:text-parchment-soft">Billed (µ$)</dt>
             <dd className="text-lg tnum">{summary.data.totalCostMicros}</dd>
           </div>
           <div className="rounded-lg border border-ink/10 p-3 dark:border-parchment/10">
-            <dt className="text-xs opacity-70">Cache hit rate</dt>
+            <dt className="text-xs text-ink-soft dark:text-parchment-soft">Cache hit rate</dt>
             <dd className="text-lg tnum">{(summary.data.cacheHitRate * 100).toFixed(1)}%</dd>
           </div>
         </dl>
@@ -64,11 +64,11 @@ function LedgerBoard({ adminKey }: LedgerBoardProps): React.JSX.Element {
           Loading audit log…
         </p>
       ) : logs.error instanceof Error ? (
-        <p role="alert" className="text-sm text-danger">
+        <p role="alert" className="text-sm text-danger dark:text-danger-soft">
           {logs.error.message}
         </p>
       ) : logs.data === undefined || logs.data.entries.length === 0 ? (
-        <p className="text-sm opacity-70">
+        <p className="text-sm text-ink-soft dark:text-parchment-soft">
           No ledger entries yet. Send traffic through the gateway to populate the audit log.
         </p>
       ) : (

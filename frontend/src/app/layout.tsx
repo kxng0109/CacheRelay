@@ -33,7 +33,7 @@ export function Layout(): React.JSX.Element {
         <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3">
           <span aria-hidden="true" className="inline-block size-3 rounded-sm bg-ember" />
           <p className="text-sm font-semibold tracking-tight">CacheRelay</p>
-          <p className="hidden text-xs text-ink/60 sm:block dark:text-parchment/60">
+          <p className="hidden text-xs text-ink-soft sm:block dark:text-parchment-soft">
             Enterprise AI gateway console
           </p>
           <span className="flex-1" />

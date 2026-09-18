@@ -80,7 +80,7 @@ function KeysBoard({ adminKey }: KeysBoardProps): React.JSX.Element {
   return (
     <div className="space-y-4">
       {error === null ? null : (
-        <p role="alert" className="text-sm text-danger">
+        <p role="alert" className="text-sm text-danger dark:text-danger-soft">
           {error}
         </p>
       )}
@@ -106,7 +106,7 @@ function KeysBoard({ adminKey }: KeysBoardProps): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
           />
           {errors.name === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger">
+            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
               {errors.name.message}
             </p>
           )}
@@ -121,7 +121,7 @@ function KeysBoard({ adminKey }: KeysBoardProps): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
           />
           {errors.models === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger">
+            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
               {errors.models.message}
             </p>
           )}
@@ -137,7 +137,7 @@ function KeysBoard({ adminKey }: KeysBoardProps): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
           />
           {errors.rpmLimit === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger">
+            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
               {errors.rpmLimit.message}
             </p>
           )}
@@ -153,7 +153,7 @@ function KeysBoard({ adminKey }: KeysBoardProps): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
           />
           {errors.dailyQuota === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger">
+            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
               {errors.dailyQuota.message}
             </p>
           )}
@@ -173,7 +173,9 @@ function KeysBoard({ adminKey }: KeysBoardProps): React.JSX.Element {
           Loading keys…
         </p>
       ) : keys.data === undefined || keys.data.keys.length === 0 ? (
-        <p className="text-sm opacity-70">No keys yet. Create the first key above.</p>
+        <p className="text-sm text-ink-soft dark:text-parchment-soft">
+          No keys yet. Create the first key above.
+        </p>
       ) : (
         <table className="w-full text-left text-sm">
           <caption className="sr-only">Virtual API keys</caption>
@@ -201,7 +203,7 @@ function KeysBoard({ adminKey }: KeysBoardProps): React.JSX.Element {
                     onClick={() => {
                       void onDelete(k.id)
                     }}
-                    className="rounded-md border border-danger/40 px-3 py-2 text-xs text-danger"
+                    className="rounded-md border border-danger/40 px-3 py-2 text-xs text-danger dark:text-danger-soft"
                   >
                     Delete
                   </button>

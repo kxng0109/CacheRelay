@@ -76,11 +76,11 @@ function ApprovalsBoard({ adminKey }: ApprovalsBoardProps): React.JSX.Element {
           Loading pending approvals…
         </p>
       ) : pending.error instanceof Error ? (
-        <p role="alert" className="text-sm text-danger">
+        <p role="alert" className="text-sm text-danger dark:text-danger-soft">
           {pending.error.message}
         </p>
       ) : pending.data === undefined || pending.data.approvals.length === 0 ? (
-        <p className="text-sm opacity-70">
+        <p className="text-sm text-ink-soft dark:text-parchment-soft">
           Queue is empty. Gated tool calls will appear here for review.
         </p>
       ) : (
@@ -92,7 +92,7 @@ function ApprovalsBoard({ adminKey }: ApprovalsBoardProps): React.JSX.Element {
             >
               <div className="min-w-0 flex-1">
                 <p className="font-mono text-xs">{a.toolName}</p>
-                <p className="text-xs tnum opacity-60">
+                <p className="text-xs text-ink-soft tnum dark:text-parchment-soft">
                   {a.approvalId} · {a.requestedAt}
                 </p>
               </div>
@@ -110,7 +110,7 @@ function ApprovalsBoard({ adminKey }: ApprovalsBoardProps): React.JSX.Element {
                 onClick={() => {
                   void decide(a.approvalId, false)
                 }}
-                className="rounded-md border border-danger/40 px-3 py-2 text-xs text-danger"
+                className="rounded-md border border-danger/40 px-3 py-2 text-xs text-danger dark:text-danger-soft"
               >
                 Reject
               </button>

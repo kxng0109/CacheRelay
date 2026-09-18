@@ -29,7 +29,7 @@ export function ObservabilityPage(): React.JSX.Element {
           Probing gateway health…
         </p>
       ) : health.error instanceof Error ? (
-        <p role="alert" className="text-sm text-danger">
+        <p role="alert" className="text-sm text-danger dark:text-danger-soft">
           {health.error.message}
         </p>
       ) : health.data === undefined ? (

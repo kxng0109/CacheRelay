@@ -30,7 +30,7 @@ pre-push:
   jobs:
     - name: typecheck
       run: npm run typecheck
-      fail_text: '`tsc --noEmit` failed. Fix type errors before pushing.'
+      fail_text: '`tsc -b` failed. Fix type errors before pushing.'
     - name: unit-tests
       run: npm run test
       fail_text: 'Vitest run failed. Fix failing tests before pushing.'

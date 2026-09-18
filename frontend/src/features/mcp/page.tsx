@@ -15,7 +15,7 @@ export function McpPage(): React.JSX.Element {
       <h1 className="text-xl font-semibold tracking-tight">MCP tools</h1>
       <div role="status" className="rounded-lg border border-warn/40 p-4">
         <p className="text-sm font-medium">■ Tool catalog suspended upstream (HTTP 403).</p>
-        <p className="mt-1 text-sm opacity-70">
+        <p className="mt-1 text-sm text-ink-soft dark:text-parchment-soft">
           The gateway refuses all MCP routes pending a backend fix. This console will not invent
           tools. Track the defect in the backend reference, section 10, then refresh.
         </p>

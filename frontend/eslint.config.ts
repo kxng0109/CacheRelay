@@ -1,4 +1,5 @@
 import { defineConfig } from 'eslint/config'
+import type { ESLint } from 'eslint'
 import js from '@eslint/js'
 import tseslint from 'typescript-eslint'
 import reactHooks from 'eslint-plugin-react-hooks'
@@ -109,14 +110,29 @@ export default defineConfig([
   },
   {
     name: 'cacherelay/tailwindcss',
-    extends: [tailwindcss.configs.recommended],
+    // The plugin's own `recommended` preset is typed against an older
+    // flat-config shape and no longer satisfies `exactOptionalPropertyTypes`,
+    // so the rule set is declared explicitly (same rules, error severity to
+    // match `--max-warnings=0`). The plugin object itself carries the same
+    // stale `configs` typing, hence the compat cast below — runtime behavior
+    // is unaffected (the plugin executes, only its types lag).
+    plugins: { tailwindcss: tailwindcss as unknown as ESLint.Plugin },
     settings: {
       tailwindcss: { cssConfigPath: './src/index.css' },
     },
     rules: {
-      // The scaffold keeps plain CSS (App.css) beside Tailwind v4 tokens,
-      // so custom class names are intentional and stay allowed.
+      // Custom one-off utilities (`.tnum`, `.skip-link`) live beside Tailwind
+      // v4 tokens in `src/index.css`, and arbitrary values are used
+      // deliberately — both stay allowed by design.
+      'tailwindcss/classnames-order': 'error',
+      'tailwindcss/enforces-canonical-classname': 'error',
+      'tailwindcss/enforces-negative-arbitrary-values': 'error',
+      'tailwindcss/enforces-shorthand': 'error',
+      'tailwindcss/important-modifier-suffix': 'error',
+      'tailwindcss/no-arbitrary-value': 'off',
       'tailwindcss/no-custom-classname': 'off',
+      'tailwindcss/no-contradicting-classname': 'error',
+      'tailwindcss/no-unnecessary-arbitrary-value': 'error',
     },
   },
   {

@@ -104,27 +104,27 @@ function CacheBoard({ adminKey }: CacheBoardProps): React.JSX.Element {
           Loading cache stats…
         </p>
       ) : stats.error instanceof Error ? (
-        <p role="alert" className="text-sm text-danger">
+        <p role="alert" className="text-sm text-danger dark:text-danger-soft">
           {stats.error.message}
         </p>
       ) : stats.data === undefined ? null : (
         <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="rounded-lg border border-ink/10 p-3 dark:border-parchment/10">
-            <dt className="text-xs opacity-70">L0 fill</dt>
+            <dt className="text-xs text-ink-soft dark:text-parchment-soft">L0 fill</dt>
             <dd className="text-lg tnum">
               {stats.data.l0Size}/{stats.data.l0Capacity}
             </dd>
           </div>
           <div className="rounded-lg border border-ink/10 p-3 dark:border-parchment/10">
-            <dt className="text-xs opacity-70">Exact entries</dt>
+            <dt className="text-xs text-ink-soft dark:text-parchment-soft">Exact entries</dt>
             <dd className="text-lg tnum">{stats.data.exactEntries}</dd>
           </div>
           <div className="rounded-lg border border-ink/10 p-3 dark:border-parchment/10">
-            <dt className="text-xs opacity-70">Semantic vectors</dt>
+            <dt className="text-xs text-ink-soft dark:text-parchment-soft">Semantic vectors</dt>
             <dd className="text-lg tnum">{stats.data.semanticVectors}</dd>
           </div>
           <div className="rounded-lg border border-ink/10 p-3 dark:border-parchment/10">
-            <dt className="text-xs opacity-70">Redis</dt>
+            <dt className="text-xs text-ink-soft dark:text-parchment-soft">Redis</dt>
             <dd className="text-lg">{stats.data.redisConfigured ? '● On' : '■ Off'}</dd>
           </div>
         </dl>
@@ -134,7 +134,7 @@ function CacheBoard({ adminKey }: CacheBoardProps): React.JSX.Element {
         onClick={() => {
           void purge()
         }}
-        className="rounded-md border border-danger/40 px-4 py-2 text-sm text-danger"
+        className="rounded-md border border-danger/40 px-4 py-2 text-sm text-danger dark:text-danger-soft"
       >
         Purge cache
       </button>
@@ -144,11 +144,13 @@ function CacheBoard({ adminKey }: CacheBoardProps): React.JSX.Element {
           Loading budgets…
         </p>
       ) : budgets.error instanceof Error ? (
-        <p role="alert" className="text-sm text-danger">
+        <p role="alert" className="text-sm text-danger dark:text-danger-soft">
           {budgets.error.message}
         </p>
       ) : budgets.data === undefined || budgets.data.budgets.length === 0 ? (
-        <p className="text-sm opacity-70">No budgets yet. Create the first budget below.</p>
+        <p className="text-sm text-ink-soft dark:text-parchment-soft">
+          No budgets yet. Create the first budget below.
+        </p>
       ) : (
         <ul className="space-y-2">
           {budgets.data.budgets.map((b) => {
@@ -194,7 +196,7 @@ function CacheBoard({ adminKey }: CacheBoardProps): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
           />
           {errors.name === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger">
+            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
               {errors.name.message}
             </p>
           )}
@@ -210,7 +212,7 @@ function CacheBoard({ adminKey }: CacheBoardProps): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
           />
           {errors.limitMicros === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger">
+            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
               {errors.limitMicros.message}
             </p>
           )}

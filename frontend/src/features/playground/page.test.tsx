@@ -1,12 +1,16 @@
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { server } from '../../test/setup.js'
 import { renderApp } from '../../test/utils.js'
 import { PlaygroundPage } from './page.js'
 
 const STREAM = 'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\ndata: [DONE]\n\n'
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('PlaygroundPage', () => {
   it('prefills the key from the memory store', () => {
@@ -48,6 +52,40 @@ describe('PlaygroundPage', () => {
     )
     await waitFor(() => {
       expect(screen.getByText(/phase: done/i)).toBeInTheDocument()
+    })
+  })
+
+  it('falls back to non-streaming completions when the flag is off', async () => {
+    vi.stubEnv('VITE_FEATURE_STREAMING', 'false')
+    const user = userEvent.setup()
+    server.use(
+      http.post('*/v1/chat/completions', () =>
+        HttpResponse.json({
+          choices: [{ message: { role: 'assistant', content: 'static hi' } }],
+          model: 'gpt-4o-mini',
+        }),
+      ),
+    )
+    renderApp(<PlaygroundPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/prompt/i), 'Say hello')
+    await user.click(screen.getByRole('button', { name: /send completion/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('log')).toHaveTextContent('static hi')
+    })
+    expect(screen.queryByText(/phase:/i)).not.toBeInTheDocument()
+  })
+
+  it('reports non-streaming failures as alerts', async () => {
+    vi.stubEnv('VITE_FEATURE_STREAMING', 'false')
+    const user = userEvent.setup()
+    server.use(http.post('*/v1/chat/completions', () => new HttpResponse('x', { status: 503 })))
+    renderApp(<PlaygroundPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/prompt/i), 'Say hello')
+    await user.click(screen.getByRole('button', { name: /send completion/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/temporarily unavailable/i)
     })
   })
 })

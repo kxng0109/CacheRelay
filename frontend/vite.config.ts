@@ -42,11 +42,7 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: (id: string): string | undefined => {
-          if (
-            id.includes('node_modules/echarts') ||
-            id.includes('node_modules/echarts-for-react') ||
-            id.includes('node_modules/zrender')
-          ) {
+          if (id.includes('node_modules/echarts') || id.includes('node_modules/zrender')) {
             return 'echarts-vendor'
           }
           return undefined

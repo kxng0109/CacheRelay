@@ -80,7 +80,7 @@ export function EmbeddingsPage(): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
           />
           {errors.key === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger">
+            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
               {errors.key.message}
             </p>
           )}
@@ -96,7 +96,7 @@ export function EmbeddingsPage(): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
           />
           {errors.model === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger">
+            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
               {errors.model.message}
             </p>
           )}
@@ -113,7 +113,7 @@ export function EmbeddingsPage(): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
           />
           {errors.input === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger">
+            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
               {errors.input.message}
             </p>
           )}
@@ -127,18 +127,18 @@ export function EmbeddingsPage(): React.JSX.Element {
         </button>
       </form>
       {error === null ? null : (
-        <p role="alert" className="text-sm text-danger">
+        <p role="alert" className="text-sm text-danger dark:text-danger-soft">
           {error}
         </p>
       )}
       {dims === null || count === null ? null : (
         <dl role="status" className="grid grid-cols-2 gap-3">
           <div className="rounded-lg border border-ink/10 p-3 dark:border-parchment/10">
-            <dt className="text-xs opacity-70">Vectors</dt>
+            <dt className="text-xs text-ink-soft dark:text-parchment-soft">Vectors</dt>
             <dd className="text-lg tnum">{count}</dd>
           </div>
           <div className="rounded-lg border border-ink/10 p-3 dark:border-parchment/10">
-            <dt className="text-xs opacity-70">Dimensions</dt>
+            <dt className="text-xs text-ink-soft dark:text-parchment-soft">Dimensions</dt>
             <dd className="text-lg tnum">{dims}</dd>
           </div>
         </dl>
