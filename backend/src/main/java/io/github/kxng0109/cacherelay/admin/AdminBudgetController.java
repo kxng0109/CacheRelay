@@ -20,6 +20,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -53,6 +54,21 @@ public class AdminBudgetController {
 				request.level(), request.subjectId(), request.minuteMicros(), request.monthMicros(),
 				request.webhookUrl()
 		)));
+	}
+
+	@Operation(summary = "List spend budgets",
+			description = "Every hard spend cap ordered by level then subject.",
+			security = {
+					@SecurityRequirement(name = OpenApiConfig.SCHEME_ADMIN_KEY_HEADER),
+					@SecurityRequirement(name = OpenApiConfig.SCHEME_ADMIN_BEARER)
+			})
+	@ApiResponses(value = {
+			@ApiResponse(responseCode = "200", description = "Budget list"),
+			@ApiResponse(responseCode = "401", description = "Unauthorized: Master Admin key missing or incorrect")
+	})
+	@GetMapping
+	public ResponseEntity<List<BudgetResponse>> listBudgets() {
+		return ResponseEntity.ok(budgetService.list().stream().map(BudgetResponse::from).toList());
 	}
 
 	@Operation(summary = "Read live balance",

@@ -288,7 +288,13 @@ Every completed stream that carries token usage is written to a PostgreSQL ledge
 
 The schema is owned by Flyway migrations under `backend/src/main/resources/db/migration` (`V1__init.sql` through `V4__finops_focus_prompt_caching.sql`). Boot's Flyway autoconfiguration is disabled, Hibernate never creates or validates the schema, and `config/DatabaseMigrator.java` applies the migrations once the database is reachable, retrying on a schedule. While the database is down, ledger writes gracefully divert to the Spillway journal and the proxy hot path keeps working.
 
-Costs come from a pricing catalog. `ledger/PricingSyncService.java` fetches the LiteLLM model pricing file (the URL is configurable and can be pinned to a tag or commit), keeps the chat oriented entries, and upserts them into `model_pricing`. It runs at startup and then daily at 03:00. `ledger/ModelPriceCatalog.java` serves lookups from a short lived cache with exact id, provider composite, and longest prefix matching, and `ledger/CostCalculator.java` computes cost in micro dollars. The sync is strictly best effort. A failed fetch leaves the previous rows in place, and the seed rows in `V2__model_pricing.sql` cover the shipped aliases from the first migration.
+Costs come from a pricing catalog. `ledger/PricingSyncService.java` fetches the LiteLLM model pricing file (the URL is configurable and can be pinned to a tag or commit), keeps the chat oriented entries, and upserts them into `model_pricing`. It runs at startup and then daily at 03:00. `ledger/ModelPriceCatalog.java` serves lookups from
+a short lived cache with exact id, provider composite, and longest prefix matching, and `ledger/CostCalculator.java`
+computes cost in micro dollars. The sync is strictly best effort. A failed fetch leaves the previous rows in place,
+and the seed rows in `V2__model_pricing.sql` cover the shipped aliases from the first migration. The startup sync
+runs on a bounded async executor (never gates readiness) with exponential backoff on transport failures
+(`gateway.pricing.max-attempts` default 5, `gateway.pricing.backoff-base-seconds` default 5); parse errors fail
+fast.
 
 ## Project layout
 
@@ -397,6 +403,11 @@ a real password (fail-fast if unset, and the role is never created if you skip i
 ```bash
 POSTGRES_EXPORTER_PASSWORD=<a real value in your .env>
 ```
+
+Configuration is startup-bound: provider, embedding-model, budget, and pricing-source changes require a
+container recreate (`docker compose up -d --force-recreate cacherelay`, ~15 s boot) — there is no hot reload
+for `gateway.*` outside the SSE flush tunables. Env-var changes never apply without a recreate since process
+environment is immutable.
 
 ### Running manually
 
@@ -572,6 +583,10 @@ Administrative endpoints require the configured master key via `Authorization: B
   ```
 - **`GET /v1/admin/keys`**: Lists registered virtual keys with safe public metadata (optional `?ownerId=...` filter).
 - **`GET /v1/admin/keys/{keyId}`**: Retrieves metadata for a specific key.
+- **`GET /v1/admin/budgets`**: Lists every spend cap (`level`, `subjectId`, `minuteMicros`, `monthMicros`).
+- **`GET /v1/admin/mcp/approvals/pending`**: Lists suspended tool calls newest-first without arguments; per-token
+  detail keeps them. Approve/reject accept optional `{"reason", "decidedBy"}` recorded to a 24 h decision trail
+  (the resumption `APPROVED` literal is never disturbed).
 - **`PATCH /v1/admin/keys/{keyId}`**: Dynamically updates name, RPM/TPM quotas, allowlists, or enabled status.
 - **`DELETE /v1/admin/keys/{keyId}`**: Permanently deletes a virtual API key and purges caches.
 - **`GET /v1/admin/circuits`**: Inspects real-time circuit breaker states (`CLOSED`, `OPEN`, `HALF_OPEN`) across all

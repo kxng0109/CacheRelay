@@ -9,6 +9,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.io.IOException;
+import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -62,8 +63,12 @@ public class OllamaKeepWarm {
 
 	/**
 	 * Pings the Ollama embeddings endpoint on the configured fixed delay. No-op when the heartbeat is
-	 * disabled, the semantic embedding model is unresolvable, or it resolves to a non-Ollama provider
+	 * disabled, the semantic embedding model is unresolvable, or it resolves to a non-Ollama target
 	 * (the wake penalty is Ollama-server-specific; remote providers have no local GPU to keep awake).
+	 *
+	 * <p>A target counts as Ollama when its provider type is {@code OLLAMA} or its endpoint URL
+	 * looks like Ollama's (default port {@code 11434} or an {@code /api/embed} path), so a
+	 * mislabeled or generic-typed Ollama server still gets its heartbeat.</p>
 	 */
 	@Scheduled(fixedDelayString = "${gateway.embeddings.keep-warm-interval:5s}")
 	public void warm() {
@@ -72,10 +77,28 @@ public class OllamaKeepWarm {
 		}
 		String embeddingModel = cacheProperties.getSemantic().getEmbeddingModel();
 		EmbeddingService.WarmTarget target = embeddingService.resolveWarmTarget(embeddingModel);
-		if (target == null || target.config().type() != ProviderType.OLLAMA) {
+		if (target == null || !isOllamaTarget(target)) {
 			return;
 		}
 		ping(target);
+	}
+
+	/**
+	 * Decides whether a resolved warm target is an Ollama server worth keeping warm.
+	 *
+	 * @param target resolved endpoint
+	 * @return true for OLLAMA-typed targets or Ollama-shaped URLs
+	 */
+	static boolean isOllamaTarget(EmbeddingService.WarmTarget target) {
+		if (target.config().type() == ProviderType.OLLAMA) {
+			return true;
+		}
+		URI uri = target.targetUri();
+		if (uri.getPort() == 11434) {
+			return true;
+		}
+		String path = uri.getPath();
+		return path != null && path.contains("/api/embed");
 	}
 
 	private void ping(EmbeddingService.WarmTarget target) {

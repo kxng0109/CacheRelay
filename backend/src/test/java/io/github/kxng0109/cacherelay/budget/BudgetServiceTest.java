@@ -337,5 +337,25 @@ class BudgetServiceTest {
 			verify(notifier).notifyChanged("KEY", "ab".repeat(32));
 		}
 	}
+
+	@Test
+	@DisplayName("list returns every cap ordered by level then subject")
+	void listOrdersByLevelThenSubject() {
+		BudgetLimit teamB = limit("TEAM", "b-corp");
+		BudgetLimit keyA = limit("KEY", "a-hex");
+		BudgetLimit teamA = limit("TEAM", "a-corp");
+		when(limits.findAll()).thenReturn(List.of(teamB, keyA, teamA));
+
+		List<BudgetLimit> listed = service.list();
+
+		assertEquals(List.of(keyA, teamA, teamB), listed);
+	}
+
+	private static BudgetLimit limit(String level, String subject) {
+		BudgetLimit limit = mock(BudgetLimit.class);
+		when(limit.getLevel()).thenReturn(level);
+		when(limit.getSubjectId()).thenReturn(subject);
+		return limit;
+	}
 }
 

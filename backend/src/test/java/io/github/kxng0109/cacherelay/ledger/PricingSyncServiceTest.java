@@ -14,6 +14,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.Executors;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.mockito.Mockito.*;
 
@@ -94,7 +95,7 @@ class PricingSyncServiceTest {
 		                                  .build();
 		service = new PricingSyncService(
 				httpClient, new ObjectMapper(), repository, priceCatalog,
-				server.url("/prices.json").toString(), 30L
+				server.url("/prices.json").toString(), 30L, 5, 5L
 		);
 	}
 
@@ -229,5 +230,39 @@ class PricingSyncServiceTest {
 		}
 		verify(priceCatalog).invalidate();
 		verifyNoMoreInteractions(repository, priceCatalog);
+	}
+
+	@Test
+	@DisplayName("unreachable source retries with backoff then warns without throwing")
+	void unreachableRetriesThenWarns() throws Exception {
+		server.shutdown();
+		HttpClient failingClient = HttpClient.newBuilder()
+				.connectTimeout(Duration.ofMillis(100))
+				.build();
+		PricingSyncService failing = new PricingSyncService(
+				failingClient, new ObjectMapper(), repository, priceCatalog,
+				"http://127.0.0.1:9/prices.json", 1L, 2, 1L);
+
+		assertDoesNotThrow(failing::refresh);
+
+		verify(repository, never()).upsert(
+				anyString(), anyString(), anyString(),
+				any(), any(), any(), any(), any(), any(), anyString());
+		verify(priceCatalog, never()).invalidate();
+	}
+
+	@Test
+	@DisplayName("malformed documents fail fast without retry sleep")
+	void malformedFailsFast() {
+		server.enqueue(new MockResponse().setResponseCode(200).setBody("not-json{{{"));
+		long startNanos = System.nanoTime();
+
+		service.refresh();
+
+		assertThat(System.nanoTime() - startNanos).isLessThan(Duration.ofSeconds(4).toNanos());
+		verify(repository, never()).upsert(
+				anyString(), anyString(), anyString(),
+				any(), any(), any(), any(), any(), any(), anyString());
+		verify(priceCatalog, never()).invalidate();
 	}
 }

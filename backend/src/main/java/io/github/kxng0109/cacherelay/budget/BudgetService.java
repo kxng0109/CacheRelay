@@ -23,6 +23,7 @@ import java.net.URI;
 import java.time.Instant;
 import java.time.YearMonth;
 import java.time.ZoneOffset;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -116,6 +117,19 @@ public class BudgetService {
 		if (value < 0) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + " must be non-negative");
 		}
+	}
+
+	/**
+	 * Lists every cap, ordered by level then subject for stable operator display.
+	 *
+	 * @return all budget limits
+	 */
+	@Transactional(readOnly = true)
+	public List<BudgetLimit> list() {
+		return limits.findAll().stream()
+				.sorted(Comparator.comparing(BudgetLimit::getLevel)
+						.thenComparing(BudgetLimit::getSubjectId))
+				.toList();
 	}
 
 	/**

@@ -48,6 +48,10 @@ class OllamaKeepWarmTest {
 	}
 
 	private EmbeddingService.WarmTarget target(ProviderType type) {
+		return target(type, URI.create("http://localhost:11434/api/embed"));
+	}
+
+	private EmbeddingService.WarmTarget target(ProviderType type, URI targetUri) {
 		ProviderConfig config = new ProviderConfig(
 				"provider-" + type.name().toLowerCase(),
 				type,
@@ -58,7 +62,7 @@ class OllamaKeepWarmTest {
 				false
 		);
 		return new EmbeddingService.WarmTarget(
-				config, "nomic-embed-text:latest", URI.create("http://localhost:11434/api/embed"));
+				config, "nomic-embed-text:latest", targetUri);
 	}
 
 	@Test
@@ -102,11 +106,44 @@ class OllamaKeepWarmTest {
 	@Test
 	@DisplayName("non-Ollama semantic provider skips the ping (no local GPU to keep warm)")
 	void nonOllamaTargetSkips() throws Exception {
-		when(embeddingService.resolveWarmTarget("local-embed")).thenReturn(target(ProviderType.OPENAI));
+		when(embeddingService.resolveWarmTarget("local-embed")).thenReturn(target(
+				ProviderType.OPENAI, URI.create("https://api.openai.com/v1/embeddings")));
 
 		keepWarm.warm();
 
 		verify(httpClient, never()).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+	}
+
+	@Test
+	@DisplayName("Ollama-typed providers ping even on custom ports")
+	void ollamaTypeCustomPortPings() throws Exception {
+		when(embeddingService.resolveWarmTarget("local-embed")).thenReturn(target(
+				ProviderType.OLLAMA, URI.create("http://gpu-box:8080/v1/embeddings")));
+		doReturn(response).when(httpClient).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+
+		keepWarm.warm();
+
+		verify(httpClient).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+	}
+
+	@Test
+	@DisplayName("mislabeled Ollama URLs ping by port or embeddings path")
+	void ollamaUrlPingsDespiteType() throws Exception {
+		when(embeddingService.resolveWarmTarget("local-embed")).thenReturn(target(
+				ProviderType.OPENAI, URI.create("http://localhost:11434/v1/embeddings")));
+		doReturn(response).when(httpClient).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+
+		keepWarm.warm();
+
+		verify(httpClient).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+
+		when(embeddingService.resolveWarmTarget("local-embed")).thenReturn(target(
+				ProviderType.OPENAI, URI.create("https://ollama.example.com/api/embed")));
+		doReturn(response).when(httpClient).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+
+		keepWarm.warm();
+
+		verify(httpClient, times(2)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
 	}
 
 	@Test

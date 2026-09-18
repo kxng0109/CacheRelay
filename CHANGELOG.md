@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Startup resilience + review queues:** pricing catalog sync no longer gates readiness (bounded async
+  executor, shared connect-timeout'd client, exponential backoff on transport failures with fast-fail on parse
+  errors); `GET /v1/admin/mcp/approvals/pending`
+  lists suspended tool calls newest-first without arguments (bounded SCAN); `GET /v1/admin/budgets` lists every
+  cap in true `{level, subjectId, minuteMicros, monthMicros}` shape; approve/reject accept optional
+  `{reason, decidedBy}` recorded to a 24h decision key plus logs (resumption `APPROVED` literal untouched);
+  Ollama keep-warm fires for OLLAMA-typed targets or Ollama-shaped URLs (port 11434 / `/api/embed` path).
 - **Operational observability for dashboards:** enriched circuit snapshots (`failures`, `cooldownMsRemaining`,
   `halfOpenProbe`) on `GET /v1/admin/circuits[/{provider}]` plus a new `GET /v1/admin/mcp/circuits[/{server}]`
   surface (list/get/reset); per-request `X-CacheRelay-Provider`, `X-CacheRelay-Tried`, and `X-Budget-Held-Micros`

@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -116,5 +117,26 @@ class AdminBudgetControllerTest {
 		var response = controller.hold("gone");
 
 		assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+	}
+
+	@Test
+	@DisplayName("list returns every budget as true-shape responses")
+	void listReturnsBudgets() {
+		BudgetLimit first = mock(BudgetLimit.class);
+		when(first.getId()).thenReturn(UUID.randomUUID());
+		when(first.getLevel()).thenReturn("TEAM");
+		when(first.getSubjectId()).thenReturn("tenant-corp");
+		when(first.getMinuteMicros()).thenReturn(5_000_000L);
+		when(first.getMonthMicros()).thenReturn(200_000_000L);
+		when(budgetService.list()).thenReturn(List.of(first));
+
+		var response = controller.listBudgets();
+
+		assertEquals(HttpStatus.OK, response.getStatusCode());
+		assertEquals(1, response.getBody().size());
+		assertEquals("TEAM", response.getBody().getFirst().level());
+		assertEquals("tenant-corp", response.getBody().getFirst().subjectId());
+		assertEquals(5_000_000L, response.getBody().getFirst().minuteMicros());
+		assertEquals(200_000_000L, response.getBody().getFirst().monthMicros());
 	}
 }
