@@ -5,9 +5,9 @@ import { defineConfig, devices } from '@playwright/test'
 // - `testDir: ./e2e` holds critical-path specs plus the `a11y` scan helper.
 // - `webServer` boots the Vite dev server (`http://localhost:5173`, see
 //   `vite.config.ts`) and reuses a running instance outside CI.
-// - `projects` runs chromium locally for fast feedback. Firefox and WebKit
-//   are CI-extended: add Desktop Firefox / Desktop Safari projects to run
-//   cross-browser in CI (documented in frontend README).
+// - `projects` runs one browser per CI matrix leg (chromium, firefox,
+//   webkit) via `--project=<browser>`; locally `npx playwright test`
+//   runs all three. Firefox and WebKit are first-class, not CI-extended.
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
@@ -30,6 +30,14 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'firefox',
+      use: { ...devices['Desktop Firefox'] },
+    },
+    {
+      name: 'webkit',
+      use: { ...devices['Desktop Safari'] },
     },
   ],
   webServer: {

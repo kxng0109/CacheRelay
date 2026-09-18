@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet } from 'react-router'
 import { useShallow } from 'zustand/react/shallow'
 import { parseRateLimit, setHeadersReporter } from '../shared/api/client.js'
@@ -55,6 +55,30 @@ export function Layout(): React.JSX.Element {
   useEffect(() => {
     useRateLimitStore.getState().clear()
   }, [gatewayKey, adminKey])
+
+  // Keyboard scrolling for the primary nav: the list overflows horizontally
+  // on narrow viewports, and WebKit does not scroll overflow regions by
+  // keyboard unless the region itself is focusable (see axe
+  // `scrollable-region-focusable`, WCAG 2.2 SC 2.1.1). The nav stays out of
+  // the tab order (`-1`) unless content actually overflows — no focus-order
+  // bloat on wide screens. The landmark keeps its accessible name.
+  const navRef = useRef<HTMLElement | null>(null)
+  const [navTabIndex, setNavTabIndex] = useState(-1)
+  useEffect(() => {
+    const nav = navRef.current
+    if (nav === null) return
+    const update = (): void => {
+      setNavTabIndex(nav.scrollWidth > nav.clientWidth ? 0 : -1)
+    }
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(nav)
+    window.addEventListener('resize', update)
+    return () => {
+      window.removeEventListener('resize', update)
+      observer.disconnect()
+    }
+  }, [])
   return (
     <div className="min-h-screen bg-paper text-ink dark:bg-night dark:text-parchment">
       <a href="#main" className="skip-link">
@@ -78,7 +102,12 @@ export function Layout(): React.JSX.Element {
             {dark ? 'Light theme' : 'Dark theme'}
           </button>
         </div>
-        <nav aria-label="Primary" className="mx-auto max-w-6xl overflow-x-auto px-4 pb-3">
+        <nav
+          ref={navRef}
+          aria-label="Primary"
+          tabIndex={navTabIndex}
+          className="mx-auto max-w-6xl overflow-x-auto px-4 pb-3"
+        >
           <ul className="flex gap-1">
             {NAV.map((item) => (
               <li key={item.to}>

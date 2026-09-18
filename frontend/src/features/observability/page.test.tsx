@@ -1,9 +1,18 @@
 import { screen, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { server } from '../../test/setup.js'
 import { renderApp } from '../../test/utils.js'
 import { ObservabilityPage } from './page.js'
+
+beforeEach(() => {
+  server.use(
+    http.get(
+      '*/actuator/prometheus',
+      () => new HttpResponse('', { headers: { 'Content-Type': 'text/plain' } }),
+    ),
+  )
+})
 
 describe('ObservabilityPage', () => {
   it('reports gateway liveness', async () => {

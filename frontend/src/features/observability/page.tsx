@@ -1,5 +1,8 @@
+import { Suspense, lazy } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { resolveApiBase } from '../../shared/api/client.js'
+
+const LatencyChart = lazy(() => import('./LatencyChart.js'))
 
 /**
  * Observability page: gateway liveness plus documentation entry points.
@@ -43,6 +46,15 @@ export function ObservabilityPage(): React.JSX.Element {
             : `■ Gateway reports ${health.data.status}`}
         </p>
       )}
+      <Suspense
+        fallback={
+          <p role="status" className="text-sm">
+            Loading latency chart…
+          </p>
+        }
+      >
+        <LatencyChart />
+      </Suspense>
       <ul className="space-y-2 text-sm">
         <li>
           Metrics (Prometheus): same-origin `/actuator/prometheus` — scrape, do not render secrets

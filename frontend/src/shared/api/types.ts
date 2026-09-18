@@ -121,16 +121,30 @@ export interface BudgetRecord {
 
 export interface LedgerSummary {
   totalRequests: number
-  totalCostMicros: number
-  cacheHitRate: number
+  totalCostUsdMicros: number
+  averageDurationMs: number
 }
 
 export interface LedgerLogEntry {
   requestId: string
-  keyId: string
   model: string
-  costMicros: number
+  costUsdMicros: number
   createdAt: string
+}
+
+/**
+ * Backend paginated envelope (`PageResponse`).
+ *
+ * @remarks Mirrors the gateway shape: `content` rows plus page metadata.
+ * The frontend never invents envelope fields.
+ */
+export interface PageResponse<T> {
+  content: T[]
+  page: number
+  size: number
+  totalElements: number
+  totalPages: number
+  hasNext: boolean
 }
 
 export interface HitlApproval {

@@ -11,6 +11,7 @@ import type {
   HitlApproval,
   LedgerLogEntry,
   LedgerSummary,
+  PageResponse,
   RateLimitDimension,
   RateLimitSnapshot,
 } from './types.js'
@@ -554,19 +555,23 @@ export class GatewayClient {
   /**
    * Reads a page of the audit log.
    *
+   * @remarks Backend truth (`AdminLedgerController`): the path is
+   * `/v1/admin/ledger/entries` returning a `PageResponse` envelope —
+   * never `/logs`, never a bare `{ entries }` array.
+   *
    * @param page - Zero-based page index.
    * @param size - Page size (backend clamps to its maximum).
    * @param opts - Optional request options (abort signal, headers listener).
-   * @returns Audit entries for the page.
+   * @returns The page envelope with entry rows.
    */
   ledgerLogs(
     page: number,
     size: number,
     opts?: RequestOptions,
-  ): Promise<{ entries: LedgerLogEntry[] }> {
+  ): Promise<PageResponse<LedgerLogEntry>> {
     const q = new URLSearchParams({ page: String(page), size: String(size) })
-    return this.request<{ entries: LedgerLogEntry[] }>(
-      `/v1/admin/ledger/logs?${q.toString()}`,
+    return this.request<PageResponse<LedgerLogEntry>>(
+      `/v1/admin/ledger/entries?${q.toString()}`,
       { headers: this.headers() },
       opts,
     )

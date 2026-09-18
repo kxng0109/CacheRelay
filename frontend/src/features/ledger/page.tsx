@@ -51,11 +51,11 @@ function LedgerBoard({ adminKey }: LedgerBoardProps): React.JSX.Element {
           </div>
           <div className="rounded-lg border border-ink/10 p-3 dark:border-parchment/10">
             <dt className="text-xs text-ink-soft dark:text-parchment-soft">Billed (µ$)</dt>
-            <dd className="text-lg tnum">{summary.data.totalCostMicros}</dd>
+            <dd className="text-lg tnum">{summary.data.totalCostUsdMicros}</dd>
           </div>
           <div className="rounded-lg border border-ink/10 p-3 dark:border-parchment/10">
-            <dt className="text-xs text-ink-soft dark:text-parchment-soft">Cache hit rate</dt>
-            <dd className="text-lg tnum">{(summary.data.cacheHitRate * 100).toFixed(1)}%</dd>
+            <dt className="text-xs text-ink-soft dark:text-parchment-soft">Avg duration (ms)</dt>
+            <dd className="text-lg tnum">{summary.data.averageDurationMs.toFixed(1)}</dd>
           </div>
         </dl>
       )}
@@ -67,7 +67,7 @@ function LedgerBoard({ adminKey }: LedgerBoardProps): React.JSX.Element {
         <p role="alert" className="text-sm text-danger dark:text-danger-soft">
           {logs.error.message}
         </p>
-      ) : logs.data === undefined || logs.data.entries.length === 0 ? (
+      ) : logs.data === undefined || logs.data.content.length === 0 ? (
         <p className="text-sm text-ink-soft dark:text-parchment-soft">
           No ledger entries yet. Send traffic through the gateway to populate the audit log.
         </p>
@@ -84,11 +84,11 @@ function LedgerBoard({ adminKey }: LedgerBoardProps): React.JSX.Element {
               </tr>
             </thead>
             <tbody>
-              {logs.data.entries.map((e) => (
+              {logs.data.content.map((e) => (
                 <tr key={e.requestId} className="border-t border-ink/10 dark:border-parchment/10">
                   <td className="py-2 font-mono text-xs">{e.requestId}</td>
                   <td className="py-2 text-xs">{e.model}</td>
-                  <td className="py-2 tnum">{e.costMicros}</td>
+                  <td className="py-2 tnum">{e.costUsdMicros}</td>
                   <td className="py-2 text-xs tnum">{e.createdAt}</td>
                 </tr>
               ))}
@@ -110,7 +110,7 @@ function LedgerBoard({ adminKey }: LedgerBoardProps): React.JSX.Element {
             </p>
             <button
               type="button"
-              disabled={logs.data.entries.length < PAGE_SIZE}
+              disabled={!logs.data.hasNext}
               onClick={() => {
                 setPage((p) => p + 1)
               }}

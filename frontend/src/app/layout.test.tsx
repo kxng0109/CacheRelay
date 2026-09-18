@@ -81,4 +81,20 @@ describe('Layout', () => {
     })
     expect(screen.queryByRole('status', { name: /rate limit status/i })).not.toBeInTheDocument()
   })
+
+  it('keeps the nav out of the tab order when nothing overflows', () => {
+    renderApp(<Layout />)
+    expect(screen.getByRole('navigation', { name: /primary/i })).toHaveAttribute('tabindex', '-1')
+  })
+
+  it('makes the nav keyboard-scrollable only while overflowing', () => {
+    renderApp(<Layout />)
+    const nav = screen.getByRole('navigation', { name: /primary/i })
+    Object.defineProperty(nav, 'scrollWidth', { value: 1200, configurable: true })
+    Object.defineProperty(nav, 'clientWidth', { value: 800, configurable: true })
+    act(() => {
+      window.dispatchEvent(new Event('resize'))
+    })
+    expect(nav).toHaveAttribute('tabindex', '0')
+  })
 })
