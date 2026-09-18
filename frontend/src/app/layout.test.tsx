@@ -1,10 +1,14 @@
 import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { useRateLimitStore } from '../shared/ratelimit/store.js'
 import { renderApp } from '../test/utils.js'
 import { Layout } from './layout.js'
 
 describe('Layout', () => {
+  beforeEach(() => {
+    useRateLimitStore.getState().clear()
+  })
   it('renders the product header, nav, and skip link', () => {
     renderApp(<Layout />)
     expect(screen.getByText('CacheRelay')).toBeInTheDocument()
@@ -20,5 +24,27 @@ describe('Layout', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(true)
     await user.click(screen.getByRole('button', { name: /light theme/i }))
     expect(document.documentElement.classList.contains('dark')).toBe(false)
+  })
+
+  it('hides the rate-limit strip before any gateway response', () => {
+    renderApp(<Layout />, { gatewayKey: 'gw-test' })
+    expect(screen.queryByRole('status', { name: /rate limit status/i })).not.toBeInTheDocument()
+  })
+
+  it('hides the rate-limit strip when signed out even with a snapshot', () => {
+    useRateLimitStore
+      .getState()
+      .setSnapshot({ limit: 60, remaining: 41, reset: 12, retryAfter: null })
+    renderApp(<Layout />)
+    expect(screen.queryByRole('status', { name: /rate limit status/i })).not.toBeInTheDocument()
+  })
+
+  it('shows the last observed snapshot once authenticated', () => {
+    useRateLimitStore
+      .getState()
+      .setSnapshot({ limit: 60, remaining: 41, reset: 12, retryAfter: null })
+    renderApp(<Layout />, { gatewayKey: 'gw-test' })
+    const strip = screen.getByRole('status', { name: /rate limit status/i })
+    expect(strip).toHaveTextContent('Remaining: 41')
   })
 })

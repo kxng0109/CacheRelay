@@ -90,19 +90,31 @@ export class ApiError extends Error {
 /**
  * Operational headers the backend emits on gateway responses.
  *
+ * @remarks
+ * Backend truth (`KeyAuthFilter`): the gateway sends an RPM trio
+ * (`X-RateLimit-Limit-RPM`, `X-RateLimit-Remaining-RPM`,
+ * `X-RateLimit-Reset-RPM`, reset as epoch seconds) plus a TPM trio with the
+ * same shapes, on success and on 429. `Retry-After` arrives on 429 only, and
+ * an uncapped dimension reports the literal `unlimited` instead of a number.
+ * RPM (requests) is the primary operator dimension; TPM (tokens) is the
+ * fallback when a response carries no RPM headers. `unlimited` maps to null
+ * (renders as `—`); the component contract renders it as text, never a bar.
+ *
  * @param headers - Response headers to inspect.
  * @returns Parsed rate-limit snapshot (nulls when absent).
  */
 export function parseRateLimit(headers: Headers): RateLimitSnapshot {
   const num = (v: string | null): number | null => {
-    if (v === null) return null
+    if (v === null || v === 'unlimited') return null
     const n = Number(v)
     return Number.isFinite(n) ? n : null
   }
+  const pick = (rpm: string, tpm: string): number | null =>
+    num(headers.get(rpm)) ?? num(headers.get(tpm))
   return {
-    limit: num(headers.get('X-RateLimit-Limit')),
-    remaining: num(headers.get('X-RateLimit-Remaining')),
-    reset: num(headers.get('X-RateLimit-Reset')),
+    limit: pick('X-RateLimit-Limit-RPM', 'X-RateLimit-Limit-TPM'),
+    remaining: pick('X-RateLimit-Remaining-RPM', 'X-RateLimit-Remaining-TPM'),
+    reset: pick('X-RateLimit-Reset-RPM', 'X-RateLimit-Reset-TPM'),
     retryAfter: num(headers.get('Retry-After')),
   }
 }
@@ -160,6 +172,33 @@ export function safeErrorMessage(status: number, body: string): string {
 
 export interface RequestOptions {
   signal?: AbortSignal
+  /**
+   * Receives raw response headers on every settled gateway response
+   * (success and failure). Lets the shell mirror operational headers into
+   * a memory-only store without threading return shapes through call sites.
+   */
+  onHeaders?: (headers: Headers) => void
+}
+
+/**
+ * Module-level headers reporter for the shell strip.
+ *
+ * @remarks
+ * Every feature page constructs its own short-lived `GatewayClient`, so no
+ * instance persists to carry a subscription. The layout registers one
+ * process-wide reporter instead; per-call `RequestOptions.onHeaders` takes
+ * precedence when both are set. The reporter must stay synchronous and
+ * side-effect-light (a zustand `set`) so it never perturbs the transport.
+ */
+let headersReporter: ((headers: Headers) => void) | null = null
+
+/**
+ * Registers the process-wide response-headers reporter.
+ *
+ * @param reporter - Receiver for settled response headers, or null to clear.
+ */
+export function setHeadersReporter(reporter: ((headers: Headers) => void) | null): void {
+  headersReporter = reporter
 }
 
 /**
@@ -176,20 +215,20 @@ export interface RequestOptions {
  * @param base - Resolved API base (or `''` for same-origin).
  * @param path - Gateway path starting with `/`.
  * @param init - Fetch init.
- * @param signal - Optional abort signal.
+ * @param opts - Optional abort signal and headers listener.
  * @returns The response; throws on network failure or non-2xx status.
  */
 async function sendGatewayRequest(
   base: string,
   path: string,
   init: RequestInit,
-  signal?: AbortSignal,
+  opts?: RequestOptions,
 ): Promise<Response> {
   let res: Response
   try {
     res = await fetch(`${base}${path}`, {
       ...init,
-      ...(signal === undefined ? {} : { signal }),
+      ...(opts?.signal === undefined ? {} : { signal: opts.signal }),
     })
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error
@@ -199,6 +238,7 @@ async function sendGatewayRequest(
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '')
+    ;(opts?.onHeaders ?? headersReporter)?.(res.headers)
     throw new ApiError({
       message: safeErrorMessage(res.status, text),
       status: res.status,
@@ -208,6 +248,7 @@ async function sendGatewayRequest(
       debugId: res.headers.get('X-Request-Debug'),
     })
   }
+  ;(opts?.onHeaders ?? headersReporter)?.(res.headers)
   return res
 }
 
@@ -246,7 +287,7 @@ export class GatewayClient {
   }
 
   private async request<T>(path: string, init: RequestInit, opts?: RequestOptions): Promise<T> {
-    const res = await sendGatewayRequest(this.base, path, init, opts?.signal)
+    const res = await sendGatewayRequest(this.base, path, init, opts)
     if (res.status === 204) return undefined as T
     return (await res.json()) as T
   }
@@ -256,21 +297,21 @@ export class GatewayClient {
    *
    * @param path - Gateway path.
    * @param init - Fetch init.
-   * @param opts - Optional abort signal.
+   * @param opts - Optional abort signal and headers listener.
    */
   private async requestEmpty(
     path: string,
     init: RequestInit,
     opts?: RequestOptions,
   ): Promise<void> {
-    await sendGatewayRequest(this.base, path, init, opts?.signal)
+    await sendGatewayRequest(this.base, path, init, opts)
   }
 
   /**
    * Sends a non-streaming chat completion.
    *
    * @param body - Chat request (stream is forced to false here; use the SSE client for streams).
-   * @param opts - Optional abort signal.
+   * @param opts - Optional request options (abort signal, headers listener).
    * @returns The completion payload.
    */
   chat(body: ChatCompletionRequest, opts?: RequestOptions): Promise<ChatCompletionResponse> {
@@ -289,7 +330,7 @@ export class GatewayClient {
    * Creates embeddings for the given input.
    *
    * @param body - Embedding request.
-   * @param opts - Optional abort signal.
+   * @param opts - Optional request options (abort signal, headers listener).
    * @returns Embedding vectors with index positions preserved.
    */
   embeddings(body: EmbeddingRequest, opts?: RequestOptions): Promise<EmbeddingResponse> {
@@ -307,7 +348,7 @@ export class GatewayClient {
   /**
    * Lists public models.
    *
-   * @param opts - Optional abort signal.
+   * @param opts - Optional request options (abort signal, headers listener).
    * @returns Model identifiers the gateway accepts.
    */
   models(opts?: RequestOptions): Promise<{ data: { id: string }[] }> {
@@ -317,7 +358,7 @@ export class GatewayClient {
   /**
    * Reads aggregated circuit state for every known provider.
    *
-   * @param opts - Optional abort signal.
+   * @param opts - Optional request options (abort signal, headers listener).
    * @returns One snapshot per provider.
    */
   circuitState(opts?: RequestOptions): Promise<{ circuits: CircuitSnapshot[] }> {
@@ -332,7 +373,7 @@ export class GatewayClient {
    * Force-resets a provider circuit (observed-state passthrough).
    *
    * @param provider - Provider name (for example `openai`).
-   * @param opts - Optional abort signal.
+   * @param opts - Optional request options (abort signal, headers listener).
    */
   resetCircuit(
     provider: string,
@@ -352,7 +393,7 @@ export class GatewayClient {
   /**
    * Lists virtual API keys (metadata only, never plaintext).
    *
-   * @param opts - Optional abort signal.
+   * @param opts - Optional request options (abort signal, headers listener).
    * @returns Key metadata records.
    */
   listKeys(opts?: RequestOptions): Promise<{ keys: ApiKeyRecord[] }> {
@@ -367,7 +408,7 @@ export class GatewayClient {
    * Creates a virtual key. Plaintext is exposed exactly once.
    *
    * @param body - Key parameters.
-   * @param opts - Optional abort signal.
+   * @param opts - Optional request options (abort signal, headers listener).
    * @returns Metadata plus the single-exposure plaintext.
    */
   createKey(
@@ -389,7 +430,7 @@ export class GatewayClient {
    * Deletes a virtual key.
    *
    * @param id - Key identifier.
-   * @param opts - Optional abort signal.
+   * @param opts - Optional request options (abort signal, headers listener).
    */
   deleteKey(id: string, opts?: RequestOptions): Promise<void> {
     return this.requestEmpty(
@@ -402,7 +443,7 @@ export class GatewayClient {
   /**
    * Reads aggregated billing.
    *
-   * @param opts - Optional abort signal.
+   * @param opts - Optional request options (abort signal, headers listener).
    * @returns Totals across tenants.
    */
   ledgerSummary(opts?: RequestOptions): Promise<LedgerSummary> {
@@ -418,7 +459,7 @@ export class GatewayClient {
    *
    * @param page - Zero-based page index.
    * @param size - Page size (backend clamps to its maximum).
-   * @param opts - Optional abort signal.
+   * @param opts - Optional request options (abort signal, headers listener).
    * @returns Audit entries for the page.
    */
   ledgerLogs(
@@ -437,7 +478,7 @@ export class GatewayClient {
   /**
    * Reads cache statistics.
    *
-   * @param opts - Optional abort signal.
+   * @param opts - Optional request options (abort signal, headers listener).
    * @returns L0/L1/L2 counters.
    */
   cacheStats(opts?: RequestOptions): Promise<CacheStats> {
@@ -448,7 +489,7 @@ export class GatewayClient {
    * Purges cache entries, optionally scoped to one model.
    *
    * @param model - Optional model scope.
-   * @param opts - Optional abort signal.
+   * @param opts - Optional request options (abort signal, headers listener).
    * @returns Purge outcome.
    */
   purgeCache(model?: string, opts?: RequestOptions): Promise<{ purged: boolean }> {
@@ -463,7 +504,7 @@ export class GatewayClient {
   /**
    * Lists budgets.
    *
-   * @param opts - Optional abort signal.
+   * @param opts - Optional request options (abort signal, headers listener).
    * @returns Budget records.
    */
   listBudgets(opts?: RequestOptions): Promise<{ budgets: BudgetRecord[] }> {
@@ -478,7 +519,7 @@ export class GatewayClient {
    * Creates a budget.
    *
    * @param body - Budget parameters.
-   * @param opts - Optional abort signal.
+   * @param opts - Optional request options (abort signal, headers listener).
    * @returns The created record.
    */
   createBudget(
@@ -499,7 +540,7 @@ export class GatewayClient {
   /**
    * Lists pending HITL approvals.
    *
-   * @param opts - Optional abort signal.
+   * @param opts - Optional request options (abort signal, headers listener).
    * @returns Pending approval queue.
    */
   hitlPending(opts?: RequestOptions): Promise<{ approvals: HitlApproval[] }> {
@@ -516,7 +557,7 @@ export class GatewayClient {
    * @param approvalId - Approval identifier.
    * @param approved - True to approve, false to reject.
    * @param decidedBy - Operator identity for the audit trail.
-   * @param opts - Optional abort signal.
+   * @param opts - Optional request options (abort signal, headers listener).
    */
   decideHitl(
     approvalId: string,

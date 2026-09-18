@@ -81,6 +81,45 @@ describe('openSseStream', () => {
     expect(done).toBe(true)
   })
 
+  it('reports handshake response headers once the stream is accepted', async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(ctrl) {
+        ctrl.enqueue(new TextEncoder().encode('data: [DONE]\n\n'))
+        ctrl.close()
+      },
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(stream, {
+            headers: {
+              'content-type': 'text/event-stream',
+              'X-RateLimit-Remaining-RPM': '57',
+            },
+          }),
+        ),
+      ),
+    )
+    let remaining: string | null = null
+    const seen: string[] = []
+    await openSseStream({
+      url: 'http://x/stream',
+      headers: {},
+      body: { model: 'm' },
+      signal: new AbortController().signal,
+      maxRetries: 0,
+      onHeaders: (h) => {
+        remaining = h.get('X-RateLimit-Remaining-RPM')
+      },
+      onMessage: (d) => {
+        seen.push(d)
+      },
+    })
+    expect(remaining).toBe('57')
+    expect(seen).toEqual([])
+  })
+
   it('counts malformed frames without dying', async () => {
     const body = ': ping\n\nnot-a-frame\n\ndata: ok\n\ndata: [DONE]\n\n'
     vi.stubGlobal(

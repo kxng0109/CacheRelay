@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { resolveApiBase } from '../../shared/api/client.js'
+import { parseRateLimit, resolveApiBase } from '../../shared/api/client.js'
 import { openSseStream } from '../../shared/sse/client.js'
+import { useRateLimitStore } from '../../shared/ratelimit/store.js'
 import type { ChatMessage } from '../../shared/api/types.js'
 
 interface SseStreamViewerProps {
@@ -111,6 +112,9 @@ export function SseStreamViewer({
       body: { model, messages, stream: true },
       signal: ctrl.signal,
       readerSlot: readerRef,
+      onHeaders: (headers) => {
+        useRateLimitStore.getState().setSnapshot(parseRateLimit(headers))
+      },
       ...(maxRetries === undefined ? {} : { maxRetries }),
       ...(heartbeatMs === undefined ? {} : { heartbeatMs }),
       onMessage: (data) => {

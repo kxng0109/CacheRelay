@@ -34,6 +34,12 @@ export interface SseRequest {
   maxRetries?: number
   heartbeatMs?: number
   /**
+   * Receives the handshake response headers once the stream is accepted.
+   * Lets the shell mirror operational headers (for example rate limits)
+   * without touching the token flow.
+   */
+  onHeaders?: (headers: Headers) => void
+  /**
    * Optional slot receiving the active stream reader. Lets the caller cancel
    * a pending `read()` on user stop: aborting `fetch` alone does not settle
    * reads that already resolved headers. Cleared when the stream settles.
@@ -151,6 +157,7 @@ export async function openSseStream(req: SseRequest & SseCallbacks): Promise<voi
       if (!res.ok || res.headers.get('content-type')?.startsWith(SSE_CONTENT_TYPE) !== true) {
         throw new Error(`SSE handshake failed: HTTP ${String(res.status)}`)
       }
+      req.onHeaders?.(res.headers)
       if (res.body === null) throw new Error('SSE handshake failed: empty body')
 
       reader = res.body.getReader()

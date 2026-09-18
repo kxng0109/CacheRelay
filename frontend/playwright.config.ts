@@ -3,7 +3,7 @@ import { defineConfig, devices } from '@playwright/test'
 // CacheRelay E2E gate (Playwright 1.63).
 //
 // - `testDir: ./e2e` holds critical-path specs plus the `a11y` scan helper.
-// - `webServer` boots the Vite dev server (`http://localhost:3000`, see
+// - `webServer` boots the Vite dev server (`http://localhost:5173`, see
 //   `vite.config.ts`) and reuses a running instance outside CI.
 // - `projects` runs chromium locally for fast feedback. Firefox and WebKit
 //   are CI-extended: add Desktop Firefox / Desktop Safari projects to run
@@ -17,7 +17,7 @@ export default defineConfig({
   ...(process.env.CI === undefined ? {} : { workers: 1 }),
   reporter: 'html',
   use: {
-    baseURL: 'http://localhost:3000',
+    baseURL: 'http://localhost:5173',
     trace: 'on-first-retry',
     // Local-only escape hatch: PLAYWRIGHT_CHANNEL=chrome runs specs against
     // the installed branded browser when the Playwright CDN is unreachable.
@@ -34,7 +34,7 @@ export default defineConfig({
   ],
   webServer: {
     command: 'npm run dev',
-    url: 'http://localhost:3000',
+    url: 'http://localhost:5173',
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000,
   },

@@ -52,7 +52,8 @@ export default defineConfig({
   },
   server: {
     host: 'localhost',
-    port: 3000,
+    // Locked to the backend dev CORS allow-list (`DevCorsConfig`, dev profile).
+    port: 5173,
   },
   html: {
     cspNonce: 'CSP_NONCE_PLACEHOLDER',

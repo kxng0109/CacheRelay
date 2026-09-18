@@ -12,7 +12,7 @@ Product name resolves at runtime from `/v3/api-docs` `info.title`
 
 | Command                       | Purpose                                              |
 | ----------------------------- | ---------------------------------------------------- |
-| `npm.cmd run dev`             | Vite dev server (`http://localhost:3000`)            |
+| `npm.cmd run dev`             | Vite dev server (`http://localhost:5173`)            |
 | `npm.cmd run typecheck`       | `tsc -b`, strict, zero errors (the real gate)        |
 | `npm.cmd run build`           | `tsc -b` + `vite build` (production, sourcemaps off) |
 | `npm.cmd run test`            | Vitest 5 unit run (jsdom)                            |
@@ -44,6 +44,14 @@ Never commit tokens, keys, or credentials.
   only (zustand, never `localStorage`/cookies/IndexedDB). No refresh cookie
   exists today; the `__Host-` cookie rules in the frontend skill apply the day
   one is introduced. See `backend/docs/BACKEND_API_REFERENCE.md` §1–§3.
+- The shell shows a live rate-limit strip below the header once a credential
+  is present and a gateway response has been observed (`RateLimitHeaders`
+  over `shared/ratelimit` memory-only state). It parses the backend RPM trio
+  (`X-RateLimit-*-RPM`, TPM fallback, 429-only `Retry-After`) via
+  `parseRateLimit`, fed by `RequestOptions.onHeaders` / the process-wide
+  `setHeadersReporter` (per-call wins) plus the SSE handshake hook. Dev
+  cross-origin reads need backend `Access-Control-Expose-Headers`; prod is
+  same-origin and unaffected.
 
 ## Quality gates
 
@@ -53,7 +61,7 @@ Never commit tokens, keys, or credentials.
 | `npm.cmd run format:check`    | Prettier 3.9.7 exact, check only                              |
 | `npm.cmd run typecheck`       | `tsc -b` (solution build; bare `--noEmit` is vacuous here)    |
 | `npm.cmd run test`            | Vitest 5 unit run (jsdom)                                     |
-| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently ~99.6/97.7/99.3/99.8) |
+| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently ~99.4/97.5/98.8/99.6) |
 | `npm.cmd run test:e2e`        | Playwright 1.63 smoke, chromium, Vite dev reuse               |
 | `npm.cmd run build-storybook` | Storybook 10.6.0 static build                                 |
 
@@ -110,13 +118,14 @@ reporter for CI step summaries.
 `cleanup()` after each test, and closes the server at the end.
 `src/test/utils.tsx` renders UI with a fresh query client (no retries),
 memory router, and seeded memory-only credentials.
-16 suites / 122 tests: pure-unit (SSE parser, error mapping, URL allow-list)
-plus MSW integration per screen (happy/error/empty/adversarial).
+17 suites / 142 tests: pure-unit (SSE parser, rate-limit parser/store,
+error mapping, URL allow-list) plus MSW integration per screen
+(happy/error/empty/adversarial).
 
 ### E2E (Playwright 1.63)
 
 `playwright.config.ts`: `testDir: ./e2e`, `webServer` boots
-`npm run dev` at `http://localhost:3000` with
+`npm run dev` at `http://localhost:5173` with
 `reuseExistingServer: !process.env.CI`, `projects` runs chromium
 (`Desktop Chrome`) only for fast local feedback. Firefox/WebKit are
 CI-extended: add `Desktop Firefox` / `Desktop Safari` projects to run

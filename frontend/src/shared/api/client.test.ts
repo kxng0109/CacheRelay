@@ -6,22 +6,64 @@ import {
   parseRateLimit,
   resolveApiBase,
   safeErrorMessage,
+  setHeadersReporter,
   toErrorMessage,
 } from './client.js'
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  setHeadersReporter(null)
 })
 
 describe('parseRateLimit', () => {
-  it('parses numeric headers', () => {
+  it('parses the RPM trio the gateway sends', () => {
     const h = new Headers({
-      'X-RateLimit-Limit': '60',
-      'X-RateLimit-Remaining': '59',
-      'X-RateLimit-Reset': '12',
+      'X-RateLimit-Limit-RPM': '60',
+      'X-RateLimit-Remaining-RPM': '59',
+      'X-RateLimit-Reset-RPM': '12',
       'Retry-After': '5',
     })
     expect(parseRateLimit(h)).toEqual({ limit: 60, remaining: 59, reset: 12, retryAfter: 5 })
+  })
+
+  it('falls back to the TPM trio when RPM headers are absent', () => {
+    const h = new Headers({
+      'X-RateLimit-Limit-TPM': '100000',
+      'X-RateLimit-Remaining-TPM': '99950',
+      'X-RateLimit-Reset-TPM': '30',
+    })
+    expect(parseRateLimit(h)).toEqual({
+      limit: 100000,
+      remaining: 99950,
+      reset: 30,
+      retryAfter: null,
+    })
+  })
+
+  it('prefers RPM over TPM when both dimensions arrive', () => {
+    const h = new Headers({
+      'X-RateLimit-Limit-RPM': '60',
+      'X-RateLimit-Limit-TPM': '100000',
+      'X-RateLimit-Remaining-RPM': '59',
+      'X-RateLimit-Remaining-TPM': '99950',
+      'X-RateLimit-Reset-RPM': '12',
+      'X-RateLimit-Reset-TPM': '30',
+    })
+    expect(parseRateLimit(h)).toEqual({ limit: 60, remaining: 59, reset: 12, retryAfter: null })
+  })
+
+  it('maps the unlimited sentinel to null (renders as em-dash)', () => {
+    const h = new Headers({
+      'X-RateLimit-Limit-RPM': 'unlimited',
+      'X-RateLimit-Remaining-RPM': 'unlimited',
+      'X-RateLimit-Reset-RPM': 'unlimited',
+    })
+    expect(parseRateLimit(h)).toEqual({
+      limit: null,
+      remaining: null,
+      reset: null,
+      retryAfter: null,
+    })
   })
 
   it('returns nulls when headers are absent', () => {
@@ -34,7 +76,7 @@ describe('parseRateLimit', () => {
   })
 
   it('rejects non-numeric header injection', () => {
-    const h = new Headers({ 'X-RateLimit-Remaining': '1; DROP' })
+    const h = new Headers({ 'X-RateLimit-Remaining-RPM': '1; DROP' })
     expect(parseRateLimit(h).remaining).toBeNull()
   })
 })
@@ -144,7 +186,7 @@ describe('GatewayClient transport', () => {
         Promise.resolve(
           new Response(JSON.stringify({ error: { message: 'nope', type: 't', code: null } }), {
             status: 429,
-            headers: { 'X-RateLimit-Remaining': '0', 'Retry-After': '7' },
+            headers: { 'X-RateLimit-Remaining-RPM': '0', 'Retry-After': '7' },
           }),
         ),
       ),
@@ -295,5 +337,73 @@ describe('GatewayClient transport', () => {
       'gpt-4o-mini',
     )
     expect(url).toContain('model=gpt-4o-mini')
+  })
+
+  it('notifies the module reporter with success-path headers', async () => {
+    const seen: string[] = []
+    setHeadersReporter((h) => {
+      const v = h.get('X-RateLimit-Remaining-RPM')
+      if (v !== null) seen.push(v)
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ data: [] }), {
+            status: 200,
+            headers: { 'X-RateLimit-Remaining-RPM': '41' },
+          }),
+        ),
+      ),
+    )
+    await new GatewayClient({ base: '', token: 'gw-test' }).models()
+    expect(seen).toEqual(['41'])
+  })
+
+  it('notifies the module reporter before throwing on 429', async () => {
+    let remaining: string | null = null
+    setHeadersReporter((h) => {
+      remaining = h.get('X-RateLimit-Remaining-RPM')
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: { message: 'slow', type: 't', code: null } }), {
+            status: 429,
+            headers: { 'X-RateLimit-Remaining-RPM': '0', 'Retry-After': '9' },
+          }),
+        ),
+      ),
+    )
+    const err = await new GatewayClient({ base: '', token: 'gw-test' })
+      .models()
+      .catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect(remaining).toBe('0')
+  })
+
+  it('prefers per-call onHeaders over the module reporter', async () => {
+    const calls: string[] = []
+    setHeadersReporter(() => {
+      calls.push('module')
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ data: [] }), {
+            status: 200,
+            headers: { 'X-RateLimit-Remaining-RPM': '10' },
+          }),
+        ),
+      ),
+    )
+    await new GatewayClient({ base: '', token: 'gw-test' }).models({
+      onHeaders: (h) => {
+        calls.push(h.get('X-RateLimit-Remaining-RPM') ?? 'missing')
+      },
+    })
+    expect(calls).toEqual(['10'])
   })
 })

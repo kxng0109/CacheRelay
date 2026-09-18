@@ -1,6 +1,11 @@
+import { useEffect } from 'react'
 import { NavLink, Outlet } from 'react-router'
 import { useShallow } from 'zustand/react/shallow'
+import { parseRateLimit, setHeadersReporter } from '../shared/api/client.js'
 import { CommandPalette } from '../shared/components/CommandPalette.js'
+import { RateLimitHeaders } from '../shared/components/RateLimitHeaders.js'
+import { useAuthStore } from '../shared/auth/store.js'
+import { useRateLimitStore } from '../shared/ratelimit/store.js'
 import { useUiStore } from '../shared/store.js'
 
 const NAV = [
@@ -18,12 +23,32 @@ const NAV = [
 /**
  * Application shell: skip link, product header, primary nav, content outlet.
  *
+ * @remarks
+ * The shell owns the rate-limit strip: it registers the process-wide headers
+ * reporter once (every feature page uses a short-lived client, so no
+ * instance persists to carry the subscription) and renders the last observed
+ * snapshot below the header. The strip stays hidden until a credential is
+ * present and a gateway response has been observed; signing out clears both.
+ *
  * @returns The shell layout wrapping every route.
  */
 export function Layout(): React.JSX.Element {
   const { dark, toggleDark } = useUiStore(
     useShallow((s) => ({ dark: s.dark, toggleDark: s.toggleDark })),
   )
+  const { gatewayKey, adminKey } = useAuthStore(
+    useShallow((s) => ({ gatewayKey: s.gatewayKey, adminKey: s.adminKey })),
+  )
+  const snapshot = useRateLimitStore((s) => s.snapshot)
+
+  useEffect(() => {
+    setHeadersReporter((headers) => {
+      useRateLimitStore.getState().setSnapshot(parseRateLimit(headers))
+    })
+    return () => {
+      setHeadersReporter(null)
+    }
+  }, [])
   return (
     <div className="min-h-screen bg-paper text-ink dark:bg-night dark:text-parchment">
       <a href="#main" className="skip-link">
@@ -66,6 +91,11 @@ export function Layout(): React.JSX.Element {
           </ul>
         </nav>
       </header>
+      {snapshot !== null && (gatewayKey !== null || adminKey !== null) ? (
+        <div className="mx-auto max-w-6xl px-4 pt-4">
+          <RateLimitHeaders snapshot={snapshot} />
+        </div>
+      ) : null}
       <main id="main" className="mx-auto max-w-6xl px-4 py-6">
         <Outlet />
       </main>
