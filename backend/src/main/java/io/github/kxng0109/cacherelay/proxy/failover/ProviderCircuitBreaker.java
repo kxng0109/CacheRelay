@@ -265,6 +265,31 @@ public final class ProviderCircuitBreaker implements CircuitBreaker {
 	}
 
 	/**
+	 * @return when the circuit last tripped to OPEN ({@code Instant.EPOCH} when never)
+	 */
+	public Instant getOpenedAt() {
+		return openedAt;
+	}
+
+	/**
+	 * @return milliseconds until the cooldown elapses while OPEN, otherwise {@code 0}
+	 */
+	public long cooldownRemainingMillis() {
+		if (state.get() != CircuitBreaker.State.OPEN) {
+			return 0L;
+		}
+		long remaining = openedAt.plus(cooldown).toEpochMilli() - clock.instant().toEpochMilli();
+		return Math.max(0L, remaining);
+	}
+
+	/**
+	 * @return whether a half-open probe is currently admitted
+	 */
+	public boolean halfOpenProbeInFlight() {
+		return state.get() == CircuitBreaker.State.HALF_OPEN && halfOpenProbes.get() > 0;
+	}
+
+	/**
 	 * Directly sets the observable state of this mirror. Used by the Redis-backed breaker to keep the local mirror in
 	 * step with Redis after a successful read, so the fallback path reflects reality.
 	 *

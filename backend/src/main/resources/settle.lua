@@ -147,13 +147,15 @@ local abortDue = tonumber(ARGV[2]) or 0
 if abortDue > 0 then
 	-- Abort: input-known portion settled above; the output hold lapses after
 	-- the grace window (the re-armed ZADD score overwrites the crash-expiry
-	-- entry). No gap row yet — the sweeper writes it at expiry, if ever.
+	-- entry). No gap row yet ?" the sweeper writes it at expiry, if ever.
 	redis.call('HSET', KEYS[3], 'state', 'ABORTED')
+	redis.call('HSET', KEYS[3], 'settled', actual)
 	redis.call('ZADD', KEYS[10], abortDue, KEYS[3])
 	return { 1, 2, actual, keyRemaining(), gap }
 end
 
 redis.call('HSET', KEYS[3], 'state', 'SETTLED')
+redis.call('HSET', KEYS[3], 'settled', actual)
 redis.call('ZREM', KEYS[10], KEYS[3])
 if gap == 1 then
 	redis.call('SET', KEYS[2], '1', 'NX', 'EX', 86400)

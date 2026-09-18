@@ -480,8 +480,10 @@ public class ProxyController {
 			settlePromptKnown(settlementContext, false);
 			replayReleaseQuietly(replayFlight);
 			return ResponseEntity.status(status)
-			                     .contentType(MediaType.APPLICATION_JSON)
-			                     .body(out -> relayRaw(providerResponse, out));
+					.contentType(MediaType.APPLICATION_JSON)
+					.header("X-CacheRelay-Provider", providerResponse.providerName())
+					.header("X-CacheRelay-Tried", triedHeader(providerResponse))
+					.body(out -> relayRaw(providerResponse, out));
 		}
 
 		ProviderConfig config = gatewayProperties.getProviders().get(providerResponse.providerName());
@@ -501,6 +503,14 @@ public class ProxyController {
 		}
 		if (zdrEnforcer != null) {
 			zdrEnforcer.applyHeaders(headers);
+		}
+		headers.set("X-CacheRelay-Provider", providerResponse.providerName());
+		headers.set("X-CacheRelay-Tried", triedHeader(providerResponse));
+		if (settlementContext != null) {
+			headers.set("X-Budget-Held-Micros", Long.toString(settlementContext.holdMicros()));
+			if (settlementContext.ownerId() != null) {
+				headers.set("X-Budget-Subject", settlementContext.ownerId());
+			}
 		}
 
 		String upstreamContentType = providerResponse.response().headers() == null ? ""
@@ -1197,11 +1207,26 @@ public class ProxyController {
 	}
 
 	/**
+	 * Renders the failover walk for the {@code X-CacheRelay-Tried} header: provider names in
+	 * walk order with their leg outcomes. Entries originate from configuration names plus
+	 * fixed reason suffixes, so the value is header-safe.
+	 *
+	 * @param providerResponse upstream outcome carrying the tried list
+	 * @return comma-joined walk, or the winner alone when nothing was recorded
+	 */
+	private static String triedHeader(ProviderResponse providerResponse) {
+		if (providerResponse.triedProviders() == null
+				|| providerResponse.triedProviders().isEmpty()) {
+			return providerResponse.providerName();
+		}
+		return String.join(",", providerResponse.triedProviders());
+	}
+
+	/**
 	 * Stream-end true-up that can never break the response: every failure is logged and absorbed (the hold H
 	 * stays counted — the safe over-count direction).
 	 */
-	private void settleQuietly(@Nullable SettlementContext context, long actualMicros, boolean abort) {
-		BudgetSettlement settlement = this.budgetSettlement;
+	private void settleQuietly(@Nullable SettlementContext context, long actualMicros, boolean abort) {		BudgetSettlement settlement = this.budgetSettlement;
 		if (settlement == null || context == null) {
 			return;
 		}

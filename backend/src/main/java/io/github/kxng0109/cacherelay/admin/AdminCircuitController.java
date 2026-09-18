@@ -17,9 +17,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 
 /**
  * REST controller for inspecting and resetting upstream circuit breakers under {@code /v1/admin/circuits}.
@@ -55,11 +53,10 @@ public class AdminCircuitController {
 	})
 	@GetMapping
 	public ResponseEntity<List<CircuitStateResponse>> listCircuits() {
-		Map<String, CircuitBreaker.State> states = circuitBreakerFactory.states();
-		List<CircuitStateResponse> response = states.entrySet().stream()
-		                                            .map(e -> new CircuitStateResponse(e.getKey(), e.getValue().name()))
-		                                            .sorted(Comparator.comparing(CircuitStateResponse::provider))
-		                                            .toList();
+		List<CircuitStateResponse> response = circuitBreakerFactory.providerNames().stream()
+				.sorted()
+				.map(name -> snapshot(name, circuitBreakerFactory.get(name)))
+				.toList();
 		return ResponseEntity.ok(response);
 	}
 
@@ -90,8 +87,7 @@ public class AdminCircuitController {
 		if (!circuitBreakerFactory.providerNames().contains(provider)) {
 			return ResponseEntity.notFound().build();
 		}
-		CircuitBreaker.State state = circuitBreakerFactory.get(provider).getState();
-		return ResponseEntity.ok(new CircuitStateResponse(provider, state.name()));
+		return ResponseEntity.ok(snapshot(provider, circuitBreakerFactory.get(provider)));
 	}
 
 	/**
@@ -125,8 +121,24 @@ public class AdminCircuitController {
 		if (!circuitBreakerFactory.providerNames().contains(provider)) {
 			return ResponseEntity.notFound().build();
 		}
-		CircuitBreaker.State state = circuitBreakerFactory.reset(provider);
-		return ResponseEntity.ok(new CircuitStateResponse(provider, state.name()));
+		circuitBreakerFactory.reset(provider);
+		return ResponseEntity.ok(snapshot(provider, circuitBreakerFactory.get(provider)));
+	}
+
+	/**
+	 * Builds the enriched snapshot for one breaker.
+	 *
+	 * @param provider provider name
+	 * @param breaker  breaker to snapshot
+	 * @return response DTO
+	 */
+	private static CircuitStateResponse snapshot(String provider, CircuitBreaker breaker) {
+		return new CircuitStateResponse(
+				provider,
+				breaker.getState().name(),
+				breaker.getFailureCount(),
+				breaker.cooldownRemainingMillis(),
+				breaker.halfOpenProbeInFlight());
 	}
 }
 

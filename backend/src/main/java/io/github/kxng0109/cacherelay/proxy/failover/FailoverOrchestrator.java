@@ -14,6 +14,7 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -199,7 +200,9 @@ public class FailoverOrchestrator {
 				switch (outcome) {
 					case SUCCESS -> {
 						breaker.recordSuccess();
-						return new ProviderResponse(config.name(), response);
+						ctx.tried(name);
+						return new ProviderResponse(config.name(), response,
+								ctx.triedSnapshot());
 					}
 					case TRANSIENT -> {
 						breaker.recordFailure();
@@ -297,8 +300,10 @@ attempt.response().whenComplete((response, error) -> {
 					switch (outcome) {
 						case SUCCESS -> {
 							attempt.breaker().recordSuccess();
+							ctx.tried(attempt.config().name());
 							winner = raceResult.complete(
-									new ProviderResponse(attempt.config().name(), response));
+									new ProviderResponse(attempt.config().name(), response,
+											ctx.triedSnapshot()));
 							if (winner) {
 								cancelLosers(attempts, attempt);
 							} else {
@@ -447,7 +452,8 @@ return response.headers().firstValue("Content-Type")
 	 */
 	private static final class AttemptContext {
 
-		private final List<String> triedProviders = new ArrayList<>();
+		private final List<String> triedProviders =
+				Collections.synchronizedList(new ArrayList<>());
 		private final AtomicInteger callsStarted = new AtomicInteger();
 		private final AtomicReference<Throwable> lastError = new AtomicReference<>();
 		private final AtomicBoolean timeoutSeen = new AtomicBoolean();
@@ -457,9 +463,16 @@ return response.headers().firstValue("Content-Type")
 			triedProviders.add(entry);
 		}
 
+		private List<String> triedSnapshot() {
+			synchronized (triedProviders) {
+				return List.copyOf(triedProviders);
+			}
+		}
+
 		private UpstreamUnavailableException exhaustedError() {
-			String tried = triedProviders.isEmpty() ? "none" : String.join(", ", triedProviders);
-			String message = "all providers failed for this request. tried: " + tried;
+			List<String> tried = triedSnapshot();
+			String triedList = tried.isEmpty() ? "none" : String.join(", ", tried);
+			String message = "all providers failed for this request. tried: " + triedList;
 			Throwable cause = lastError.get();
 			boolean serviceUnavailable = callsStarted.get() == 0;
 			boolean timedOut = timeoutSeen.get();

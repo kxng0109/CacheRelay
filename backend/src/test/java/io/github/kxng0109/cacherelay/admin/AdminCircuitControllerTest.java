@@ -9,7 +9,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -24,12 +23,17 @@ class AdminCircuitControllerTest {
 	private final AdminCircuitController controller = new AdminCircuitController(factory);
 
 	@Test
-	@DisplayName("listCircuits returns all provider circuit states sorted")
+	@DisplayName("listCircuits returns enriched snapshots sorted")
 	void listCircuitsSuccess() {
-		when(factory.states()).thenReturn(Map.of(
-				"openai", CircuitBreaker.State.CLOSED,
-				"anthropic", CircuitBreaker.State.OPEN
-		));
+		CircuitBreaker openai = mock(CircuitBreaker.class);
+		when(openai.getState()).thenReturn(CircuitBreaker.State.CLOSED);
+		CircuitBreaker anthropic = mock(CircuitBreaker.class);
+		when(anthropic.getState()).thenReturn(CircuitBreaker.State.OPEN);
+		when(anthropic.getFailureCount()).thenReturn(3);
+		when(anthropic.cooldownRemainingMillis()).thenReturn(12_000L);
+		when(factory.providerNames()).thenReturn(Set.of("openai", "anthropic"));
+		when(factory.get("openai")).thenReturn(openai);
+		when(factory.get("anthropic")).thenReturn(anthropic);
 
 		ResponseEntity<List<CircuitStateResponse>> response = controller.listCircuits();
 
@@ -37,6 +41,9 @@ class AdminCircuitControllerTest {
 		assertThat(response.getBody()).hasSize(2);
 		assertThat(response.getBody().getFirst().provider()).isEqualTo("anthropic");
 		assertThat(response.getBody().getFirst().state()).isEqualTo("OPEN");
+		assertThat(response.getBody().getFirst().failures()).isEqualTo(3);
+		assertThat(response.getBody().getFirst().cooldownMsRemaining()).isEqualTo(12_000L);
+		assertThat(response.getBody().getFirst().halfOpenProbe()).isFalse();
 		assertThat(response.getBody().get(1).provider()).isEqualTo("openai");
 		assertThat(response.getBody().get(1).state()).isEqualTo("CLOSED");
 	}
@@ -63,8 +70,10 @@ class AdminCircuitControllerTest {
 	@Test
 	@DisplayName("resetCircuit returns 200 OK for known provider and 404 for unknown")
 	void resetCircuitScenarios() {
+		CircuitBreaker breaker = mock(CircuitBreaker.class);
+		when(breaker.getState()).thenReturn(CircuitBreaker.State.CLOSED);
 		when(factory.providerNames()).thenReturn(Set.of("openai"));
-		when(factory.reset("openai")).thenReturn(CircuitBreaker.State.CLOSED);
+		when(factory.get("openai")).thenReturn(breaker);
 
 		ResponseEntity<CircuitStateResponse> reset = controller.resetCircuit("openai");
 		assertThat(reset.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -77,15 +86,20 @@ class AdminCircuitControllerTest {
 	}
 
 	@Test
-	@DisplayName("resetCircuit returns the observed state, not a hardcoded CLOSED")
+	@DisplayName("resetCircuit returns the re-read state, not a hardcoded CLOSED")
 	void resetCircuitReturnsObservedState() {
+		CircuitBreaker breaker = mock(CircuitBreaker.class);
+		when(breaker.getState()).thenReturn(CircuitBreaker.State.HALF_OPEN);
+		when(breaker.halfOpenProbeInFlight()).thenReturn(true);
 		when(factory.providerNames()).thenReturn(Set.of("openai"));
-		when(factory.reset("openai")).thenReturn(CircuitBreaker.State.HALF_OPEN);
+		when(factory.get("openai")).thenReturn(breaker);
 
 		ResponseEntity<CircuitStateResponse> reset = controller.resetCircuit("openai");
+
 		assertThat(reset.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(reset.getBody()).isNotNull();
 		assertThat(reset.getBody().provider()).isEqualTo("openai");
 		assertThat(reset.getBody().state()).isEqualTo("HALF_OPEN");
+		assertThat(reset.getBody().halfOpenProbe()).isTrue();
 	}
 }

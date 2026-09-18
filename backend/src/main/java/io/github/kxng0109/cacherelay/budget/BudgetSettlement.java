@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.time.YearMonth;
 import java.time.ZoneOffset;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import io.github.kxng0109.cacherelay.contracts.ProviderType;
@@ -108,6 +109,40 @@ public class BudgetSettlement {
 			persistGap(holdId, keyHex, outcome.amountApplied(), currMonth, origMonth, reason, actualMicros);
 		}
 		return outcome;
+	}
+
+	/**
+	 * Point-in-time view of one hold record for operator inspection.
+	 *
+	 * @param holdId        request identifier the hold was created under
+	 * @param subject       subject ref recorded at admission
+	 * @param heldMicros    micros held at admission
+	 * @param settledMicros micros applied at settle, or {@code null} before settle
+	 * @param state         hold lifecycle state (e.g. ACTIVE, SETTLED, ABORTED, EXPIRED)
+	 */
+	public record HoldView(String holdId, String subject, long heldMicros,
+			@Nullable Long settledMicros, String state) {
+	}
+
+	/**
+	 * Reads one hold record by request identifier.
+	 *
+	 * @param holdId request identifier (hold id)
+	 * @return view, or empty when the record expired or never existed
+	 */
+	public Optional<HoldView> readHold(String holdId) {
+		Map<Object, Object> fields = enforcer.readHold(BudgetEnforcer.holdKey(holdId));
+		if (fields.isEmpty()) {
+			return Optional.empty();
+		}
+		String settledRaw = stringField(fields, "settled");
+		Long settled = settledRaw.isEmpty() ? null : longField(fields, "settled");
+		return Optional.of(new HoldView(
+				holdId,
+				stringField(fields, "subject"),
+				longField(fields, "amount"),
+				settled,
+				stringField(fields, "state")));
 	}
 
 	/**

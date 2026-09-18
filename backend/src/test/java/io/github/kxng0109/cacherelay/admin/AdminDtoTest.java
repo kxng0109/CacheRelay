@@ -61,9 +61,12 @@ class AdminDtoTest {
 		assertThat(updateReq.allowedProviders()).containsExactly("p2");
 		assertThat(updateReq.enabled()).isFalse();
 
-		CircuitStateResponse circuitResp = new CircuitStateResponse("openai", "CLOSED");
+		CircuitStateResponse circuitResp = new CircuitStateResponse("openai", "CLOSED", 0, 0L, false);
 		assertThat(circuitResp.provider()).isEqualTo("openai");
 		assertThat(circuitResp.state()).isEqualTo("CLOSED");
+		assertThat(circuitResp.failures()).isZero();
+		assertThat(circuitResp.cooldownMsRemaining()).isZero();
+		assertThat(circuitResp.halfOpenProbe()).isFalse();
 
 		ProblemDetailResponse problem = ProblemDetailResponse.of(
 				"Bad Request",

@@ -616,6 +616,20 @@ Humans log in with local username+password or any configured SSO provider; API k
   admin denial (probing cannot confirm the control plane exists), mandatory audit on every admin mutation, and
   per-response CSP nonces. No token ever touches `localStorage`.
 
+### Operational Observability (for dashboards)
+
+- **Circuits**: `GET /v1/admin/circuits` (list) and `GET /v1/admin/circuits/{provider}` report state plus
+  `failures` (consecutive, CLOSED), `cooldownMsRemaining` (0 unless OPEN), and `halfOpenProbe` admission;
+  `POST …/reset` force-closes. Same shape under `GET /v1/admin/mcp/circuits[/{server}[/reset]]` for MCP servers.
+  Countdowns are mirror-local (approximate across instances).
+- **Per-request headers** on proxied responses: `X-CacheRelay-Provider` (winner), `X-CacheRelay-Tried`
+  (walk order with leg outcomes), `X-Budget-Held-Micros` (admission hold; settled figures post-date headers on
+  streams, so query below).
+- **Hold-versus-settled**: `GET /v1/admin/budgets/holds/{requestId}` returns held micros, applied settled micros
+  (`null` before settle), and lifecycle state; 404 once the hold record expires.
+- **Prometheus**: `cacherelay.circuit.breaker.state` / `.failures` per provider and
+  `cacherelay.mcp.circuit.breaker.state` / `.failures` per server (state encoded 0/1/2).
+
 Every proxied request passes a single atomic Lua spend gate (`budget_limit.lua`, V7 `budget_limits` + `budget_audit`
 tables, V8 append-only trigger) across KEY → TEAM → ORG levels: check-before-increment (denials consume nothing),
 first-denied level wins, implicit month rollover via TTL (no reset job to race), uniform fail-closed on Redis/script/

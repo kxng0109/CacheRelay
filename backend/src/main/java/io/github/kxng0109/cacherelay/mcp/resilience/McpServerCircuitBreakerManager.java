@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
@@ -87,5 +88,12 @@ public class McpServerCircuitBreakerManager {
 	public void reset(String serverName) {
 		getBreaker(serverName).reset();
 		catalogCache.invalidate();
+	}
+
+	/**
+	 * @return the names of servers with a materialized breaker (lazily created on first use)
+	 */
+	public Set<String> serverNames() {
+		return Set.copyOf(breakers.keySet());
 	}
 }

@@ -1798,6 +1798,98 @@ class ProxyControllerTest {
 	}
 
 	@Test
+	@DisplayName("success responses carry provider, tried-walk, and held-budget headers")
+	void successCarriesObservabilityHeaders() throws Exception {		String upstream = "{\"id\":\"chatcmpl-h\",\"object\":\"chat.completion\",\"created\":1700000000,"
+				+ "\"model\":\"gpt-5.6-luna\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+				+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
+				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
+		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(),
+				Stream.of(upstream), List.of("anthropic (circuit open)", "openai"));
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+
+		assertEquals(200, entity.getStatusCode().value());
+		assertEquals("openai", entity.getHeaders().getFirst("X-CacheRelay-Provider"));
+		assertEquals("anthropic (circuit open),openai",
+				entity.getHeaders().getFirst("X-CacheRelay-Tried"));
+	}
+
+	@Test
+	@DisplayName("settled requests carry held-budget headers alongside failover headers")
+	void settledRequestCarriesBudgetHeaders() throws Exception {
+		BudgetEnforcer mockEnforcer = mock(BudgetEnforcer.class);
+		BudgetSettlement mockSettlement = mock(BudgetSettlement.class);
+		controller.setBudgetEnforcer(mockEnforcer);
+		controller.setBudgetSettlement(mockSettlement);
+		try {
+			when(mockSettlement.authorize(any(), any(), any(), anyString(), anyInt(), any(), any()))
+					.thenReturn(new BudgetEnforcer.HoldAuthorization(
+							new BudgetDecision.Allowed(100L, 60L), 9_000L, "2026-09"));
+			when(mockSettlement.createHold(anyString(), anyString(), any(), any()))
+					.thenReturn(true);
+			String upstream = "{\"id\":\"chatcmpl-h\",\"object\":\"chat.completion\",\"created\":1700000000,"
+					+ "\"model\":\"gpt-5.6-luna\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+					+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
+					+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
+			ProviderResponse response = providerResponse("openai", 200, jsonHeaders(),
+					Stream.of(upstream), List.of("openai"));
+			when(orchestrator.execute(any(), anyString()))
+					.thenReturn(CompletableFuture.completedFuture(response));
+			MockHttpServletRequest req = request();
+			req.setAttribute("cacherelay.keyHash", "ab".repeat(32));
+
+			ResponseEntity<StreamingResponseBody> entity =
+					controller.proxyChatCompletions(PATH_BODY, req);
+
+			assertEquals(200, entity.getStatusCode().value());
+			assertEquals("9000", entity.getHeaders().getFirst("X-Budget-Held-Micros"));
+			assertEquals("openai", entity.getHeaders().getFirst("X-CacheRelay-Provider"));
+			assertEquals("openai", entity.getHeaders().getFirst("X-CacheRelay-Tried"));
+		} finally {
+			controller.setBudgetEnforcer(null);
+			controller.setBudgetSettlement(null);
+		}
+	}
+
+	@Test
+	@DisplayName("anonymous owner requests carry held headers without a subject")
+	void anonymousOwnerOmitsSubjectHeader() throws Exception {
+		BudgetEnforcer mockEnforcer = mock(BudgetEnforcer.class);
+		BudgetSettlement mockSettlement = mock(BudgetSettlement.class);
+		controller.setBudgetEnforcer(mockEnforcer);
+		controller.setBudgetSettlement(mockSettlement);
+		try {
+			when(mockSettlement.authorize(any(), any(), any(), anyString(), anyInt(), any(), any()))
+					.thenReturn(new BudgetEnforcer.HoldAuthorization(
+							new BudgetDecision.Allowed(100L, 60L), 9_000L, "2026-09"));
+			when(mockSettlement.createHold(anyString(), anyString(), any(), any()))
+					.thenReturn(true);
+			String upstream = "{\"id\":\"chatcmpl-h\",\"object\":\"chat.completion\",\"created\":1700000000,"
+					+ "\"model\":\"gpt-5.6-luna\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+					+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
+					+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
+			ProviderResponse response = providerResponse("openai", 200, jsonHeaders(),
+					Stream.of(upstream), List.of("openai"));
+			when(orchestrator.execute(any(), anyString()))
+					.thenReturn(CompletableFuture.completedFuture(response));
+			MockHttpServletRequest req = new MockHttpServletRequest();
+			req.setAttribute("cacherelay.keyHash", "ab".repeat(32));
+
+			ResponseEntity<StreamingResponseBody> entity =
+					controller.proxyChatCompletions(PATH_BODY, req);
+
+			assertEquals(200, entity.getStatusCode().value());
+			assertEquals("9000", entity.getHeaders().getFirst("X-Budget-Held-Micros"));
+			assertEquals(null, entity.getHeaders().getFirst("X-Budget-Subject"));
+		} finally {
+			controller.setBudgetEnforcer(null);
+			controller.setBudgetSettlement(null);
+		}
+	}
+
+	@Test
 	@DisplayName("non-streaming empty JSON object falls back to generated id and empty choice")
 	void jsonRelayAppliesFallbacks() throws Exception {
 		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of("{}"));
@@ -1911,11 +2003,21 @@ class ProxyControllerTest {
 			HttpHeaders headers,
 			Stream<String> lines
 	) {
+		return providerResponse(provider, status, headers, lines, List.of(provider));
+	}
+
+	private static ProviderResponse providerResponse(
+			String provider,
+			int status,
+			HttpHeaders headers,
+			Stream<String> lines,
+			List<String> tried
+	) {
 		HttpResponse<Stream<String>> response = mock(HttpResponse.class);
 		when(response.statusCode()).thenReturn(status);
 		when(response.headers()).thenReturn(headers);
 		when(response.body()).thenReturn(lines);
-		return new ProviderResponse(provider, response);
+		return new ProviderResponse(provider, response, tried);
 	}
 
 	private static HttpHeaders sseHeaders() {

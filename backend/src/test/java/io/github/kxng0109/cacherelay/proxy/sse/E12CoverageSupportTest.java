@@ -391,7 +391,7 @@ class E12CoverageSupportTest {
 		when(errHttpResp.statusCode()).thenReturn(500);
 		when(errHttpResp.body()).thenReturn(java.util.stream.Stream.of("error line 1", "error line 2"));
 		when(orchestrator.execute(any(), any())).thenReturn(CompletableFuture.completedFuture(
-				new ProviderResponse("openai-p", errHttpResp)
+				new ProviderResponse("openai-p", errHttpResp, List.of("openai-p"))
 		));
 
 		var res3 = controller.proxyChatCompletions("{\"model\": \"test-model\"}", req);
@@ -413,7 +413,7 @@ class E12CoverageSupportTest {
 				"data: [DONE]"
 		));
 		when(orchestrator.execute(any(), any())).thenReturn(CompletableFuture.completedFuture(
-				new ProviderResponse("openai-p", okHttpResp)
+				new ProviderResponse("openai-p", okHttpResp, List.of("openai-p"))
 		));
 
 		var res4 = controller.proxyChatCompletions("{\"model\": \"test-model\"}", req);
@@ -431,7 +431,7 @@ class E12CoverageSupportTest {
 		});
 		when(oomHttpResp.body()).thenReturn(throwingStream);
 		when(orchestrator.execute(any(), any())).thenReturn(CompletableFuture.completedFuture(
-				new ProviderResponse("openai-p", oomHttpResp)
+				new ProviderResponse("openai-p", oomHttpResp, List.of("openai-p"))
 		));
 
 		var res5 = controller.proxyChatCompletions("{\"model\": \"test-model\"}", req);

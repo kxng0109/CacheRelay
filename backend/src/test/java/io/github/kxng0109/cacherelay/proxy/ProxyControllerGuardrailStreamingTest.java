@@ -113,7 +113,7 @@ class ProxyControllerGuardrailStreamingTest {
 		HttpHeaders sseHeaders = HttpHeaders.of(Map.of("Content-Type", List.of("text/event-stream")), (k, v) -> true);
 		when(httpResponse.headers()).thenReturn(sseHeaders);
 		when(httpResponse.body()).thenReturn(lines);
-		return new ProviderResponse("openai", httpResponse);
+		return new ProviderResponse("openai", httpResponse, List.of("openai"));
 	}
 
 	@Test

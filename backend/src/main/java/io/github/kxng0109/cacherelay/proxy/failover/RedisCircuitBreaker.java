@@ -216,6 +216,29 @@ public final class RedisCircuitBreaker implements CircuitBreaker {
 	}
 
 	/**
+	 * @return mirror-local cooldown remainder against the configured cooldown. This is the
+	 * instance's view, not Redis server truth: when clocks or configured cooldowns diverge
+	 * across instances the remaining time is approximate.
+	 */
+	@Override
+	public long cooldownRemainingMillis() {
+		if (mirror.getState() != CircuitBreaker.State.OPEN) {
+			return 0L;
+		}
+		long remaining = mirror.getOpenedAt().plus(props.cooldown()).toEpochMilli()
+				- clock.instant().toEpochMilli();
+		return Math.max(0L, remaining);
+	}
+
+	/**
+	 * @return whether the local mirror currently admits a half-open probe
+	 */
+	@Override
+	public boolean halfOpenProbeInFlight() {
+		return mirror.halfOpenProbeInFlight();
+	}
+
+	/**
 	 * @return the provider this breaker protects
 	 */
 	@Override

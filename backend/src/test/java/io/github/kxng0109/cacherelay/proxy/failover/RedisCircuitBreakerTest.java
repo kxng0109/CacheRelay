@@ -139,6 +139,37 @@ class RedisCircuitBreakerTest {
 		assertThat(breaker.tryAcquire()).isTrue();
 	}
 
+	@Test
+	@DisplayName("cooldown remainder ticks down while OPEN and reads zero otherwise")
+	void cooldownRemainderTicksDown() {
+		RedisCircuitBreaker fresh = breaker("cooldown-fresh", InstanceId.generate().value());
+
+		assertThat(fresh.cooldownRemainingMillis()).isZero();
+
+		RedisCircuitBreaker tripped = breaker("cooldown-open", InstanceId.generate().value());
+		recordFailures(tripped, 3);
+
+		assertThat(tripped.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+		assertThat(tripped.cooldownRemainingMillis()).isPositive().isLessThanOrEqualTo(250L);
+
+		waitForCooldown();
+
+		assertThat(tripped.cooldownRemainingMillis()).isZero();
+	}
+
+	@Test
+	@DisplayName("half-open probe flag delegates to the mirror")
+	void halfOpenProbeFlagTracksProbe() {
+		RedisCircuitBreaker breaker = breaker("cooldown-probe", InstanceId.generate().value());
+
+		assertThat(breaker.halfOpenProbeInFlight()).isFalse();
+
+		recordFailures(breaker, 3);
+
+		assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+		assertThat(breaker.halfOpenProbeInFlight()).isFalse();
+	}
+
 	private static RedisCircuitBreaker breaker(String providerName, String instanceId) {
 		return new RedisCircuitBreaker(
 				providerName,

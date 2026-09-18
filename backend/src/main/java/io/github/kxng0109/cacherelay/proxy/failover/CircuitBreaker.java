@@ -67,6 +67,21 @@ public interface CircuitBreaker {
 	int getFailureCount();
 
 	/**
+	 * @return milliseconds until the cooldown elapses while OPEN ({@code 0} when not OPEN),
+	 * or {@code -1} when the implementation cannot compute it
+	 */
+	default long cooldownRemainingMillis() {
+		return -1L;
+	}
+
+	/**
+	 * @return whether a half-open probe is currently admitted
+	 */
+	default boolean halfOpenProbeInFlight() {
+		return false;
+	}
+
+	/**
 	 * @return the provider this breaker protects
 	 */
 	String getProviderName();

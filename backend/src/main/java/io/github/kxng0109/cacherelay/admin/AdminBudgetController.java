@@ -1,10 +1,12 @@
 package io.github.kxng0109.cacherelay.admin;
 
 import io.github.kxng0109.cacherelay.admin.dto.BudgetBalanceResponse;
+import io.github.kxng0109.cacherelay.admin.dto.BudgetHoldResponse;
 import io.github.kxng0109.cacherelay.admin.dto.BudgetResponse;
 import io.github.kxng0109.cacherelay.admin.dto.CreateBudgetRequest;
 import io.github.kxng0109.cacherelay.admin.dto.UpdateBudgetRequest;
 import io.github.kxng0109.cacherelay.budget.BudgetService;
+import io.github.kxng0109.cacherelay.budget.BudgetSettlement;
 import io.github.kxng0109.cacherelay.config.OpenApiConfig;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -31,6 +33,7 @@ import java.util.UUID;
 public class AdminBudgetController {
 
 	private final BudgetService budgetService;
+	private final BudgetSettlement budgetSettlement;
 
 	@Operation(summary = "Create spend budget",
 			description = "Creates a hard spend cap; duplicate (level, subject) is a 409.",
@@ -67,6 +70,25 @@ public class AdminBudgetController {
 			@Parameter(description = "KEY, TEAM, or ORG") @PathVariable String level,
 			@Parameter(description = "Budget subject") @PathVariable String subject) {
 		return ResponseEntity.ok(BudgetBalanceResponse.from(budgetService.balance(level, subject)));
+	}
+
+	@Operation(summary = "Read request hold-versus-settled",
+			description = "Held micros, applied settled micros (null before settle), and lifecycle state for one request id. 404 once the hold record expires.",
+			security = {
+					@SecurityRequirement(name = OpenApiConfig.SCHEME_ADMIN_KEY_HEADER),
+					@SecurityRequirement(name = OpenApiConfig.SCHEME_ADMIN_BEARER)
+			})
+	@ApiResponses(value = {
+			@ApiResponse(responseCode = "200", description = "Hold view"),
+			@ApiResponse(responseCode = "401", description = "Unauthorized: Master Admin key missing or incorrect"),
+			@ApiResponse(responseCode = "404", description = "Hold expired or unknown")
+	})
+	@GetMapping("/holds/{requestId}")
+	public ResponseEntity<BudgetHoldResponse> hold(
+			@Parameter(description = "Request identifier") @PathVariable String requestId) {
+		return budgetSettlement.readHold(requestId)
+				.map(view -> ResponseEntity.ok(BudgetHoldResponse.from(view)))
+				.orElse(ResponseEntity.notFound().build());
 	}
 
 	@Operation(summary = "Replace spend budget caps",

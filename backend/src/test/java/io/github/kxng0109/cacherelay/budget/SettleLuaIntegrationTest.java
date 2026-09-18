@@ -119,6 +119,10 @@ class SettleLuaIntegrationTest {
 		assertThat(outcome.amountApplied()).isEqualTo(4_000L);
 		assertThat(outcome.gapSet()).isFalse();
 		assertThat(monthCount(template, "KEY", keyHex, month)).isEqualTo(4_000L);
+		assertThat(template.opsForHash().get(BudgetEnforcer.holdKey("hold-1"), "settled"))
+				.isEqualTo("4000");
+		assertThat(template.opsForHash().get(BudgetEnforcer.holdKey("hold-1"), "state"))
+				.isEqualTo("SETTLED");
 	}
 
 	@Test
@@ -158,6 +162,8 @@ class SettleLuaIntegrationTest {
 		assertThat(outcome.outcome()).isEqualTo(BudgetEnforcer.SETTLE_ABORTED);
 		assertThat(monthCount(template, "KEY", keyHex, month)).isEqualTo(2_000L);
 		assertThat(template.opsForHash().get(BudgetEnforcer.holdKey("hold-3"), "state")).isEqualTo("ABORTED");
+		assertThat(template.opsForHash().get(BudgetEnforcer.holdKey("hold-3"), "settled"))
+				.isEqualTo("2000");
 		Double score = template.opsForZSet().score(BudgetEnforcer.holdExpiryKey(),
 				BudgetEnforcer.holdKey("hold-3"));
 		assertThat(score).isNotNull();

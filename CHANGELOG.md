@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Operational observability for dashboards:** enriched circuit snapshots (`failures`, `cooldownMsRemaining`,
+  `halfOpenProbe`) on `GET /v1/admin/circuits[/{provider}]` plus a new `GET /v1/admin/mcp/circuits[/{server}]`
+  surface (list/get/reset); per-request `X-CacheRelay-Provider`, `X-CacheRelay-Tried`, and `X-Budget-Held-Micros`
+  response headers; `GET /v1/admin/budgets/holds/{requestId}` serving held-vs-settled micros and lifecycle state
+  (settle persists the applied figure on the hold hash); failure-count gauges alongside the state gauges for
+  providers and MCP servers. Full `verify` 1,819 green, branch ≥ 0.95.
 - **MCP tools/call flood gate:** the virtual key's RPM now binds `tools/call` through a dedicated RPM-only
   engine path (token dimension passed unlimited, so TPM accounting stays clean); rejections answer HTTP `429` with
   `Retry-After` plus a JSON-RPC `-32603` body, limiter outages fail closed with `503`. Egress now also emits a warn

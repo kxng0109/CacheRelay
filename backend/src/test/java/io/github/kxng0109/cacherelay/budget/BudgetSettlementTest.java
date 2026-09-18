@@ -502,4 +502,44 @@ class BudgetSettlementTest {
 		verify(enforcer).settle(eq("bare"), anyString(), anyString(), any(), anyString(), anyString(),
 				anyString(), anyLong(), anyLong());
 	}
+
+	@Test
+	@DisplayName("readHold maps the hold hash and honors absence")
+	void readHoldMapsHash() {
+		BudgetEnforcer enforcer = mock(BudgetEnforcer.class);
+		Map<Object, Object> fields = new HashMap<>();
+		fields.put("subject", "KEY|abc");
+		fields.put("amount", "1250");
+		fields.put("state", "SETTLED");
+		fields.put("settled", "900");
+		when(enforcer.readHold(BudgetEnforcer.holdKey("req-1"))).thenReturn(fields);
+		when(enforcer.readHold(BudgetEnforcer.holdKey("gone"))).thenReturn(Map.of());
+
+		var settled = settlement(enforcer, mock(BudgetGapRepository.class)).readHold("req-1");
+
+		assertThat(settled).isPresent();
+		assertThat(settled.get().heldMicros()).isEqualTo(1250L);
+		assertThat(settled.get().settledMicros()).isEqualTo(900L);
+		assertThat(settled.get().state()).isEqualTo("SETTLED");
+
+		var missing = settlement(enforcer, mock(BudgetGapRepository.class)).readHold("gone");
+
+		assertThat(missing).isEmpty();
+	}
+
+	@Test
+	@DisplayName("readHold reports null settled before settle")
+	void readHoldUnsettled() {
+		BudgetEnforcer enforcer = mock(BudgetEnforcer.class);
+		Map<Object, Object> fields = new HashMap<>();
+		fields.put("subject", "KEY|abc");
+		fields.put("amount", "1250");
+		fields.put("state", "ACTIVE");
+		when(enforcer.readHold(BudgetEnforcer.holdKey("req-2"))).thenReturn(fields);
+
+		var view = settlement(enforcer, mock(BudgetGapRepository.class)).readHold("req-2");
+
+		assertThat(view).isPresent();
+		assertThat(view.get().settledMicros()).isNull();
+	}
 }

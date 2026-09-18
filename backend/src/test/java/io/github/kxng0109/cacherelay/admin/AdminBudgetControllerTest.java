@@ -5,11 +5,13 @@ import io.github.kxng0109.cacherelay.admin.dto.CreateBudgetRequest;
 import io.github.kxng0109.cacherelay.admin.dto.UpdateBudgetRequest;
 import io.github.kxng0109.cacherelay.budget.BudgetLimit;
 import io.github.kxng0109.cacherelay.budget.BudgetService;
+import io.github.kxng0109.cacherelay.budget.BudgetSettlement;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -25,8 +27,10 @@ import static org.mockito.Mockito.when;
 class AdminBudgetControllerTest {
 
 	private final BudgetService budgetService = mock(BudgetService.class);
+	private final BudgetSettlement budgetSettlement = mock(BudgetSettlement.class);
 
-	private final AdminBudgetController controller = new AdminBudgetController(budgetService);
+	private final AdminBudgetController controller =
+			new AdminBudgetController(budgetService, budgetSettlement);
 
 	@Test
 	@DisplayName("create returns 201 with the created budget")
@@ -88,5 +92,29 @@ class AdminBudgetControllerTest {
 
 		assertThrows(ResponseStatusException.class, () ->
 				controller.updateBudget(id, new UpdateBudgetRequest(1L, 2L, null)));
+	}
+
+	@Test
+	@DisplayName("hold returns 200 with held and settled micros")
+	void holdReturns200() {
+		when(budgetSettlement.readHold("req-1")).thenReturn(Optional.of(
+				new BudgetSettlement.HoldView("req-1", "KEY|abc", 1250L, 900L, "SETTLED")));
+
+		var response = controller.hold("req-1");
+
+		assertEquals(HttpStatus.OK, response.getStatusCode());
+		assertEquals(1250L, response.getBody().heldMicros());
+		assertEquals(900L, response.getBody().settledMicros());
+		assertEquals("SETTLED", response.getBody().state());
+	}
+
+	@Test
+	@DisplayName("hold returns 404 when the record expired")
+	void holdReturns404() {
+		when(budgetSettlement.readHold("gone")).thenReturn(Optional.empty());
+
+		var response = controller.hold("gone");
+
+		assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
 	}
 }

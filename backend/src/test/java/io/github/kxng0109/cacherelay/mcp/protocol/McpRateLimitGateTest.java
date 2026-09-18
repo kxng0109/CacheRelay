@@ -184,6 +184,36 @@ class McpRateLimitGateTest {
 		assertThat(response.getBody()).contains("Method not found");
 	}
 
+	@Test
+	@DisplayName("non-Bearer credentials hash to nothing and proceed")
+	void nonBearerProceeds() {
+		when(router.resolveToolRoute(any())).thenReturn(Optional.empty());
+		MockHttpServletRequest request = new MockHttpServletRequest("POST", "/v1/mcp");
+		request.addHeader("Authorization", "Basic dXNlcjpwYXNz");
+		request.setAttribute("virtualApiKey", apiKey);
+
+		ResponseEntity<String> response = controller.handleStreamableHttp(CALL_BODY,
+				"2024-11-05", null, request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody()).contains("Method not found");
+	}
+
+	@Test
+	@DisplayName("blank Bearer secrets hash to nothing and proceed")
+	void blankBearerProceeds() {
+		when(router.resolveToolRoute(any())).thenReturn(Optional.empty());
+		MockHttpServletRequest request = new MockHttpServletRequest("POST", "/v1/mcp");
+		request.addHeader("Authorization", "Bearer    ");
+		request.setAttribute("virtualApiKey", apiKey);
+
+		ResponseEntity<String> response = controller.handleStreamableHttp(CALL_BODY,
+				"2024-11-05", null, request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody()).contains("Method not found");
+	}
+
 	private MockHttpServletRequest bearerRequest() {
 		MockHttpServletRequest request = new MockHttpServletRequest("POST", "/v1/mcp");
 		request.addHeader("Authorization", "Bearer gw-test-key-1234567890abcdef");

@@ -283,6 +283,44 @@ class ProviderCircuitBreakerTest {
 		return new MutableClock(START);
 	}
 
+	@Test
+	void cooldownCountdownTicksDownWhileOpen() {
+		MutableClock clock = mutableClock();
+		ProviderCircuitBreaker breaker = new ProviderCircuitBreaker("p1", clock, 1,
+				Duration.ofSeconds(30));
+
+		assertEquals(0L, breaker.cooldownRemainingMillis());
+
+		breaker.recordFailure();
+		assertEquals(CircuitBreaker.State.OPEN, breaker.getState());
+		assertEquals(30_000L, breaker.cooldownRemainingMillis());
+
+		clock.advance(Duration.ofSeconds(10));
+		assertEquals(20_000L, breaker.cooldownRemainingMillis());
+
+		clock.advance(Duration.ofSeconds(25));
+		assertEquals(0L, breaker.cooldownRemainingMillis());
+	}
+
+	@Test
+	void halfOpenProbeFlagTracksAdmission() {
+		MutableClock clock = mutableClock();
+		ProviderCircuitBreaker breaker = new ProviderCircuitBreaker("p1", clock, 1,
+				Duration.ofSeconds(30));
+
+		assertFalse(breaker.halfOpenProbeInFlight());
+
+		breaker.recordFailure();
+		assertFalse(breaker.halfOpenProbeInFlight());
+
+		clock.advance(Duration.ofSeconds(31));
+		assertTrue(breaker.tryAcquire());
+		assertTrue(breaker.halfOpenProbeInFlight());
+
+		breaker.recordSuccess();
+		assertFalse(breaker.halfOpenProbeInFlight());
+	}
+
 	/**
 	 * A clock whose current instant tests can move forward deterministically.
 	 */

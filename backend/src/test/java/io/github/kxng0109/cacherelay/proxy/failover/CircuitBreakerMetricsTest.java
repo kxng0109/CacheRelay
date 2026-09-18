@@ -91,9 +91,15 @@ class CircuitBreakerMetricsTest {
 		assertThat(gauge(registry, "closed")).isZero();
 		assertThat(gauge(registry, "open")).isEqualTo(1.0);
 		assertThat(gauge(registry, "half")).isEqualTo(2.0);
+		assertThat(failures(registry, "closed")).isZero();
+		assertThat(failures(registry, "open")).isEqualTo(3.0);
 	}
 
 	private static double gauge(SimpleMeterRegistry registry, String provider) {
 		return registry.get("cacherelay.circuit.breaker.state").tag("provider", provider).gauge().value();
+	}
+
+	private static double failures(SimpleMeterRegistry registry, String provider) {
+		return registry.get("cacherelay.circuit.breaker.failures").tag("provider", provider).gauge().value();
 	}
 }

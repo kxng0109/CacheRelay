@@ -10,7 +10,9 @@ import org.springframework.stereotype.Component;
  *
  * <p>One {@code cacherelay.circuit.breaker.state} gauge is registered per provider and tagged with the provider name. The
  * gauge value encodes {@link CircuitBreaker.State} as {@code 0} for CLOSED, {@code 1} for OPEN and {@code 2} for
- * HALF_OPEN, so a healthy provider always reads {@code 0}.</p>
+ * HALF_OPEN, so a healthy provider always reads {@code 0}. A companion
+ * {@code cacherelay.circuit.breaker.failures} gauge reports the consecutive failure count, so operators can see a
+ * provider approaching its trip threshold.</p>
  *
  * <p>Spring Boot binds every {@link MeterBinder} bean to the managed {@link MeterRegistry}, so these gauges are
  * scraped by the Prometheus endpoint and drive Grafana dashboards for failover health.</p>
@@ -30,7 +32,7 @@ public class CircuitBreakerMetrics implements MeterBinder {
 	}
 
 	/**
-	 * Registers one gauge per provider.
+	 * Registers one state gauge and one failure-count gauge per provider.
 	 *
 	 * @param registry the registry the gauges are registered with
 	 */
@@ -39,7 +41,13 @@ public class CircuitBreakerMetrics implements MeterBinder {
 		for (String name : factory.providerNames()) {
 			Gauge.builder("cacherelay.circuit.breaker.state", factory, f -> stateCode(f.get(name).getState()))
 					.tag("provider", name)
+					.description("Circuit state encoded as 0=CLOSED, 1=OPEN, 2=HALF_OPEN")
 					.baseUnit("state")
+					.register(registry);
+			Gauge.builder("cacherelay.circuit.breaker.failures", factory, f -> f.get(name).getFailureCount())
+					.tag("provider", name)
+					.description("Consecutive failures recorded while CLOSED")
+					.baseUnit("failures")
 					.register(registry);
 		}
 	}
