@@ -1,10 +1,13 @@
-import { act, screen } from '@testing-library/react'
+import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
+import { GatewayClient } from '../shared/api/client.js'
 import { useAuthStore } from '../shared/auth/store.js'
 import { useRateLimitStore } from '../shared/ratelimit/store.js'
+import { server } from '../test/setup.js'
 import { renderApp } from '../test/utils.js'
-import { Layout } from './layout.js'
+import { Layout, computeNavTabIndex } from './layout.js'
 
 describe('Layout', () => {
   beforeEach(() => {
@@ -96,5 +99,32 @@ describe('Layout', () => {
       window.dispatchEvent(new Event('resize'))
     })
     expect(nav).toHaveAttribute('tabindex', '0')
+  })
+
+  it('mirrors live gateway headers into the strip', async () => {
+    server.use(
+      http.get('*/v1/models', () =>
+        HttpResponse.json(
+          { data: [] },
+          { headers: { 'X-RateLimit-Limit-RPM': '60', 'X-RateLimit-Remaining-RPM': '41' } },
+        ),
+      ),
+    )
+    renderApp(<Layout />, { gatewayKey: 'gw-test' })
+    expect(screen.queryByRole('status', { name: /rate limit status/i })).not.toBeInTheDocument()
+    await new GatewayClient({ base: '', token: 'gw-test' }).models()
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: /rate limit status/i })).toHaveTextContent(
+        'Remaining: 41',
+      )
+    })
+  })
+})
+
+describe('computeNavTabIndex', () => {
+  it('focuses only on real overflow', () => {
+    expect(computeNavTabIndex(1200, 800)).toBe(0)
+    expect(computeNavTabIndex(800, 800)).toBe(-1)
+    expect(computeNavTabIndex(400, 800)).toBe(-1)
   })
 })

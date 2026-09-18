@@ -84,6 +84,46 @@ describe('LatencyChart', () => {
     })
   })
 
+  it('stays in collecting state when the scrape carries no histogram', async () => {
+    let calls = 0
+    server.use(
+      http.get('*/actuator/prometheus', () => {
+        calls += 1
+        return new HttpResponse('cacherelay_tokens_total{provider="x"} 5\n', {
+          headers: { 'Content-Type': 'text/plain' },
+        })
+      }),
+    )
+    renderApp(<LatencyChart />)
+    await waitFor(() => {
+      expect(calls).toBeGreaterThan(0)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(mockInit).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('status')).toHaveTextContent(/collecting latency samples/i)
+  })
+
+  it('reports unknown latency when samples never resolve finitely', async () => {
+    const unbounded = [
+      'http_server_requests_seconds_bucket{uri="/v1/x",le="+Inf"} 141',
+      'http_server_requests_seconds_count{uri="/v1/x"} 141',
+    ].join('\n')
+    let calls = 0
+    server.use(
+      http.get('*/actuator/prometheus', () => {
+        calls += 1
+        const body = calls === 1 ? SCRAPE : unbounded
+        return new HttpResponse(body, { headers: { 'Content-Type': 'text/plain' } })
+      }),
+    )
+    renderApp(<LatencyChart pollMs={50} />)
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(/P50 unknown/)
+    })
+  })
+
   it('pushes options to the chart and disposes on unmount', async () => {
     mockScrape(200, SCRAPE)
     const { unmount } = renderApp(<LatencyChart />)

@@ -88,4 +88,34 @@ describe('PlaygroundPage', () => {
       expect(screen.getByRole('alert')).toHaveTextContent(/temporarily unavailable/i)
     })
   })
+
+  it('names an empty non-streaming completion honestly', async () => {
+    vi.stubEnv('VITE_FEATURE_STREAMING', 'false')
+    const user = userEvent.setup()
+    server.use(
+      http.post('*/v1/chat/completions', () =>
+        HttpResponse.json({ choices: [], model: 'gpt-4o-mini' }),
+      ),
+    )
+    renderApp(<PlaygroundPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/prompt/i), 'Say hello')
+    await user.click(screen.getByRole('button', { name: /send completion/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('log')).toHaveTextContent(/empty completion/i)
+    })
+  })
+
+  it('requires a model before sending', async () => {
+    vi.stubEnv('VITE_FEATURE_STREAMING', 'false')
+    const user = userEvent.setup()
+    renderApp(<PlaygroundPage />)
+    await user.clear(screen.getByLabelText(/model/i))
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/prompt/i), 'Say hello')
+    await user.click(screen.getByRole('button', { name: /send completion/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/model is required/i)).toBeInTheDocument()
+    })
+  })
 })

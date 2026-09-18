@@ -103,4 +103,51 @@ describe('SseStreamViewer', () => {
     await screen.findByRole('button', { name: /^stop$/i })
     rendered.unmount()
   })
+
+  it('stops before the handshake resolves without a reader', async () => {
+    const user = userEvent.setup()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    server.use(
+      http.post('*/v1/chat/completions', async () => {
+        await gate
+        return new HttpResponse('data: [DONE]\n\n', {
+          headers: { 'content-type': 'text/event-stream' },
+        })
+      }),
+    )
+    renderApp(<SseStreamViewer token="gw-test" model="m" messages={MESSAGES} />)
+    await user.click(await screen.findByRole('button', { name: /^stop$/i }))
+    release()
+    await waitFor(() => {
+      expect(screen.getByText(/phase: error/i)).toBeInTheDocument()
+    })
+  })
+
+  it('honors explicit retry and heartbeat options', async () => {
+    server.use(
+      http.post('*/v1/chat/completions', () => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            ctrl.enqueue(new TextEncoder().encode('data: [DONE]\n\n'))
+            ctrl.close()
+          },
+        })
+        return new HttpResponse(stream, { headers: { 'content-type': 'text/event-stream' } })
+      }),
+    )
+    renderApp(
+      <SseStreamViewer
+        token="gw-test"
+        model="m"
+        messages={MESSAGES}
+        streamOptions={{ maxRetries: 2, heartbeatMs: 1000 }}
+      />,
+    )
+    await waitFor(() => {
+      expect(screen.getByText(/phase: done/i)).toBeInTheDocument()
+    })
+  })
 })

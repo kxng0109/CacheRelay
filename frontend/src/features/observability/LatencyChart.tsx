@@ -76,6 +76,8 @@ export default function LatencyChart({ pollMs = POLL_MS }: LatencyChartProps): R
 
   useEffect(() => {
     const container = containerRef.current
+    // The div mounts before effects run; the container is never null here.
+    /* v8 ignore if -- @preserve */
     if (container === null) return
     const chart = echarts.init(container)
     chartRef.current = chart
@@ -92,6 +94,8 @@ export default function LatencyChart({ pollMs = POLL_MS }: LatencyChartProps): R
 
   useEffect(() => {
     const chart = chartRef.current
+    // The mount effect assigns the instance synchronously, so updates always find it.
+    /* v8 ignore if -- @preserve */
     if (chart === null) return
     chart.setTheme(dark ? 'dark' : 'default')
     const option: EChartsOption = {
@@ -122,6 +126,8 @@ export default function LatencyChart({ pollMs = POLL_MS }: LatencyChartProps): R
     chart.setOption(option, { notMerge: true })
   }, [points, dark])
 
+  // Points are appended whole and arrays have no holes; the element is never undefined here.
+  /* v8 ignore next -- @preserve */
   const latest: LatencyPoint | null = points.length > 0 ? (points[points.length - 1] ?? null) : null
 
   return (

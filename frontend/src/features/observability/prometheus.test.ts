@@ -37,6 +37,7 @@ describe('parsePrometheusHistogram', () => {
   it('returns null without v1 bucket series', () => {
     expect(parsePrometheusHistogram('# HELP x\nelephant 5\n# EOF')).toBeNull()
     expect(parsePrometheusHistogram('')).toBeNull()
+    expect(parsePrometheusHistogram('cacherelay_tokens_total{provider="x"} 5\n')).toBeNull()
   })
 
   it('skips braceless lines and lines without a value separator', () => {

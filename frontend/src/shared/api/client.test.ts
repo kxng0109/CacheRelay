@@ -121,6 +121,15 @@ describe('parseRateLimit', () => {
     const h = new Headers({ 'X-RateLimit-Remaining-RPM': '1; DROP' })
     expect(parseRateLimit(h).remaining).toBeNull()
   })
+
+  it('rejects a non-numeric retry-after without failing', () => {
+    const h = new Headers({
+      'X-RateLimit-Limit-RPM': '60',
+      'X-RateLimit-Remaining-RPM': '0',
+      'Retry-After': 'soon',
+    })
+    expect(parseRateLimit(h).retryAfter).toBeNull()
+  })
 })
 
 describe('selectPrimaryDimension', () => {
@@ -206,6 +215,14 @@ describe('safeErrorMessage', () => {
       instance: '/v1/chat/completions',
     })
     expect(safeErrorMessage(400, body)).toBe('Model xyz is unknown.')
+  })
+
+  it('maps plain-text 403 bodies without parsing', () => {
+    expect(safeErrorMessage(403, 'Forbidden')).toContain('gateway policy')
+  })
+
+  it('maps unlisted statuses to their HTTP code', () => {
+    expect(safeErrorMessage(418, '')).toContain('HTTP 418')
   })
 })
 
@@ -332,6 +349,29 @@ describe('GatewayClient transport', () => {
     expect(err).toBeInstanceOf(Error)
     expect((err as Error).message).toContain('Network unreachable')
     expect((err as Error).cause).toBe(cause)
+  })
+
+  it('recovers when the error body itself fails to read', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(ctrl) {
+                ctrl.error(new Error('truncated'))
+              },
+            }),
+            { status: 503 },
+          ),
+        ),
+      ),
+    )
+    const err = await new GatewayClient({ base: '', token: 'gw-test' })
+      .models()
+      .catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).message).toContain('temporarily unavailable')
   })
 
   it('propagates aborts untouched', async () => {

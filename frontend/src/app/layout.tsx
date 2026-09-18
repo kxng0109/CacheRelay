@@ -21,6 +21,20 @@ const NAV = [
 ] as const
 
 /**
+ * Decides whether the primary nav belongs in the tab order.
+ *
+ * @remarks Pure overflow math, extracted for unit tests: the nav is
+ * keyboard-focusable only while its content actually overflows.
+ *
+ * @param scrollWidth - Full scrollable width of the nav.
+ * @param clientWidth - Visible width of the nav.
+ * @returns `0` when overflowing, `-1` otherwise.
+ */
+export function computeNavTabIndex(scrollWidth: number, clientWidth: number): -1 | 0 {
+  return scrollWidth > clientWidth ? 0 : -1
+}
+
+/**
  * Application shell: skip link, product header, primary nav, content outlet.
  *
  * @remarks
@@ -63,12 +77,14 @@ export function Layout(): React.JSX.Element {
   // the tab order (`-1`) unless content actually overflows — no focus-order
   // bloat on wide screens. The landmark keeps its accessible name.
   const navRef = useRef<HTMLElement | null>(null)
-  const [navTabIndex, setNavTabIndex] = useState(-1)
+  const [navTabIndex, setNavTabIndex] = useState<-1 | 0>(-1)
   useEffect(() => {
     const nav = navRef.current
+    // React attaches refs before effects run, so the nav is never null here.
+    /* v8 ignore if -- @preserve */
     if (nav === null) return
     const update = (): void => {
-      setNavTabIndex(nav.scrollWidth > nav.clientWidth ? 0 : -1)
+      setNavTabIndex(computeNavTabIndex(nav.scrollWidth, nav.clientWidth))
     }
     update()
     const observer = new ResizeObserver(update)
