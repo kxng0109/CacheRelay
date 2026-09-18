@@ -64,6 +64,26 @@ public class GraphEmailSender extends BaseSender implements ChannelSender {
 
 	@Override
 	public ChannelResult send(NotificationPreference preference, NotificationPayload payload) {
+		return postMessage(preference.getTarget(),
+				"CacheRelay alert [" + payload.severity() + "] " + payload.detector(),
+				payload.toText());
+	}
+
+	/**
+	 * Sends a free-form message (invite links, operator notices) through the same Graph
+	 * channel. Returns {@code SKIPPED} when the channel is unconfigured, so callers can
+	 * fall back to returning the content directly.
+	 *
+	 * @param to      recipient address
+	 * @param subject message subject
+	 * @param body    plain-text body
+	 * @return delivery outcome
+	 */
+	public ChannelResult sendDirect(String to, String subject, String body) {
+		return postMessage(to, subject, body);
+	}
+
+	private ChannelResult postMessage(String to, String subject, String body) {
 		if (graphProperties.tenantId().isBlank() || graphProperties.clientId().isBlank()
 				|| graphProperties.mailbox().isBlank()) {
 			return ChannelResult.SKIPPED;
@@ -80,10 +100,10 @@ public class GraphEmailSender extends BaseSender implements ChannelSender {
 		String target = graphBase + "/v1.0/users/" + user + "/sendMail";
 		Map<String, Object> message = Map.of(
 				"message", Map.of(
-						"subject", "CacheRelay alert [" + payload.severity() + "] " + payload.detector(),
-						"body", Map.of("contentType", "Text", "content", payload.toText()),
+						"subject", subject,
+						"body", Map.of("contentType", "Text", "content", body),
 						"toRecipients", List.of(Map.of("emailAddress",
-								Map.of("address", preference.getTarget())))),
+								Map.of("address", to)))),
 				"saveToSentItems", false);
 		String json;
 		try {

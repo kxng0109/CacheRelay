@@ -10,7 +10,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @ConfigurationPropertiesScan
 @EnableScheduling
 @EnableJpaRepositories(basePackages = {"io.github.kxng0109.cacherelay.ledger",
-		"io.github.kxng0109.cacherelay.budget", "io.github.kxng0109.cacherelay.replay"})
+		"io.github.kxng0109.cacherelay.budget", "io.github.kxng0109.cacherelay.replay",
+		"io.github.kxng0109.cacherelay.auth"})
 public class CacheRelayApplication {
 
 	static void main(String[] args) {

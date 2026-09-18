@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Hybrid human login + all-IdP SSO (V15):** short-lived access JWTs (SPA memory only, 10m / 5m admin)
+  + rotating opaque refresh tokens in `__Host-` `httpOnly` `Secure` `SameSite=Lax` cookies (14d / 7d admin idle,
+  30d / 7d admin absolute ceiling) with single-flight rotation and whole-family revocation on replay; single-use
+  invites (atomic consume, 410 after use, email via the Graph channel when configured plus always a copyable link)
+  with zero-user bootstrap of the first admin; local username+password (BCrypt, failure-counted lockout) plus
+  Authorization Code + PKCE SSO for Google, GitHub, Entra ID, Azure B2C, Okta, and generic OIDC with `(sub, iss)`
+  shadow accounts; stealth-404 on every admin denial; strict per-response CSP nonces; severity-filterable audit
+  ledger with keyed-hash pseudonyms and retention janitor. `POST /v1/auth/login|redeem|refresh|logout`,
+  `GET /v1/auth/me`, `POST /v1/admin/invites`. Full `verify` 1,794 green, branch ≥ 0.95.
 - **Spend budgets + chargeback (V7):** `budget_limits` + append-only `budget_audit` tables, atomic single-RTT Lua
   gate (`budget_limit.lua`) across KEY → TEAM → ORG with rolling-60s + UTC-month windows in micro-dollars,
   check-before-increment, first-denied-wins, TTL rollover, fail-closed everywhere; full admin CRUD plus live

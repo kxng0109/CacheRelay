@@ -47,8 +47,32 @@ spring:
     # Automatic Flyway is disabled; DatabaseMigrator runs the same migrations
     # non-fatally and retries until the database is reachable.
     enabled: false
+  # Human-auth SSO is registered programmatically (see SsoRegistrationConfig): every
+  # IdP below activates the moment its SSO_* client id (and secret) is supplied, and
+  # blank stays inert. Static spring.security.oauth2.client blocks are deliberately
+  # absent — Boot fails startup on blank client-ids, so registrations are built only
+  # for configured providers. Supported day one: google, github, azure (Entra ID),
+  # azure-b2c, okta, generic (explicit endpoint URIs, no boot-time discovery calls).
 
 gateway:
+  auth:
+    # Human authentication lifetimes: relaxed defaults, strict admin counterparts.
+    access-ttl: ${GATEWAY_AUTH_ACCESS_TTL:10m}
+    admin-access-ttl: ${GATEWAY_AUTH_ADMIN_ACCESS_TTL:5m}
+    refresh-ttl: ${GATEWAY_AUTH_REFRESH_TTL:14d}
+    admin-refresh-ttl: ${GATEWAY_AUTH_ADMIN_REFRESH_TTL:7d}
+    absolute-max-ttl: ${GATEWAY_AUTH_ABSOLUTE_MAX_TTL:30d}
+    admin-absolute-max-ttl: ${GATEWAY_AUTH_ADMIN_ABSOLUTE_MAX_TTL:7d}
+    invite-ttl: ${GATEWAY_AUTH_INVITE_TTL:48h}
+    cookie-name: ${GATEWAY_AUTH_COOKIE_NAME:__Host-refresh}
+    cookie-same-site: ${GATEWAY_AUTH_COOKIE_SAMESITE:Lax}
+    jwt-issuer: ${GATEWAY_AUTH_JWT_ISSUER:cacherelay}
+    # 32+ bytes; blank mints an ephemeral secret (single-instance safe, restart-invalid).
+    jwt-secret: ${GATEWAY_AUTH_JWT_SECRET:}
+    audit-retention-days: ${GATEWAY_AUTH_AUDIT_RETENTION_DAYS:180}
+    login-max-attempts: ${GATEWAY_AUTH_LOGIN_MAX_ATTEMPTS:5}
+    login-attempt-window: ${GATEWAY_AUTH_LOGIN_ATTEMPT_WINDOW:15m}
+    login-lockout: ${GATEWAY_AUTH_LOGIN_LOCKOUT:30m}
   providers:
     openai:
       type: OPENAI

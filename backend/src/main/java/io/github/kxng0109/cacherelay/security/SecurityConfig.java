@@ -2,6 +2,8 @@ package io.github.kxng0109.cacherelay.security;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.config.ObjectPostProcessor;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -9,7 +11,10 @@ import org.springframework.security.config.annotation.web.configurers.AbstractHt
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.header.HeaderWriterFilter;
+import tools.jackson.databind.ObjectMapper;
 
+import io.github.kxng0109.cacherelay.auth.SsoSuccessHandler;
+import io.github.kxng0109.cacherelay.auth.StealthAccessDeniedHandler;
 import io.github.kxng0109.cacherelay.web.SpaFallbackController;
 
 /**
@@ -41,11 +46,15 @@ import io.github.kxng0109.cacherelay.web.SpaFallbackController;
  *   <li><b>Public observability/docs:</b> {@code /actuator/health},
  *       {@code /actuator/prometheus}, {@code /v3/api-docs}, {@code /swagger-ui.html}
  *       (no secrets; load-balancer and scrape access only).</li>
- *   <li><b>Delegated auth:</b> {@code /v1/chat/completions} and
- *       {@code /v1/embeddings} (authenticated, rate-limited, and budget-gated by
- *       {@code KeyAuthFilter}); {@code /v1/admin/**} (master-key authenticated by
- *       {@code AdminAuthFilter}); {@code /v1/mcp/**} (virtual-key authenticated inside
- *       {@code McpStreamableHttpController} with per-tool RBAC).</li>
+  *   <li><b>Delegated auth:</b> {@code /v1/chat/completions} and
+  *       {@code /v1/embeddings} (authenticated, rate-limited, and budget-gated by
+  *       {@code KeyAuthFilter}); {@code /v1/admin/**} (master-key or admin-JWT
+  *       authenticated by {@code AdminAuthFilter}, stealth-404 on denial);
+  *       {@code /v1/mcp/**} (virtual-key authenticated inside
+  *       {@code McpStreamableHttpController} with per-tool RBAC).</li>
+  *   <li><b>Human authentication:</b> {@code /v1/auth/**} (login, redeem, identity;
+  *       refresh rotation lives in its own filter) and Spring's OAuth2 login/code
+  *       endpoints (SSO entry points).</li>
  *   <li><b>Operator SPA shell:</b> {@code /}, {@code /index.html}, {@code /assets/**},
  *       {@code /error}, and {@code SpaFallbackController#SPA_PATH_PATTERN} (extensionless
  *       non-API routes forward to the shell; reserved first segments stay denied).</li>
@@ -76,11 +85,36 @@ import io.github.kxng0109.cacherelay.web.SpaFallbackController;
 public class SecurityConfig {
 
 	/**
+	 * SSO chain: the OAuth2 Authorization Code + PKCE dance needs a session for the
+	 * authorization request, so these endpoints run stateful while the API chain below
+	 * stays stateless. Success mints a CacheRelay session (refresh cookie) and redirects
+	 * to the SPA with the access token in the URL fragment.
+	 *
+	 * @param http         security builder
+	 * @param successHandler SSO completion handler
+	 * @return the SSO chain (evaluated before the fail-closed chain)
+	 */
+	@Bean
+	@Order(1)
+	@ConditionalOnExpression("'${SSO_GOOGLE_CLIENT_ID:}${SSO_GITHUB_CLIENT_ID:}${SSO_AZURE_CLIENT_ID:}${SSO_AZURE_B2C_CLIENT_ID:}${SSO_OKTA_CLIENT_ID:}${SSO_GENERIC_CLIENT_ID:}'.length() > 0")
+	SecurityFilterChain ssoFilterChain(HttpSecurity http, SsoSuccessHandler successHandler)
+			throws Exception {
+		http
+				.securityMatcher("/oauth2/**", "/login/oauth2/**")
+				.authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
+				.oauth2Login(oauth2 -> oauth2.successHandler(successHandler))
+				.logout(logout -> logout.logoutSuccessUrl("/"))
+				.csrf(AbstractHttpConfigurer::disable)
+				.sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED));
+		return http.build();
+	}
+
+	/**
 	 * Single fail-closed filter chain. {@code anyRequest().denyAll()} is the terminal rule: every route not listed
 	 * above is refused before reaching any controller.
 	 */
 	@Bean
-	SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+	SecurityFilterChain filterChain(HttpSecurity http, ObjectMapper objectMapper) throws Exception {
 		http
 				.authorizeHttpRequests(auth -> auth
 						.requestMatchers(
@@ -96,6 +130,11 @@ public class SecurityConfig {
 								"/v1/mcp/**"
 						).permitAll()
 						.requestMatchers(
+								"/v1/auth/**",
+								"/oauth2/**",
+								"/login/oauth2/**"
+						).permitAll()
+						.requestMatchers(
 								"/",
 								"/index.html",
 								"/assets/**",
@@ -104,6 +143,8 @@ public class SecurityConfig {
 						).permitAll()
 						.anyRequest().denyAll()
 				)
+				.exceptionHandling(handling -> handling
+						.accessDeniedHandler(new StealthAccessDeniedHandler(objectMapper)))
 				.csrf(AbstractHttpConfigurer::disable)
 				.sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 				.headers(headers -> headers.withObjectPostProcessor(new ObjectPostProcessor<HeaderWriterFilter>() {

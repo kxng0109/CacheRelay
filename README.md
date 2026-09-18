@@ -593,6 +593,26 @@ Administrative endpoints require the configured master key via `Authorization: B
 - **`GET /v1/admin/notifications?scope=...`**: Lists all subscriptions for one alert scope.
 - **`DELETE /v1/admin/notifications/{id}`**: Opts out (unknown ids are no-ops).
 
+### Human Authentication (`/v1/auth/**` + SSO)
+
+Humans log in with local username+password or any configured SSO provider; API keys stay machine-only:
+
+- **`POST /v1/auth/login`**: Local login → short-lived access JWT (memory only) + `httpOnly` refresh cookie.
+- **`POST /v1/auth/refresh`**: Rotates the refresh family (requires the `X-CacheRelay-Refresh: 1` CSRF header);
+  replaying a rotated token revokes the whole family. Returns a fresh access token.
+- **`POST /v1/auth/logout`**: Revokes every session of the account and clears the cookie.
+- **`GET /v1/auth/me`**: Current session identity.
+- **`POST /v1/auth/redeem`**: Consumes a single-use invite into an account (410 when consumed or expired) and
+  logs it in. The first-ever redemption bootstraps the initial admin.
+- **`POST /v1/admin/invites`**: Creates an invite (master key or admin session). Always returns a copyable
+  redemption link; emails it too when an address is given and the mail channel is configured.
+- **SSO**: Google, GitHub, Entra ID, Azure B2C, Okta, and generic OIDC via Authorization Code + PKCE. Providers
+  activate from `SSO_*` env credentials; identities link to shadow accounts by `(sub, iss)`, never email.
+  Success sets the refresh cookie and redirects to the SPA with the access token in the URL fragment.
+- **Strict admin posture**: 5-minute admin access tokens, 7-day admin refresh ceilings, stealth-404 on every
+  admin denial (probing cannot confirm the control plane exists), mandatory audit on every admin mutation, and
+  per-response CSP nonces. No token ever touches `localStorage`.
+
 Every proxied request passes a single atomic Lua spend gate (`budget_limit.lua`, V7 `budget_limits` + `budget_audit`
 tables, V8 append-only trigger) across KEY → TEAM → ORG levels: check-before-increment (denials consume nothing),
 first-denied level wins, implicit month rollover via TTL (no reset job to race), uniform fail-closed on Redis/script/
@@ -659,6 +679,8 @@ tracking, syntax highlighting, and live Try-It-Out execution:
   default-denied. Local UI development uses a `dev`-profile-only allow-list for `http://localhost:5173`.
 - Operator SPA shell (`/`, `/index.html`, `/assets/**` + extensionless deep links) is served with immutable
   caching on versioned assets and `no-store` on the shell; unknown `/v1/**` routes still refuse with 403.
+- Human sessions are hybrid: short-lived Bearer JWTs plus rotating `__Host-` refresh cookies with reuse
+  revocation; admin paths deny with stealth-404 and audit every mutation.
 
 ## Testing
 

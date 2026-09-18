@@ -5,7 +5,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import tools.jackson.databind.ObjectMapper;
 
+import io.github.kxng0109.cacherelay.auth.AuthAuditService;
+import io.github.kxng0109.cacherelay.auth.JwtService;
+import io.github.kxng0109.cacherelay.auth.UserAccountRepository;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 @DisplayName("AdminFilterConfig")
 class AdminFilterConfigTest {
@@ -18,7 +23,10 @@ class AdminFilterConfigTest {
 
 		FilterRegistrationBean<AdminAuthFilter> registration = config.adminAuthFilterRegistration(
 				"secret-key",
-				objectMapper
+				objectMapper,
+				mock(JwtService.class),
+				mock(UserAccountRepository.class),
+				mock(AuthAuditService.class)
 		);
 
 		assertThat(registration.getOrder()).isEqualTo(1);
