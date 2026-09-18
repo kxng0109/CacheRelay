@@ -99,8 +99,11 @@ jobs:
         run: |
           if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
             npx --no-install commitlint --last --verbose
+          elif git cat-file -e "${{ github.event.before }}" 2>/dev/null; then
+            npx --no-install commitlint --from ${{ github.event.before }} --to ${{ github.sha }} --verbose
           else
-            npx --no-install commitlint --from ${{ github.event.before }} --to ${{ github.event.after }} --verbose
+            echo "::warning::push-base missing after a history rewrite; linting HEAD only"
+            npx --no-install commitlint --last --verbose
           fi
 
   build:
