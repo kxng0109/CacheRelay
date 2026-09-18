@@ -2,6 +2,9 @@ import { Suspense, lazy } from 'react'
 import { createBrowserRouter } from 'react-router'
 import { Layout } from './layout.js'
 
+const OverviewPage = lazy(() =>
+  import('../features/overview/page.js').then((m) => ({ default: m.OverviewPage })),
+)
 const PlaygroundPage = lazy(() =>
   import('../features/playground/page.js').then((m) => ({ default: m.PlaygroundPage })),
 )
@@ -48,7 +51,8 @@ export const router = createBrowserRouter([
   {
     element: <Layout />,
     children: [
-      { index: true, element: suspend(<PlaygroundPage />) },
+      { index: true, element: suspend(<OverviewPage />) },
+      { path: 'playground', element: suspend(<PlaygroundPage />) },
       { path: 'circuits', element: suspend(<CircuitsPage />) },
       { path: 'keys', element: suspend(<KeysPage />) },
       { path: 'ledger', element: suspend(<LedgerPage />) },

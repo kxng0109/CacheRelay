@@ -55,6 +55,7 @@ describe('CommandPalette', () => {
   it('navigates through every section action', async () => {
     const user = userEvent.setup()
     const labels = [
+      'Go to Overview',
       'Go to Playground',
       'Go to Circuits',
       'Go to Keys',
@@ -62,6 +63,7 @@ describe('CommandPalette', () => {
       'Go to Cache and budgets',
       'Go to Embeddings',
       'Go to Approvals',
+      'Go to MCP',
       'Go to Observability',
     ]
     renderApp(<CommandPalette />)

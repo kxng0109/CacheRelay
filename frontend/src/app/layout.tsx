@@ -1,41 +1,96 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import {
+  Activity,
+  BookOpen,
+  Brain,
+  ChevronsLeft,
+  ChevronsRight,
+  Database,
+  FlaskConical,
+  KeyRound,
+  LayoutDashboard,
+  Menu,
+  Moon,
+  Plug,
+  ShieldCheck,
+  Sun,
+  Zap,
+} from 'lucide-react'
 import { NavLink, Outlet, useLocation } from 'react-router'
 import { useShallow } from 'zustand/react/shallow'
-import { parseRateLimit, resolveApiBase, setHeadersReporter } from '../shared/api/client.js'
+import {
+  GatewayClient,
+  parseRateLimit,
+  resolveApiBase,
+  setHeadersReporter,
+} from '../shared/api/client.js'
 import { CommandPalette } from '../shared/components/CommandPalette.js'
 import { RateLimitHeaders } from '../shared/components/RateLimitHeaders.js'
 import { useAuthStore } from '../shared/auth/store.js'
 import { useRateLimitStore } from '../shared/ratelimit/store.js'
 import { useUiStore } from '../shared/store.js'
+import type { LucideIcon } from 'lucide-react'
 
-const NAV = [
-  { to: '/', label: 'Playground' },
-  { to: '/circuits', label: 'Circuits' },
-  { to: '/keys', label: 'Keys' },
-  { to: '/ledger', label: 'Ledger' },
-  { to: '/cache', label: 'Cache & budgets' },
-  { to: '/embeddings', label: 'Embeddings' },
-  { to: '/approvals', label: 'Approvals' },
-  { to: '/mcp', label: 'MCP' },
-  { to: '/observability', label: 'Observability' },
-] as const
+interface NavItem {
+  to: string
+  label: string
+  icon: LucideIcon
+  badge?: (() => React.JSX.Element | null) | undefined
+}
+
+interface NavGroup {
+  label: string | null
+  items: NavItem[]
+}
+
+/** Storage key for the sidebar preference. Presentation state only. */
+const SIDEBAR_KEY = 'cacherelay.sidebar'
+
+type SidebarState = 'open' | 'closed'
 
 /**
- * Decides whether the primary nav belongs in the tab order.
+ * Validates an untrusted stored value against the sidebar allow-list.
  *
- * @remarks Pure overflow math, extracted for unit tests: the nav is
- * keyboard-focusable only while its content actually overflows.
+ * @remarks Same doctrine as the theme parser: only exact literals pass;
+ * everything else falls back to open. Never reaches markup or auth paths.
  *
- * @param scrollWidth - Full scrollable width of the nav.
- * @param clientWidth - Visible width of the nav.
- * @returns `0` when overflowing, `-1` otherwise.
+ * @param raw - Untrusted value from storage.
+ * @returns The sidebar state, or null when the input is not exactly one.
  */
-export function computeNavTabIndex(scrollWidth: number, clientWidth: number): -1 | 0 {
-  return scrollWidth > clientWidth ? 0 : -1
+export function parseSidebar(raw: unknown): SidebarState | null {
+  if (raw === 'open' || raw === 'closed') return raw
+  return null
 }
 
 /**
- * Application shell: skip link, product header, primary nav, content outlet.
+ * Reads the persisted sidebar state without ever throwing.
+ *
+ * @returns Persisted state, or open when missing, invalid, or unreadable.
+ */
+function readStoredSidebar(): SidebarState {
+  try {
+    return parseSidebar(window.localStorage.getItem(SIDEBAR_KEY)) ?? 'open'
+  } catch {
+    return 'open'
+  }
+}
+
+/**
+ * Persists the sidebar state without ever throwing.
+ *
+ * @param state - State to persist.
+ */
+function writeStoredSidebar(state: SidebarState): void {
+  try {
+    window.localStorage.setItem(SIDEBAR_KEY, state)
+  } catch {
+    // Private mode: session-only preference. Never a crash.
+  }
+}
+
+/**
+ * Application shell: sidebar navigation, session strip, content outlet.
  *
  * @remarks
  * The shell owns the rate-limit strip: it registers the process-wide headers
@@ -44,7 +99,9 @@ export function computeNavTabIndex(scrollWidth: number, clientWidth: number): -1
  * snapshot below the header. The strip stays hidden until a credential is
  * present and a gateway response has been observed; the snapshot clears
  * whenever the credential identity changes (key switch or sign-out) since
- * quota is identity-bound.
+ * quota is identity-bound. Navigation is a grouped sidebar (Overview pinned,
+ * Run/Guard/Inspect groups); the approvals badge shows the live pending
+ * count only while an admin key is present.
  *
  * @returns The shell layout wrapping every route.
  */
@@ -57,7 +114,8 @@ export function Layout(): React.JSX.Element {
   )
   const snapshot = useRateLimitStore((s) => s.snapshot)
   const { pathname } = useLocation()
-  const routeLabel = NAV.find((item) => item.to === pathname)?.label ?? pathname
+  const [collapsed, setCollapsed] = useState<boolean>(() => readStoredSidebar() === 'closed')
+  const [drawer, setDrawer] = useState(false)
   const base = resolveApiBase()
   const authLabel =
     gatewayKey !== null && adminKey !== null
@@ -67,6 +125,16 @@ export function Layout(): React.JSX.Element {
         : adminKey !== null
           ? 'admin'
           : 'locked'
+
+  const pending = useQuery({
+    queryKey: ['approvals-badge'],
+    queryFn: ({ signal }) =>
+      new GatewayClient({ token: adminKey ?? '', adminKey: adminKey ?? '' }).hitlPending({
+        signal,
+      }),
+    enabled: adminKey !== null,
+  })
+  const pendingCount = pending.data?.approvals.length ?? 0
 
   useEffect(() => {
     setHeadersReporter((headers, code) => {
@@ -81,108 +149,206 @@ export function Layout(): React.JSX.Element {
     useRateLimitStore.getState().clear()
   }, [gatewayKey, adminKey])
 
-  // Keyboard scrolling for the primary nav: the list overflows horizontally
-  // on narrow viewports, and WebKit does not scroll overflow regions by
-  // keyboard unless the region itself is focusable (see axe
-  // `scrollable-region-focusable`, WCAG 2.2 SC 2.1.1). The nav stays out of
-  // the tab order (`-1`) unless content actually overflows — no focus-order
-  // bloat on wide screens. The landmark keeps its accessible name.
-  const navRef = useRef<HTMLElement | null>(null)
-  const [navTabIndex, setNavTabIndex] = useState<-1 | 0>(-1)
-  useEffect(() => {
-    const nav = navRef.current
-    // React attaches refs before effects run, so the nav is never null here.
-    /* v8 ignore if -- @preserve */
-    if (nav === null) return
-    const update = (): void => {
-      setNavTabIndex(computeNavTabIndex(nav.scrollWidth, nav.clientWidth))
-    }
-    update()
-    const observer = new ResizeObserver(update)
-    observer.observe(nav)
-    window.addEventListener('resize', update)
-    return () => {
-      window.removeEventListener('resize', update)
-      observer.disconnect()
-    }
-  }, [])
+  const toggleCollapsed = (): void => {
+    setCollapsed((c) => {
+      writeStoredSidebar(c ? 'open' : 'closed')
+      return !c
+    })
+  }
+
+  const groups: NavGroup[] = [
+    { label: null, items: [{ to: '/', label: 'Overview', icon: LayoutDashboard }] },
+    {
+      label: 'Run',
+      items: [
+        { to: '/playground', label: 'Playground', icon: FlaskConical },
+        { to: '/embeddings', label: 'Embeddings', icon: Brain },
+      ],
+    },
+    {
+      label: 'Guard',
+      items: [
+        { to: '/circuits', label: 'Circuits', icon: Zap },
+        {
+          to: '/approvals',
+          label: 'Approvals',
+          icon: ShieldCheck,
+          badge:
+            pendingCount > 0
+              ? () => (
+                  <span
+                    aria-label={`${String(pendingCount)} pending approvals`}
+                    className="rounded-full bg-warn/20 px-2 py-0.5 font-mono text-[11px] text-warn tnum dark:text-warn-soft"
+                  >
+                    {pendingCount}
+                  </span>
+                )
+              : undefined,
+        },
+        { to: '/cache', label: 'Cache & budgets', icon: Database },
+        { to: '/keys', label: 'Keys', icon: KeyRound },
+      ],
+    },
+    {
+      label: 'Inspect',
+      items: [
+        { to: '/ledger', label: 'Ledger', icon: BookOpen },
+        { to: '/mcp', label: 'MCP', icon: Plug },
+        { to: '/observability', label: 'Observability', icon: Activity },
+      ],
+    },
+  ]
+
+  const routeLabel =
+    pathname === '/'
+      ? 'Overview'
+      : (groups.flatMap((g) => g.items).find((item) => item.to === pathname)?.label ?? pathname)
+
+  const sidebarBody = (
+    <div className="flex h-full flex-col">
+      <div className="flex items-center gap-2 p-4">
+        <span aria-hidden="true" className="inline-block size-3 shrink-0 rounded-sm bg-ember" />
+        {collapsed ? null : (
+          <p className="font-display text-lg font-medium tracking-tight">CacheRelay</p>
+        )}
+        <span className="flex-1" />
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          className="hidden rounded-md p-2 text-ink-soft lg:block dark:text-parchment-soft"
+        >
+          {collapsed ? <ChevronsRight size={16} /> : <ChevronsLeft size={16} />}
+        </button>
+      </div>
+      <nav aria-label="Primary" className="flex-1 space-y-4 overflow-y-auto px-2">
+        {groups.map((group) => (
+          <div key={group.label ?? 'home'}>
+            {group.label === null || collapsed ? null : (
+              <p className="px-2 pb-1 font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+                {group.label}
+              </p>
+            )}
+            <ul className="space-y-0.5">
+              {group.items.map((item) => {
+                const Badge = item.badge
+                const showBadge = !collapsed && Badge !== undefined
+                return (
+                  <li key={item.to}>
+                    <NavLink
+                      to={item.to}
+                      onClick={() => {
+                        setDrawer(false)
+                      }}
+                      title={collapsed ? item.label : undefined}
+                      className={({ isActive }) =>
+                        `flex items-center gap-2 rounded-md px-2 py-2 text-xs whitespace-nowrap ${
+                          isActive
+                            ? 'bg-ink/[0.06] font-medium text-ink dark:bg-parchment/[0.08] dark:text-parchment'
+                            : 'text-ink-soft hover:text-ink dark:text-parchment-soft dark:hover:text-parchment'
+                        }`
+                      }
+                    >
+                      <item.icon size={16} aria-hidden="true" className="shrink-0" />
+                      {collapsed ? null : <span>{item.label}</span>}
+                      {showBadge ? <span className="flex-1" /> : null}
+                      {showBadge ? <Badge /> : null}
+                    </NavLink>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        ))}
+      </nav>
+      <div className="space-y-2 border-t border-ink/10 p-4 dark:border-parchment/10">
+        <button
+          type="button"
+          onClick={toggleDark}
+          className="flex w-full items-center gap-2 rounded-md p-2 text-xs"
+        >
+          {dark ? <Sun size={16} aria-hidden="true" /> : <Moon size={16} aria-hidden="true" />}
+          {collapsed ? null : <span>{dark ? 'Light theme' : 'Dark theme'}</span>}
+        </button>
+      </div>
+    </div>
+  )
+
   return (
-    <div className="flex min-h-screen flex-col bg-paper text-ink dark:bg-night dark:text-parchment">
+    <div className="min-h-screen bg-paper text-ink lg:flex dark:bg-night dark:text-parchment">
       <a href="#main" className="skip-link">
         Skip to content
       </a>
-      <header className="border-b border-ink/10 dark:border-parchment/10">
-        <div className="border-b border-ink/10 dark:border-parchment/10">
+      {drawer ? (
+        <button
+          type="button"
+          aria-label="Close navigation"
+          onClick={() => {
+            setDrawer(false)
+          }}
+          className="fixed inset-0 z-40 bg-night/60 lg:hidden"
+        />
+      ) : null}
+      <aside
+        aria-label="Console navigation"
+        className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-ink/10 bg-paper transition-transform dark:border-parchment/10 dark:bg-night ${
+          drawer ? 'translate-x-0' : '-translate-x-full'
+        } lg:sticky lg:top-0 lg:z-auto lg:h-screen lg:shrink-0 lg:translate-x-0 ${
+          collapsed ? 'lg:w-16' : 'lg:w-64'
+        }`}
+      >
+        {sidebarBody}
+      </aside>
+      <div className="flex min-h-screen min-w-0 flex-1 flex-col">
+        <header className="border-b border-ink/10 dark:border-parchment/10">
+          <div className="border-b border-ink/10 dark:border-parchment/10">
+            <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-1">
+              <p className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+                cacherelay · {base || 'same-origin'}
+              </p>
+              <p className="font-mono text-[11px] text-ink-soft tnum dark:text-parchment-soft">
+                auth: {authLabel}
+              </p>
+            </div>
+          </div>
+          <div className="mx-auto flex max-w-6xl items-center gap-2 px-4 py-2">
+            <button
+              type="button"
+              onClick={() => {
+                setDrawer(true)
+              }}
+              aria-label="Open navigation"
+              className="rounded-md p-2 lg:hidden"
+            >
+              <Menu size={18} aria-hidden="true" />
+            </button>
+            <p className="font-mono text-[11px] text-ink-soft lg:hidden dark:text-parchment-soft">
+              {routeLabel}
+            </p>
+            <span className="flex-1" />
+            <CommandPalette />
+          </div>
+          <p className="sr-only">Enterprise AI gateway console</p>
+        </header>
+        {snapshot !== null && (gatewayKey !== null || adminKey !== null) ? (
+          <div className="mx-auto w-full max-w-6xl px-4 pt-4">
+            <RateLimitHeaders snapshot={snapshot} />
+          </div>
+        ) : null}
+        <main id="main" className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
+          <Outlet />
+        </main>
+        <footer className="border-t border-ink/10 dark:border-parchment/10">
           <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-1">
             <p className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
-              cacherelay · {base || 'same-origin'}
+              route: {routeLabel}
             </p>
-            <p className="font-mono text-[11px] text-ink-soft tnum dark:text-parchment-soft">
-              auth: {authLabel}
+            <p className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+              theme: {dark ? 'dark' : 'light'}
             </p>
           </div>
-        </div>
-        <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3">
-          <span aria-hidden="true" className="inline-block size-3 rounded-sm bg-ember" />
-          <p className="font-display text-lg font-medium tracking-tight">CacheRelay</p>
-          <p className="hidden text-xs text-ink-soft sm:block dark:text-parchment-soft">
-            Enterprise AI gateway console
-          </p>
-          <span className="flex-1" />
-          <CommandPalette />
-          <button
-            type="button"
-            onClick={toggleDark}
-            aria-pressed={dark}
-            className="rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
-          >
-            {dark ? 'Light theme' : 'Dark theme'}
-          </button>
-        </div>
-        <nav
-          ref={navRef}
-          aria-label="Primary"
-          tabIndex={navTabIndex}
-          className="mx-auto max-w-6xl overflow-x-auto px-4 pb-3"
-        >
-          <ul className="flex gap-1">
-            {NAV.map((item) => (
-              <li key={item.to}>
-                <NavLink
-                  to={item.to}
-                  className={({ isActive }) =>
-                    `rounded-md px-3 py-2 text-xs whitespace-nowrap text-ink-soft underline-offset-8 hover:text-ink dark:text-parchment-soft dark:hover:text-parchment ${
-                      isActive
-                        ? 'font-medium text-ink underline decoration-ember decoration-2 dark:text-parchment'
-                        : ''
-                    }`
-                  }
-                >
-                  {item.label}
-                </NavLink>
-              </li>
-            ))}
-          </ul>
-        </nav>
-      </header>
-      {snapshot !== null && (gatewayKey !== null || adminKey !== null) ? (
-        <div className="mx-auto max-w-6xl px-4 pt-4">
-          <RateLimitHeaders snapshot={snapshot} />
-        </div>
-      ) : null}
-      <main id="main" className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
-        <Outlet />
-      </main>
-      <footer className="border-t border-ink/10 dark:border-parchment/10">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-1">
-          <p className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
-            route: {routeLabel}
-          </p>
-          <p className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
-            theme: {dark ? 'dark' : 'light'}
-          </p>
-        </div>
-      </footer>
+        </footer>
+      </div>
     </div>
   )
 }

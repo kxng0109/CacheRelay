@@ -7,10 +7,11 @@ import { expect, test } from '@playwright/test'
  */
 test('shell loads and every screen renders its idle state', async ({ page }) => {
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'Playground' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Skip to content' })).toBeVisible()
 
   const screens: { link: string; heading: string }[] = [
+    { link: 'Playground', heading: 'Playground' },
     { link: 'Circuits', heading: 'Circuits' },
     { link: 'Keys', heading: 'Keys' },
     { link: 'Ledger', heading: 'Ledger' },

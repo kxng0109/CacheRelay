@@ -5,6 +5,7 @@ import { router } from './app/router.js'
 import { server } from './test/setup.js'
 
 const LEGS: [string, string][] = [
+  ['/playground', 'Playground'],
   ['/circuits', 'Circuits'],
   ['/keys', 'Keys'],
   ['/ledger', 'Ledger'],

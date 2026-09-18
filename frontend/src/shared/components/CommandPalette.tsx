@@ -43,10 +43,17 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
 
   const nav: PaletteAction[] = [
     {
+      id: 'nav-overview',
+      label: 'Go to Overview',
+      run: () => {
+        go('/')
+      },
+    },
+    {
       id: 'nav-play',
       label: 'Go to Playground',
       run: () => {
-        go('/')
+        go('/playground')
       },
     },
     {
@@ -89,6 +96,13 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
       label: 'Go to Approvals',
       run: () => {
         go('/approvals')
+      },
+    },
+    {
+      id: 'nav-mcp',
+      label: 'Go to MCP',
+      run: () => {
+        go('/mcp')
       },
     },
     {

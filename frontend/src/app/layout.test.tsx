@@ -7,11 +7,15 @@ import { useAuthStore } from '../shared/auth/store.js'
 import { useRateLimitStore } from '../shared/ratelimit/store.js'
 import { server } from '../test/setup.js'
 import { renderApp } from '../test/utils.js'
-import { Layout, computeNavTabIndex } from './layout.js'
+import { Layout, parseSidebar } from './layout.js'
 
 describe('Layout', () => {
   beforeEach(() => {
     useRateLimitStore.getState().clear()
+    window.localStorage.removeItem('cacherelay.sidebar')
+    server.use(
+      http.get('*/v1/admin/mcp/approvals/pending', () => HttpResponse.json({ approvals: [] })),
+    )
   })
   it('renders the product header, nav, and skip link', () => {
     renderApp(<Layout />)
@@ -89,7 +93,7 @@ describe('Layout', () => {
     renderApp(<Layout />, { gatewayKey: 'gw-test', adminKey: 'master-test' })
     expect(screen.getByText(/cacherelay ·/i)).toBeInTheDocument()
     expect(screen.getByText('auth: gateway + admin')).toBeInTheDocument()
-    expect(screen.getByText('route: Playground')).toBeInTheDocument()
+    expect(screen.getByText('route: Overview')).toBeInTheDocument()
     expect(screen.getByText('theme: dark')).toBeInTheDocument()
   })
 
@@ -142,20 +146,108 @@ describe('Layout', () => {
     expect(useRateLimitStore.getState().snapshot).toBeNull()
   })
 
-  it('keeps the nav out of the tab order when nothing overflows', () => {
+  it('groups all ten routes with Overview pinned first', () => {
     renderApp(<Layout />)
-    expect(screen.getByRole('navigation', { name: /primary/i })).toHaveAttribute('tabindex', '-1')
+    expect(screen.getByText('Run')).toBeInTheDocument()
+    expect(screen.getByText('Guard')).toBeInTheDocument()
+    expect(screen.getByText('Inspect')).toBeInTheDocument()
+    for (const label of [
+      'Overview',
+      'Playground',
+      'Embeddings',
+      'Circuits',
+      'Approvals',
+      'Cache & budgets',
+      'Keys',
+      'Ledger',
+      'MCP',
+      'Observability',
+    ]) {
+      expect(screen.getByRole('link', { name: new RegExp(`^${label}$`) })).toBeInTheDocument()
+    }
   })
 
-  it('makes the nav keyboard-scrollable only while overflowing', () => {
+  it('collapses to icons and persists the preference', async () => {
+    const user = userEvent.setup()
+    window.localStorage.removeItem('cacherelay.sidebar')
     renderApp(<Layout />)
-    const nav = screen.getByRole('navigation', { name: /primary/i })
-    Object.defineProperty(nav, 'scrollWidth', { value: 1200, configurable: true })
-    Object.defineProperty(nav, 'clientWidth', { value: 800, configurable: true })
-    act(() => {
-      window.dispatchEvent(new Event('resize'))
+    expect(screen.getByText('Playground')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: /collapse sidebar/i }))
+    expect(screen.queryByText('Playground')).not.toBeInTheDocument()
+    expect(window.localStorage.getItem('cacherelay.sidebar')).toBe('closed')
+    expect(screen.getByRole('button', { name: /expand sidebar/i })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /expand sidebar/i }))
+    expect(screen.getByText('Playground')).toBeVisible()
+    expect(window.localStorage.getItem('cacherelay.sidebar')).toBe('open')
+  })
+
+  it('boots collapsed from a stored preference', () => {
+    window.localStorage.setItem('cacherelay.sidebar', 'closed')
+    renderApp(<Layout />)
+    expect(screen.queryByText('Playground')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /expand sidebar/i })).toBeInTheDocument()
+  })
+
+  it('opens and closes the mobile drawer', async () => {
+    const user = userEvent.setup()
+    renderApp(<Layout />)
+    await user.click(screen.getByRole('button', { name: /open navigation/i }))
+    expect(screen.getByRole('button', { name: /close navigation/i })).toBeInTheDocument()
+    await user.click(screen.getByRole('link', { name: /^Ledger$/ }))
+    expect(screen.queryByRole('button', { name: /close navigation/i })).not.toBeInTheDocument()
+  })
+
+  it('closes the drawer from its overlay without navigating', async () => {
+    const user = userEvent.setup()
+    renderApp(<Layout />)
+    await user.click(screen.getByRole('button', { name: /open navigation/i }))
+    await user.click(screen.getByRole('button', { name: /close navigation/i }))
+    expect(screen.queryByRole('button', { name: /close navigation/i })).not.toBeInTheDocument()
+  })
+
+  it('keeps a session-only sidebar when writes are denied', async () => {
+    const real = window.localStorage
+    let reads = 0
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string): string | null => {
+        reads += 1
+        if (reads === 1) throw new Error('denied')
+        return real.getItem(key)
+      },
+      setItem: (): void => {
+        throw new Error('denied')
+      },
+      removeItem: vi.fn(),
+      clear: vi.fn(),
+      key: (): null => null,
+      length: 0,
     })
-    expect(nav).toHaveAttribute('tabindex', '0')
+    try {
+      renderApp(<Layout />)
+      expect(screen.getByText('Playground')).toBeVisible()
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('button', { name: /collapse sidebar/i }))
+      expect(screen.queryByText('Playground')).not.toBeInTheDocument()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('badges live pending approvals for admins', async () => {
+    server.use(
+      http.get('*/v1/admin/mcp/approvals/pending', () =>
+        HttpResponse.json({ approvals: [{ id: 'a' }, { id: 'b' }] }),
+      ),
+    )
+    renderApp(<Layout />, { adminKey: 'master-test' })
+    await waitFor(() => {
+      expect(screen.getByLabelText('2 pending approvals')).toBeInTheDocument()
+    })
+  })
+
+  it('shows no badge without an admin key', () => {
+    renderApp(<Layout />)
+    expect(screen.queryByLabelText(/pending approvals/i)).not.toBeInTheDocument()
   })
 
   it('mirrors live gateway headers into the strip', async () => {
@@ -178,10 +270,19 @@ describe('Layout', () => {
   })
 })
 
-describe('computeNavTabIndex', () => {
-  it('focuses only on real overflow', () => {
-    expect(computeNavTabIndex(1200, 800)).toBe(0)
-    expect(computeNavTabIndex(800, 800)).toBe(-1)
-    expect(computeNavTabIndex(400, 800)).toBe(-1)
+describe('parseSidebar', () => {
+  it('passes the two allow-listed literals through', () => {
+    expect(parseSidebar('open')).toBe('open')
+    expect(parseSidebar('closed')).toBe('closed')
+  })
+
+  it('rejects everything else', () => {
+    expect(parseSidebar(null)).toBeNull()
+    expect(parseSidebar('')).toBeNull()
+    expect(parseSidebar('OPEN')).toBeNull()
+    expect(parseSidebar('__proto__')).toBeNull()
+    expect(parseSidebar('<script>alert(1)</script>')).toBeNull()
+    expect(parseSidebar(1)).toBeNull()
+    expect(parseSidebar({ state: 'open' })).toBeNull()
   })
 })

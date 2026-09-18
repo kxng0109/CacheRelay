@@ -166,9 +166,10 @@ describe('LatencyChart', () => {
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent(/P50 500 ms/)
     })
-    const option = lastOption()
-    expect(option.series[0]?.data.length).toBeGreaterThan(0)
-    expect(option.tooltip.valueFormatter(12)).toBe('12 ms')
+    await waitFor(() => {
+      expect(lastOption().series[0]?.data.length).toBeGreaterThan(0)
+    })
+    expect(lastOption().tooltip.valueFormatter(12)).toBe('12 ms')
   })
 
   it('resizes the chart when the container changes', async () => {

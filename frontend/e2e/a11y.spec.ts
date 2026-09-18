@@ -7,6 +7,7 @@ import { scanForA11yViolations } from './a11y.js'
  */
 const SCREENS = [
   '/',
+  '/playground',
   '/circuits',
   '/keys',
   '/ledger',
