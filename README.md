@@ -552,6 +552,16 @@ curl http://localhost:8080/v1/embeddings \
   -d '{"model":"text-embedding-3-small","input":["First text to embed","Second text to embed"]}'
 ```
 
+### Model Catalog (`/v1/models`)
+
+OpenAI-compatible key-authenticated listing of the configured model aliases (`id`, `owned_by` primary provider).
+Unmetered metadata — no budget or rate-limit charge:
+
+```bash
+curl http://localhost:8080/v1/models \
+  -H "Authorization: Bearer gw-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+```
+
 Supports:
 
 - Single string input (`"input": "text"`), multi-text arrays (`"input": ["text1", "text2"]`), and token ID arrays.

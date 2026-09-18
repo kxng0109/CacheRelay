@@ -48,7 +48,8 @@ import io.github.kxng0109.cacherelay.web.SpaFallbackController;
  *       (no secrets; load-balancer and scrape access only).</li>
   *   <li><b>Delegated auth:</b> {@code /v1/chat/completions} and
   *       {@code /v1/embeddings} (authenticated, rate-limited, and budget-gated by
-  *       {@code KeyAuthFilter}); {@code /v1/admin/**} (master-key or admin-JWT
+  *       {@code KeyAuthFilter}); {@code /v1/models} (virtual-key authenticated inside
+  *       {@code ModelController}, unmetered metadata); {@code /v1/admin/**} (master-key or admin-JWT
   *       authenticated by {@code AdminAuthFilter}, stealth-404 on denial);
   *       {@code /v1/mcp/**} (virtual-key authenticated inside
   *       {@code McpStreamableHttpController} with per-tool RBAC).</li>
@@ -126,6 +127,7 @@ public class SecurityConfig {
 						.requestMatchers(
 								"/v1/chat/completions",
 								"/v1/embeddings",
+								"/v1/models",
 								"/v1/admin/**",
 								"/v1/mcp/**"
 						).permitAll()

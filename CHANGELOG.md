@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`GET /v1/models`:** OpenAI-compatible key-authenticated model catalog (sorted aliases with primary
+  providers). Unmetered metadata. Full `verify` green, branch gate passing.
 - **Startup resilience + review queues:** pricing catalog sync no longer gates readiness (bounded async
   executor, shared connect-timeout'd client, exponential backoff on transport failures with fast-fail on parse
   errors); `GET /v1/admin/mcp/approvals/pending`
