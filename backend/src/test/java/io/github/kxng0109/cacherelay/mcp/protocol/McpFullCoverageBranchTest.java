@@ -15,6 +15,7 @@ import io.github.kxng0109.cacherelay.mcp.security.McpGuardrailScanner;
 import io.github.kxng0109.cacherelay.mcp.security.McpJsonSchemaValidator;
 import io.github.kxng0109.cacherelay.mcp.security.McpToolRbacPolicyEngine;
 import io.github.kxng0109.cacherelay.security.ratelimit.KeyManagementService;
+import io.github.kxng0109.cacherelay.security.ratelimit.RateLimitEngine;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -67,6 +68,8 @@ class McpFullCoverageBranchTest {
 	private McpServerCircuitBreakerManager circuitBreakerManager;
 	@Mock
 	private KeyManagementService keyManagementService;
+	@Mock
+	private RateLimitEngine rateLimitEngine;
 	@Mock
 	private HttpClient httpClient;
 
@@ -141,7 +144,7 @@ class McpFullCoverageBranchTest {
 		McpStreamableHttpController controller = new McpStreamableHttpController(
 				properties, catalogAggregator, router, rbacPolicyEngine,
 				jsonSchemaValidator, guardrailScanner, hitlSuspensionEngine,
-				circuitBreakerManager, keyManagementService, httpClient, objectMapper
+				circuitBreakerManager, keyManagementService, rateLimitEngine, httpClient, objectMapper
 		);
 
 		// 1. Legacy SSE disabled
@@ -458,7 +461,7 @@ class McpFullCoverageBranchTest {
 		McpStreamableHttpController controller = new McpStreamableHttpController(
 				properties, catalogAggregator, router, rbacPolicyEngine,
 				jsonSchemaValidator, guardrailScanner, hitlSuspensionEngine,
-				circuitBreakerManager, keyManagementService, httpClient, objectMapper
+				circuitBreakerManager, keyManagementService, rateLimitEngine, httpClient, objectMapper
 		);
 
 		VirtualApiKey apiKey = new VirtualApiKey(

@@ -1,6 +1,7 @@
 package io.github.kxng0109.cacherelay.mcp.protocol;
 
 import io.github.kxng0109.cacherelay.config.OpenApiConfig;
+import io.github.kxng0109.cacherelay.contracts.RateLimitDecision;
 import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
 import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
 import io.github.kxng0109.cacherelay.mcp.config.McpGatewayProperties;
@@ -16,6 +17,8 @@ import io.github.kxng0109.cacherelay.mcp.security.McpJsonSchemaValidator;
 import io.github.kxng0109.cacherelay.mcp.security.McpToolRbacPolicyEngine;
 import io.github.kxng0109.cacherelay.security.guardrail.secret.SecretScanResult;
 import io.github.kxng0109.cacherelay.security.ratelimit.KeyManagementService;
+import io.github.kxng0109.cacherelay.security.ratelimit.RateLimitEngine;
+import io.github.kxng0109.cacherelay.security.ratelimit.RateLimitUnavailableException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -67,6 +70,7 @@ public class McpStreamableHttpController {
 	private final McpHitlSuspensionEngine hitlSuspensionEngine;
 	private final McpServerCircuitBreakerManager circuitBreakerManager;
 	private final KeyManagementService keyManagementService;
+	private final RateLimitEngine rateLimitEngine;
 	private final HttpClient httpClient;
 	private final ObjectMapper objectMapper;
 
@@ -80,6 +84,7 @@ public class McpStreamableHttpController {
 			McpHitlSuspensionEngine hitlSuspensionEngine,
 			McpServerCircuitBreakerManager circuitBreakerManager,
 			KeyManagementService keyManagementService,
+			RateLimitEngine rateLimitEngine,
 			@Qualifier("mcpHttpClient") HttpClient httpClient,
 			ObjectMapper objectMapper
 	) {
@@ -92,6 +97,7 @@ public class McpStreamableHttpController {
 		this.hitlSuspensionEngine = hitlSuspensionEngine;
 		this.circuitBreakerManager = circuitBreakerManager;
 		this.keyManagementService = keyManagementService;
+		this.rateLimitEngine = rateLimitEngine;
 		this.httpClient = httpClient;
 		this.objectMapper = objectMapper;
 	}
@@ -175,8 +181,73 @@ public class McpStreamableHttpController {
 			return ResponseEntity.accepted().build();
 		}
 
+		// Flood gate for the cost-bearing path only: tools/call dispatches upstream work,
+		// so the key's RPM applies here. Lists/ping stay unthrottled (cached, local).
+		// Denied calls burn the caller's own quota, which is self-defeating for attackers.
+		if ("tools/call".equals(request.method())) {
+			ResponseEntity<String> limited = enforceToolsCallRateLimit(request, apiKey,
+					httpRequest);
+			if (limited != null) {
+				return limited;
+			}
+		}
+
 		McpJsonRpcResponse response = processRequest(request, apiKey, protocolVersion);
 		return ResponseEntity.ok(response.toJsonNode(objectMapper).toString());
+	}
+
+	/**
+	 * Enforces the key's RPM budget on tool calls (TPM untouched by contract).
+	 *
+	 * @param request     parsed JSON-RPC request (for the response id)
+	 * @param apiKey      authenticated key carrying the limits
+	 * @param httpRequest current request (Bearer re-hash, no I/O)
+	 * @return a 429/503 response on rejection or outage, or {@code null} to proceed
+	 */
+	private ResponseEntity<String> enforceToolsCallRateLimit(McpJsonRpcRequest request,
+			VirtualApiKey apiKey, HttpServletRequest httpRequest) {
+		SHA256Hash keyHash = keyHashOf(httpRequest);
+		if (keyHash == null) {
+			// Attribute-attributed keys carry no presented secret to hash; production always
+			// resolves via Bearer, so this path only triggers in test scaffolding.
+			return null;
+		}
+		RateLimitDecision decision;
+		try {
+			decision = rateLimitEngine.checkRequestRate(keyHash, apiKey);
+		} catch (RateLimitUnavailableException e) {
+			log.warn("MCP rate limiter unavailable; failing closed");
+			return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+					.body(McpJsonRpcResponse.failure(request.id(),
+							McpJsonRpcError.internalError("Rate limiter unavailable"))
+							.toJsonNode(objectMapper).toString());
+		}
+		if (decision instanceof RateLimitDecision.Rejected rejected) {
+			log.warn("MCP rate limit exceeded for tenant '{}'", apiKey.ownerId());
+			return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+					.header("Retry-After", String.valueOf(rejected.retryAfterSeconds()))
+					.body(McpJsonRpcResponse.failure(request.id(),
+							McpJsonRpcError.rateLimited(rejected.retryAfterSeconds()))
+							.toJsonNode(objectMapper).toString());
+		}
+		return null;
+	}
+
+	/**
+	 * Re-derives the key hash from the presented Bearer secret (pure hash, no I/O).
+	 *
+	 * @param httpRequest current request
+	 * @return hash, or {@code null} when no Bearer secret was presented
+	 */
+	private SHA256Hash keyHashOf(HttpServletRequest httpRequest) {
+		String authHeader = httpRequest.getHeader("Authorization");
+		if (authHeader != null && authHeader.startsWith("Bearer ")) {
+			String token = authHeader.substring("Bearer ".length()).trim();
+			if (!token.isBlank()) {
+				return SHA256Hash.fromRawKey(token);
+			}
+		}
+		return null;
 	}
 
 	/**
@@ -573,16 +644,23 @@ public class McpStreamableHttpController {
 				if (respNode.has("result")) {
 					JsonNode resultNode = respNode.get("result");
 					if (resultNode.has("content") && resultNode.path("content").isArray()) {
-						for (JsonNode contentItem : resultNode.path("content")) {
-							if ("text".equals(contentItem.path("type").asString()) && contentItem.has("text")) {
-								String originalText = contentItem.path("text").asString();
-								String wrapped = guardrailScanner.wrapToolOutputWithNonce(
+					for (JsonNode contentItem : resultNode.path("content")) {
+						if ("text".equals(contentItem.path("type").asString()) && contentItem.has("text")) {
+							String originalText = contentItem.path("text").asString();
+							if (guardrailScanner.containsIndirectPromptInjection(originalText)) {
+								log.warn(
+										"MCP egress signal: indirect prompt injection markers in tool '{}' output for tenant '{}' (delivered nonce-wrapped, not blocked)",
 										route.namespacedName(),
-										originalText
+										apiKey.ownerId()
 								);
-								((ObjectNode) contentItem).put("text", wrapped);
 							}
+							String wrapped = guardrailScanner.wrapToolOutputWithNonce(
+									route.namespacedName(),
+									originalText
+							);
+							((ObjectNode) contentItem).put("text", wrapped);
 						}
+					}
 					}
 					return McpJsonRpcResponse.success(request.id(), resultNode);
 				} else if (respNode.has("error")) {

@@ -15,6 +15,7 @@ import io.github.kxng0109.cacherelay.mcp.security.McpGuardrailScanner;
 import io.github.kxng0109.cacherelay.mcp.security.McpJsonSchemaValidator;
 import io.github.kxng0109.cacherelay.mcp.security.McpToolRbacPolicyEngine;
 import io.github.kxng0109.cacherelay.security.ratelimit.KeyManagementService;
+import io.github.kxng0109.cacherelay.security.ratelimit.RateLimitEngine;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -73,6 +74,8 @@ class McpVersionNegotiationMatrixTest {
 
 	@Mock
 	private KeyManagementService keyManagementService;
+	@Mock
+	private RateLimitEngine rateLimitEngine;
 
 	@Mock
 	private HttpClient httpClient;
@@ -124,6 +127,7 @@ class McpVersionNegotiationMatrixTest {
 				hitlSuspensionEngine,
 				circuitBreakerManager,
 				keyManagementService,
+				rateLimitEngine,
 				httpClient,
 				objectMapper
 		);

@@ -71,6 +71,19 @@ public record McpJsonRpcError(
 				                     + "' is temporarily unavailable (circuit breaker open)");
 	}
 
+	/**
+	 * Per-key request rate exceeded. Surfaced as {@code INTERNAL_ERROR} (-32603) because
+	 * throttling is a local implementation decision, not a protocol error; the MCP spec
+	 * forbids emitting undefined codes from the -32020..-32099 sub-range. Callers should
+	 * also honor the accompanying HTTP {@code 429} status and {@code Retry-After} header.
+	 *
+	 * @param retryAfterSeconds seconds to wait before retrying
+	 */
+	public static McpJsonRpcError rateLimited(long retryAfterSeconds) {
+		return internalError("Rate limit exceeded: too many tool calls; retry after "
+				+ Math.max(1, retryAfterSeconds) + "s");
+	}
+
 	public static McpJsonRpcError headerMismatch(String detail) {
 		return new McpJsonRpcError(HEADER_MISMATCH, "Header mismatch: " + detail, null);
 	}

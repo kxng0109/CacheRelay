@@ -146,7 +146,28 @@ public class RateLimitEngine {
 				properties.minEstimatedTokens(),
 				properties.maxEstimatedTokens()
 		);
+		return decide(keyHash, key.rpmLimit(), key.tpmLimit(), clampedTokens);
+	}
 
+	/**
+	 * Checks the RPM budget only, for non-token workloads such as MCP tool calls.
+	 *
+	 * <p>The token dimension is passed as unlimited ({@code 0}), which the Lua script contract
+	 * guarantees to leave untouched: no TPM counter is incremented, no TPM key is created, and
+	 * token-budget accounting stays clean. Only the key's configured request rate applies.</p>
+	 *
+	 * @param keyHash SHA-256 of the plaintext API key; derives the Redis counter keys
+	 * @param key     resolved virtual API key carrying the configured RPM limit
+	 * @return {@link RateLimitDecision.Allowed} with the post-check state, or
+	 * {@link RateLimitDecision.Rejected} with the retry-after period
+	 * @throws RateLimitUnavailableException if the Redis backend is unreachable or returns a
+	 *                                       malformed result (fail-closed)
+	 */
+	public RateLimitDecision checkRequestRate(SHA256Hash keyHash, VirtualApiKey key) {
+		return decide(keyHash, key.rpmLimit(), 0, MIN_ESTIMATED_TOKENS);
+	}
+
+	private RateLimitDecision decide(SHA256Hash keyHash, int rpmLimit, int tpmLimit, int tokens) {
 		// Hash-tagged keys ({hex}) so the RPM/TPM pair shares one Cluster slot; the Lua script
 		// touches both keys atomically and would fail with CROSSSLOT otherwise.
 		String tag = "{" + keyHash.hex() + "}";
@@ -155,9 +176,9 @@ public class RateLimitEngine {
 				RATELIMIT_KEY_PREFIX + tag + ":tpm"
 		);
 		List<String> args = List.of(
-				String.valueOf(key.rpmLimit()),
-				String.valueOf(clampedTokens),
-				String.valueOf(key.tpmLimit()),
+				String.valueOf(rpmLimit),
+				String.valueOf(tokens),
+				String.valueOf(tpmLimit),
 				String.valueOf(properties.windowMillis())
 		);
 
@@ -184,10 +205,10 @@ public class RateLimitEngine {
 			long nowMillis = System.currentTimeMillis();
 			Instant now = Instant.ofEpochMilli(nowMillis);
 			RateLimitState state = new RateLimitState(
-					key.rpmLimit(),
+					rpmLimit,
 					toInt(rpmRemaining),
 					now.plusSeconds(rpmResetSeconds),
-					key.tpmLimit(),
+					tpmLimit,
 					toInt(tpmRemaining),
 					now.plusSeconds(tpmResetSeconds)
 			);

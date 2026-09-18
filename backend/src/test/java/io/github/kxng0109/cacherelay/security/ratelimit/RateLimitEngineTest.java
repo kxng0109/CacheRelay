@@ -1,6 +1,7 @@
 package io.github.kxng0109.cacherelay.security.ratelimit;
 
 import io.github.kxng0109.cacherelay.contracts.RateLimitDecision;
+import io.github.kxng0109.cacherelay.contracts.RateLimitState;
 import io.github.kxng0109.cacherelay.contracts.RejectionReason;
 import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
 import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
@@ -364,5 +365,34 @@ class RateLimitEngineTest {
 		ArgumentCaptor<Object[]> argsCaptor = ArgumentCaptor.forClass(Object[].class);
 		verify(redisTemplate).execute(eq(script), anyList(), argsCaptor.capture());
 		assertEquals(expectedTokens, argsCaptor.getValue()[1]);
+	}
+
+	@Test
+	void requestRateCheckEnforcesRpmWithoutTouchingTpm() {
+		stubResult(List.of(1L, 9L, 60L, 0L, 60L, 0L));
+
+		RateLimitDecision decision = engine.checkRequestRate(HASH, key(10, 100));
+
+		assertInstanceOf(RateLimitDecision.Allowed.class, decision);
+		RateLimitState state = ((RateLimitDecision.Allowed) decision).state();
+		assertEquals(10, state.rpmLimit());
+		assertEquals(9, state.rpmRemaining());
+		assertEquals(0, state.tpmLimit());
+		ArgumentCaptor<Object[]> argsCaptor = ArgumentCaptor.forClass(Object[].class);
+		verify(redisTemplate).execute(eq(script), anyList(), argsCaptor.capture());
+		assertEquals("10", argsCaptor.getValue()[0]);
+		assertEquals("0", argsCaptor.getValue()[2]);
+	}
+
+	@Test
+	void requestRateRejectionReportsRetryAfter() {
+		stubResult(List.of(0L, 0L, 60L, 0L, 60L, 1L));
+
+		RateLimitDecision decision = engine.checkRequestRate(HASH, key(10, 100));
+
+		assertInstanceOf(RateLimitDecision.Rejected.class, decision);
+		RateLimitDecision.Rejected rejected = (RateLimitDecision.Rejected) decision;
+		assertEquals(RejectionReason.RPM_EXCEEDED, rejected.reason());
+		assertEquals(60L, rejected.retryAfterSeconds());
 	}
 }

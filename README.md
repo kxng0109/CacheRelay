@@ -230,7 +230,7 @@ Supported methods: `initialize`, `ping`, `tools/list`, `tools/call`, `resources/
   hijacking across servers.
 - **Tool-level RBAC/ABAC**: every virtual API key carries `allowedTools` / `deniedTools` glob policies (e.g.
   `postgres__*`, `*:delete_*`). Tools are pruned from `tools/list` per caller and denied at `tools/call` with JSON-RPC
-  error `-32025`.
+  error `-32603`.
 - **JSON Schema Draft 2020-12 parameter validation**: tool arguments are validated strictly (required fields, types,
   string bounds, regex formats, IEEE 754 safe-integer limits, `additionalProperties: false`) with dangerous-path
   pre-filtering for path traversal and command separators.
@@ -242,8 +242,11 @@ Supported methods: `initialize`, `ping`, `tools/list`, `tools/call`, `resources/
   binding, 300-second TTL, single-use Redis replay protection). Administrators review and approve/reject via
   `GET/POST /v1/admin/mcp/approvals/{tokenId}[/approve|/reject]`.
 - **Resilience**: each upstream server runs an in-memory atomic CAS circuit breaker (`McpServerCircuitBreakerManager`);
-  tripped servers are automatically pruned from the federated catalog and reject calls with error `-32024`. A dedicated
+  tripped servers are automatically pruned from the federated catalog and reject calls with error `-32603`. A dedicated
   HTTP/2 multiplexed client (`mcpHttpClient`, `Redirect.NEVER`) keeps connection counts and SSRF exposure minimal.
+- **Per-key request throttling on `tools/call`**: the virtual key's RPM applies with the token dimension untouched;
+  rejections answer HTTP `429` with `Retry-After` and a JSON-RPC `-32603` body, limiter outages fail closed with
+  `503`. Lists and ping stay unthrottled (cached, local).
 
 ### Configuration
 

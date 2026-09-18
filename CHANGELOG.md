@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **MCP tools/call flood gate:** the virtual key's RPM now binds `tools/call` through a dedicated RPM-only
+  engine path (token dimension passed unlimited, so TPM accounting stays clean); rejections answer HTTP `429` with
+  `Retry-After` plus a JSON-RPC `-32603` body, limiter outages fail closed with `503`. Egress now also emits a warn
+  signal when indirect prompt injection markers are detected in tool output (delivered nonce-wrapped, never silently
+  dropped). Full `verify` 1,801 green, branch ≥ 0.95.
 - **Hybrid human login + all-IdP SSO (V15):** short-lived access JWTs (SPA memory only, 10m / 5m admin)
   + rotating opaque refresh tokens in `__Host-` `httpOnly` `Secure` `SameSite=Lax` cookies (14d / 7d admin idle,
   30d / 7d admin absolute ceiling) with single-flight rotation and whole-family revocation on replay; single-use

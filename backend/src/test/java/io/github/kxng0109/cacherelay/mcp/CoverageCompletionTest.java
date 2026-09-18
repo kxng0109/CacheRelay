@@ -21,6 +21,7 @@ import io.github.kxng0109.cacherelay.proxy.protocol.GeminiSseNormalizer;
 import io.github.kxng0109.cacherelay.security.guardrail.secret.IngressSecretScanner;
 import io.github.kxng0109.cacherelay.security.guardrail.secret.SecretScanResult;
 import io.github.kxng0109.cacherelay.security.ratelimit.KeyManagementService;
+import io.github.kxng0109.cacherelay.security.ratelimit.RateLimitEngine;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -77,6 +78,8 @@ class CoverageCompletionTest {
 	@Mock
 	private KeyManagementService keyManagementService;
 	@Mock
+	private RateLimitEngine rateLimitEngine;
+	@Mock
 	private HttpClient httpClient;
 
 	private McpGatewayProperties properties;
@@ -93,7 +96,7 @@ class CoverageCompletionTest {
 		controller = new McpStreamableHttpController(
 				properties, catalogAggregator, router, rbacPolicyEngine,
 				jsonSchemaValidator, guardrailScanner, hitlSuspensionEngine,
-				circuitBreakerManager, keyManagementService, httpClient, objectMapper
+				circuitBreakerManager, keyManagementService, rateLimitEngine, httpClient, objectMapper
 		);
 	}
 
