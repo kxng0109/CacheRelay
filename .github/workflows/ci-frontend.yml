@@ -197,32 +197,16 @@ jobs:
         working-directory: frontend
         run: npm audit
 
-  osv:
-    name: Scan dependencies (OSV)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
-      - name: Install osv-scanner (attestation-verified)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release download --repo google/osv-scanner v2.6.0 \
-            --pattern 'osv-scanner_linux_amd64' --dir /tmp/osv-scanner
-          # v0.2 predicate: osv-scanner publishes SLSA v0.2 provenance while
-          # gh defaults the lookup to v1 (which 404s).
-          gh attestation verify -R google/osv-scanner \
-            --predicate-type https://slsa.dev/provenance/v0.2 \
-            /tmp/osv-scanner/osv-scanner_linux_amd64
-          chmod +x /tmp/osv-scanner/osv-scanner_linux_amd64
-
-      - name: Scan frontend lockfile (fails on any finding)
-        run: /tmp/osv-scanner/osv-scanner_linux_amd64 --recursive ./frontend
-
+  # NOTE (verified Sept 2026): no OSV-Scanner job on purpose. For a pure-npm
+  # tree OSV.dev npm entries come from the same GitHub Advisory Database that
+  # powers `npm audit` (above, failing on ANY severity), so a second scanner
+  # adds no coverage — only failure modes. Evidence from the investigation:
+  # `gh attestation verify -R google/osv-scanner` 404s under both SLSA
+  # predicate types (Google never registered these binaries in GitHub's
+  # attestations store; only `attest-*` actions write there), and the static
+  # bundle's verifier chain is deprecated (slsa-verifier and
+  # slsa-github-generator are both unmaintained). Reintroduce OSV scanning if
+  # non-npm ecosystems ever enter this tree.
   e2e:
     name: End-to-end (Playwright)
     runs-on: ubuntu-latest

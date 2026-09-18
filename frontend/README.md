@@ -143,8 +143,9 @@ it as invalid, see codecov-action#1487).
 
 Separate frontend workflow (backend `ci.yml` untouched): typecheck, lint,
 coverage-gate test (+ Codecov when configured), static build artifact,
-`npm audit` (any severity fails), attestation-verified `osv-scanner`
-v2.6.0 over `frontend/`, Playwright on Chromium, token-gated Chromatic.
+`npm audit` (any severity fails — it reads the same GitHub Advisory DB as
+OSV.dev for npm, so no second scanner runs; see the workflow comment),
+Playwright on Chromium, token-gated Chromatic.
 All actions SHA-pinned (the repo's SHA-sweep covers the file); `act`
 verifies locally with an empty env file because the repo-root Docker
 `.env` (BOM) breaks act's dotenv parser:
