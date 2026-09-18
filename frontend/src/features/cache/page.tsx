@@ -27,7 +27,7 @@ export function CachePage(): React.JSX.Element {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Cache and budgets</h1>
+      <h1 className="font-display text-2xl font-medium tracking-tight">Cache and budgets</h1>
       {adminKey === null ? (
         <p className="text-sm">Unlock the admin key on the Circuits page first.</p>
       ) : (
@@ -109,21 +109,21 @@ function CacheBoard({ adminKey }: CacheBoardProps): React.JSX.Element {
         </p>
       ) : stats.data === undefined ? null : (
         <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="rounded-lg border border-ink/10 p-3 dark:border-parchment/10">
+          <div className="rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
             <dt className="text-xs text-ink-soft dark:text-parchment-soft">L0 fill</dt>
             <dd className="text-lg tnum">
               {stats.data.l0Size}/{stats.data.l0Capacity}
             </dd>
           </div>
-          <div className="rounded-lg border border-ink/10 p-3 dark:border-parchment/10">
+          <div className="rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
             <dt className="text-xs text-ink-soft dark:text-parchment-soft">Exact entries</dt>
             <dd className="text-lg tnum">{stats.data.exactEntries}</dd>
           </div>
-          <div className="rounded-lg border border-ink/10 p-3 dark:border-parchment/10">
+          <div className="rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
             <dt className="text-xs text-ink-soft dark:text-parchment-soft">Semantic vectors</dt>
             <dd className="text-lg tnum">{stats.data.semanticVectors}</dd>
           </div>
-          <div className="rounded-lg border border-ink/10 p-3 dark:border-parchment/10">
+          <div className="rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
             <dt className="text-xs text-ink-soft dark:text-parchment-soft">Redis</dt>
             <dd className="text-lg">{stats.data.redisConfigured ? '● On' : '■ Off'}</dd>
           </div>
@@ -159,7 +159,7 @@ function CacheBoard({ adminKey }: CacheBoardProps): React.JSX.Element {
             return (
               <li
                 key={b.id}
-                className="rounded-lg border border-ink/10 p-3 dark:border-parchment/10"
+                className="rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent"
               >
                 <div className="flex justify-between text-sm">
                   <span>{b.name}</span>
@@ -184,7 +184,7 @@ function CacheBoard({ adminKey }: CacheBoardProps): React.JSX.Element {
         onSubmit={(e) => {
           void handleSubmit(onCreate)(e)
         }}
-        className="grid gap-3 rounded-lg border border-ink/10 p-4 sm:grid-cols-2 dark:border-parchment/10"
+        className="grid gap-3 rounded-lg border border-ink/10 bg-cream p-4 sm:grid-cols-2 dark:border-parchment/10 dark:bg-transparent"
       >
         <div>
           <label htmlFor="budget-name" className="mb-1 block text-xs font-medium">
@@ -221,7 +221,7 @@ function CacheBoard({ adminKey }: CacheBoardProps): React.JSX.Element {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="rounded-md bg-ember px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper disabled:opacity-50 dark:bg-parchment dark:text-night"
           >
             Create budget
           </button>

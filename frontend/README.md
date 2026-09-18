@@ -76,7 +76,7 @@ Never commit tokens, keys, or credentials.
 | `npm.cmd run format:check`    | Prettier 3.9.7 exact, check only                                                                                 |
 | `npm.cmd run typecheck`       | `tsc -b` (solution build; bare `--noEmit` is vacuous here)                                                       |
 | `npm.cmd run test`            | Vitest 5 unit run (jsdom)                                                                                        |
-| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently 100/99.3/100/100; only three defensive null-arms excluded from branches) |
+| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently 100/99.4/100/100; only three defensive null-arms excluded from branches) |
 | `npm.cmd run test:e2e`        | Playwright 1.63 smoke, chromium, Vite dev reuse                                                                  |
 | `npm.cmd run build-storybook` | Storybook 10.6.0 static build                                                                                    |
 
@@ -133,7 +133,7 @@ reporter for CI step summaries.
 `cleanup()` after each test, and closes the server at the end.
 `src/test/utils.tsx` renders UI with a fresh query client (no retries),
 memory router, and seeded memory-only credentials.
-21 suites / 199 tests: pure-unit (SSE parser, rate-limit parser/selector/store,
+22 suites / 221 tests: pure-unit (SSE parser, rate-limit parser/selector/store,
 Prometheus histogram parser/quantiles, ECharts registration, app boot,
 error mapping, URL allow-list) plus MSW integration per screen
 (happy/error/empty/adversarial).

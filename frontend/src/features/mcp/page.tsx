@@ -12,7 +12,7 @@
 export function McpPage(): React.JSX.Element {
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">MCP tools</h1>
+      <h1 className="font-display text-2xl font-medium tracking-tight">MCP tools</h1>
       <div role="status" className="rounded-lg border border-warn/40 p-4">
         <p className="text-sm font-medium">■ Tool catalog suspended upstream (HTTP 403).</p>
         <p className="mt-1 text-sm text-ink-soft dark:text-parchment-soft">

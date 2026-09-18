@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
@@ -91,6 +91,37 @@ describe('LedgerPage', () => {
     )
     renderApp(<LedgerPage />, { adminKey: 'master-test' })
     expect(await screen.findByRole('button', { name: /next/i })).toBeDisabled()
+  })
+
+  it('inspects a row receipt without leaving the table', async () => {
+    const user = userEvent.setup()
+    server.use(
+      summary({ totalRequests: 1, totalCostUsdMicros: 12, averageDurationMs: 3 }),
+      http.get('*/v1/admin/ledger/entries', () => HttpResponse.json(pageOf(['r9'], false))),
+    )
+    renderApp(<LedgerPage />, { adminKey: 'master-test' })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByText('r9'))
+    const inspector = screen.getByRole('complementary', { name: /receipt inspector/i })
+    expect(inspector).toHaveTextContent('gpt-4o-mini')
+    expect(inspector).toHaveTextContent('12')
+    await user.click(within(table).getByText('r9'))
+    expect(screen.getByRole('complementary', { name: /receipt inspector/i })).toHaveTextContent(
+      /select a row to inspect/i,
+    )
+  })
+
+  it('omits the page total when the backend reports none', async () => {
+    server.use(
+      summary({ totalRequests: 1, totalCostUsdMicros: 1, averageDurationMs: 1 }),
+      http.get('*/v1/admin/ledger/entries', () =>
+        HttpResponse.json({ ...pageOf(['r1'], false), totalPages: 0 }),
+      ),
+    )
+    renderApp(<LedgerPage />, { adminKey: 'master-test' })
+    const pager = await screen.findByText(/page 1/i)
+    expect(pager).toHaveTextContent('Page 1')
+    expect(pager).not.toHaveTextContent('of')
   })
 
   it('reports summary failures as alerts', async () => {

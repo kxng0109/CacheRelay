@@ -24,8 +24,10 @@ for (const route of SCREENS) {
     // no heading) so axe scans the real screen, not the loader.
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
     await scanForA11yViolations(page)
-    // Same screen in dark mode: proves the `-soft` dark text variants.
-    await page.getByRole('button', { name: /dark theme/i }).click()
+    // Same screen in the other theme: proves both the `-soft` dark text
+    // variants and the light paper tokens. The app boots dark by default,
+    // so the toggle reads "light theme" on first paint.
+    await page.getByRole('button', { name: /theme/i }).click()
     await scanForA11yViolations(page)
   })
 }

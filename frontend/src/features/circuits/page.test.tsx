@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -40,7 +40,7 @@ describe('CircuitsPage', () => {
     await waitFor(() => {
       expect(screen.getByText('openai')).toBeInTheDocument()
     })
-    expect(screen.getByText(/closed/i)).toBeInTheDocument()
+    expect(screen.getByText('● Closed')).toBeInTheDocument()
   })
 
   it('resets a circuit and announces the outcome', async () => {
@@ -112,12 +112,135 @@ describe('CircuitsPage', () => {
     expect(screen.getByText('2026-09-17T01:00:00Z')).toBeInTheDocument()
   })
 
+  it('renders future states under their own name', async () => {
+    server.use(
+      http.get('*/v1/admin/circuits/state', () =>
+        HttpResponse.json({
+          circuits: [{ provider: 'c', state: 'DRAINING', lastTransitionAt: null }],
+        }),
+      ),
+    )
+    renderBoard()
+    await waitFor(() => {
+      expect(screen.getByText('DRAINING')).toBeInTheDocument()
+    })
+  })
+
   it('shows the same-origin base when unconfigured', async () => {
     vi.stubEnv('VITE_API_BASE_URL', '')
     server.use(http.get('*/v1/admin/circuits/state', () => HttpResponse.json({ circuits: [] })))
     renderBoard()
     await waitFor(() => {
       expect(screen.getByText(/same-origin/i)).toBeInTheDocument()
+    })
+  })
+
+  it('refreshes the board on demand', async () => {
+    let calls = 0
+    server.use(
+      http.get('*/v1/admin/circuits/state', () => {
+        calls += 1
+        return HttpResponse.json(STATE)
+      }),
+    )
+    renderBoard()
+    await waitFor(() => {
+      expect(screen.getByText('openai')).toBeInTheDocument()
+    })
+    expect(calls).toBe(1)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /refresh/i }))
+    await waitFor(() => {
+      expect(calls).toBeGreaterThan(1)
+    })
+  })
+
+  it('names a filter with zero matches honestly', async () => {
+    const user = userEvent.setup()
+    server.use(http.get('*/v1/admin/circuits/state', () => HttpResponse.json(STATE)))
+    renderBoard()
+    await waitFor(() => {
+      expect(screen.getByText('openai')).toBeInTheDocument()
+    })
+    await user.type(screen.getByLabelText(/filter circuits/i), 'zzz-no-such-provider')
+    expect(screen.getByText(/no circuits match this filter/i)).toBeInTheDocument()
+  })
+
+  it('deselects a row on second click', async () => {
+    const user = userEvent.setup()
+    server.use(http.get('*/v1/admin/circuits/state', () => HttpResponse.json(STATE)))
+    renderBoard()
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByText('openai'))
+    expect(screen.getByRole('complementary', { name: /circuit inspector/i })).toHaveTextContent(
+      'Flowing',
+    )
+    await user.click(within(table).getByText('openai'))
+    expect(screen.getByRole('complementary', { name: /circuit inspector/i })).toHaveTextContent(
+      /select a row to inspect/i,
+    )
+  })
+
+  it('filters rows by provider text', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/circuits/state', () =>
+        HttpResponse.json({
+          circuits: [
+            { provider: 'openai', state: 'CLOSED', lastTransitionAt: null },
+            { provider: 'anthropic', state: 'OPEN', lastTransitionAt: null },
+          ],
+        }),
+      ),
+    )
+    renderBoard()
+    await waitFor(() => {
+      expect(screen.getByText('anthropic')).toBeInTheDocument()
+    })
+    await user.type(screen.getByLabelText(/filter circuits/i), 'openai')
+    expect(screen.queryByText('anthropic')).not.toBeInTheDocument()
+    expect(screen.getByText('openai')).toBeInTheDocument()
+  })
+
+  it('segments rows by state dimension', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/circuits/state', () =>
+        HttpResponse.json({
+          circuits: [
+            { provider: 'openai', state: 'CLOSED', lastTransitionAt: null },
+            { provider: 'anthropic', state: 'OPEN', lastTransitionAt: null },
+          ],
+        }),
+      ),
+    )
+    renderBoard()
+    await waitFor(() => {
+      expect(screen.getByText('anthropic')).toBeInTheDocument()
+    })
+    await user.click(screen.getByRole('button', { name: /^open$/i }))
+    expect(screen.queryByText('openai')).not.toBeInTheDocument()
+    expect(screen.getByText('anthropic')).toBeInTheDocument()
+  })
+
+  it('inspects a row and resets from the inspector', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/circuits/state', () => HttpResponse.json(STATE)),
+      http.post('*/v1/admin/circuits/reset', () =>
+        HttpResponse.json({ provider: 'openai', state: 'CLOSED' }),
+      ),
+    )
+    renderBoard()
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByText('openai'))
+    expect(screen.getByRole('complementary', { name: /circuit inspector/i })).toHaveTextContent(
+      'Flowing',
+    )
+    const inspector = screen.getByRole('complementary', { name: /circuit inspector/i })
+    await user.click(within(inspector).getByRole('button', { name: /reset circuit/i }))
+    await waitFor(() => {
+      expect(screen.getByText('openai: CLOSED')).toBeInTheDocument()
     })
   })
 })

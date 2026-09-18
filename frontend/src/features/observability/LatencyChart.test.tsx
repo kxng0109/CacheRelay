@@ -137,7 +137,9 @@ describe('LatencyChart', () => {
 
   it('follows the app theme without re-initializing', async () => {
     mockScrape(200, SCRAPE)
-    useUiStore.getState().toggleDark()
+    act(() => {
+      useUiStore.getState().toggleDark()
+    })
     try {
       renderApp(<LatencyChart />)
       await waitFor(() => {
@@ -145,7 +147,9 @@ describe('LatencyChart', () => {
       })
       expect(mockInit).toHaveBeenCalledTimes(1)
     } finally {
-      useUiStore.getState().toggleDark()
+      act(() => {
+        useUiStore.getState().toggleDark()
+      })
     }
   })
 

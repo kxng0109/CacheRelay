@@ -94,7 +94,7 @@ function KeysBoard({ adminKey }: KeysBoardProps): React.JSX.Element {
         onSubmit={(e) => {
           void handleSubmit(onCreate)(e)
         }}
-        className="grid gap-3 rounded-lg border border-ink/10 p-4 sm:grid-cols-2 dark:border-parchment/10"
+        className="grid gap-3 rounded-lg border border-ink/10 bg-cream p-4 sm:grid-cols-2 dark:border-parchment/10 dark:bg-transparent"
       >
         <div>
           <label htmlFor="key-name" className="mb-1 block text-xs font-medium">
@@ -162,7 +162,7 @@ function KeysBoard({ adminKey }: KeysBoardProps): React.JSX.Element {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="rounded-md bg-ember px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper disabled:opacity-50 dark:bg-parchment dark:text-night"
           >
             Create key
           </button>
@@ -227,7 +227,7 @@ export function KeysPage(): React.JSX.Element {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Keys</h1>
+      <h1 className="font-display text-2xl font-medium tracking-tight">Keys</h1>
       {adminKey === null ? (
         <p className="text-sm">Unlock the admin key on the Circuits page first.</p>
       ) : (

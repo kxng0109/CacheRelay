@@ -1,7 +1,7 @@
 import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { GatewayClient } from '../shared/api/client.js'
 import { useAuthStore } from '../shared/auth/store.js'
 import { useRateLimitStore } from '../shared/ratelimit/store.js'
@@ -20,14 +20,14 @@ describe('Layout', () => {
     expect(screen.getByRole('link', { name: /skip to content/i })).toHaveAttribute('href', '#main')
   })
 
-  it('toggles the dark theme on the document root', async () => {
+  it('toggles the theme on the document root', async () => {
     const user = userEvent.setup()
     renderApp(<Layout />)
-    const toggle = screen.getByRole('button', { name: /dark theme/i })
-    await user.click(toggle)
     expect(document.documentElement.classList.contains('dark')).toBe(true)
     await user.click(screen.getByRole('button', { name: /light theme/i }))
     expect(document.documentElement.classList.contains('dark')).toBe(false)
+    await user.click(screen.getByRole('button', { name: /dark theme/i }))
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
   })
 
   it('hides the rate-limit strip before any gateway response', () => {
@@ -83,6 +83,63 @@ describe('Layout', () => {
       useAuthStore.getState().clear()
     })
     expect(screen.queryByRole('status', { name: /rate limit status/i })).not.toBeInTheDocument()
+  })
+
+  it('shows session identity and route in the shell bars', () => {
+    renderApp(<Layout />, { gatewayKey: 'gw-test', adminKey: 'master-test' })
+    expect(screen.getByText(/cacherelay ·/i)).toBeInTheDocument()
+    expect(screen.getByText('auth: gateway + admin')).toBeInTheDocument()
+    expect(screen.getByText('route: Playground')).toBeInTheDocument()
+    expect(screen.getByText('theme: dark')).toBeInTheDocument()
+  })
+
+  it('shows locked auth when signed out', () => {
+    renderApp(<Layout />)
+    expect(screen.getByText('auth: locked')).toBeInTheDocument()
+  })
+
+  it('falls back to the raw path on unknown routes', () => {
+    renderApp(<Layout />, { route: '/nope' })
+    expect(screen.getByText('route: /nope')).toBeInTheDocument()
+  })
+
+  it('shows a configured base instead of same-origin', () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'http://localhost:8080')
+    renderApp(<Layout />)
+    expect(screen.getByText(/cacherelay · http:\/\/localhost:8080/i)).toBeInTheDocument()
+    vi.unstubAllEnvs()
+  })
+
+  it('names partial credentials honestly', () => {
+    const { unmount } = renderApp(<Layout />, { gatewayKey: 'gw-test' })
+    expect(screen.getByText('auth: gateway')).toBeInTheDocument()
+    unmount()
+    renderApp(<Layout />, { adminKey: 'master-test' })
+    expect(screen.getByText('auth: admin')).toBeInTheDocument()
+  })
+
+  it('reflects the light theme in the footer', async () => {
+    const user = userEvent.setup()
+    renderApp(<Layout />)
+    await user.click(screen.getByRole('button', { name: /light theme/i }))
+    expect(screen.getByText('theme: light')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /dark theme/i }))
+    expect(screen.getByText('theme: dark')).toBeInTheDocument()
+  })
+
+  it('stops mirroring headers after unmount', async () => {
+    server.use(
+      http.get('*/v1/models', () =>
+        HttpResponse.json(
+          { data: [] },
+          { headers: { 'X-RateLimit-Limit-RPM': '60', 'X-RateLimit-Remaining-RPM': '41' } },
+        ),
+      ),
+    )
+    const { unmount } = renderApp(<Layout />, { gatewayKey: 'gw-test' })
+    unmount()
+    await new GatewayClient({ base: '', token: 'gw-test' }).models()
+    expect(useRateLimitStore.getState().snapshot).toBeNull()
   })
 
   it('keeps the nav out of the tab order when nothing overflows', () => {

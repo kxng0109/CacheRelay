@@ -166,7 +166,7 @@ export function SseStreamViewer({
             onClick={() => {
               stopStream()
             }}
-            className="rounded-md bg-danger px-3 py-2 text-xs text-white"
+            className="rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
           >
             Stop
           </button>

@@ -1,11 +1,26 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F7F5F0" />
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0E0D0B" />
+    <!--
+      Anti-FOUC theme boot: applies the stored theme before first paint.
+      Same allow-list as `parseTheme` in shared/store.ts — only the exact
+      strings `light`/`dark` take effect; everything else keeps the dark
+      default. Never reads or writes anything except `cacherelay.theme`,
+      never touches markup, URLs, or credentials. Nonce follows the same
+      edge placeholder convention documented below.
+    -->
+    <script nonce="__CSP_NONCE__">
+      try {
+        if (window.localStorage.getItem('cacherelay.theme') === 'light') {
+          document.documentElement.classList.remove('dark')
+        }
+      } catch (e) {}
+    </script>
     <!--
       CSP nonce placeholder: the edge replaces `CSP_NONCE_PLACEHOLDER`
       (vite `html.cspNonce`) and `__CSP_NONCE__` (script-tag placeholder)

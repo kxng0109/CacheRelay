@@ -26,7 +26,7 @@ export function ObservabilityPage(): React.JSX.Element {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Observability</h1>
+      <h1 className="font-display text-2xl font-medium tracking-tight">Observability</h1>
       {health.isPending ? (
         <p role="status" className="text-sm">
           Probing gateway health…

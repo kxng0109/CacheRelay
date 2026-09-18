@@ -60,12 +60,12 @@ export function EmbeddingsPage(): React.JSX.Element {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Embeddings</h1>
+      <h1 className="font-display text-2xl font-medium tracking-tight">Embeddings</h1>
       <form
         onSubmit={(e) => {
           void handleSubmit(onSubmit)(e)
         }}
-        className="space-y-3 rounded-lg border border-ink/10 p-4 dark:border-parchment/10"
+        className="space-y-3 rounded-lg border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent"
       >
         <div>
           <label htmlFor="emb-key" className="mb-1 block text-xs font-medium">
@@ -121,7 +121,7 @@ export function EmbeddingsPage(): React.JSX.Element {
         <button
           type="submit"
           disabled={isSubmitting}
-          className="rounded-md bg-ember px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper disabled:opacity-50 dark:bg-parchment dark:text-night"
         >
           {isSubmitting ? 'Embedding…' : 'Create embeddings'}
         </button>
@@ -133,11 +133,11 @@ export function EmbeddingsPage(): React.JSX.Element {
       )}
       {dims === null || count === null ? null : (
         <dl role="status" className="grid grid-cols-2 gap-3">
-          <div className="rounded-lg border border-ink/10 p-3 dark:border-parchment/10">
+          <div className="rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
             <dt className="text-xs text-ink-soft dark:text-parchment-soft">Vectors</dt>
             <dd className="text-lg tnum">{count}</dd>
           </div>
-          <div className="rounded-lg border border-ink/10 p-3 dark:border-parchment/10">
+          <div className="rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
             <dt className="text-xs text-ink-soft dark:text-parchment-soft">Dimensions</dt>
             <dd className="text-lg tnum">{dims}</dd>
           </div>

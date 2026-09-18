@@ -28,8 +28,14 @@
   --color-ink-soft: #57534a;
   --color-parchment-soft: #a8a094;
 
-  --font-sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: ui-monospace, Consolas, monospace;
+  /* Light raised surface + hairline: warm white panels on paper, with a
+     hairline one step deeper than ink/10 so elevation reads without shadow. */
+  --color-cream: #fffdf8;
+  --color-sand: #e4ddcd;
+
+  --font-sans: 'Inter Variable', system-ui, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Martian Mono Variable', ui-monospace, Consolas, monospace;
+  --font-display: 'Fraunces Variable', Georgia, serif;
 }
 
 /* Base canvas: light paper by default, dark night under `.dark`. */
@@ -40,6 +46,10 @@
 body {
   background-color: var(--color-paper);
   color: var(--color-ink);
+  /* Inter Variable optical alternates: alternate one + round quotes/commas.
+     Verified real features on Inter's own lab page (cv01, ss03). Set where
+     the UI font lives; families lacking these features ignore them. */
+  font-feature-settings: 'cv01', 'ss03';
 }
 
 .dark body {

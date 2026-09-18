@@ -42,7 +42,7 @@ describe('PlaygroundPage', () => {
     )
     renderApp(<PlaygroundPage />)
     await user.type(screen.getByLabelText(/api key/i), 'gw-test')
-    await user.type(screen.getByLabelText(/prompt/i), 'Say hello')
+    await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
     await user.click(screen.getByRole('button', { name: /stream completion/i }))
     await waitFor(
       () => {
@@ -68,7 +68,7 @@ describe('PlaygroundPage', () => {
     )
     renderApp(<PlaygroundPage />)
     await user.type(screen.getByLabelText(/api key/i), 'gw-test')
-    await user.type(screen.getByLabelText(/prompt/i), 'Say hello')
+    await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
     await user.click(screen.getByRole('button', { name: /send completion/i }))
     await waitFor(() => {
       expect(screen.getByRole('log')).toHaveTextContent('static hi')
@@ -82,7 +82,7 @@ describe('PlaygroundPage', () => {
     server.use(http.post('*/v1/chat/completions', () => new HttpResponse('x', { status: 503 })))
     renderApp(<PlaygroundPage />)
     await user.type(screen.getByLabelText(/api key/i), 'gw-test')
-    await user.type(screen.getByLabelText(/prompt/i), 'Say hello')
+    await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
     await user.click(screen.getByRole('button', { name: /send completion/i }))
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/temporarily unavailable/i)
@@ -99,7 +99,7 @@ describe('PlaygroundPage', () => {
     )
     renderApp(<PlaygroundPage />)
     await user.type(screen.getByLabelText(/api key/i), 'gw-test')
-    await user.type(screen.getByLabelText(/prompt/i), 'Say hello')
+    await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
     await user.click(screen.getByRole('button', { name: /send completion/i }))
     await waitFor(() => {
       expect(screen.getByRole('log')).toHaveTextContent(/empty completion/i)
@@ -112,10 +112,29 @@ describe('PlaygroundPage', () => {
     renderApp(<PlaygroundPage />)
     await user.clear(screen.getByLabelText(/model/i))
     await user.type(screen.getByLabelText(/api key/i), 'gw-test')
-    await user.type(screen.getByLabelText(/prompt/i), 'Say hello')
+    await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
     await user.click(screen.getByRole('button', { name: /send completion/i }))
     await waitFor(() => {
       expect(screen.getByText(/model is required/i)).toBeInTheDocument()
     })
+  })
+
+  it('records runs and reloads them into the prompt', async () => {
+    vi.stubEnv('VITE_FEATURE_STREAMING', 'false')
+    const user = userEvent.setup()
+    server.use(
+      http.post('*/v1/chat/completions', () =>
+        HttpResponse.json({ choices: [{ message: { content: 'hi' } }], model: 'gpt-4o-mini' }),
+      ),
+    )
+    renderApp(<PlaygroundPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
+    await user.click(screen.getByRole('button', { name: /send completion/i }))
+    const entry = await screen.findByRole('button', { name: /run #1/i })
+    expect(entry).toHaveTextContent('Say hello')
+    await user.clear(screen.getByLabelText(/prompt/i, { selector: 'textarea' }))
+    await user.click(entry)
+    expect(screen.getByLabelText(/prompt/i, { selector: 'textarea' })).toHaveValue('Say hello')
   })
 })

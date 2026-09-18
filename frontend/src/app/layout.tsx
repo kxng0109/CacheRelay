@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { NavLink, Outlet } from 'react-router'
+import { NavLink, Outlet, useLocation } from 'react-router'
 import { useShallow } from 'zustand/react/shallow'
-import { parseRateLimit, setHeadersReporter } from '../shared/api/client.js'
+import { parseRateLimit, resolveApiBase, setHeadersReporter } from '../shared/api/client.js'
 import { CommandPalette } from '../shared/components/CommandPalette.js'
 import { RateLimitHeaders } from '../shared/components/RateLimitHeaders.js'
 import { useAuthStore } from '../shared/auth/store.js'
@@ -56,6 +56,17 @@ export function Layout(): React.JSX.Element {
     useShallow((s) => ({ gatewayKey: s.gatewayKey, adminKey: s.adminKey })),
   )
   const snapshot = useRateLimitStore((s) => s.snapshot)
+  const { pathname } = useLocation()
+  const routeLabel = NAV.find((item) => item.to === pathname)?.label ?? pathname
+  const base = resolveApiBase()
+  const authLabel =
+    gatewayKey !== null && adminKey !== null
+      ? 'gateway + admin'
+      : gatewayKey !== null
+        ? 'gateway'
+        : adminKey !== null
+          ? 'admin'
+          : 'locked'
 
   useEffect(() => {
     setHeadersReporter((headers, code) => {
@@ -96,14 +107,24 @@ export function Layout(): React.JSX.Element {
     }
   }, [])
   return (
-    <div className="min-h-screen bg-paper text-ink dark:bg-night dark:text-parchment">
+    <div className="flex min-h-screen flex-col bg-paper text-ink dark:bg-night dark:text-parchment">
       <a href="#main" className="skip-link">
         Skip to content
       </a>
       <header className="border-b border-ink/10 dark:border-parchment/10">
+        <div className="border-b border-ink/10 dark:border-parchment/10">
+          <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-1">
+            <p className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+              cacherelay · {base || 'same-origin'}
+            </p>
+            <p className="font-mono text-[11px] text-ink-soft tnum dark:text-parchment-soft">
+              auth: {authLabel}
+            </p>
+          </div>
+        </div>
         <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3">
           <span aria-hidden="true" className="inline-block size-3 rounded-sm bg-ember" />
-          <p className="text-sm font-semibold tracking-tight">CacheRelay</p>
+          <p className="font-display text-lg font-medium tracking-tight">CacheRelay</p>
           <p className="hidden text-xs text-ink-soft sm:block dark:text-parchment-soft">
             Enterprise AI gateway console
           </p>
@@ -130,8 +151,10 @@ export function Layout(): React.JSX.Element {
                 <NavLink
                   to={item.to}
                   className={({ isActive }) =>
-                    `rounded-md px-3 py-2 text-xs whitespace-nowrap ${
-                      isActive ? 'bg-ink text-paper dark:bg-parchment dark:text-night' : ''
+                    `rounded-md px-3 py-2 text-xs whitespace-nowrap text-ink-soft underline-offset-8 hover:text-ink dark:text-parchment-soft dark:hover:text-parchment ${
+                      isActive
+                        ? 'font-medium text-ink underline decoration-ember decoration-2 dark:text-parchment'
+                        : ''
                     }`
                   }
                 >
@@ -147,9 +170,19 @@ export function Layout(): React.JSX.Element {
           <RateLimitHeaders snapshot={snapshot} />
         </div>
       ) : null}
-      <main id="main" className="mx-auto max-w-6xl px-4 py-6">
+      <main id="main" className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
         <Outlet />
       </main>
+      <footer className="border-t border-ink/10 dark:border-parchment/10">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-1">
+          <p className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+            route: {routeLabel}
+          </p>
+          <p className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+            theme: {dark ? 'dark' : 'light'}
+          </p>
+        </div>
+      </footer>
     </div>
   )
 }

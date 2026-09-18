@@ -17,7 +17,7 @@ export function ApprovalsPage(): React.JSX.Element {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Approvals</h1>
+      <h1 className="font-display text-2xl font-medium tracking-tight">Approvals</h1>
       {adminKey === null ? (
         <p className="text-sm">Unlock the admin key on the Circuits page first.</p>
       ) : (
@@ -88,7 +88,7 @@ function ApprovalsBoard({ adminKey }: ApprovalsBoardProps): React.JSX.Element {
           {pending.data.approvals.map((a) => (
             <li
               key={a.approvalId}
-              className="flex flex-wrap items-center gap-3 rounded-lg border border-ink/10 p-3 dark:border-parchment/10"
+              className="flex flex-wrap items-center gap-3 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent"
             >
               <div className="min-w-0 flex-1">
                 <p className="font-mono text-xs">{a.toolName}</p>

@@ -6,14 +6,25 @@ import { resolveApiBase } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 
-const STATE_META: Record<string, { badge: string; dark: string; label: string }> = {
+const STATE_META: Record<string, { badge: string; dark: string; label: string; wash: string }> = {
   CLOSED: {
     badge: 'bg-success/15 text-success',
     dark: 'dark:text-success-soft',
     label: '● Closed',
+    wash: '',
   },
-  OPEN: { badge: 'bg-danger/15 text-danger', dark: 'dark:text-danger-soft', label: '■ Open' },
-  HALF_OPEN: { badge: 'bg-warn/15 text-warn', dark: 'dark:text-warn-soft', label: '▲ Half-open' },
+  OPEN: {
+    badge: 'bg-danger/15 text-danger',
+    dark: 'dark:text-danger-soft',
+    label: '■ Open',
+    wash: 'border-danger/40 bg-danger/[0.06] dark:border-danger-soft/40',
+  },
+  HALF_OPEN: {
+    badge: 'bg-warn/15 text-warn',
+    dark: 'dark:text-warn-soft',
+    label: '▲ Half-open',
+    wash: 'border-warn/40 bg-warn/[0.06] dark:border-warn-soft/40',
+  },
 }
 
 /**
@@ -21,11 +32,29 @@ const STATE_META: Record<string, { badge: string; dark: string; label: string }>
  * newer backend may introduce.
  *
  * @param state - Raw state string from the gateway.
- * @returns Badge classes (plus dark-mode text class) and an icon+text label;
- * unknown states get an explicit Unknown badge instead of being mislabeled.
+ * @returns Badge classes (plus dark-mode text class), an icon+text label,
+ * and the panel wash for non-closed states; unknown states get an explicit
+ * Unknown badge instead of being mislabeled.
  */
-function stateMeta(state: string): { badge: string; dark: string; label: string } {
-  return STATE_META[state] ?? { badge: '', dark: '', label: '? Unknown' }
+function stateMeta(state: string): { badge: string; dark: string; label: string; wash: string } {
+  return STATE_META[state] ?? { badge: '', dark: '', label: '? Unknown', wash: '' }
+}
+
+/**
+ * Resolves the large switchboard word for a circuit state.
+ *
+ * @remarks Takes a plain string (not the `CircuitSnapshot` union) so a
+ * backend state added tomorrow renders its own name instead of inheriting
+ * a wrong word.
+ *
+ * @param state - Raw state string from the gateway.
+ * @returns The display word for the panel readout.
+ */
+function stateWord(state: string): string {
+  if (state === 'CLOSED') return 'Flowing'
+  if (state === 'OPEN') return 'Tripped'
+  if (state === 'HALF_OPEN') return 'Probing'
+  return state
 }
 
 interface CircuitsBoardProps {
@@ -37,12 +66,18 @@ interface CircuitsBoardProps {
  * Live provider-state board plus force-reset.
  *
  * @remarks Proof-type: live (polls real `/v1/admin/circuits/state`).
+ * Register-table layout: filter + state segments + refresh on top, dense
+ * rows in the centre, inspector rail on the right. Row selection is local
+ * UI state; reset reuses the single destructive action in both loci.
  *
  * @param props - The admin key for admin-surface calls.
  * @returns The circuits board.
  */
 function CircuitsBoard({ adminKey }: CircuitsBoardProps): React.JSX.Element {
   const [notice, setNotice] = useState<string | null>(null)
+  const [filter, setFilter] = useState('')
+  const [segment, setSegment] = useState<'all' | 'CLOSED' | 'OPEN' | 'HALF_OPEN' | 'unknown'>('all')
+  const [selected, setSelected] = useState<string | null>(null)
   const qc = useQueryClient()
 
   const query = useQuery({
@@ -63,72 +98,199 @@ function CircuitsBoard({ adminKey }: CircuitsBoardProps): React.JSX.Element {
     }
   }
 
+  const circuits = query.data?.circuits ?? []
+  const queryText = filter.trim().toLowerCase()
+  const visible = circuits.filter((c) => {
+    // Widened to string: the gateway may introduce states newer than the
+    // generated union, and those must land in `unknown`, never mislabeled.
+    const state: string = c.state
+    const dimension =
+      state === 'CLOSED' || state === 'OPEN' || state === 'HALF_OPEN' ? state : 'unknown'
+    if (segment !== 'all' && dimension !== segment) return false
+    if (queryText.length === 0) return true
+    return c.provider.toLowerCase().includes(queryText) || c.state.toLowerCase().includes(queryText)
+  })
+  const inspected = circuits.find((c) => c.provider === selected) ?? null
+
   return (
-    <div className="space-y-4">
-      {notice === null ? null : (
-        <p role="status" className="text-xs">
-          {notice}
+    <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <label htmlFor="circuit-filter" className="sr-only">
+            Filter circuits
+          </label>
+          <input
+            id="circuit-filter"
+            type="search"
+            value={filter}
+            placeholder="Filter [/]"
+            onChange={(e) => {
+              setFilter(e.target.value)
+            }}
+            className="w-48 rounded-md border border-ink/15 bg-transparent px-3 py-2 text-xs dark:border-parchment/15"
+          />
+          <div role="group" aria-label="State filter" className="flex gap-1">
+            {(['all', 'CLOSED', 'OPEN', 'HALF_OPEN', 'unknown'] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                aria-pressed={segment === s}
+                onClick={() => {
+                  setSegment(s)
+                }}
+                className={`rounded-md p-2 font-mono text-[11px] ${
+                  segment === s
+                    ? 'bg-ink text-paper dark:bg-parchment dark:text-night'
+                    : 'text-ink-soft dark:text-parchment-soft'
+                }`}
+              >
+                {s === 'all'
+                  ? 'all'
+                  : s === 'HALF_OPEN'
+                    ? 'half'
+                    : s === 'unknown'
+                      ? '?'
+                      : s.toLowerCase()}
+              </button>
+            ))}
+          </div>
+          <span className="flex-1" />
+          <button
+            type="button"
+            onClick={() => {
+              void qc.invalidateQueries({ queryKey: ['circuits'] })
+            }}
+            className="rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+          >
+            Refresh [r]
+          </button>
+        </div>
+        {notice === null ? null : (
+          <p role="status" className="text-xs">
+            {notice}
+          </p>
+        )}
+        {query.isPending ? (
+          <p role="status" className="text-sm">
+            Loading circuit state…
+          </p>
+        ) : null}
+        {query.error instanceof Error ? (
+          <p role="alert" className="text-sm text-danger dark:text-danger-soft">
+            {query.error.message}
+          </p>
+        ) : null}
+        {!query.isPending && !(query.error instanceof Error) && visible.length === 0 ? (
+          <p className="text-sm text-ink-soft dark:text-parchment-soft">
+            {circuits.length === 0
+              ? 'No providers reported. Configure providers in the backend to populate this board.'
+              : 'No circuits match this filter.'}
+          </p>
+        ) : null}
+        {visible.length === 0 ? null : (
+          <table className="w-full text-left text-sm">
+            <caption className="sr-only">Provider circuit states</caption>
+            <thead>
+              <tr className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+                <th scope="col" className="py-2 pr-3 font-medium">
+                  Provider
+                </th>
+                <th scope="col" className="py-2 pr-3 font-medium">
+                  State
+                </th>
+                <th scope="col" className="py-2 pr-3 font-medium">
+                  Signal
+                </th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">
+                  Last transition
+                </th>
+                <th scope="col" className="py-2 text-right font-medium">
+                  <span className="sr-only">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((c) => {
+                const meta = stateMeta(c.state)
+                const active = c.provider === selected
+                return (
+                  <tr
+                    key={c.provider}
+                    aria-selected={active}
+                    onClick={() => {
+                      setSelected(active ? null : c.provider)
+                    }}
+                    className={`cursor-pointer border-t border-ink/10 dark:border-parchment/10 ${
+                      active ? 'bg-ink/4 dark:bg-parchment/6' : ''
+                    }`}
+                  >
+                    <td className="py-2 pr-3 font-mono text-xs">{c.provider}</td>
+                    <td className="py-2 pr-3">
+                      <span className={`rounded px-2 py-1 text-xs tnum ${meta.badge} ${meta.dark}`}>
+                        {meta.label}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-3 font-display text-lg tnum">{stateWord(c.state)}</td>
+                    <td className="py-2 pr-3 text-right text-xs tnum">
+                      {c.lastTransitionAt ?? '—'}
+                    </td>
+                    <td className="py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          void reset(c.provider)
+                        }}
+                        className="rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+                      >
+                        Reset circuit
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        )}
+        <p className="text-xs text-ink-soft dark:text-parchment-soft">
+          Base: {resolveApiBase() === '' ? 'same-origin' : resolveApiBase()}
         </p>
-      )}
-      {query.isPending ? (
-        <p role="status" className="text-sm">
-          Loading circuit state…
-        </p>
-      ) : null}
-      {query.error instanceof Error ? (
-        <p role="alert" className="text-sm text-danger dark:text-danger-soft">
-          {query.error.message}
-        </p>
-      ) : null}
-      {query.data === undefined || query.data.circuits.length === 0 ? (
-        <p className="text-sm text-ink-soft dark:text-parchment-soft">
-          No providers reported. Configure providers in the backend to populate this board.
-        </p>
-      ) : (
-        <table className="w-full text-left text-sm">
-          <caption className="sr-only">Provider circuit states</caption>
-          <thead>
-            <tr>
-              <th scope="col">Provider</th>
-              <th scope="col">State</th>
-              <th scope="col">Last transition</th>
-              <th scope="col">
-                <span className="sr-only">Actions</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {query.data.circuits.map((c) => {
-              const meta = stateMeta(c.state)
-              return (
-                <tr key={c.provider} className="border-t border-ink/10 dark:border-parchment/10">
-                  <td className="py-2 font-mono">{c.provider}</td>
-                  <td className="py-2">
-                    <span className={`rounded px-2 py-1 text-xs tnum ${meta.badge} ${meta.dark}`}>
-                      {meta.label}
-                    </span>
-                  </td>
-                  <td className="py-2 text-xs tnum">{c.lastTransitionAt ?? '—'}</td>
-                  <td className="py-2 text-right">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void reset(c.provider)
-                      }}
-                      className="rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
-                    >
-                      Reset circuit
-                    </button>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      )}
-      <p className="text-xs text-ink-soft dark:text-parchment-soft">
-        Base: {resolveApiBase() === '' ? 'same-origin' : resolveApiBase()}
-      </p>
+      </div>
+      <aside aria-label="Circuit inspector" className="space-y-3">
+        {inspected === null ? (
+          <p className="text-xs text-ink-soft dark:text-parchment-soft">
+            Select a row to inspect a circuit.
+          </p>
+        ) : (
+          <div
+            className={`space-y-3 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent ${stateMeta(inspected.state).wash}`}
+          >
+            <h2 className="font-mono text-sm">{inspected.provider}</h2>
+            <p className="font-display text-3xl font-medium tracking-tight tnum">
+              {stateWord(inspected.state)}
+            </p>
+            <dl className="space-y-2 text-xs">
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink-soft dark:text-parchment-soft">State</dt>
+                <dd className="tnum">{stateMeta(inspected.state).label}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink-soft dark:text-parchment-soft">Last transition</dt>
+                <dd className="tnum">{inspected.lastTransitionAt ?? '—'}</dd>
+              </div>
+            </dl>
+            <button
+              type="button"
+              onClick={() => {
+                void reset(inspected.provider)
+              }}
+              className="w-full rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+            >
+              Reset circuit
+            </button>
+          </div>
+        )}
+      </aside>
     </div>
   )
 }
@@ -147,13 +309,13 @@ export function CircuitsPage(): React.JSX.Element {
   if (adminKey === null) {
     return (
       <div className="space-y-4">
-        <h1 className="text-xl font-semibold tracking-tight">Circuits</h1>
+        <h1 className="font-display text-2xl font-medium tracking-tight">Circuits</h1>
         <form
           onSubmit={(e) => {
             e.preventDefault()
             setAdminKey(keyInput.length > 0 ? keyInput : null)
           }}
-          className="space-y-2 rounded-lg border border-ink/10 p-4 dark:border-parchment/10"
+          className="space-y-2 rounded-lg border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent"
         >
           <label htmlFor="admin-key" className="block text-xs font-medium">
             Master admin key (memory only)
@@ -181,7 +343,7 @@ export function CircuitsPage(): React.JSX.Element {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Circuits</h1>
+      <h1 className="font-display text-2xl font-medium tracking-tight">Circuits</h1>
       <CircuitsBoard adminKey={adminKey} />
     </div>
   )
