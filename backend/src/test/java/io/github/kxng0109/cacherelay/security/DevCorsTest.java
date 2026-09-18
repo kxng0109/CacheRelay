@@ -71,7 +71,10 @@ class DevCorsTest {
 				.hasValueSatisfying(value -> assertThat(value)
 						.contains("X-RateLimit-Remaining-RPM")
 						.contains("X-CacheRelay-Similarity-Score")
-						.contains("X-Budget-Remaining"));
+						.contains("X-Budget-Remaining")
+						.contains("X-Budget-Held-Micros")
+						.contains("X-CacheRelay-Provider")
+						.contains("X-CacheRelay-Tried"));
 	}
 
 	@Test

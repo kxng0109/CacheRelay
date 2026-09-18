@@ -65,7 +65,11 @@ public class DevCorsConfig {
 				"X-Budget-Remaining",
 				"X-Budget-Reset",
 				"X-Budget-Level",
-				"X-Budget-Window"));
+				"X-Budget-Window",
+				"X-Budget-Held-Micros",
+				"X-Budget-Subject",
+				"X-CacheRelay-Provider",
+				"X-CacheRelay-Tried"));
 		UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
 		source.registerCorsConfiguration("/v1/**", config);
 		return source;
