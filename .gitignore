@@ -44,6 +44,8 @@ AI_GATEWAY_LANDSCAPE.md
 REBRAND.md
 COMPETITORS/
 backend/docs/BACKEND_API_REFERENCE.md
+backend/docs/ROADMAP.md
+docs/ROADMAP.md
 
 # Monorepo - frontend workspace artifacts (root /dist/ + /node_modules/ do not cover subdirs)
 frontend/dist/
