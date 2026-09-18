@@ -44,7 +44,8 @@ import io.github.kxng0109.cacherelay.web.SpaFallbackController;
  *   <li><b>Delegated auth:</b> {@code /v1/chat/completions} and
  *       {@code /v1/embeddings} (authenticated, rate-limited, and budget-gated by
  *       {@code KeyAuthFilter}); {@code /v1/admin/**} (master-key authenticated by
- *       {@code AdminAuthFilter}).</li>
+ *       {@code AdminAuthFilter}); {@code /v1/mcp/**} (virtual-key authenticated inside
+ *       {@code McpStreamableHttpController} with per-tool RBAC).</li>
  *   <li><b>Operator SPA shell:</b> {@code /}, {@code /index.html}, {@code /assets/**},
  *       {@code /error}, and {@code SpaFallbackController#SPA_PATH_PATTERN} (extensionless
  *       non-API routes forward to the shell; reserved first segments stay denied).</li>
@@ -91,7 +92,8 @@ public class SecurityConfig {
 						.requestMatchers(
 								"/v1/chat/completions",
 								"/v1/embeddings",
-								"/v1/admin/**"
+								"/v1/admin/**",
+								"/v1/mcp/**"
 						).permitAll()
 						.requestMatchers(
 								"/",

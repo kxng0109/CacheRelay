@@ -146,9 +146,7 @@ public class EmbeddingService {
 			throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Budget service unavailable", unavailable);
 		}
 		if (decision instanceof BudgetDecision.Denied denied) {
-			throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
-					"budget exhausted (" + denied.level() + " " + denied.window()
-					+ ", retry after " + Math.max(1L, denied.retryAfterSeconds()) + "s)");
+			throw new EmbeddingBudgetDeniedException(denied);
 		}
 	}
 

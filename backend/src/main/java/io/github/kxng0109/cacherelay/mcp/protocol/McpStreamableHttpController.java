@@ -31,6 +31,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -192,6 +193,13 @@ public class McpStreamableHttpController {
 	public ResponseBodyEmitter handleLegacySse(HttpServletRequest httpRequest, HttpServletResponse response) {
 		if (!properties.isAllowLegacySse()) {
 			throw new IllegalStateException("Legacy SSE transport is disabled");
+		}
+
+		// The chain passes MCP through (delegated auth): every stream must still prove a key, otherwise an
+		// unauthenticated caller could hold emitters and sender threads open.
+		VirtualApiKey streamKey = resolveApiKey(httpRequest);
+		if (streamKey == null || !streamKey.enabled()) {
+			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid or disabled API key");
 		}
 
 		response.setHeader("X-Accel-Buffering", "no");

@@ -115,6 +115,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (deep links at depth 1–2, cache policies, boundary preservation, clean error dispatch). The
   `backend/src/main/resources/static/` output dir is gitignored; release overlays `frontend/dist`
   there at package time.
+- **MCP chain pass-through + legacy SSE auth (`SecurityConfig`, `McpStreamableHttpController`):**
+  `/v1/mcp/**` joins the delegated-auth permitAll set (the 2026-09-17 deny-all defect is fixed) after
+  verifying the controller self-authenticates virtual keys (missing/disabled key returns 401 JSON-RPC,
+  per-tool RBAC preserved). Opening the surface exposed one gap: the legacy SSE stream allocated
+  emitters and sender threads with no key check, so it now rejects unauthenticated callers with 401
+  before allocating anything. Pinned by 4 live-server tests (missing/unknown/valid key on tools/list,
+  keyless SSE rejected); the existing controller unit suite still passes unchanged.
+- **Embeddings budget-denial parity (`EmbeddingBudgetDeniedException`):** embeddings 429s now carry the
+  exact chat shape (four `X-Budget-*` headers, `Retry-After`, identical body) via a decision-carrying
+  exception rendered by a controller-local handler; the previously message-only `ResponseStatusException`
+  path is gone, including its divergent retry-after message text. Pinned by a standalone slice test.
+  Full `verify` 1,666 green, branch 0.9503.
+- **Dev CORS expose list (`DevCorsConfig`):** the 14 rate-limit/cache/budget header names the operator
+  strip reads are now exposed to browsers (a wildcard is a silent no-op under credentials, so the list
+  is explicit); prod chain still byte-identical with zero CORS surface.
 
 ### Fixed
 

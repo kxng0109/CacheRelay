@@ -66,6 +66,12 @@ class DevCorsTest {
 		assertThat(response.headers().firstValue("Access-Control-Allow-Credentials"))
 				.as("credentials flag")
 				.hasValue("true");
+		assertThat(response.headers().firstValue("Access-Control-Expose-Headers"))
+				.as("exposed operational headers")
+				.hasValueSatisfying(value -> assertThat(value)
+						.contains("X-RateLimit-Remaining-RPM")
+						.contains("X-CacheRelay-Similarity-Score")
+						.contains("X-Budget-Remaining"));
 	}
 
 	@Test

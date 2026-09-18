@@ -18,7 +18,9 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
  * default-deny for cross-origin browser traffic.
  *
  * <p>The single allowed origin is explicit. {@code *} combined with credentials is rejected by
- * {@code CorsConfiguration#validateAllowCredentials()}, so a wildcard is never an option here.
+ * {@code CorsConfiguration#validateAllowCredentials()}, so a wildcard is never an option here. The same
+ * applies to exposed headers: with credentials the browser treats {@code *} as a literal name, so the
+ * rate-limit, cache and budget families the UI reads are listed explicitly instead.
  *
  * @since 1.8.0
  */
@@ -49,6 +51,21 @@ public class DevCorsConfig {
 				"Mcp-Session-Id",
 				"MCP-Protocol-Version"));
 		config.setMaxAge(3600L);
+		config.setExposedHeaders(List.of(
+				"X-RateLimit-Limit-RPM",
+				"X-RateLimit-Remaining-RPM",
+				"X-RateLimit-Reset-RPM",
+				"X-RateLimit-Limit-TPM",
+				"X-RateLimit-Remaining-TPM",
+				"X-RateLimit-Reset-TPM",
+				"Retry-After",
+				"X-Cache",
+				"X-CacheRelay-Similarity-Score",
+				"Age",
+				"X-Budget-Remaining",
+				"X-Budget-Reset",
+				"X-Budget-Level",
+				"X-Budget-Window"));
 		UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
 		source.registerCorsConfiguration("/v1/**", config);
 		return source;

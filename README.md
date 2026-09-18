@@ -387,7 +387,9 @@ Copy `.env.docker.example` to `.env` to configure ports, provider API keys, and 
 - **Grafana Dashboard**: `http://localhost:3000` (Pre-configured `CacheRelay — Production Operations` dashboard, 51 panels across 12 rows: request path, rate limiting, ledger, JVM, pools, Redis, Postgres, client connections)
 - **Prometheus TSDB**: `http://localhost:9090` (Scraping the app plus `redis-exporter:9121` and `postgres-exporter:9187`, with 20 pre-loaded alert rules)
 
-One extra setup line is required for the Postgres exporter (least-privilege `pg_monitor` user; fail-fast if unset):
+The Postgres exporter role is provisioned automatically: `backend/deploy/postgres-init/01-exporter-role.sh`
+runs once at first volume init and creates the least-privilege `pg_monitor` member from your `.env` — just set
+a real password (fail-fast if unset, and the role is never created if you skip it):
 
 ```bash
 POSTGRES_EXPORTER_PASSWORD=<a real value in your .env>
@@ -666,7 +668,7 @@ Run the full suite with coverage and the packaging step (from `backend/`):
 cd backend && ./mvnw clean verify
 ```
 
-The suite currently has 1,661 tests (100% passing):
+The suite currently has 1,666 tests (100% passing):
 
 JaCoCo coverage gates (BUNDLE, `backend/target/site/jacoco/jacoco.xml` is single-session honest via
 `<append>false</append>` on `prepare-agent`): INSTRUCTION/BRANCH/LINE/METHOD/CLASS ≥ 95%, COMPLEXITY ≥ 90%.

@@ -1,5 +1,8 @@
 package io.github.kxng0109.cacherelay.proxy.embeddings;
 
+import java.util.Map;
+
+import io.github.kxng0109.cacherelay.budget.BudgetDecision;
 import io.github.kxng0109.cacherelay.config.OpenApiConfig;
 import io.github.kxng0109.cacherelay.proxy.IdempotencyKeys;
 import io.github.kxng0109.cacherelay.proxy.embeddings.dto.EmbeddingRequest;
@@ -17,8 +20,10 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.Nullable;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -122,6 +127,28 @@ public class EmbeddingController {
 		EmbeddingResponse response = embeddingService.processEmbedding(request, ownerId, idempotencyKey,
 				(String) httpServletRequest.getAttribute(KeyAuthFilter.KEY_HASH_ATTRIBUTE));
 		return ResponseEntity.ok(response);
+	}
+
+	/**
+	 * Renders a budget denial with the same 429 shape as the chat path.
+	 *
+	 * @param ex denial carrying the binding decision; must not be {@code null}
+	 * @return 429 with {@code Retry-After}, the {@code X-Budget-*} family and the shared error body
+	 */
+	@ExceptionHandler(EmbeddingBudgetDeniedException.class)
+	public ResponseEntity<Map<String, Map<String, String>>> handleBudgetDenied(EmbeddingBudgetDeniedException ex) {
+		BudgetDecision.Denied denied = ex.getDenied();
+		long retryAfter = Math.max(1L, denied.retryAfterSeconds());
+		HttpHeaders denyHeaders = new HttpHeaders();
+		denyHeaders.setContentType(MediaType.APPLICATION_JSON);
+		denyHeaders.set(HttpHeaders.RETRY_AFTER, Long.toString(retryAfter));
+		denyHeaders.set("X-Budget-Remaining", "0");
+		denyHeaders.set("X-Budget-Reset", Long.toString(System.currentTimeMillis() / 1000L + retryAfter));
+		denyHeaders.set("X-Budget-Level", denied.level());
+		denyHeaders.set("X-Budget-Window", denied.window());
+		Map<String, String> error = Map.of(
+				"message", "budget exhausted (" + denied.level() + " " + denied.window() + ")");
+		return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).headers(denyHeaders).body(Map.of("error", error));
 	}
 }
 

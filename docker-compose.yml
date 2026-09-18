@@ -135,6 +135,7 @@ services:
       start_period: 10s
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./backend/deploy/postgres-init:/docker-entrypoint-initdb.d:ro
     profiles:
       - deps
       - monitoring
