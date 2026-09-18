@@ -28,7 +28,9 @@ const NAV = [
  * reporter once (every feature page uses a short-lived client, so no
  * instance persists to carry the subscription) and renders the last observed
  * snapshot below the header. The strip stays hidden until a credential is
- * present and a gateway response has been observed; signing out clears both.
+ * present and a gateway response has been observed; the snapshot clears
+ * whenever the credential identity changes (key switch or sign-out) since
+ * quota is identity-bound.
  *
  * @returns The shell layout wrapping every route.
  */
@@ -42,13 +44,17 @@ export function Layout(): React.JSX.Element {
   const snapshot = useRateLimitStore((s) => s.snapshot)
 
   useEffect(() => {
-    setHeadersReporter((headers) => {
-      useRateLimitStore.getState().setSnapshot(parseRateLimit(headers))
+    setHeadersReporter((headers, code) => {
+      useRateLimitStore.getState().setSnapshot(parseRateLimit(headers, code))
     })
     return () => {
       setHeadersReporter(null)
     }
   }, [])
+
+  useEffect(() => {
+    useRateLimitStore.getState().clear()
+  }, [gatewayKey, adminKey])
   return (
     <div className="min-h-screen bg-paper text-ink dark:bg-night dark:text-parchment">
       <a href="#main" className="skip-link">

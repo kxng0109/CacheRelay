@@ -3,9 +3,11 @@ import {
   ApiError,
   GatewayClient,
   isStreamingEnabled,
+  parseGatewayErrorCode,
   parseRateLimit,
   resolveApiBase,
   safeErrorMessage,
+  selectPrimaryDimension,
   setHeadersReporter,
   toErrorMessage,
 } from './client.js'
@@ -23,7 +25,13 @@ describe('parseRateLimit', () => {
       'X-RateLimit-Reset-RPM': '12',
       'Retry-After': '5',
     })
-    expect(parseRateLimit(h)).toEqual({ limit: 60, remaining: 59, reset: 12, retryAfter: 5 })
+    expect(parseRateLimit(h)).toEqual({
+      dimension: 'RPM',
+      limit: 60,
+      remaining: 59,
+      reset: 12,
+      retryAfter: 5,
+    })
   })
 
   it('falls back to the TPM trio when RPM headers are absent', () => {
@@ -33,6 +41,7 @@ describe('parseRateLimit', () => {
       'X-RateLimit-Reset-TPM': '30',
     })
     expect(parseRateLimit(h)).toEqual({
+      dimension: 'TPM',
       limit: 100000,
       remaining: 99950,
       reset: 30,
@@ -40,16 +49,47 @@ describe('parseRateLimit', () => {
     })
   })
 
-  it('prefers RPM over TPM when both dimensions arrive', () => {
+  it('leads with the most-constrained dimension, not fixed RPM', () => {
     const h = new Headers({
       'X-RateLimit-Limit-RPM': '60',
-      'X-RateLimit-Limit-TPM': '100000',
       'X-RateLimit-Remaining-RPM': '59',
-      'X-RateLimit-Remaining-TPM': '99950',
       'X-RateLimit-Reset-RPM': '12',
+      'X-RateLimit-Limit-TPM': '100000',
+      'X-RateLimit-Remaining-TPM': '1000',
       'X-RateLimit-Reset-TPM': '30',
     })
-    expect(parseRateLimit(h)).toEqual({ limit: 60, remaining: 59, reset: 12, retryAfter: null })
+    expect(parseRateLimit(h).dimension).toBe('TPM')
+    expect(parseRateLimit(h).remaining).toBe(1000)
+  })
+
+  it('breaks most-constrained ties toward RPM', () => {
+    const h = new Headers({
+      'X-RateLimit-Limit-RPM': '60',
+      'X-RateLimit-Remaining-RPM': '30',
+      'X-RateLimit-Limit-TPM': '100000',
+      'X-RateLimit-Remaining-TPM': '50000',
+    })
+    expect(parseRateLimit(h).dimension).toBe('RPM')
+  })
+
+  it('lets the backend-named 429 code override the header math', () => {
+    const h = new Headers({
+      'X-RateLimit-Limit-RPM': '60',
+      'X-RateLimit-Remaining-RPM': '0',
+      'X-RateLimit-Limit-TPM': '100000',
+      'X-RateLimit-Remaining-TPM': '0',
+      'Retry-After': '9',
+    })
+    expect(parseRateLimit(h, 'TPM_EXCEEDED').dimension).toBe('TPM')
+    expect(parseRateLimit(h, 'RPM_EXCEEDED').dimension).toBe('RPM')
+  })
+
+  it('ignores unknown 429 codes instead of rendering them', () => {
+    const h = new Headers({
+      'X-RateLimit-Limit-RPM': '60',
+      'X-RateLimit-Remaining-RPM': '59',
+    })
+    expect(parseRateLimit(h, 'BOGUS_CODE').dimension).toBe('RPM')
   })
 
   it('maps the unlimited sentinel to null (renders as em-dash)', () => {
@@ -59,6 +99,7 @@ describe('parseRateLimit', () => {
       'X-RateLimit-Reset-RPM': 'unlimited',
     })
     expect(parseRateLimit(h)).toEqual({
+      dimension: null,
       limit: null,
       remaining: null,
       reset: null,
@@ -68,6 +109,7 @@ describe('parseRateLimit', () => {
 
   it('returns nulls when headers are absent', () => {
     expect(parseRateLimit(new Headers())).toEqual({
+      dimension: null,
       limit: null,
       remaining: null,
       reset: null,
@@ -78,6 +120,50 @@ describe('parseRateLimit', () => {
   it('rejects non-numeric header injection', () => {
     const h = new Headers({ 'X-RateLimit-Remaining-RPM': '1; DROP' })
     expect(parseRateLimit(h).remaining).toBeNull()
+  })
+})
+
+describe('selectPrimaryDimension', () => {
+  const triple = (limit: number | null, remaining: number | null) => ({ limit, remaining })
+
+  it('prefers the named 429 dimension over fractions', () => {
+    expect(selectPrimaryDimension(triple(60, 59), triple(100, 99), 'TPM_EXCEEDED')).toBe('TPM')
+    expect(selectPrimaryDimension(triple(60, 1), triple(100, 99), 'RPM_EXCEEDED')).toBe('RPM')
+  })
+
+  it('returns null when neither dimension is capped and observed', () => {
+    expect(selectPrimaryDimension(triple(null, null), triple(null, null), null)).toBeNull()
+    expect(selectPrimaryDimension(triple(null, 5), triple(0, 0), null)).toBeNull()
+  })
+
+  it('picks the lone capped dimension', () => {
+    expect(selectPrimaryDimension(triple(60, 3), triple(null, null), null)).toBe('RPM')
+    expect(selectPrimaryDimension(triple(null, null), triple(100, 3), null)).toBe('TPM')
+  })
+})
+
+describe('parseGatewayErrorCode', () => {
+  it('extracts the deny code from the gateway envelope', () => {
+    expect(
+      parseGatewayErrorCode(JSON.stringify({ error: { message: 'slow', code: 'RPM_EXCEEDED' } })),
+    ).toBe('RPM_EXCEEDED')
+  })
+
+  it('returns null for empty, non-JSON, and codeless bodies', () => {
+    expect(parseGatewayErrorCode('')).toBeNull()
+    expect(parseGatewayErrorCode('{{{not json')).toBeNull()
+    expect(parseGatewayErrorCode(JSON.stringify({ error: { message: 'x' } }))).toBeNull()
+    expect(parseGatewayErrorCode(JSON.stringify({ ok: true }))).toBeNull()
+  })
+
+  it('rejects oversized and non-string codes', () => {
+    expect(
+      parseGatewayErrorCode(JSON.stringify({ error: { message: 'x', code: 'A'.repeat(65) } })),
+    ).toBeNull()
+    expect(parseGatewayErrorCode(JSON.stringify({ error: { message: 'x', code: 429 } }))).toBeNull()
+    expect(
+      parseGatewayErrorCode(JSON.stringify({ error: { message: 'x', code: '<script>' } })),
+    ).toBe('<script>')
   })
 })
 
@@ -198,7 +284,40 @@ describe('GatewayClient transport', () => {
     const apiErr = err as ApiError
     expect(apiErr.status).toBe(429)
     expect(apiErr.rateLimit.retryAfter).toBe(7)
+    expect(apiErr.code).toBeNull()
     expect(apiErr.message).toContain('Rate limit')
+  })
+
+  it('carries the backend-named binding dimension on 429', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: { message: 'Token rate limit exceeded.', code: 'TPM_EXCEEDED' },
+            }),
+            {
+              status: 429,
+              headers: {
+                'X-RateLimit-Remaining-RPM': '12',
+                'X-RateLimit-Limit-RPM': '60',
+                'X-RateLimit-Remaining-TPM': '0',
+                'X-RateLimit-Limit-TPM': '500000',
+                'Retry-After': '9',
+              },
+            },
+          ),
+        ),
+      ),
+    )
+    const err = await new GatewayClient({ base: '', token: 'gw-test' })
+      .models()
+      .catch((e: unknown) => e)
+    const apiErr = err as ApiError
+    expect(apiErr.code).toBe('TPM_EXCEEDED')
+    expect(apiErr.rateLimit.dimension).toBe('TPM')
+    expect(apiErr.rateLimit.remaining).toBe(0)
   })
 
   it('maps unreachable networks with the cause attached', async () => {
@@ -341,7 +460,8 @@ describe('GatewayClient transport', () => {
 
   it('notifies the module reporter with success-path headers', async () => {
     const seen: string[] = []
-    setHeadersReporter((h) => {
+    setHeadersReporter((h, code) => {
+      expect(code).toBeNull()
       const v = h.get('X-RateLimit-Remaining-RPM')
       if (v !== null) seen.push(v)
     })
@@ -362,8 +482,10 @@ describe('GatewayClient transport', () => {
 
   it('notifies the module reporter before throwing on 429', async () => {
     let remaining: string | null = null
-    setHeadersReporter((h) => {
+    let seenCode: string | null | undefined
+    setHeadersReporter((h, code) => {
       remaining = h.get('X-RateLimit-Remaining-RPM')
+      seenCode = code
     })
     vi.stubGlobal(
       'fetch',
@@ -381,6 +503,7 @@ describe('GatewayClient transport', () => {
       .catch((e: unknown) => e)
     expect(err).toBeInstanceOf(ApiError)
     expect(remaining).toBe('0')
+    expect(seenCode).toBeNull()
   })
 
   it('prefers per-call onHeaders over the module reporter', async () => {

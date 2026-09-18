@@ -13,8 +13,9 @@ describe('useRateLimitStore', () => {
   it('replaces the snapshot with freshly parsed headers', () => {
     useRateLimitStore
       .getState()
-      .setSnapshot({ limit: 60, remaining: 41, reset: 12, retryAfter: null })
+      .setSnapshot({ dimension: 'RPM', limit: 60, remaining: 41, reset: 12, retryAfter: null })
     expect(useRateLimitStore.getState().snapshot).toEqual({
+      dimension: 'RPM',
       limit: 60,
       remaining: 41,
       reset: 12,
@@ -25,11 +26,12 @@ describe('useRateLimitStore', () => {
   it('overwrites stale snapshots instead of merging', () => {
     useRateLimitStore
       .getState()
-      .setSnapshot({ limit: 60, remaining: 41, reset: 12, retryAfter: null })
+      .setSnapshot({ dimension: 'RPM', limit: 60, remaining: 41, reset: 12, retryAfter: null })
     useRateLimitStore
       .getState()
-      .setSnapshot({ limit: null, remaining: null, reset: null, retryAfter: 9 })
+      .setSnapshot({ dimension: null, limit: null, remaining: null, reset: null, retryAfter: 9 })
     expect(useRateLimitStore.getState().snapshot).toEqual({
+      dimension: null,
       limit: null,
       remaining: null,
       reset: null,
@@ -40,7 +42,7 @@ describe('useRateLimitStore', () => {
   it('clears back to null on sign-out', () => {
     useRateLimitStore
       .getState()
-      .setSnapshot({ limit: 60, remaining: 41, reset: 12, retryAfter: null })
+      .setSnapshot({ dimension: 'RPM', limit: 60, remaining: 41, reset: 12, retryAfter: null })
     useRateLimitStore.getState().clear()
     expect(useRateLimitStore.getState().snapshot).toBeNull()
   })

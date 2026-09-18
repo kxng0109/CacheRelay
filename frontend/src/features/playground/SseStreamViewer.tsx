@@ -112,8 +112,8 @@ export function SseStreamViewer({
       body: { model, messages, stream: true },
       signal: ctrl.signal,
       readerSlot: readerRef,
-      onHeaders: (headers) => {
-        useRateLimitStore.getState().setSnapshot(parseRateLimit(headers))
+      onHeaders: (headers, code) => {
+        useRateLimitStore.getState().setSnapshot(parseRateLimit(headers, code))
       },
       ...(maxRetries === undefined ? {} : { maxRetries }),
       ...(heartbeatMs === undefined ? {} : { heartbeatMs }),

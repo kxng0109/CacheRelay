@@ -13,11 +13,13 @@ export default meta
 type Story = StoryObj<typeof RateLimitHeaders>
 
 /**
- * Headers present on the last gateway response.
+ * Headers present on the last gateway response. The reset epoch is null here
+ * on purpose: a live countdown would drift between Chromatic captures, and
+ * the ticking behavior is pinned by fake-timer unit tests instead.
  */
 export const Populated: Story = {
   args: {
-    snapshot: { limit: 60, remaining: 59, reset: 12, retryAfter: null },
+    snapshot: { dimension: 'RPM', limit: 60, remaining: 59, reset: null, retryAfter: null },
   },
 }
 
@@ -26,6 +28,6 @@ export const Populated: Story = {
  */
 export const Absent: Story = {
   args: {
-    snapshot: { limit: null, remaining: null, reset: null, retryAfter: null },
+    snapshot: { dimension: null, limit: null, remaining: null, reset: null, retryAfter: null },
   },
 }

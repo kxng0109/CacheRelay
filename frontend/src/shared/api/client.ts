@@ -11,6 +11,7 @@ import type {
   HitlApproval,
   LedgerLogEntry,
   LedgerSummary,
+  RateLimitDimension,
   RateLimitSnapshot,
 } from './types.js'
 
@@ -68,6 +69,8 @@ export class ApiError extends Error {
   readonly rateLimit: RateLimitSnapshot
   readonly cacheStatus: string | null
   readonly debugId: string | null
+  /** Gateway `error.code` (for example `RPM_EXCEEDED`), or null when absent. */
+  readonly code: string | null
 
   constructor(args: {
     message: string
@@ -76,6 +79,7 @@ export class ApiError extends Error {
     rateLimit: RateLimitSnapshot
     cacheStatus: string | null
     debugId: string | null
+    code: string | null
   }) {
     super(args.message)
     this.name = 'ApiError'
@@ -84,7 +88,62 @@ export class ApiError extends Error {
     this.rateLimit = args.rateLimit
     this.cacheStatus = args.cacheStatus
     this.debugId = args.debugId
+    this.code = args.code
   }
+}
+
+/**
+ * Reads one rate-limit dimension triple from response headers.
+ *
+ * @param headers - Response headers to inspect.
+ * @param dimension - Which header family suffix to read.
+ * @returns The dimension triple (nulls when absent or `unlimited`).
+ */
+function parseDimension(
+  headers: Headers,
+  dimension: RateLimitDimension,
+): { limit: number | null; remaining: number | null; reset: number | null } {
+  const num = (v: string | null): number | null => {
+    if (v === null || v === 'unlimited') return null
+    const n = Number(v)
+    return Number.isFinite(n) ? n : null
+  }
+  return {
+    limit: num(headers.get(`X-RateLimit-Limit-${dimension}`)),
+    remaining: num(headers.get(`X-RateLimit-Remaining-${dimension}`)),
+    reset: num(headers.get(`X-RateLimit-Reset-${dimension}`)),
+  }
+}
+
+/**
+ * Selects the binding dimension to display in the single-row strip.
+ *
+ * @remarks
+ * A backend-named 429 `error.code` (`RPM_EXCEEDED` / `TPM_EXCEEDED`) always
+ * wins — the gateway states which dimension rejected the request. Otherwise
+ * the most-constrained capped dimension (lowest remaining fraction) leads;
+ * uncapped (`unlimited`/absent) dimensions never race. Ties and unknowns
+ * fall back to RPM, the primary operator quota.
+ *
+ * @param rpm - Parsed RPM triple.
+ * @param tpm - Parsed TPM triple.
+ * @param code - Gateway `error.code`, or null outside failure paths.
+ * @returns The binding dimension, or null when none is capped and observed.
+ */
+export function selectPrimaryDimension(
+  rpm: { limit: number | null; remaining: number | null },
+  tpm: { limit: number | null; remaining: number | null },
+  code: string | null,
+): RateLimitDimension | null {
+  if (code === 'RPM_EXCEEDED') return 'RPM'
+  if (code === 'TPM_EXCEEDED') return 'TPM'
+  const fraction = (d: { limit: number | null; remaining: number | null }): number | null =>
+    d.limit !== null && d.limit > 0 && d.remaining !== null ? d.remaining / d.limit : null
+  const rpmFraction = fraction(rpm)
+  const tpmFraction = fraction(tpm)
+  if (rpmFraction === null) return tpmFraction === null ? null : 'TPM'
+  if (tpmFraction === null) return 'RPM'
+  return tpmFraction < rpmFraction ? 'TPM' : 'RPM'
 }
 
 /**
@@ -94,29 +153,61 @@ export class ApiError extends Error {
  * Backend truth (`KeyAuthFilter`): the gateway sends an RPM trio
  * (`X-RateLimit-Limit-RPM`, `X-RateLimit-Remaining-RPM`,
  * `X-RateLimit-Reset-RPM`, reset as epoch seconds) plus a TPM trio with the
- * same shapes, on success and on 429. `Retry-After` arrives on 429 only, and
- * an uncapped dimension reports the literal `unlimited` instead of a number.
- * RPM (requests) is the primary operator dimension; TPM (tokens) is the
- * fallback when a response carries no RPM headers. `unlimited` maps to null
- * (renders as `—`); the component contract renders it as text, never a bar.
+ * same shapes, on success and on 429. `Retry-After` arrives on deny paths
+ * only, and an uncapped dimension reports the literal `unlimited` instead of
+ * a number (mapped to null; the strip renders it as quiet text, never a bar).
+ * The displayed row is the binding dimension from {@link selectPrimaryDimension}.
  *
  * @param headers - Response headers to inspect.
+ * @param code - Gateway `error.code` naming the binding dimension on 429, if any.
  * @returns Parsed rate-limit snapshot (nulls when absent).
  */
-export function parseRateLimit(headers: Headers): RateLimitSnapshot {
+export function parseRateLimit(headers: Headers, code: string | null = null): RateLimitSnapshot {
   const num = (v: string | null): number | null => {
     if (v === null || v === 'unlimited') return null
     const n = Number(v)
     return Number.isFinite(n) ? n : null
   }
-  const pick = (rpm: string, tpm: string): number | null =>
-    num(headers.get(rpm)) ?? num(headers.get(tpm))
+  const rpm = parseDimension(headers, 'RPM')
+  const tpm = parseDimension(headers, 'TPM')
+  const dimension = selectPrimaryDimension(rpm, tpm, code)
+  const primary = dimension === 'TPM' ? tpm : rpm
   return {
-    limit: pick('X-RateLimit-Limit-RPM', 'X-RateLimit-Limit-TPM'),
-    remaining: pick('X-RateLimit-Remaining-RPM', 'X-RateLimit-Remaining-TPM'),
-    reset: pick('X-RateLimit-Reset-RPM', 'X-RateLimit-Reset-TPM'),
+    dimension,
+    limit: primary.limit,
+    remaining: primary.remaining,
+    reset: primary.reset,
     retryAfter: num(headers.get('Retry-After')),
   }
+}
+
+/**
+ * Extracts the gateway `error.code` from a failure body without throwing.
+ *
+ * @remarks
+ * Backend truth (`KeyAuthFilter.writeJsonError`): deny bodies carry
+ * `{"error":{"message":…,"code":"RPM_EXCEEDED"|…}}`. Overlong values are
+ * rejected so adversarial bodies can never flow a payload into the UI —
+ * unknown codes map to null at selection time and are never rendered raw.
+ *
+ * @param body - Raw response text (may be empty or non-JSON).
+ * @returns The code string, or null when absent, malformed, or oversized.
+ */
+export function parseGatewayErrorCode(body: string): string | null {
+  if (body.length === 0) return null
+  try {
+    const parsed: unknown = JSON.parse(body)
+    if (typeof parsed === 'object' && parsed !== null) {
+      const err = (parsed as Record<string, unknown>).error
+      if (typeof err === 'object' && err !== null) {
+        const code = (err as Record<string, unknown>).code
+        if (typeof code === 'string' && code.length > 0 && code.length <= 64) return code
+      }
+    }
+  } catch {
+    // Malformed bodies carry no code; callers fall back to header selection.
+  }
+  return null
 }
 
 /**
@@ -174,10 +265,11 @@ export interface RequestOptions {
   signal?: AbortSignal
   /**
    * Receives raw response headers on every settled gateway response
-   * (success and failure). Lets the shell mirror operational headers into
+   * (success and failure), plus the gateway `error.code` on deny paths
+   * (null elsewhere). Lets the shell mirror operational headers into
    * a memory-only store without threading return shapes through call sites.
    */
-  onHeaders?: (headers: Headers) => void
+  onHeaders?: (headers: Headers, code: string | null) => void
 }
 
 /**
@@ -190,14 +282,17 @@ export interface RequestOptions {
  * precedence when both are set. The reporter must stay synchronous and
  * side-effect-light (a zustand `set`) so it never perturbs the transport.
  */
-let headersReporter: ((headers: Headers) => void) | null = null
+let headersReporter: ((headers: Headers, code: string | null) => void) | null = null
 
 /**
  * Registers the process-wide response-headers reporter.
  *
- * @param reporter - Receiver for settled response headers, or null to clear.
+ * @param reporter - Receiver for settled response headers plus the deny-path
+ * error code, or null to clear.
  */
-export function setHeadersReporter(reporter: ((headers: Headers) => void) | null): void {
+export function setHeadersReporter(
+  reporter: ((headers: Headers, code: string | null) => void) | null,
+): void {
   headersReporter = reporter
 }
 
@@ -238,17 +333,19 @@ async function sendGatewayRequest(
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '')
-    ;(opts?.onHeaders ?? headersReporter)?.(res.headers)
+    const code = parseGatewayErrorCode(text)
+    ;(opts?.onHeaders ?? headersReporter)?.(res.headers, code)
     throw new ApiError({
       message: safeErrorMessage(res.status, text),
       status: res.status,
       requestId: res.headers.get('X-Request-Id'),
-      rateLimit: parseRateLimit(res.headers),
+      rateLimit: parseRateLimit(res.headers, code),
       cacheStatus: res.headers.get('X-Cache-Status'),
       debugId: res.headers.get('X-Request-Debug'),
+      code,
     })
   }
-  ;(opts?.onHeaders ?? headersReporter)?.(res.headers)
+  ;(opts?.onHeaders ?? headersReporter)?.(res.headers, null)
   return res
 }
 

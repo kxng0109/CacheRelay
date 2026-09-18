@@ -46,12 +46,16 @@ Never commit tokens, keys, or credentials.
   one is introduced. See `backend/docs/BACKEND_API_REFERENCE.md` §1–§3.
 - The shell shows a live rate-limit strip below the header once a credential
   is present and a gateway response has been observed (`RateLimitHeaders`
-  over `shared/ratelimit` memory-only state). It parses the backend RPM trio
-  (`X-RateLimit-*-RPM`, TPM fallback, 429-only `Retry-After`) via
-  `parseRateLimit`, fed by `RequestOptions.onHeaders` / the process-wide
-  `setHeadersReporter` (per-call wins) plus the SSE handshake hook. Dev
-  cross-origin reads need backend `Access-Control-Expose-Headers`; prod is
-  same-origin and unaffected.
+  over `shared/ratelimit` memory-only state). One smart row shows the binding
+  dimension (captioned request vs token quota): the backend-named 429
+  `error.code` (`RPM_EXCEEDED`/`TPM_EXCEEDED`) wins, otherwise the
+  most-constrained capped dimension leads (ties → RPM, `unlimited` never
+  races). The reset cell counts down live from the reset epoch (1s interval
+  only while a future reset shows); the snapshot clears on key switch and
+  sign-out since quota is identity-bound. Wired via `RequestOptions.onHeaders`
+  / process-wide `setHeadersReporter` (per-call wins) plus the SSE handshake
+  hook. Dev cross-origin reads need backend `Access-Control-Expose-Headers`;
+  prod is same-origin and unaffected.
 
 ## Quality gates
 
@@ -61,7 +65,7 @@ Never commit tokens, keys, or credentials.
 | `npm.cmd run format:check`    | Prettier 3.9.7 exact, check only                              |
 | `npm.cmd run typecheck`       | `tsc -b` (solution build; bare `--noEmit` is vacuous here)    |
 | `npm.cmd run test`            | Vitest 5 unit run (jsdom)                                     |
-| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently ~99.4/97.5/98.8/99.6) |
+| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently ~99.5/97.6/98.9/99.6) |
 | `npm.cmd run test:e2e`        | Playwright 1.63 smoke, chromium, Vite dev reuse               |
 | `npm.cmd run build-storybook` | Storybook 10.6.0 static build                                 |
 
@@ -118,7 +122,7 @@ reporter for CI step summaries.
 `cleanup()` after each test, and closes the server at the end.
 `src/test/utils.tsx` renders UI with a fresh query client (no retries),
 memory router, and seeded memory-only credentials.
-17 suites / 142 tests: pure-unit (SSE parser, rate-limit parser/store,
+17 suites / 158 tests: pure-unit (SSE parser, rate-limit parser/selector/store,
 error mapping, URL allow-list) plus MSW integration per screen
 (happy/error/empty/adversarial).
 

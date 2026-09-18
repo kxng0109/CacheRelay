@@ -65,7 +65,18 @@ export interface GatewayErrorBody {
   }
 }
 
+/**
+ * Rate-limit dimension the gateway meters independently.
+ *
+ * @remarks
+ * Mirrors the backend `X-RateLimit-*-RPM` / `X-RateLimit-*-TPM` header
+ * families and the 429 `error.code` values (`RPM_EXCEEDED`, `TPM_EXCEEDED`).
+ */
+export type RateLimitDimension = 'RPM' | 'TPM'
+
 export interface RateLimitSnapshot {
+  /** Binding dimension displayed, or null when no capped dimension observed. */
+  dimension: RateLimitDimension | null
   limit: number | null
   remaining: number | null
   reset: number | null
