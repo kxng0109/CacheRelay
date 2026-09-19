@@ -129,3 +129,36 @@ tests:
             exp_annotations:
               summary: "Redis memory above 80% of maxmemory"
               description: "Redis holds pressure against its maxmemory cap. Evictions under noeviction fail writes."
+
+  - interval: 1m
+    input_series:
+      - series: 'jvm_buffer_memory_used_bytes{bufferPool="direct"}'
+        values: 230000000+0x29
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: JvmDirectMemoryHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: platform-core
+              bufferPool: direct
+            exp_annotations:
+              summary: "JVM direct memory above 80% of the 256m cap"
+              description: "Netty/Lettuce pooled buffers near MaxDirectMemorySize; exhaustion OOMs without ExitOnOutOfMemoryError (JDK-8257790). Denominator tracks the Dockerfile cap — update together."
+
+  - interval: 1m
+    input_series:
+      - series: 'jvm_memory_used_bytes{area="heap"}'
+        values: 1100000000+0x29
+      - series: 'jvm_memory_max_bytes{area="heap"}'
+        values: 1200000000+0x29
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: JvmHeapPressureHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: platform-core
+            exp_annotations:
+              summary: "JVM heap above 90% sustained"
+              description: "Heap pressure near Xmx; expect ZGC allocation pacing then OOM. Correlate with GcPauseHigh."

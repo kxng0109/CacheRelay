@@ -69,6 +69,21 @@ class RateLimitEngineTest {
 	}
 
 	@Test
+	void unlimitedKeySkipsRedisRoundTrip() {
+		RateLimitDecision tokenDecision = engine.checkRateLimit(HASH, key(0, 0), 10);
+		RateLimitDecision.Allowed tokenAllowed = assertInstanceOf(RateLimitDecision.Allowed.class, tokenDecision);
+		assertEquals(0, tokenAllowed.state().rpmLimit());
+		assertEquals(0, tokenAllowed.state().rpmRemaining());
+		assertEquals(0, tokenAllowed.state().tpmLimit());
+		assertEquals(0, tokenAllowed.state().tpmRemaining());
+
+		RateLimitDecision mcpDecision = engine.checkRequestRate(HASH, key(0, 100));
+		assertInstanceOf(RateLimitDecision.Allowed.class, mcpDecision);
+
+		verifyNoInteractions(redisTemplate);
+	}
+
+	@Test
 	void decisionCounterRecordsAllowedAndDenied() {
 		SimpleMeterRegistry registry = new SimpleMeterRegistry();
 		RateLimitEngine metered = new RateLimitEngine(redisTemplate, script, RateLimitProperties.DEFAULTS, registry);

@@ -29,9 +29,15 @@ import org.springframework.stereotype.Service;
 @Service
 public class ReplayService {
 
-	static final String PREFIX = "cacherelay:replay:";
+	/**
+	 * Redis key prefix for stored idempotent replays (also purged by the admin cache purge).
+	 */
+	public static final String PREFIX = "cacherelay:replay:";
 
-	static final String FILL_PREFIX = "cacherelay:replay-fill:";
+	/**
+	 * Redis key prefix for in-flight replay fill locks (also purged by the admin cache purge).
+	 */
+	public static final String FILL_PREFIX = "cacherelay:replay-fill:";
 
 	static final Duration HOT_TTL = Duration.ofHours(24);
 

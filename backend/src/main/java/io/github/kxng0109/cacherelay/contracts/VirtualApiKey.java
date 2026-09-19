@@ -1,6 +1,9 @@
 package io.github.kxng0109.cacherelay.contracts;
 
+import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
+
 import java.time.Instant;
+import java.util.EnumSet;
 import java.util.Set;
 
 /**
@@ -26,6 +29,8 @@ import java.util.Set;
  * @param injectionBlock   whether indirect prompt injection markers in tool output block delivery (true) or only warn (false)
  * @param enabled          whether the key is currently active
  * @param createdAt        creation timestamp
+ * @param allowedCacheScopes cache isolation scopes the key may use (SEC-01: the request header can only
+ *                           select within this server-side allowlist; null or empty means TENANT only)
  */
 public record VirtualApiKey(
 		SHA256Hash keyHash,
@@ -44,7 +49,8 @@ public record VirtualApiKey(
 		Set<String> deniedPrompts,
 		boolean injectionBlock,
 		boolean enabled,
-		Instant createdAt
+		Instant createdAt,
+		Set<CacheScope> allowedCacheScopes
 ) {
 	/**
 	 * Stores immutable copies of the allow and deny lists so callers cannot mutate the
@@ -59,6 +65,27 @@ public record VirtualApiKey(
 		deniedResources = deniedResources == null ? Set.of() : Set.copyOf(deniedResources);
 		allowedPrompts = allowedPrompts == null ? Set.of() : Set.copyOf(allowedPrompts);
 		deniedPrompts = deniedPrompts == null ? Set.of() : Set.copyOf(deniedPrompts);
+		allowedCacheScopes = normalizeCacheScopes(allowedCacheScopes);
+	}
+
+	/**
+	 * Normalizes the cache-scope allowlist to a non-empty immutable set, defaulting to
+	 * TENANT-only when nothing was configured (fail-closed: no scope is granted implicitly).
+	 *
+	 * @param scopes configured scopes, possibly {@code null} or empty
+	 * @return non-empty immutable scope set
+	 */
+	public static Set<CacheScope> normalizeCacheScopes(Set<CacheScope> scopes) {
+		if (scopes == null || scopes.isEmpty()) {
+			return Set.of(CacheScope.TENANT);
+		}
+		EnumSet<CacheScope> copy = EnumSet.noneOf(CacheScope.class);
+		for (CacheScope scope : scopes) {
+			if (scope != null) {
+				copy.add(scope);
+			}
+		}
+		return copy.isEmpty() ? Set.of(CacheScope.TENANT) : Set.copyOf(copy);
 	}
 
 	/**
@@ -93,7 +120,52 @@ public record VirtualApiKey(
 				Set.of(),
 				true,
 				enabled,
-				createdAt
+				createdAt,
+				Set.of(CacheScope.TENANT)
+		);
+	}
+
+	/**
+	 * Backwards-compatible constructor omitting the cache-scope allowlist (defaults to TENANT-only).
+	 */
+	public VirtualApiKey(
+			SHA256Hash keyHash,
+			String keyPrefix,
+			String ownerId,
+			String name,
+			int rpmLimit,
+			int tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts,
+			boolean injectionBlock,
+			boolean enabled,
+			Instant createdAt
+	) {
+		this(
+				keyHash,
+				keyPrefix,
+				ownerId,
+				name,
+				rpmLimit,
+				tpmLimit,
+				allowedModels,
+				allowedProviders,
+				allowedTools,
+				deniedTools,
+				allowedResources,
+				deniedResources,
+				allowedPrompts,
+				deniedPrompts,
+				injectionBlock,
+				enabled,
+				createdAt,
+				Set.of(CacheScope.TENANT)
 		);
 	}
 
@@ -131,7 +203,8 @@ public record VirtualApiKey(
 				Set.of(),
 				true,
 				enabled,
-				createdAt
+				createdAt,
+				Set.of(CacheScope.TENANT)
 		);
 	}
 }

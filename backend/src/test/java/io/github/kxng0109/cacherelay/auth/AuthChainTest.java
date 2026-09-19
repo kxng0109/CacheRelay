@@ -48,7 +48,7 @@ class AuthChainTest {
 	static void properties(DynamicPropertyRegistry registry) {
 		registry.add("spring.data.redis.host", REDIS::getHost);
 		registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
-		registry.add("gateway.admin.master-key", () -> "test-master-key-12345");
+		registry.add("gateway.admin.master-key", () -> "test-only-admin-master-key-32b-min!!");
 	}
 
 	@LocalServerPort
@@ -142,7 +142,7 @@ class AuthChainTest {
 	private String createInvite(String email, boolean admin) throws Exception {
 		String emailJson = email != null ? "\"email\":\"" + email + "\"," : "";
 		HttpResponse<String> response = post("/v1/admin/invites",
-				"{" + emailJson + "\"admin\":" + admin + "}", "X-Admin-Key test-master-key-12345",
+				"{" + emailJson + "\"admin\":" + admin + "}", "X-Admin-Key test-only-admin-master-key-32b-min!!",
 				null);
 		assertThat(response.statusCode()).as("invite created").isEqualTo(201);
 		String body = response.body();

@@ -8,10 +8,13 @@ import io.github.kxng0109.cacherelay.cache.engine.l2.RediSearchVectorClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
+import java.util.Arrays;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -44,9 +47,11 @@ class AdminCacheControllerTest {
 	}
 
 	@Test
-	@DisplayName("purgeCache executes global and tenant-level purges")
+	@DisplayName("purgeCache executes global and tenant-level purges with SCAN (never KEYS)")
 	void purgeCacheOperations() {
-		when(redisTemplate.keys(anyString())).thenReturn(Set.of("key1", "key2"));
+		when(redisTemplate.scan(any(ScanOptions.class)))
+				.thenAnswer(invocation -> cursorOf("key1", "key2"));
+		when(vectorClient.vectorDimensionOf(anyString())).thenReturn(768);
 
 		// Tenant purge
 		ResponseEntity<CachePurgeResponse> tenantRes = controller.purgeCache("tenant-abc");
@@ -55,33 +60,56 @@ class AdminCacheControllerTest {
 		assertThat(tenantRes.getBody().evictedScope()).isEqualTo("tenant-abc");
 		verify(cacheService, times(1)).purgeLocalCache();
 
-		// Global purge
+		// Global purge rebuilds the index at the live dimension (never hardcoded)
 		ResponseEntity<CachePurgeResponse> globalRes = controller.purgeCache(null);
 		assertThat(globalRes.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(globalRes.getBody()).isNotNull();
 		assertThat(globalRes.getBody().evictedScope()).isEqualTo("ALL");
 		verify(vectorClient).dropIndex(anyString(), eq(false));
+		verify(vectorClient, atLeastOnce())
+				.createIndexIfNotExists(anyString(), anyString(), eq(768));
 
 		// Blank ownerId should trigger global purge
 		ResponseEntity<CachePurgeResponse> blankOwnerRes = controller.purgeCache("   ");
 		assertThat(blankOwnerRes.getBody().evictedScope()).isEqualTo("ALL");
 
+		// Unreadable dimension skips the index rebuild instead of breaking L2
+		when(vectorClient.vectorDimensionOf(anyString())).thenReturn(-1);
+		clearInvocations(vectorClient);
+		ResponseEntity<CachePurgeResponse> unknownDimsRes = controller.purgeCache(null);
+		assertThat(unknownDimsRes.getStatusCode()).isEqualTo(HttpStatus.OK);
+		verify(vectorClient, never()).dropIndex(anyString(), anyBoolean());
+
 		// Exception during index recreation in global purge
+		when(vectorClient.vectorDimensionOf(anyString())).thenReturn(768);
 		doThrow(new RuntimeException("recreation err")).when(vectorClient)
 		                                               .createIndexIfNotExists(anyString(), anyString(), anyInt());
 		ResponseEntity<CachePurgeResponse> recreateErrRes = controller.purgeCache(null);
 		assertThat(recreateErrRes.getStatusCode()).isEqualTo(HttpStatus.OK);
 
-		// Null and empty keys set
-		when(redisTemplate.keys(anyString())).thenReturn(null);
-		controller.purgeCache("tenant-nullkeys");
-
-		when(redisTemplate.keys(anyString())).thenReturn(Set.of());
+		// Empty scan and scan failure stay 200
+		when(redisTemplate.scan(any(ScanOptions.class)))
+				.thenAnswer(invocation -> cursorOf());
 		controller.purgeCache("tenant-emptykeys");
 
-		// Exception handling during key purge
-		when(redisTemplate.keys(anyString())).thenThrow(new RuntimeException("Redis keys failure"));
+		when(redisTemplate.scan(any(ScanOptions.class)))
+				.thenThrow(new RuntimeException("Redis scan failure"));
 		ResponseEntity<CachePurgeResponse> errorRes = controller.purgeCache("tenant-err");
 		assertThat(errorRes.getStatusCode()).isEqualTo(HttpStatus.OK);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Cursor<String> cursorOf(String... keys) {
+		Cursor<String> cursor = mock(Cursor.class);
+		if (keys.length == 0) {
+			when(cursor.hasNext()).thenReturn(false);
+			return cursor;
+		}
+		Boolean[] hasNext = new Boolean[keys.length + 1];
+		Arrays.fill(hasNext, 0, keys.length, Boolean.TRUE);
+		hasNext[keys.length] = Boolean.FALSE;
+		when(cursor.hasNext()).thenReturn(true, hasNext);
+		when(cursor.next()).thenReturn(keys[0], Arrays.copyOfRange(keys, 1, keys.length));
+		return cursor;
 	}
 }

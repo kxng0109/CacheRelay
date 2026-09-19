@@ -1,5 +1,6 @@
 package io.github.kxng0109.cacherelay.admin.dto;
 
+import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.time.Instant;
@@ -76,7 +77,10 @@ public record CreatedKeyResponse(
 		boolean enabled,
 
 		@Schema(description = "Creation timestamp (ISO-8601)", example = "2026-09-01T12:00:00Z")
-		Instant createdAt
+		Instant createdAt,
+
+		@Schema(description = "Cache isolation scopes (TENANT-only when unset)", example = "[\"TENANT\"]")
+		Set<CacheScope> allowedCacheScopes
 ) {
 	public CreatedKeyResponse(
 			String keyId,
@@ -109,7 +113,8 @@ public record CreatedKeyResponse(
 				Set.of(),
 				true,
 				enabled,
-				createdAt
+				createdAt,
+				Set.of(CacheScope.TENANT)
 		);
 	}
 
@@ -149,7 +154,8 @@ public record CreatedKeyResponse(
 				Set.of(),
 				true,
 				enabled,
-				createdAt
+				createdAt,
+				Set.of(CacheScope.TENANT)
 		);
 	}
 
@@ -193,7 +199,8 @@ public record CreatedKeyResponse(
 				deniedPrompts,
 				true,
 				enabled,
-				createdAt
+				createdAt,
+				Set.of(CacheScope.TENANT)
 		);
 	}
 }

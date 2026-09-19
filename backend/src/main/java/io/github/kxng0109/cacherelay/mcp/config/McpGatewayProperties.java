@@ -95,6 +95,12 @@ public class McpGatewayProperties {
 	private int maxSseMessageBytes = 2 * 1024 * 1024; // 2 MB
 
 	/**
+	 * Maximum bytes buffered for one tools/call upstream result body (PERF-11).
+	 * Larger results fail fast instead of OOMing the heap.
+	 */
+	private int maxResultBytes = 1024 * 1024; // 1 MB
+
+	/**
 	 * Whether to enable backwards-compatible legacy dual-endpoint SSE transport (GET /mcp/sse + POST /mcp/message).
 	 */
 	private boolean allowLegacySse = true;

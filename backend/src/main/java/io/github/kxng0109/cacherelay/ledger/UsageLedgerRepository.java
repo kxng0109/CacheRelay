@@ -2,6 +2,8 @@ package io.github.kxng0109.cacherelay.ledger;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -21,4 +23,13 @@ public interface UsageLedgerRepository extends JpaRepository<UsageLedgerEntry, U
 	 * @return {@code true} when an entry was already recorded for it
 	 */
 	boolean existsByRequestId(UUID requestId);
+
+	/**
+	 * Batch existence check for micro-batch deduplication (PERF-03): one SELECT per
+	 * flush instead of one per row.
+	 *
+	 * @param requestIds correlation ids of the candidate batch
+	 * @return the subset already recorded
+	 */
+	List<UsageLedgerEntry> findByRequestIdIn(Collection<UUID> requestIds);
 }

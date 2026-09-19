@@ -11,6 +11,9 @@ services:
     image: redis:8.10.1-alpine3.23
     container_name: cacherelay-redis
     restart: unless-stopped
+    # Auth: --requirepass from REDIS_PASSWORD (hard-required, no default; generate
+    # with: openssl rand -hex 32). Hex output has no spaces, so the folded command
+    # string never splits the secret into extra argv words.
     command: >
       redis-server
       --appendonly yes
@@ -19,10 +22,11 @@ services:
       --maxmemory 384mb
       --maxmemory-policy noeviction
       --protected-mode no
+      --requirepass ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: [ "CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}", "--no-auth-warning", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -59,6 +63,8 @@ services:
     image: redis:8.10.1-alpine3.23
     container_name: cacherelay-redis-cache
     restart: unless-stopped
+    # Auth: separate credential from the accounting tier (see REDIS_PASSWORD).
+    # Generate with: openssl rand -hex 32.
     command: >
       redis-server
       --appendonly yes
@@ -66,10 +72,11 @@ services:
       --maxmemory 512mb
       --maxmemory-policy allkeys-lru
       --protected-mode no
+      --requirepass ${REDIS_CACHE_PASSWORD:?set REDIS_CACHE_PASSWORD in .env}
     ports:
-      - "${REDIS_CACHE_PORT:-6380}:6379"
+      - "127.0.0.1:${REDIS_CACHE_PORT:-6380}:6379"
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: [ "CMD", "redis-cli", "-a", "${REDIS_CACHE_PASSWORD:?set REDIS_CACHE_PASSWORD in .env}", "--no-auth-warning", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -117,12 +124,16 @@ services:
       # Raise per-instance pools or instance count only after re-running this sum.
       - "-c"
       - "max_connections=200"
+      # Explicit scram-sha-256 (the PG14+ default, pinned so a base-image change
+      # can never silently downgrade stored credentials to md5).
+      - "-c"
+      - "password_encryption=scram-sha-256"
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-cacherelay}
       POSTGRES_USER: ${POSTGRES_USER:-cacherelay}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cacherelay_secret}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       # Passthrough ONLY so one-off admin exec can reference the exporter
       # credentials without values ever leaving the container. Ignored by PG.
       POSTGRES_EXPORTER_USER: ${POSTGRES_EXPORTER_USER:-cacherelay_exporter}
@@ -175,7 +186,7 @@ services:
         soft: 65536
         hard: 100000
     ports:
-      - "${GATEWAY_PORT:-8080}:8080"
+      - "${GATEWAY_BIND_HOST:-127.0.0.1}:${GATEWAY_PORT:-8080}:8080"
     depends_on:
       redis:
         condition: service_healthy
@@ -200,7 +211,11 @@ services:
       GATEWAY_BUDGET_DETECTION_ALERTMANAGER_URL: http://alertmanager:9093
       POSTGRES_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-cacherelay}
       POSTGRES_USER: ${POSTGRES_USER:-cacherelay}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cacherelay_secret}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      # Redis AUTH passthrough (empty default = unauthenticated, for test-only
+      # stacks; the compose redis services above hard-require real secrets).
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_CACHE_PASSWORD: ${REDIS_CACHE_PASSWORD:-}
       HIKARI_MAXIMUM_POOL_SIZE: ${HIKARI_MAXIMUM_POOL_SIZE:-10}
       HIKARI_MINIMUM_IDLE: ${HIKARI_MINIMUM_IDLE:-10}
 
@@ -219,8 +234,16 @@ services:
       # localhost for local Ollama development.
       GATEWAY_DEV_ALLOW_PRIVATE_HOSTS: ${GATEWAY_DEV_ALLOW_PRIVATE_HOSTS:-}
 
-      # Master Admin Key (for /v1/admin/** APIs)
-      GATEWAY_ADMIN_MASTERKEY: ${GATEWAY_ADMIN_MASTERKEY:-cacherelay_admin_secret_key}
+      # Master Admin Key (for /v1/admin/** APIs). No default: the app fails fast
+      # at startup when this is missing, shorter than 32 bytes, or a published
+      # default. Generate with: openssl rand -base64 32. Rotate immediately if
+      # the old shipped default was ever used in an environment.
+      GATEWAY_ADMIN_MASTERKEY: ${GATEWAY_ADMIN_MASTERKEY:?set GATEWAY_ADMIN_MASTERKEY in .env}
+
+      # Human-auth JWT HMAC secret. Mandatory outside the dev profile (the app
+      # fails fast without a stable 32+ byte secret); dev mints an ephemeral one.
+      # Generate with: openssl rand -base64 32. Rotate with session invalidation.
+      GATEWAY_AUTH_JWT_SECRET: ${GATEWAY_AUTH_JWT_SECRET:-}
 
       # HITL AEAD secret (REQUIRED — the app refuses to start without 32+ bytes).
       # Generate with: openssl rand -base64 32
@@ -300,6 +323,10 @@ services:
     image: oliver006/redis_exporter:v1.89.0-alpine
     container_name: cacherelay-redis-exporter
     restart: unless-stopped
+    # Authenticated scrape: the exporter reads REDIS_PASSWORD natively
+    # (CLI flags take precedence; none are set here by design).
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
     command:
       - "--redis.addr=redis://redis:6379"
       - "--include-modules-metrics"
@@ -338,6 +365,8 @@ services:
     image: oliver006/redis_exporter:v1.89.0-alpine
     container_name: cacherelay-redis-cache-exporter
     restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_CACHE_PASSWORD:?set REDIS_CACHE_PASSWORD in .env}
     command:
       - "--redis.addr=redis://redis-cache:6379"
       - "--include-modules-metrics"
@@ -422,7 +451,7 @@ services:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
       - "--storage.path=/alertmanager"
     ports:
-      - "${ALERTMANAGER_PORT:-9093}:9093"
+      - "127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093"
     volumes:
       - ./backend/monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager_data:/alertmanager
@@ -471,7 +500,7 @@ services:
       - "--storage.tsdb.wal-compression"
       - "--web.enable-lifecycle"
     ports:
-      - "${PROMETHEUS_PORT:-9090}:9090"
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./backend/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./backend/monitoring/prometheus/rules:/etc/prometheus/rules:ro
@@ -523,7 +552,7 @@ services:
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
     ports:
-      - "${GRAFANA_PORT:-3000}:3000"
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
     volumes:
       - ./backend/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./backend/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro

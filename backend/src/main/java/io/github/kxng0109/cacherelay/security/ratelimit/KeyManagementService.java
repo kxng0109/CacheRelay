@@ -2,7 +2,10 @@ package io.github.kxng0109.cacherelay.security.ratelimit;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
 import io.github.kxng0109.cacherelay.contracts.BootstrapKey;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import io.github.kxng0109.cacherelay.contracts.GatewayProperties;
 import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
 import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
@@ -42,6 +45,18 @@ public class KeyManagementService {
 			"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_".toCharArray();
 
 	private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+
+	/**
+	 * Codec for the JSON-array persistence of RBAC visibility sets (FS-04). Thread-safe
+	 * after construction; shared across all key operations.
+	 */
+	private static final ObjectMapper SET_CODEC = new ObjectMapper();
+
+	/**
+	 * Injection handling persisted for seeded keys. Bootstrap templates carry no injection
+	 * knob, so seeds keep the safe default (block); operators relax via the admin API.
+	 */
+	private static final boolean SEED_INJECTION_BLOCK = true;
 
 	/**
 	 * Atomically claims a bootstrap-key slot: stores the full metadata hash plus the index entry only when the
@@ -122,6 +137,136 @@ public class KeyManagementService {
 		             .collect(Collectors.toUnmodifiableSet());
 	}
 
+	/**
+	 * Encodes a visibility set as a JSON array (FS-04), sorted for deterministic storage.
+	 * URIs and globs may contain commas, quotes, or brackets that CSV cannot represent.
+	 *
+	 * @param values set elements, possibly {@code null}
+	 * @return JSON array string ({@code []} when empty)
+	 */
+	private static String encodeSet(Set<String> values) {
+		try {
+			List<String> sorted = values == null
+					? List.of()
+					: values.stream().filter(Objects::nonNull).sorted().toList();
+			return SET_CODEC.writeValueAsString(sorted);
+		} catch (JacksonException e) {
+			throw new IllegalStateException("Failed to encode key policy set", e);
+		}
+	}
+
+	/**
+	 * Decodes a visibility set: JSON arrays (current format) or legacy CSV (tolerant
+	 * reader for keys stored before FS-04). Corrupt JSON fails the whole load via
+	 * {@link IllegalArgumentException} so the key resolves to a miss, never allow-all.
+	 *
+	 * @param raw stored value, possibly {@code null}
+	 * @return decoded set (empty when blank)
+	 */
+	private static Set<String> parseSetField(String raw) {
+		if (raw == null || raw.isBlank()) {
+			return Set.of();
+		}
+		String trimmed = raw.trim();
+		if (trimmed.startsWith("[")) {
+			try {
+				String[] elements = SET_CODEC.readValue(trimmed, String[].class);
+				return elements == null
+						? Set.of()
+						: Arrays.stream(elements)
+						        .filter(Objects::nonNull)
+						        .collect(Collectors.toUnmodifiableSet());
+			} catch (JacksonException e) {
+				throw new IllegalArgumentException("Corrupt stored key policy set", e);
+			}
+		}
+		return parseCsv(trimmed);
+	}
+
+	/**
+	 * Writes every governance field shared by the create and seed paths into the given
+	 * ordered map (FS-02 divergence guard: new policy fields are added here once, so the
+	 * seed path can never silently drop what the store path persists; FS-04 will swap the
+	 * set encoding to JSON inside this method only).
+	 *
+	 * @param fields             ordered destination map
+	 * @param allowedModels      allowed model names
+	 * @param allowedProviders   allowed provider names
+	 * @param allowedTools       allowed tool globs
+	 * @param deniedTools        denied tool globs
+	 * @param allowedResources   allowed resource URI globs
+	 * @param deniedResources    denied resource URI globs
+	 * @param allowedPrompts     allowed prompt globs
+	 * @param deniedPrompts      denied prompt globs
+	 * @param injectionBlock     injection handling flag
+	 * @param allowedCacheScopes cache isolation scopes
+	 */
+	private static void putPolicyFields(
+			Map<String, String> fields,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts,
+			boolean injectionBlock,
+			Set<CacheScope> allowedCacheScopes
+	) {
+		fields.put("allowedModels", toCsv(allowedModels));
+		fields.put("allowedProviders", toCsv(allowedProviders));
+		fields.put("allowedTools", toCsv(allowedTools));
+		fields.put("deniedTools", toCsv(deniedTools));
+		fields.put("allowedResources", encodeSet(allowedResources));
+		fields.put("deniedResources", encodeSet(deniedResources));
+		fields.put("allowedPrompts", encodeSet(allowedPrompts));
+		fields.put("deniedPrompts", encodeSet(deniedPrompts));
+		fields.put("injectionBlock", Boolean.toString(injectionBlock));
+		fields.put("allowedCacheScopes", scopesToCsv(allowedCacheScopes));
+	}
+
+	/**
+	 * Encodes cache scopes for Redis storage (enum names contain no commas, so the
+	 * CSV format is unambiguous here, unlike resource URIs).
+	 *
+	 * @param scopes scopes to encode, possibly {@code null}
+	 * @return comma-joined scope names, or empty when none
+	 */
+	private static String scopesToCsv(Set<CacheScope> scopes) {
+		if (scopes == null || scopes.isEmpty()) {
+			return "";
+		}
+		return scopes.stream()
+		             .filter(Objects::nonNull)
+		             .map(CacheScope::name)
+		             .sorted()
+		             .collect(Collectors.joining(","));
+	}
+
+	/**
+	 * Decodes stored cache scopes, failing closed to TENANT-only when the value is
+	 * missing, blank, or carries no recognizable scope (unknown names are dropped).
+	 *
+	 * @param csv stored scope list, possibly {@code null}
+	 * @return non-empty scope set
+	 */
+	private static Set<CacheScope> parseScopes(String csv) {
+		if (csv == null || csv.isBlank()) {
+			return Set.of(CacheScope.TENANT);
+		}
+		EnumSet<CacheScope> scopes = EnumSet.noneOf(CacheScope.class);
+		for (String token : csv.split(",")) {
+			try {
+				scopes.add(CacheScope.valueOf(token.trim().toUpperCase(Locale.ROOT)));
+			} catch (IllegalArgumentException ignored) {
+			}
+		}
+		return scopes.isEmpty()
+				? Set.of(CacheScope.TENANT)
+				: Collections.unmodifiableSet(scopes);
+	}
+
 	private static String redisKey(SHA256Hash hash) {
 		return REDIS_KEY_PREFIX + hash.hex();
 	}
@@ -161,7 +306,8 @@ public class KeyManagementService {
 				template.deniedResources(),
 				template.allowedPrompts(),
 				template.deniedPrompts(),
-				true
+				true,
+				template.allowedCacheScopes()
 		);
 		return plaintext;
 	}
@@ -288,6 +434,47 @@ public class KeyManagementService {
 			Set<String> deniedPrompts,
 			Boolean injectionBlock
 	) {
+		return createKey(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders,
+				allowedTools, deniedTools, allowedResources, deniedResources, allowedPrompts,
+				deniedPrompts, injectionBlock, null);
+	}
+
+	/**
+	 * Creates a new virtual API key with full governance rules including resource,
+	 * prompt, injection, and cache-scope handling.
+	 *
+	 * @param ownerId            owner identifier
+	 * @param name               label for the key
+	 * @param rpmLimit           requests per minute limit (0 = unlimited)
+	 * @param tpmLimit           tokens per minute limit (0 = unlimited)
+	 * @param allowedModels      allowed model names (empty = all)
+	 * @param allowedProviders   allowed provider names (empty = all)
+	 * @param allowedTools       allowed tool names or glob patterns (empty = all)
+	 * @param deniedTools        denied tool names or glob patterns (empty = none)
+	 * @param allowedResources   allowed resource URI globs (empty = all visible)
+	 * @param deniedResources    denied resource URI globs (empty = none hidden)
+	 * @param allowedPrompts     allowed prompt name globs (empty = all visible)
+	 * @param deniedPrompts      denied prompt name globs (empty = none hidden)
+	 * @param injectionBlock     whether indirect prompt injection blocks delivery (null = default block)
+	 * @param allowedCacheScopes cache isolation scopes (null or empty = TENANT only)
+	 * @return the created key object containing the plaintext and metadata
+	 */
+	public CreatedKey createKey(
+			String ownerId,
+			String name,
+			int rpmLimit,
+			int tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts,
+			Boolean injectionBlock,
+			Set<CacheScope> allowedCacheScopes
+	) {
 		String plaintext = randomPlaintext();
 		Instant now = Instant.now();
 		SHA256Hash hash = SHA256Hash.fromRawKey(plaintext);
@@ -309,7 +496,8 @@ public class KeyManagementService {
 				deniedPrompts,
 				injectionBlock == null || injectionBlock,
 				true,
-				now
+				now,
+				allowedCacheScopes
 		);
 		storeKey(
 				plaintext,
@@ -325,7 +513,8 @@ public class KeyManagementService {
 				deniedResources,
 				allowedPrompts,
 				deniedPrompts,
-				injectionBlock == null || injectionBlock
+				injectionBlock == null || injectionBlock,
+				allowedCacheScopes
 		);
 		return new CreatedKey(hash, plaintext, metadata);
 	}
@@ -485,6 +674,49 @@ public class KeyManagementService {
 			Boolean injectionBlock,
 			Boolean enabled
 	) {
+		return updateKey(hash, name, rpmLimit, tpmLimit, allowedModels, allowedProviders,
+				allowedTools, deniedTools, allowedResources, deniedResources, allowedPrompts,
+				deniedPrompts, injectionBlock, null, enabled);
+	}
+
+	/**
+	 * Updates an existing key's metadata including full governance rules and cache
+	 * scopes, invalidating the local cache.
+	 *
+	 * @param hash               key hash to update
+	 * @param name               new name (or null to keep)
+	 * @param rpmLimit           new RPM limit (or null to keep)
+	 * @param tpmLimit           new TPM limit (or null to keep)
+	 * @param allowedModels      new allowed models (or null to keep)
+	 * @param allowedProviders   new allowed providers (or null to keep)
+	 * @param allowedTools       new allowed tools (or null to keep)
+	 * @param deniedTools        new denied tools (or null to keep)
+	 * @param allowedResources   new allowed resource URI globs (or null to keep)
+	 * @param deniedResources    new denied resource URI globs (or null to keep)
+	 * @param allowedPrompts     new allowed prompt globs (or null to keep)
+	 * @param deniedPrompts      new denied prompt globs (or null to keep)
+	 * @param injectionBlock     new injection handling (or null to keep)
+	 * @param allowedCacheScopes new cache isolation scopes (or null to keep)
+	 * @param enabled            new enabled state (or null to keep)
+	 * @return the updated key metadata, or empty if key was not found
+	 */
+	public Optional<VirtualApiKey> updateKey(
+			SHA256Hash hash,
+			String name,
+			Integer rpmLimit,
+			Integer tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts,
+			Boolean injectionBlock,
+			Set<CacheScope> allowedCacheScopes,
+			Boolean enabled
+	) {
 		String key = redisKey(hash);
 		if (Boolean.FALSE.equals(redisTemplate.hasKey(key))) {
 			return Optional.empty();
@@ -512,19 +744,22 @@ public class KeyManagementService {
 			updates.put("deniedTools", toCsv(deniedTools));
 		}
 		if (allowedResources != null) {
-			updates.put("allowedResources", toCsv(allowedResources));
+			updates.put("allowedResources", encodeSet(allowedResources));
 		}
 		if (deniedResources != null) {
-			updates.put("deniedResources", toCsv(deniedResources));
+			updates.put("deniedResources", encodeSet(deniedResources));
 		}
 		if (allowedPrompts != null) {
-			updates.put("allowedPrompts", toCsv(allowedPrompts));
+			updates.put("allowedPrompts", encodeSet(allowedPrompts));
 		}
 		if (deniedPrompts != null) {
-			updates.put("deniedPrompts", toCsv(deniedPrompts));
+			updates.put("deniedPrompts", encodeSet(deniedPrompts));
 		}
 		if (injectionBlock != null) {
 			updates.put("injectionBlock", injectionBlock.toString());
+		}
+		if (allowedCacheScopes != null) {
+			updates.put("allowedCacheScopes", scopesToCsv(allowedCacheScopes));
 		}
 		if (enabled != null) {
 			updates.put("enabled", enabled.toString());
@@ -603,7 +838,13 @@ public class KeyManagementService {
 					bootstrapKey.allowedModels(),
 					bootstrapKey.allowedProviders(),
 					bootstrapKey.allowedTools(),
-					bootstrapKey.deniedTools()
+					bootstrapKey.deniedTools(),
+					bootstrapKey.allowedResources(),
+					bootstrapKey.deniedResources(),
+					bootstrapKey.allowedPrompts(),
+					bootstrapKey.deniedPrompts(),
+					SEED_INJECTION_BLOCK,
+					bootstrapKey.allowedCacheScopes()
 			);
 		}
 	}
@@ -622,32 +863,31 @@ public class KeyManagementService {
 			Set<String> allowedModels,
 			Set<String> allowedProviders,
 			Set<String> allowedTools,
-			Set<String> deniedTools
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts,
+			boolean injectionBlock,
+			Set<CacheScope> allowedCacheScopes
 	) {
 		SHA256Hash hash = SHA256Hash.fromRawKey(plaintextKey);
+		Map<String, String> fields = new LinkedHashMap<>();
+		fields.put("ownerId", ownerId);
+		fields.put("name", name);
+		fields.put("rpmLimit", Integer.toString(rpmLimit));
+		fields.put("tpmLimit", Integer.toString(tpmLimit));
+		fields.put("enabled", "true");
+		putPolicyFields(fields, allowedModels, allowedProviders, allowedTools, deniedTools,
+				allowedResources, deniedResources, allowedPrompts, deniedPrompts,
+				injectionBlock, allowedCacheScopes);
+		fields.put("createdAt", Instant.now().toString());
+		fields.put("keyPrefix", prefixOf(plaintextKey));
 		List<Object> args = new ArrayList<>();
-		args.add("ownerId");
-		args.add(ownerId);
-		args.add("name");
-		args.add(name);
-		args.add("rpmLimit");
-		args.add(Integer.toString(rpmLimit));
-		args.add("tpmLimit");
-		args.add(Integer.toString(tpmLimit));
-		args.add("enabled");
-		args.add("true");
-		args.add("allowedModels");
-		args.add(toCsv(allowedModels));
-		args.add("allowedProviders");
-		args.add(toCsv(allowedProviders));
-		args.add("allowedTools");
-		args.add(toCsv(allowedTools));
-		args.add("deniedTools");
-		args.add(toCsv(deniedTools));
-		args.add("createdAt");
-		args.add(Instant.now().toString());
-		args.add("keyPrefix");
-		args.add(prefixOf(plaintextKey));
+		for (Map.Entry<String, String> field : fields.entrySet()) {
+			args.add(field.getKey());
+			args.add(field.getValue());
+		}
 		args.add(hash.hex());
 		Long claimed = redisTemplate.execute(
 				SEED_IF_ABSENT_SCRIPT, List.of(redisKey(hash), INDEX_KEY), args.toArray());
@@ -672,7 +912,8 @@ public class KeyManagementService {
 			Set<String> deniedResources,
 			Set<String> allowedPrompts,
 			Set<String> deniedPrompts,
-			boolean injectionBlock
+			boolean injectionBlock,
+			Set<CacheScope> allowedCacheScopes
 	) {
 		SHA256Hash hash = SHA256Hash.fromRawKey(plaintextKey);
 		Map<String, String> fields = new LinkedHashMap<>();
@@ -681,15 +922,9 @@ public class KeyManagementService {
 		fields.put("rpmLimit", Integer.toString(rpmLimit));
 		fields.put("tpmLimit", Integer.toString(tpmLimit));
 		fields.put("enabled", "true");
-		fields.put("allowedModels", toCsv(allowedModels));
-		fields.put("allowedProviders", toCsv(allowedProviders));
-		fields.put("allowedTools", toCsv(allowedTools));
-		fields.put("deniedTools", toCsv(deniedTools));
-		fields.put("allowedResources", toCsv(allowedResources));
-		fields.put("deniedResources", toCsv(deniedResources));
-		fields.put("allowedPrompts", toCsv(allowedPrompts));
-		fields.put("deniedPrompts", toCsv(deniedPrompts));
-		fields.put("injectionBlock", Boolean.toString(injectionBlock));
+		putPolicyFields(fields, allowedModels, allowedProviders, allowedTools, deniedTools,
+				allowedResources, deniedResources, allowedPrompts, deniedPrompts,
+				injectionBlock, allowedCacheScopes);
 		fields.put("createdAt", Instant.now().toString());
 		fields.put("keyPrefix", prefixOf(plaintextKey));
 		redisTemplate.opsForHash().putAll(redisKey(hash), fields);
@@ -719,11 +954,12 @@ public class KeyManagementService {
 			Set<String> allowedProviders = parseCsv((String) raw.get("allowedProviders"));
 			Set<String> allowedTools = parseCsv((String) raw.get("allowedTools"));
 			Set<String> deniedTools = parseCsv((String) raw.get("deniedTools"));
-			Set<String> allowedResources = parseCsv((String) raw.get("allowedResources"));
-			Set<String> deniedResources = parseCsv((String) raw.get("deniedResources"));
-			Set<String> allowedPrompts = parseCsv((String) raw.get("allowedPrompts"));
-			Set<String> deniedPrompts = parseCsv((String) raw.get("deniedPrompts"));
+			Set<String> allowedResources = parseSetField((String) raw.get("allowedResources"));
+			Set<String> deniedResources = parseSetField((String) raw.get("deniedResources"));
+			Set<String> allowedPrompts = parseSetField((String) raw.get("allowedPrompts"));
+			Set<String> deniedPrompts = parseSetField((String) raw.get("deniedPrompts"));
 			boolean injectionBlock = !"false".equalsIgnoreCase((String) raw.get("injectionBlock"));
+			Set<CacheScope> allowedCacheScopes = parseScopes((String) raw.get("allowedCacheScopes"));
 			Instant createdAt = Instant.parse((String) raw.get("createdAt"));
 			String keyPrefix = (String) raw.getOrDefault("keyPrefix", KEY_PREFIX_RAW);
 			return Optional.of(new VirtualApiKey(
@@ -743,7 +979,8 @@ public class KeyManagementService {
 					deniedPrompts,
 					injectionBlock,
 					enabled,
-					createdAt
+					createdAt,
+					allowedCacheScopes
 			));
 		} catch (RuntimeException ignored) {
 			// Malformed or incomplete stored metadata: treat as absent, never throw.

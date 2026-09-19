@@ -15,6 +15,7 @@ import io.github.kxng0109.cacherelay.contracts.ModelAlias;
 import io.github.kxng0109.cacherelay.contracts.ProviderConfig;
 import io.github.kxng0109.cacherelay.contracts.ProviderType;
 import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
+import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
 import io.github.kxng0109.cacherelay.ledger.CostCalculator;
 import io.github.kxng0109.cacherelay.ledger.TokenUsageEvent;
 import io.github.kxng0109.cacherelay.proxy.failover.FailoverOrchestrator;
@@ -356,7 +357,10 @@ public class ProxyController {
 			return errorResponse(HttpStatus.BAD_REQUEST, "empty request body");
 		}
 
-		String model = extractModel(trimmed);
+		// PERF-04: parse once — the tree serves model extraction and DTO binding
+		// (treeToValue), replacing two full parses with one parse plus one bind.
+		JsonNode bodyTree = parseBodyTree(trimmed);
+		String model = extractModel(bodyTree);
 		if (model == null || model.isBlank()) {
 			return errorResponse(HttpStatus.BAD_REQUEST, "model is required");
 		}
@@ -374,8 +378,14 @@ public class ProxyController {
 		}
 
 		@Nullable String ownerId = (String) request.getAttribute(KeyAuthFilter.OWNER_ID_ATTRIBUTE);
-		OpenAiChatRequest chatRequest = parseChatRequest(trimmed);
-		String bodyHashHex = IdempotencyKeys.sha256Hex(trimmed.getBytes(StandardCharsets.UTF_8));
+		@Nullable VirtualApiKey apiKey =
+				(VirtualApiKey) request.getAttribute(KeyAuthFilter.VIRTUAL_KEY_ATTRIBUTE);
+		OpenAiChatRequest chatRequest = parseChatRequest(bodyTree);
+		// PERF-04: the body fingerprint feeds idempotency only — skip the SHA-256
+		// when no Idempotency-Key is present (resolveRequestId ignores it then).
+		@Nullable String bodyHashHex = idempotencyKey != null
+				? IdempotencyKeys.sha256Hex(trimmed.getBytes(StandardCharsets.UTF_8))
+				: null;
 
 		// Exact replay for idempotent retries: a stored completion is re-delivered without upstream spend
 		// or budget charge. Same key + different body is 422 (key reuse); a concurrent first flight is 409.
@@ -414,10 +424,10 @@ public class ProxyController {
 		final @Nullable ReplayFlight replayFlight = claimedFlight;
 
 		if (cacheService != null && cachedStreamReconstitution != null && chatRequest != null) {
-			CacheLookupResult cacheResult = cacheService.evaluateCache(chatRequest, request, ownerId);
+			CacheLookupResult cacheResult = cacheService.evaluateCache(chatRequest, request, ownerId, apiKey);
 			if (cacheResult.isHit() && cacheResult.entry() != null) {
 				CacheEntry entry = cacheResult.entry();
-				boolean clientWantsUsage = requestsUsage(trimmed);
+				boolean clientWantsUsage = chatRequest != null && chatRequest.requestsUsage();
 				HttpHeaders headers = new HttpHeaders();
 				headers.setContentType(MediaType.TEXT_EVENT_STREAM);
 				headers.setCacheControl("no-cache");
@@ -489,7 +499,7 @@ public class ProxyController {
 		ProviderConfig config = gatewayProperties.getProviders().get(providerResponse.providerName());
 		ProviderType providerType = config == null ? ProviderType.OPENAI : config.type();
 		ProtocolAdapter adapter = adapterResolver.resolve(providerType);
-		boolean clientWantsUsage = requestsUsage(trimmed);
+		boolean clientWantsUsage = chatRequest != null && chatRequest.requestsUsage();
 
 		HttpHeaders headers = new HttpHeaders();
 		headers.setCacheControl("no-cache");
@@ -675,12 +685,8 @@ public class ProxyController {
 					List<String> normalized = normalizer.normalizeLine(line);
 					for (String toWrite : normalized) {
 						String delta = extractDelta(toWrite);
-						// Tracks whether toWrite was rewritten below: a successful rewrite sets
-						// the delta content verbatim, so re-parsing the rewritten line (a second
-						// full JSON parse per chunk) is skipped in favor of the known content.
 						// Reference comparison is exact here: replaceDeltaContent returns the
 						// identical String reference only when it made no change.
-						boolean deltaRebased = false;
 						if (delta != null && !delta.isEmpty()) {
 							if (shingleTracker != null && shingleTracker.ingestChunk(delta)) {
 								MidStreamKillSwitch.terminate(out, lines, "system_prompt_exfiltration");
@@ -699,20 +705,17 @@ public class ProxyController {
 									if (rewritten != toWrite) {
 										toWrite = rewritten;
 										delta = deAnonymized;
-										deltaRebased = true;
 									}
 								}
 							}
 						}
 
-						if (deltaRebased) {
-							if (delta != null) {
-								accumulatedContent.append(delta);
-							}
-						} else {
-							extractDeltaContent(toWrite, accumulatedContent);
-						}
-						byte[] bytes = toWrite.getBytes(StandardCharsets.UTF_8);
+					// PERF-06: delta was parsed once above for this exact line (or rebased
+					// by the de-anonymizer); reusing it avoids a second full JSON parse.
+					if (delta != null) {
+						accumulatedContent.append(delta);
+					}
+					byte[] bytes = toWrite.getBytes(StandardCharsets.UTF_8);
 						out.write(bytes);
 						out.write('\n');
 						if (flushHandle != null && servletOut != null) {
@@ -801,20 +804,16 @@ public class ProxyController {
 				int ct = (int) Math.min(Integer.MAX_VALUE, usage.completionTokens());
 				String completionJson = buildCompletionJson(model, accumulatedContent.toString(), pt, ct);
 				if (cacheService != null) {
-					cacheService.storeResponse(chatRequest, servletRequest, ownerId, completionJson, pt, ct);
+					@Nullable VirtualApiKey streamApiKey = (VirtualApiKey) servletRequest
+							.getAttribute(KeyAuthFilter.VIRTUAL_KEY_ATTRIBUTE);
+					cacheService.storeResponse(
+							chatRequest, servletRequest, ownerId, streamApiKey, completionJson, pt, ct);
 				}
 				// Completed SSE stored re-framed (single data event + DONE on serve): identical content
 				// and usage, transport framing only.
 				replayStoreQuietly(replayFlight,
 						completionJson.getBytes(StandardCharsets.UTF_8), true);
 			}
-		}
-	}
-
-	private void extractDeltaContent(String line, StringBuilder accumulator) {
-		String delta = extractDelta(line);
-		if (delta != null) {
-			accumulator.append(delta);
 		}
 	}
 
@@ -878,9 +877,20 @@ public class ProxyController {
 		}
 	}
 
-	private @Nullable OpenAiChatRequest parseChatRequest(String rawBody) {
+	private @Nullable JsonNode parseBodyTree(String rawBody) {
 		try {
-			return objectMapper.readValue(rawBody, OpenAiChatRequest.class);
+			return objectMapper.readTree(rawBody);
+		} catch (JacksonException ex) {
+			return null;
+		}
+	}
+
+	private @Nullable OpenAiChatRequest parseChatRequest(@Nullable JsonNode bodyTree) {
+		if (bodyTree == null || !bodyTree.isObject()) {
+			return null;
+		}
+		try {
+			return objectMapper.treeToValue(bodyTree, OpenAiChatRequest.class);
 		} catch (Exception ex) {
 			return null;
 		}
@@ -1022,10 +1032,13 @@ public class ProxyController {
 				try {
 					int pt = (int) Math.min(Integer.MAX_VALUE, promptTokens);
 					int ct = (int) Math.min(Integer.MAX_VALUE, completionTokens);
+					@Nullable VirtualApiKey nonStreamApiKey = (VirtualApiKey) servletRequest
+							.getAttribute(KeyAuthFilter.VIRTUAL_KEY_ATTRIBUTE);
 					cacheService.storeResponse(
 							chatRequest,
 							servletRequest,
 							ownerId,
+							nonStreamApiKey,
 							normalizedJson,
 							pt,
 							ct
@@ -1039,26 +1052,12 @@ public class ProxyController {
 		}
 	}
 
-	private @Nullable String extractModel(String rawBody) {
-		try {
-			JsonNode root = objectMapper.readTree(rawBody);
-			if (root == null || !root.isObject()) {
-				return null;
-			}
-			JsonNode modelNode = root.get("model");
-			return modelNode != null && modelNode.isString() ? modelNode.asString() : null;
-		} catch (JacksonException ex) {
+	private @Nullable String extractModel(@Nullable JsonNode root) {
+		if (root == null || !root.isObject()) {
 			return null;
 		}
-	}
-
-	private boolean requestsUsage(String rawBody) {
-		try {
-			OpenAiChatRequest request = objectMapper.readValue(rawBody, OpenAiChatRequest.class);
-			return request.requestsUsage();
-		} catch (JacksonException ex) {
-			return false;
-		}
+		JsonNode modelNode = root.get("model");
+		return modelNode != null && modelNode.isString() ? modelNode.asString() : null;
 	}
 
 	/**

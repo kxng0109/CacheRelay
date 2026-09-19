@@ -30,6 +30,9 @@ import java.util.List;
  * @param responseFormat      structured output response format specification, may be {@code null}
  * @param reasoningEffort     reasoning effort constraint for thinking models, may be {@code null}
  * @param thinking            reasoning configuration for hybrid thinking models, may be {@code null}
+ * @param frequencyPenalty    frequency penalty for sampling, may be {@code null}
+ * @param presencePenalty     presence penalty for sampling, may be {@code null}
+ * @param seed                deterministic sampling seed, may be {@code null}
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 @Schema(name = "OpenAiChatRequest", description = "OpenAI-compatible chat completion request payload")
@@ -77,7 +80,16 @@ public record OpenAiChatRequest(
 		@Nullable @JsonProperty("reasoning_effort") String reasoningEffort,
 
 		@Schema(description = "Thinking mode configuration object for hybrid reasoning models", implementation = Object.class)
-		@Nullable JsonNode thinking
+		@Nullable JsonNode thinking,
+
+		@Schema(description = "Frequency penalty for sampling", example = "0.0")
+		@Nullable @JsonProperty("frequency_penalty") Double frequencyPenalty,
+
+		@Schema(description = "Presence penalty for sampling", example = "0.0")
+		@Nullable @JsonProperty("presence_penalty") Double presencePenalty,
+
+		@Schema(description = "Deterministic sampling seed", example = "42")
+		@Nullable Long seed
 ) {
 
 	/**
@@ -88,7 +100,7 @@ public record OpenAiChatRequest(
 	                         JsonNode stop, Boolean stream, JsonNode streamOptions) {
 		this(
 				model, messages, temperature, maxTokens, maxCompletionTokens, topP, stop, stream, streamOptions,
-				null, null, null, null, null, null
+				null, null, null, null, null, null, null, null, null
 		);
 	}
 

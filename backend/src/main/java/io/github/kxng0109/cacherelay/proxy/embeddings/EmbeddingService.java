@@ -107,6 +107,19 @@ public class EmbeddingService {
 	private volatile @Nullable BudgetEnforcer budgetEnforcer;
 
 	/**
+	 * Wires embedding telemetry when present. Optional on purpose: unit-constructed
+	 * services keep working with metrics silently skipped.
+	 *
+	 * @param embeddingMetrics the metrics, if available
+	 */
+	@Autowired(required = false)
+	public void setEmbeddingMetrics(EmbeddingMetrics embeddingMetrics) {
+		this.embeddingMetrics = embeddingMetrics;
+	}
+
+	private volatile @Nullable EmbeddingMetrics embeddingMetrics;
+
+	/**
 	 * Processes an embedding request, managing batching, upstream routing, and ledger tracking.
 	 *
 	 * @param request client embedding request
@@ -192,7 +205,12 @@ public class EmbeddingService {
 		EmbeddingAdapter adapter = adapterResolver.resolve(providerConfig.type());
 		URI targetUri = resolveTargetUri(providerConfig);
 		byte[] canonicalBytes = canonicalEmbeddingBytes(request);
-		enforceBudgetOrThrow(keyHashHex, ownerId, idempotencyKey, providerConfig, target, canonicalBytes);
+		try {
+			enforceBudgetOrThrow(keyHashHex, ownerId, idempotencyKey, providerConfig, target, canonicalBytes);
+		} catch (EmbeddingBudgetDeniedException denied) {
+			recordOutcome(providerConfig.name(), target.effectiveModel(), "denied", -1);
+			throw denied;
+		}
 
 		Instant start = Instant.now();
 		EmbeddingResponse response;
@@ -202,15 +220,18 @@ public class EmbeddingService {
 			if (ex instanceof InterruptedException) {
 				Thread.currentThread().interrupt();
 			}
-			log.warn("Embedding upstream call failed: {}", ex.getMessage());
+			String failureId = UUID.randomUUID().toString();
+			log.warn("Embedding upstream call failed [id={}]: {}", failureId, ex.getMessage());
+			recordOutcome(providerConfig.name(), target.effectiveModel(), "error", -1);
 			throw new ResponseStatusException(
 					HttpStatus.BAD_GATEWAY,
-					"Embedding upstream provider error: " + ex.getMessage(),
+					"Embedding upstream provider error (id=" + failureId + ")",
 					ex
 			);
 		}
 
 		long durationMs = Duration.between(start, Instant.now()).toMillis();
+		recordOutcome(providerConfig.name(), target.effectiveModel(), "success", durationMs);
 		int promptTokens = response.usage() != null ? response.usage().promptTokens() : 0;
 		long costUsdMicros = costCalculator.calculate(
 				providerConfig.type(), target.effectiveModel(), promptTokens, 0);
@@ -235,6 +256,28 @@ public class EmbeddingService {
 		eventPublisher.publishEvent(event);
 
 		return response;
+	}
+
+	/**
+	 * Records an embedding outcome and, for completed upstream calls, latency.
+	 * Silent when no metrics are wired (non-Spring unit-test contexts).
+	 *
+	 * @param provider   upstream provider name
+	 * @param model      effective upstream model
+	 * @param outcome    {@code success} or {@code error}
+	 * @param durationMs upstream milliseconds, or negative to skip latency
+	 */
+	private void recordOutcome(String provider, String model, String outcome, long durationMs) {
+		EmbeddingMetrics metrics = this.embeddingMetrics;
+		if (metrics == null) {
+			return;
+		}
+		String safeProvider = provider == null ? "unknown" : provider;
+		String safeModel = model == null ? "unknown" : model;
+		metrics.request(safeProvider, safeModel, outcome);
+		if (durationMs >= 0) {
+			metrics.upstreamLatency(safeProvider, durationMs);
+		}
 	}
 
 	private void validateRequest(EmbeddingRequest request) {

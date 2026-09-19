@@ -64,6 +64,18 @@ spec:
                   name: cacherelay-secrets
                   key: postgres-password
                   optional: false
+            - name: GATEWAY_ADMIN_MASTERKEY
+              valueFrom:
+                secretKeyRef:
+                  name: cacherelay-secrets
+                  key: admin-master-key
+                  optional: false
+            - name: GATEWAY_AUTH_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: cacherelay-secrets
+                  key: auth-jwt-secret
+                  optional: false
             # P1: accept backlog matched to somaxconn (HT default 8192).
             - name: TOMCAT_ACCEPT_COUNT
               value: "8192"

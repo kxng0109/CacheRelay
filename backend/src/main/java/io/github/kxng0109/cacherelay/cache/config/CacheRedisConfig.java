@@ -7,6 +7,8 @@ import org.springframework.boot.health.contributor.HealthContributor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.RedisPassword;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 
 import java.util.Map;
@@ -24,12 +26,28 @@ import java.util.Map;
 public class CacheRedisConfig {
 
 	/**
+	 * Builds the standalone configuration for the cache-tier Redis instance,
+	 * applying AUTH only when a password is configured (blank stays unauthenticated).
+	 *
+	 * @param properties cache-tier connection details
+	 * @return standalone configuration with host, port, and optional password
+	 */
+	static RedisStandaloneConfiguration standaloneConfiguration(CacheRedisProperties properties) {
+		RedisStandaloneConfiguration configuration =
+				new RedisStandaloneConfiguration(properties.host(), properties.port());
+		if (properties.password() != null && !properties.password().isBlank()) {
+			configuration.setPassword(RedisPassword.of(properties.password()));
+		}
+		return configuration;
+	}
+
+	/**
 	 * @return factory for the cache-tier Redis instance (shared connection; Lettuce is thread-safe)
 	 */
 	@Bean
 	public LettuceConnectionFactory cacheRedisConnectionFactory(CacheRedisProperties properties) {
 		LettuceConnectionFactory factory =
-				new LettuceConnectionFactory(properties.host(), properties.port());
+				new LettuceConnectionFactory(standaloneConfiguration(properties));
 		factory.afterPropertiesSet();
 		return factory;
 	}
@@ -47,7 +65,7 @@ public class CacheRedisConfig {
 	@Bean
 	public LettuceConnectionFactory vectorRedisConnectionFactory(CacheRedisProperties properties) {
 		LettuceConnectionFactory factory =
-				new LettuceConnectionFactory(properties.host(), properties.port());
+				new LettuceConnectionFactory(standaloneConfiguration(properties));
 		factory.afterPropertiesSet();
 		return factory;
 	}

@@ -8,6 +8,7 @@ import tools.jackson.databind.ObjectMapper;
 import io.github.kxng0109.cacherelay.auth.AuthAuditService;
 import io.github.kxng0109.cacherelay.auth.JwtService;
 import io.github.kxng0109.cacherelay.auth.UserAccountRepository;
+import io.github.kxng0109.cacherelay.config.SensitiveString;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -20,9 +21,11 @@ class AdminFilterConfigTest {
 	void registersAdminFilterCorrectly() {
 		AdminFilterConfig config = new AdminFilterConfig();
 		ObjectMapper objectMapper = new ObjectMapper();
+		AdminProperties properties = new AdminProperties();
+		properties.setMasterKey(new SensitiveString("test-only-admin-master-key-32b-min!!"));
 
 		FilterRegistrationBean<AdminAuthFilter> registration = config.adminAuthFilterRegistration(
-				"secret-key",
+				properties,
 				objectMapper,
 				mock(JwtService.class),
 				mock(UserAccountRepository.class),

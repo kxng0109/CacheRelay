@@ -43,6 +43,7 @@ class EmbeddingControllerTest {
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(response.getBody()).isEqualTo(expected);
 		assertThat(response.getHeaders().getFirst("X-CacheRelay-Provider")).isEqualTo("openai");
+		assertThat(response.getHeaders().getFirst("X-CacheRelay-Tried")).isEqualTo("openai");
 		verify(embeddingService).processEmbedding(request, "tenant-alpha", null, null);
 	}
 

@@ -2,12 +2,16 @@ package io.github.kxng0109.cacherelay.cache.engine;
 
 import io.github.kxng0109.cacherelay.cache.config.CacheRelayCacheProperties;
 import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
+import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
+import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
 import io.github.kxng0109.cacherelay.proxy.protocol.OpenAiChatRequest;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 
+import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -158,24 +162,82 @@ class CachePolicyEngineTest {
 	}
 
 	@Test
-	@DisplayName("resolveScope and resolveSimilarityThreshold parse request header overrides and fallbacks")
-	void resolveScopeAndThreshold() {
+	@DisplayName("resolveScope enforces the server-side key policy, never client headers")
+	void resolveScopeEnforcesKeyPolicy() {
+		VirtualApiKey tenantKey = keyWithScopes(Set.of(CacheScope.TENANT));
+		VirtualApiKey globalKey =
+				keyWithScopes(Set.of(CacheScope.TENANT, CacheScope.GLOBAL));
+
+		// Forged GLOBAL on a TENANT-only key is ignored (no error oracle)
+		MockHttpServletRequest globalReq = new MockHttpServletRequest();
+		globalReq.addHeader("X-CacheRelay-Cache-Scope", "GLOBAL");
+		assertThat(policyEngine.resolveScope(globalReq, tenantKey)).isEqualTo(CacheScope.TENANT);
+
+		// USER with a forged victim id degrades to TENANT: no verified end-user claim exists
+		MockHttpServletRequest userReq = new MockHttpServletRequest();
+		userReq.addHeader("X-CacheRelay-Cache-Scope", "USER");
+		userReq.addHeader("X-User-Id", "victim-user");
+		assertThat(policyEngine.resolveScope(userReq, tenantKey)).isEqualTo(CacheScope.TENANT);
+
+		// GLOBAL allowed by the key but operator-disabled stays TENANT
+		assertThat(policyEngine.resolveScope(globalReq, globalKey)).isEqualTo(CacheScope.TENANT);
+
+		// Operator flag on: allowed keys reach GLOBAL, TENANT-only keys still cannot
+		properties.setGlobalScopeEnabled(true);
+		try {
+			assertThat(policyEngine.resolveScope(globalReq, globalKey)).isEqualTo(CacheScope.GLOBAL);
+			assertThat(policyEngine.resolveScope(globalReq, tenantKey)).isEqualTo(CacheScope.TENANT);
+		} finally {
+			properties.setGlobalScopeEnabled(false);
+		}
+
+		// Invalid scope header falls back to the default
+		MockHttpServletRequest invalidReq = new MockHttpServletRequest();
+		invalidReq.addHeader("X-CacheRelay-Cache-Scope", "INVALID_SCOPE");
+		assertThat(policyEngine.resolveScope(invalidReq, tenantKey)).isEqualTo(CacheScope.TENANT);
+
+		// Missing key identity fails closed to TENANT
+		assertThat(policyEngine.resolveScope(globalReq, null)).isEqualTo(CacheScope.TENANT);
+	}
+
+	@Test
+	@DisplayName("resolveSimilarityThreshold parses header overrides and fallbacks")
+	void resolveSimilarityThreshold() {
 		MockHttpServletRequest req = new MockHttpServletRequest();
-		req.addHeader("X-CacheRelay-Cache-Scope", "USER");
 		req.addHeader("X-CacheRelay-Semantic-Threshold", "0.95");
 
-		assertThat(policyEngine.resolveScope(req)).isEqualTo(CacheScope.USER);
 		assertThat(policyEngine.resolveSimilarityThreshold(req)).isEqualTo(0.95);
 
 		// Invalid or out-of-range overrides fall back to defaults
 		MockHttpServletRequest invalidReq = new MockHttpServletRequest();
-		invalidReq.addHeader("X-CacheRelay-Cache-Scope", "INVALID_SCOPE");
 		invalidReq.addHeader("X-CacheRelay-Semantic-Threshold", "0.20"); // below 0.50 min
-		assertThat(policyEngine.resolveScope(invalidReq)).isEqualTo(CacheScope.TENANT);
 		assertThat(policyEngine.resolveSimilarityThreshold(invalidReq)).isEqualTo(0.80);
 
 		MockHttpServletRequest malformedReq = new MockHttpServletRequest();
 		malformedReq.addHeader("X-CacheRelay-Semantic-Threshold", "abc");
 		assertThat(policyEngine.resolveSimilarityThreshold(malformedReq)).isEqualTo(0.80);
+	}
+
+	private static VirtualApiKey keyWithScopes(Set<CacheScope> scopes) {
+		return new VirtualApiKey(
+				SHA256Hash.fromRawKey("gw-test-scope-key-0123456789abcdef"),
+				"gw-",
+				"tenant-a",
+				"scope-test",
+				120,
+				500000,
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				true,
+				true,
+				Instant.parse("2026-09-01T00:00:00Z"),
+				scopes
+		);
 	}
 }

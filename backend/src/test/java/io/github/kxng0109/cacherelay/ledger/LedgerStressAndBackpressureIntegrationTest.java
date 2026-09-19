@@ -1,7 +1,9 @@
 package io.github.kxng0109.cacherelay.ledger;
 
-import io.micrometer.core.instrument.MeterRegistry;
+import io.github.kxng0109.cacherelay.ledger.queue.DisruptorUsageLedgerQueue;
+import io.github.kxng0109.cacherelay.ledger.queue.MicroBatchLedgerWriter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -121,19 +123,19 @@ class LedgerStressAndBackpressureIntegrationTest {
 	}
 
 	@Test
-	@DisplayName("Should fallback to dead-letter storage when repository fails during DB downtime")
+	@DisplayName("Should spill to the disk journal when the database fails during DB downtime")
 	void shouldFallbackToDeadLetterOnDatabaseFailure() throws Exception {
-		MeterRegistry meterRegistry = new SimpleMeterRegistry();
 		UsageLedgerRepository failingRepo = mock(UsageLedgerRepository.class);
-		when(failingRepo.existsByRequestId(any())).thenReturn(false);
-		when(failingRepo.save(any()))
+		when(failingRepo.saveAll(any()))
 				.thenThrow(new DataAccessResourceFailureException("PostgreSQL connection lost"));
-
-		UsageLedgerListener listener = new UsageLedgerListener(
-				failingRepo,
+		SpillwayJournalManager spillway = new SpillwayJournalManager(
 				deadLetterFile.toString(),
-				meterRegistry
-		);
+				new ObjectMapper(),
+				new SimpleMeterRegistry());
+		DisruptorUsageLedgerQueue testQueue = new DisruptorUsageLedgerQueue(1024, spillway);
+		MicroBatchLedgerWriter testWriter = new MicroBatchLedgerWriter(
+				testQueue, failingRepo, spillway, new SimpleMeterRegistry(),
+				100, 50, 30_000L, 60_000L, 5);
 
 		UUID requestId = UUID.randomUUID();
 		TokenUsageEvent event = new TokenUsageEvent(
@@ -148,7 +150,8 @@ class LedgerStressAndBackpressureIntegrationTest {
 				4000, 4000, "reqhash"
 		);
 
-		listener.onTokenUsage(event);
+		assertThat(testQueue.offer(event)).isTrue();
+		assertThat(testWriter.flushCycle()).isZero();
 
 		assertThat(Files.exists(deadLetterFile)).isTrue();
 		List<String> deadLetterLines = Files.readAllLines(deadLetterFile);
@@ -157,11 +160,5 @@ class LedgerStressAndBackpressureIntegrationTest {
 				.contains(requestId.toString())
 				.contains("tenant-fault-1")
 				.contains("PostgreSQL connection lost");
-
-		double deadLetterCount = meterRegistry.get("cacherelay.ledger.dead_letter")
-		                                      .tag("provider", "anthropic")
-		                                      .counter()
-		                                      .count();
-		assertThat(deadLetterCount).isEqualTo(1.0);
 	}
 }

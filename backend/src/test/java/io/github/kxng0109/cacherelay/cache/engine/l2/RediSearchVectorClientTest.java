@@ -572,6 +572,35 @@ class RediSearchVectorClientTest {
 	}
 
 	@Test
+	@DisplayName("indexSchemaFields lists indexed field names from FT.INFO")
+	void indexSchemaFieldsListsFields() {
+		List<Object> attributes = List.of(
+				"identifier".getBytes(StandardCharsets.UTF_8),
+				"owner_id".getBytes(StandardCharsets.UTF_8),
+				"attribute".getBytes(StandardCharsets.UTF_8),
+				"owner_id".getBytes(StandardCharsets.UTF_8),
+				"type".getBytes(StandardCharsets.UTF_8),
+				"TAG".getBytes(StandardCharsets.UTF_8),
+				"identifier".getBytes(StandardCharsets.UTF_8),
+				"temperature".getBytes(StandardCharsets.UTF_8),
+				"attribute".getBytes(StandardCharsets.UTF_8),
+				"temperature".getBytes(StandardCharsets.UTF_8),
+				"type".getBytes(StandardCharsets.UTF_8),
+				"TAG".getBytes(StandardCharsets.UTF_8)
+		);
+		List<Object> info = List.of(
+				"index_name".getBytes(StandardCharsets.UTF_8),
+				"attributes".getBytes(StandardCharsets.UTF_8),
+				attributes
+		);
+		when(connection.execute(eq("FT.INFO"), any(NestedMultiOutput.class), any(byte[][].class)))
+				.thenReturn(info);
+
+		assertThat(client.indexSchemaFields("cacherelay:cache:idx"))
+				.containsExactlyInAnyOrder("owner_id", "temperature");
+	}
+
+	@Test
 	@DisplayName("vectorDimensionOf reads dim from a flattened RESP3-style map reply")
 	void vectorDimensionOfReadsFlattenedMap() {
 		// RESP3 FT.INFO arrives as a map; NestedMultiOutput flattens it to key/value pairs inline.

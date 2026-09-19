@@ -10,6 +10,7 @@ import io.github.kxng0109.cacherelay.proxy.embeddings.dto.EmbeddingData;
 import io.github.kxng0109.cacherelay.proxy.embeddings.dto.EmbeddingRequest;
 import io.github.kxng0109.cacherelay.proxy.embeddings.dto.EmbeddingResponse;
 import io.github.kxng0109.cacherelay.security.ratelimit.RateLimitUnavailableException;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -93,6 +94,42 @@ class EmbeddingServiceTest {
 		assertThat(response).isEqualTo(mockResponse);
 		verify(eventPublisher).publishEvent(any(TokenUsageEvent.class));
 		verify(costCalculator).calculate(ProviderType.OPENAI, "text-embedding-3-small", 10, 0);
+	}
+
+	@Test
+	@DisplayName("embedding outcomes and upstream latency are metered")
+	void embeddingMetricsRecorded() throws Exception {
+		SimpleMeterRegistry registry = new SimpleMeterRegistry();
+		service.setEmbeddingMetrics(new EmbeddingMetrics(registry));
+
+		ProviderConfig provider = new ProviderConfig(
+				"openai-main", ProviderType.OPENAI, URI.create("https://api.openai.com/v1"),
+				new SensitiveString("key"), Duration.ofSeconds(5), Duration.ofSeconds(30)
+		);
+		gatewayProperties.setProviders(Map.of("openai-main", provider));
+		ModelAlias alias = new ModelAlias(
+				List.of(new ProviderRef("openai-main", "text-embedding-3-small")),
+				FailoverStrategy.SEQUENTIAL
+		);
+		gatewayProperties.setAliases(Map.of("text-embedding-3-small", alias));
+
+		EmbeddingAdapter adapter = mock(EmbeddingAdapter.class);
+		when(adapterResolver.resolve(ProviderType.OPENAI)).thenReturn(adapter);
+		EmbeddingResponse mockResponse = EmbeddingResponse.of(
+				"text-embedding-3-small",
+				List.of(EmbeddingData.of(0, new float[]{0.1f})),
+				10
+		);
+		when(batchOrchestrator.execute(any(), any(), any(), any())).thenReturn(mockResponse);
+
+		EmbeddingRequest request = new EmbeddingRequest(List.of("hello"), "text-embedding-3-small", null, null, null);
+		service.processEmbedding(request, "tenant-1");
+
+		assertThat(registry.get("embedding_requests_total")
+				.tag("provider", "openai-main").tag("model", "text-embedding-3-small")
+				.tag("outcome", "success").counter().count()).isEqualTo(1.0);
+		assertThat(registry.get("embedding_upstream_latency")
+				.tag("provider", "openai-main").timer().count()).isEqualTo(1L);
 	}
 
 	@Test
@@ -223,6 +260,29 @@ class EmbeddingServiceTest {
 		doReturn(nullUsageResp).when(batchOrchestrator).execute(any(), any(), any(), any());
 		EmbeddingResponse res = service.processEmbedding(request, "tenant-1");
 		assertThat(res.usage()).isNull();
+	}
+
+	@Test
+	@DisplayName("upstream failure message is generic with a correlation id (SEC-16)")
+	void upstreamErrorSanitized() throws Exception {
+		ProviderConfig provider = new ProviderConfig(
+				"openai", ProviderType.OPENAI, URI.create("https://api.openai.com"),
+				new SensitiveString("key"), Duration.ofSeconds(5), Duration.ofSeconds(30)
+		);
+		gatewayProperties.setProviders(Map.of("openai", provider));
+
+		EmbeddingAdapter adapter = mock(EmbeddingAdapter.class);
+		when(adapterResolver.resolve(ProviderType.OPENAI)).thenReturn(adapter);
+		when(batchOrchestrator.execute(any(), any(), any(), any()))
+				.thenThrow(new IOException("Connection reset by internal SECRET detail"));
+
+		EmbeddingRequest request = new EmbeddingRequest("text", "text-embedding-3-small", null, null, null);
+		assertThatThrownBy(() -> service.processEmbedding(request, "tenant-1"))
+				.isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("Embedding upstream provider error")
+				.hasMessageContaining("id=")
+				.hasMessageNotContaining("SECRET detail")
+				.hasCauseInstanceOf(IOException.class);
 	}
 
 	@Test

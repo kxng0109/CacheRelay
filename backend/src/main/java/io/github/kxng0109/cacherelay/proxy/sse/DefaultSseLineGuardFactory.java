@@ -5,6 +5,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Default factory for creating per-stream line guards and bounded body handlers.
@@ -19,6 +20,7 @@ public final class DefaultSseLineGuardFactory implements SseLineGuardAutoConfig.
 	private volatile SseLineGuardProperties properties;
 	private final MeterRegistry registry;
 	private final ObjectMapper objectMapper;
+	private final ConcurrentHashMap<MetersCacheKey, SseLineMeters> metersCache = new ConcurrentHashMap<>();
 
 	public DefaultSseLineGuardFactory(
 			SseLineGuardProperties properties,
@@ -36,14 +38,40 @@ public final class DefaultSseLineGuardFactory implements SseLineGuardAutoConfig.
 			String providerName,
 			UUID requestId
 	) {
+		SseLineGuardProperties snapshot = properties;
 		return new DefaultSseLineGuard(
-				properties,
+				snapshot,
 				registry,
 				objectMapper,
 				providerType,
 				providerName,
-				requestId == null ? UUID.randomUUID() : requestId
+				requestId == null ? UUID.randomUUID() : requestId,
+				metersFor(providerName, snapshot.action())
 		);
+	}
+
+	/**
+	 * Returns the shared meter set for one (provider, action) pair, building it once
+	 * (PERF-06): guards no longer pay seven builder+register calls per stream.
+	 *
+	 * @param providerName provider tag value, or {@code null} for unknown
+	 * @param action       action tag value, or {@code null} for the default
+	 * @return shared meter set
+	 */
+	SseLineMeters metersFor(String providerName, SseLineGuard.Action action) {
+		String provider = providerName == null ? "unknown" : providerName;
+		SseLineGuard.Action effectiveAction = action == null
+				? SseLineGuard.Action.REJECT_LINE_AND_CLOSE
+				: action;
+		return metersCache.computeIfAbsent(
+				new MetersCacheKey(provider, effectiveAction),
+				key -> SseLineMeters.create(registry, key.provider(), key.action()));
+	}
+
+	/**
+	 * Cache key for shared meter sets.
+	 */
+	private record MetersCacheKey(String provider, SseLineGuard.Action action) {
 	}
 
 	@Override

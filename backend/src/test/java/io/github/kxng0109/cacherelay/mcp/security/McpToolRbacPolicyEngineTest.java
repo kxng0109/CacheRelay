@@ -54,6 +54,25 @@ class McpToolRbacPolicyEngineTest {
 	}
 
 	@Test
+	@SuppressWarnings("DataFlowIssue")
+	@DisplayName("matchesPattern guards null text, folds ASCII case, and finishes adversarial input fast")
+	void matchesPatternLinearAndNullSafe() {
+		assertThat(McpToolRbacPolicyEngine.matchesPattern(null, "postgres__*")).isFalse();
+		assertThat(McpToolRbacPolicyEngine.matchesPattern("POSTGRES__RUN_QUERY", "postgres__*")).isTrue();
+		assertThat(McpToolRbacPolicyEngine.matchesPattern("", "*")).isTrue();
+		assertThat(McpToolRbacPolicyEngine.matchesPattern("", "?")).isFalse();
+		assertThat(McpToolRbacPolicyEngine.matchesPattern("tool", "tool?")).isFalse();
+
+		String adversarialText = "a".repeat(10_000);
+		long startedAt = System.nanoTime();
+		boolean matched = McpToolRbacPolicyEngine.matchesPattern(
+				adversarialText, "*a*a*a*a*a*a*a*a*b");
+		long elapsedMillis = (System.nanoTime() - startedAt) / 1_000_000;
+		assertThat(matched).isFalse();
+		assertThat(elapsedMillis).as("linear matcher must not backtrack").isLessThan(2_000L);
+	}
+
+	@Test
 	@DisplayName("isToolAllowed enforces deny list precedence and allow list restrictions")
 	void isToolAllowedEvaluations() {
 		VirtualApiKey keyWithDeny = new VirtualApiKey(

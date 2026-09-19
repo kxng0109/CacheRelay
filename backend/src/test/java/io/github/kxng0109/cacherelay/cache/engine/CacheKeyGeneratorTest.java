@@ -52,6 +52,51 @@ class CacheKeyGeneratorTest {
 	}
 
 	@Test
+	@DisplayName("exact hash distinguishes generation-affecting fields (PERF-14)")
+	void exactHashCoversGenerationFields() {
+		List<OpenAiChatRequest.Message> messages = List.of(
+				new OpenAiChatRequest.Message("user", objectMapper.valueToTree("What is 2+2?")));
+		OpenAiChatRequest base = new OpenAiChatRequest(
+				"gpt-4o", messages, 0.0, null, null, null, null, false, null,
+				null, null, null, null, null, null, null, null, null);
+
+		assertThat(generator.computeExactHash(base, "tenant1"))
+				.isNotEqualTo(generator.computeExactHash(withSeed(base, 42L), "tenant1"));
+		assertThat(generator.computeExactHash(base, "tenant1"))
+				.isNotEqualTo(generator.computeExactHash(withTools(base), "tenant1"));
+		assertThat(generator.computeExactHash(base, "tenant1"))
+				.isNotEqualTo(generator.computeExactHash(withStop(base), "tenant1"));
+		assertThat(generator.computeExactHash(base, "tenant1"))
+				.isEqualTo(generator.computeExactHash(base, "tenant1"));
+	}
+
+	private OpenAiChatRequest withSeed(OpenAiChatRequest base, Long seed) {
+		return new OpenAiChatRequest(
+				base.model(), base.messages(), base.temperature(), base.maxTokens(),
+				base.maxCompletionTokens(), base.topP(), base.stop(), base.stream(), base.streamOptions(),
+				base.tools(), base.toolChoice(), base.parallelToolCalls(), base.responseFormat(),
+				base.reasoningEffort(), base.thinking(), base.frequencyPenalty(), base.presencePenalty(), seed);
+	}
+
+	private OpenAiChatRequest withTools(OpenAiChatRequest base) {
+		return new OpenAiChatRequest(
+				base.model(), base.messages(), base.temperature(), base.maxTokens(),
+				base.maxCompletionTokens(), base.topP(), base.stop(), base.stream(), base.streamOptions(),
+				objectMapper.createArrayNode(), base.toolChoice(), base.parallelToolCalls(),
+				base.responseFormat(), base.reasoningEffort(), base.thinking(),
+				base.frequencyPenalty(), base.presencePenalty(), base.seed());
+	}
+
+	private OpenAiChatRequest withStop(OpenAiChatRequest base) {
+		return new OpenAiChatRequest(
+				base.model(), base.messages(), base.temperature(), base.maxTokens(),
+				base.maxCompletionTokens(), base.topP(), objectMapper.valueToTree("STOP"),
+				base.stream(), base.streamOptions(), base.tools(), base.toolChoice(),
+				base.parallelToolCalls(), base.responseFormat(), base.reasoningEffort(), base.thinking(),
+				base.frequencyPenalty(), base.presencePenalty(), base.seed());
+	}
+
+	@Test
 	@DisplayName("extractText supports multipart array content nodes")
 	void extractMultipartText() {
 		ArrayNode parts = objectMapper.createArrayNode();

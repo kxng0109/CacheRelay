@@ -16,16 +16,18 @@ import org.springframework.validation.annotation.Validated;
  *
  * @param host cache-tier Redis host
  * @param port cache-tier Redis port
+ * @param password cache-tier Redis AUTH secret; blank means unauthenticated
  */
 @ConfigurationProperties("gateway.redis.cache")
 @Validated
 public record CacheRedisProperties(
 		@DefaultValue("localhost") String host,
-		@Min(1) @Max(65_535) @DefaultValue("6380") int port
+		@Min(1) @Max(65_535) @DefaultValue("6380") int port,
+		@DefaultValue("") String password
 ) {
 
 	/**
 	 * The documented defaults, mirroring the {@link DefaultValue} annotations.
 	 */
-	public static final CacheRedisProperties DEFAULTS = new CacheRedisProperties("localhost", 6380);
+	public static final CacheRedisProperties DEFAULTS = new CacheRedisProperties("localhost", 6380, "");
 }

@@ -176,6 +176,23 @@ public class CacheKeyGenerator {
 		sb.append("max_tokens=").append(request.effectiveMaxTokens() == null ? "default" : request.effectiveMaxTokens())
 		  .append(";");
 
+		// PERF-14: every generation-affecting field participates. JsonNode fields use
+		// their serialized form (key order preserved from input: fewer hits on reorder,
+		// never a wrong hit); numeric fields use exact string forms (no rounding merges).
+		sb.append("tools=").append(request.tools() == null ? "none" : request.tools().toString()).append(";");
+		sb.append("tool_choice=")
+		  .append(request.toolChoice() == null ? "none" : request.toolChoice().toString()).append(";");
+		sb.append("response_format=")
+		  .append(request.responseFormat() == null ? "none" : request.responseFormat().toString()).append(";");
+		sb.append("stop=").append(request.stop() == null ? "none" : request.stop().toString()).append(";");
+		sb.append("reasoning_effort=").append(request.reasoningEffort() == null ? "none" : request.reasoningEffort())
+		  .append(";");
+		sb.append("frequency_penalty=")
+		  .append(request.frequencyPenalty() == null ? "none" : request.frequencyPenalty().toString()).append(";");
+		sb.append("presence_penalty=")
+		  .append(request.presencePenalty() == null ? "none" : request.presencePenalty().toString()).append(";");
+		sb.append("seed=").append(request.seed() == null ? "none" : request.seed()).append(";");
+
 		sb.append("messages=[");
 		for (OpenAiChatRequest.Message msg : request.messages()) {
 			String role = msg.role() == null ? "unknown" : msg.role().trim().toLowerCase(Locale.ROOT);
@@ -216,13 +233,24 @@ public class CacheKeyGenerator {
 		return content.toString();
 	}
 
-	private static String sha256Hex(String input) {
+	/**
+	 * Per-thread SHA-256 instance (PERF-07): {@code MessageDigest.getInstance} does a
+	 * provider lookup per call; three hashes per key build, twice per request, made it
+	 * one of the hottest allocations. {@code digest()} resets the instance, and the
+	 * explicit {@code reset()} guards against reuse after an exception mid-update.
+	 */
+	private static final ThreadLocal<MessageDigest> SHA256 = ThreadLocal.withInitial(() -> {
 		try {
-			MessageDigest md = MessageDigest.getInstance("SHA-256");
-			byte[] digest = md.digest(input.getBytes(StandardCharsets.UTF_8));
-			return HEX.formatHex(digest);
+			return MessageDigest.getInstance("SHA-256");
 		} catch (NoSuchAlgorithmException e) {
 			throw new AssertionError("SHA-256 algorithm unavailable", e);
 		}
+	});
+
+	private static String sha256Hex(String input) {
+		MessageDigest md = SHA256.get();
+		md.reset();
+		byte[] digest = md.digest(input.getBytes(StandardCharsets.UTF_8));
+		return HEX.formatHex(digest);
 	}
 }

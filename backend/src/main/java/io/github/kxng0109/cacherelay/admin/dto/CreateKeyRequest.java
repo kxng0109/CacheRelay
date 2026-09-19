@@ -1,8 +1,13 @@
 package io.github.kxng0109.cacherelay.admin.dto;
 
+import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
+import io.github.kxng0109.cacherelay.contracts.PolicyBounds;
+import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Size;
 
 import java.util.Set;
 
@@ -17,6 +22,7 @@ import java.util.Set;
  * @param allowedProviders allowed provider names (null or empty = all allowed)
  * @param allowedTools     allowed tool names or glob patterns (null or empty = all allowed)
  * @param deniedTools      denied tool names or glob patterns (null or empty = none)
+ * @param allowedCacheScopes cache isolation scopes the key may use (null or empty = TENANT only)
  */
 @Schema(name = "CreateKeyRequest", description = "Payload for provisioning a new virtual API key with quotas, model, and tool access controls")
 public record CreateKeyRequest(
@@ -37,31 +43,50 @@ public record CreateKeyRequest(
 		Integer tpmLimit,
 
 		@Schema(description = "Set of permitted model alias identifiers (empty = all allowed)", example = "[\"gpt-56-luna\", \"claude-sonnet-4-5\"]")
-		Set<String> allowedModels,
+		@Size(max = PolicyBounds.MAX_PATTERNS, message = "at most 64 entries per policy set")
+		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH, message = "pattern too long (max 256)")
+				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> allowedModels,
 
 		@Schema(description = "Set of permitted upstream provider identifiers (empty = all allowed)", example = "[\"openai\", \"anthropic\"]")
-		Set<String> allowedProviders,
+		@Size(max = PolicyBounds.MAX_PATTERNS, message = "at most 64 entries per policy set")
+		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH, message = "pattern too long (max 256)")
+				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> allowedProviders,
 
 		@Schema(description = "Set of permitted MCP tool identifiers or glob patterns (empty = all allowed)", example = "[\"postgres__*\", \"github__list_prs\"]")
-		Set<String> allowedTools,
+		@Size(max = PolicyBounds.MAX_PATTERNS, message = "at most 64 entries per policy set")
+		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH, message = "pattern too long (max 256)")
+				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> allowedTools,
 
 		@Schema(description = "Set of denied MCP tool identifiers or glob patterns (empty = none denied)", example = "[\"*:delete_*\", \"*:drop_*\"]")
-		Set<String> deniedTools,
+		@Size(max = PolicyBounds.MAX_PATTERNS, message = "at most 64 entries per policy set")
+		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH, message = "pattern too long (max 256)")
+				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> deniedTools,
 
 		@Schema(description = "Set of visible MCP resource URI globs (empty = all visible)", example = "[\"postgres://*\"]")
-		Set<String> allowedResources,
+		@Size(max = PolicyBounds.MAX_PATTERNS, message = "at most 64 entries per policy set")
+		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH, message = "pattern too long (max 256)")
+				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> allowedResources,
 
 		@Schema(description = "Set of hidden MCP resource URI globs (empty = none hidden)", example = "[\"postgres://secret/*\"]")
-		Set<String> deniedResources,
+		@Size(max = PolicyBounds.MAX_PATTERNS, message = "at most 64 entries per policy set")
+		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH, message = "pattern too long (max 256)")
+				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> deniedResources,
 
-		@Schema(description = "Set of visible MCP prompt name globs (empty = all visible)", example = "[\"review_*\"]")
-		Set<String> allowedPrompts,
+		@Schema(description = "Set of visible MCP prompt name globs, matched against namespaced names (empty = all visible)", example = "[\"server__review_*\"]")
+		@Size(max = PolicyBounds.MAX_PATTERNS, message = "at most 64 entries per policy set")
+		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH, message = "pattern too long (max 256)")
+				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> allowedPrompts,
 
-		@Schema(description = "Set of hidden MCP prompt name globs (empty = none hidden)", example = "[\"admin_*\"]")
-		Set<String> deniedPrompts,
+		@Schema(description = "Set of hidden MCP prompt name globs, matched against namespaced names (empty = none hidden)", example = "[\"server__admin_*\"]")
+		@Size(max = PolicyBounds.MAX_PATTERNS, message = "at most 64 entries per policy set")
+		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH, message = "pattern too long (max 256)")
+				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> deniedPrompts,
 
 		@Schema(description = "Block tool delivery on indirect prompt injection markers (null = default block, false = warn only)", example = "true")
-		Boolean injectionBlock
+		Boolean injectionBlock,
+
+		@Schema(description = "Cache isolation scopes the key may use (null or empty = TENANT only)", example = "[\"TENANT\"]")
+		Set<CacheScope> allowedCacheScopes
 ) {
 	public CreateKeyRequest {
 		rpmLimit = rpmLimit != null ? rpmLimit : 0;
@@ -74,6 +99,7 @@ public record CreateKeyRequest(
 		deniedResources = deniedResources != null ? Set.copyOf(deniedResources) : Set.of();
 		allowedPrompts = allowedPrompts != null ? Set.copyOf(allowedPrompts) : Set.of();
 		deniedPrompts = deniedPrompts != null ? Set.copyOf(deniedPrompts) : Set.of();
+		allowedCacheScopes = VirtualApiKey.normalizeCacheScopes(allowedCacheScopes);
 	}
 
 	public CreateKeyRequest(
@@ -85,7 +111,7 @@ public record CreateKeyRequest(
 			Set<String> allowedProviders
 	) {
 		this(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders, Set.of(), Set.of(),
-				Set.of(), Set.of(), Set.of(), Set.of(), null);
+				Set.of(), Set.of(), Set.of(), Set.of(), null, Set.of(CacheScope.TENANT));
 	}
 
 	/**
@@ -102,7 +128,30 @@ public record CreateKeyRequest(
 			Set<String> deniedTools
 	) {
 		this(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
-				deniedTools, Set.of(), Set.of(), Set.of(), Set.of(), null);
+				deniedTools, Set.of(), Set.of(), Set.of(), Set.of(), null, Set.of(CacheScope.TENANT));
+	}
+
+	/**
+	 * Backwards-compatible constructor omitting the cache-scope allowlist (defaults to TENANT-only).
+	 */
+	public CreateKeyRequest(
+			String ownerId,
+			String name,
+			Integer rpmLimit,
+			Integer tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts,
+			Boolean injectionBlock
+	) {
+		this(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
+				deniedTools, allowedResources, deniedResources, allowedPrompts, deniedPrompts,
+				injectionBlock, Set.of(CacheScope.TENANT));
 	}
 
 	/**
@@ -124,6 +173,6 @@ public record CreateKeyRequest(
 	) {
 		this(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
 				deniedTools, allowedResources, deniedResources, allowedPrompts, deniedPrompts,
-				null);
+				null, Set.of(CacheScope.TENANT));
 	}
 }

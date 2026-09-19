@@ -17,9 +17,35 @@ public class InMemoryExactCache {
 
 	public InMemoryExactCache(CacheRelayCacheProperties properties) {
 		this.cache = Caffeine.newBuilder()
-		                     .maximumSize(properties.getExact().getL0InMemorySize())
+		                     .maximumWeight(properties.getExact().getL0MaxBytes())
+		                     .weigher(InMemoryExactCache::weighEntry)
 		                     .expireAfterWrite(properties.getExact().getL0InMemoryTtl())
 		                     .build();
+	}
+
+	/**
+	 * Estimates one entry's heap weight in bytes (PERF-11): UTF-16 chars count two
+	 * bytes each plus a fixed per-entry overhead for the key, entry, and map node.
+	 * Deliberately an over-estimate — the cap is a safety bound, not an accounting ledger.
+	 *
+	 * @param exactKey cache key
+	 * @param entry    cached entry
+	 * @return estimated weight in bytes
+	 */
+	static int weighEntry(String exactKey, CacheEntry entry) {
+		long weight = 512L;
+		weight += 2L * chars(exactKey);
+		if (entry != null) {
+			weight += 2L * chars(entry.promptText());
+			weight += 2L * chars(entry.responsePayloadJson());
+			weight += 2L * chars(entry.systemPromptHash());
+			weight += 2L * chars(entry.prefixHash());
+		}
+		return (int) Math.min(weight, Integer.MAX_VALUE);
+	}
+
+	private static int chars(String value) {
+		return value == null ? 0 : value.length();
 	}
 
 	/**

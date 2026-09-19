@@ -14,6 +14,7 @@ import io.github.kxng0109.cacherelay.mcp.hitl.McpHitlSuspensionEngine;
 import io.github.kxng0109.cacherelay.mcp.resilience.McpServerCircuitBreakerManager;
 import io.github.kxng0109.cacherelay.mcp.router.McpCatalogAggregator;
 import io.github.kxng0109.cacherelay.mcp.router.McpRouter;
+import io.github.kxng0109.cacherelay.mcp.security.McpEgressMetrics;
 import io.github.kxng0109.cacherelay.mcp.security.McpGuardrailScanner;
 import io.github.kxng0109.cacherelay.mcp.security.McpJsonSchemaValidator;
 import io.github.kxng0109.cacherelay.mcp.security.McpToolRbacPolicyEngine;
@@ -29,6 +30,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import tools.jackson.databind.ObjectMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -93,7 +95,8 @@ class McpRateLimitGateTest {
 				keyManagementService,
 				rateLimitEngine,
 				httpClient,
-				new ObjectMapper()
+				new ObjectMapper(),
+				new McpEgressMetrics(new SimpleMeterRegistry())
 		);
 		apiKey = new VirtualApiKey(
 				SHA256Hash.fromRawKey("gw-test-key-1234567890abcdef"),

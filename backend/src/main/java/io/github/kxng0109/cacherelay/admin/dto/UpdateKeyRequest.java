@@ -1,7 +1,11 @@
 package io.github.kxng0109.cacherelay.admin.dto;
 
+import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
+import io.github.kxng0109.cacherelay.contracts.PolicyBounds;
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Size;
 
 import java.util.Set;
 
@@ -19,6 +23,7 @@ import java.util.Set;
  * @param deniedResources  new denied resource URI globs (or null to preserve)
  * @param allowedPrompts   new allowed prompt globs (or null to preserve)
  * @param deniedPrompts    new denied prompt globs (or null to preserve)
+ * @param allowedCacheScopes new cache isolation scopes (or null to preserve)
  * @param enabled          new enabled state (or null to preserve)
  */
 @Schema(name = "UpdateKeyRequest", description = "Patch payload for modifying virtual key quotas, allowlists, or enabled status")
@@ -35,31 +40,50 @@ public record UpdateKeyRequest(
 		Integer tpmLimit,
 
 		@Schema(description = "New allowed model aliases set (optional)", example = "[\"gpt-56-luna\", \"claude-sonnet-4-5\"]")
-		Set<String> allowedModels,
+		@Size(max = PolicyBounds.MAX_PATTERNS, message = "at most 64 entries per policy set")
+		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH, message = "pattern too long (max 256)")
+				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> allowedModels,
 
 		@Schema(description = "New allowed providers set (optional)", example = "[\"openai\", \"anthropic\"]")
-		Set<String> allowedProviders,
+		@Size(max = PolicyBounds.MAX_PATTERNS, message = "at most 64 entries per policy set")
+		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH, message = "pattern too long (max 256)")
+				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> allowedProviders,
 
 		@Schema(description = "New allowed MCP tools set (optional)", example = "[\"postgres__*\"]")
-		Set<String> allowedTools,
+		@Size(max = PolicyBounds.MAX_PATTERNS, message = "at most 64 entries per policy set")
+		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH, message = "pattern too long (max 256)")
+				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> allowedTools,
 
 		@Schema(description = "New denied MCP tools set (optional)", example = "[\"*:delete_*\"]")
-		Set<String> deniedTools,
+		@Size(max = PolicyBounds.MAX_PATTERNS, message = "at most 64 entries per policy set")
+		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH, message = "pattern too long (max 256)")
+				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> deniedTools,
 
 		@Schema(description = "New allowed resource URI globs (optional)", example = "[\"postgres://*\"]")
-		Set<String> allowedResources,
+		@Size(max = PolicyBounds.MAX_PATTERNS, message = "at most 64 entries per policy set")
+		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH, message = "pattern too long (max 256)")
+				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> allowedResources,
 
 		@Schema(description = "New denied resource URI globs (optional)", example = "[\"postgres://secret/*\"]")
-		Set<String> deniedResources,
+		@Size(max = PolicyBounds.MAX_PATTERNS, message = "at most 64 entries per policy set")
+		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH, message = "pattern too long (max 256)")
+				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> deniedResources,
 
-		@Schema(description = "New allowed prompt globs (optional)", example = "[\"review_*\"]")
-		Set<String> allowedPrompts,
+		@Schema(description = "New allowed prompt globs, matched against namespaced names (optional)", example = "[\"server__review_*\"]")
+		@Size(max = PolicyBounds.MAX_PATTERNS, message = "at most 64 entries per policy set")
+		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH, message = "pattern too long (max 256)")
+				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> allowedPrompts,
 
-		@Schema(description = "New denied prompt globs (optional)", example = "[\"admin_*\"]")
-		Set<String> deniedPrompts,
+		@Schema(description = "New denied prompt globs, matched against namespaced names (optional)", example = "[\"server__admin_*\"]")
+		@Size(max = PolicyBounds.MAX_PATTERNS, message = "at most 64 entries per policy set")
+		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH, message = "pattern too long (max 256)")
+				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> deniedPrompts,
 
 		@Schema(description = "Block tool delivery on injection markers (optional, null = keep)", example = "false")
 		Boolean injectionBlock,
+
+		@Schema(description = "New cache isolation scopes (optional, null = keep)", example = "[\"TENANT\"]")
+		Set<CacheScope> allowedCacheScopes,
 
 		@Schema(description = "Enable or disable key (optional)", example = "true")
 		Boolean enabled
@@ -73,7 +97,7 @@ public record UpdateKeyRequest(
 			Boolean enabled
 	) {
 		this(name, rpmLimit, tpmLimit, allowedModels, allowedProviders, null, null, null, null,
-				null, null, null, enabled);
+				null, null, null, null, enabled);
 	}
 
 	/**
@@ -90,7 +114,30 @@ public record UpdateKeyRequest(
 			Boolean enabled
 	) {
 		this(name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
-				deniedTools, null, null, null, null, null, enabled);
+				deniedTools, null, null, null, null, null, null, enabled);
+	}
+
+	/**
+	 * Backwards-compatible constructor omitting the cache-scope allowlist (null = keep).
+	 */
+	public UpdateKeyRequest(
+			String name,
+			Integer rpmLimit,
+			Integer tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts,
+			Boolean injectionBlock,
+			Boolean enabled
+	) {
+		this(name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
+				deniedTools, allowedResources, deniedResources, allowedPrompts, deniedPrompts,
+				injectionBlock, null, enabled);
 	}
 
 	/**
@@ -112,6 +159,6 @@ public record UpdateKeyRequest(
 	) {
 		this(name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
 				deniedTools, allowedResources, deniedResources, allowedPrompts, deniedPrompts,
-				null, enabled);
+				null, null, enabled);
 	}
 }

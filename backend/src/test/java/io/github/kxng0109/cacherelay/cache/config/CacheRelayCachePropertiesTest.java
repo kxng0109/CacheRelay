@@ -26,12 +26,12 @@ class CacheRelayCachePropertiesTest {
 		assertThat(props.getTtl()).isEqualTo(Duration.ofHours(12));
 
 		CacheRelayCacheProperties.ExactCacheProperties exact = new CacheRelayCacheProperties.ExactCacheProperties();
-		exact.setL0InMemorySize(1000);
+		exact.setL0MaxBytes(1024);
 		exact.setL0InMemoryTtl(Duration.ofSeconds(30));
 		exact.setL1RedisEnabled(false);
 		props.setExact(exact);
 
-		assertThat(props.getExact().getL0InMemorySize()).isEqualTo(1000);
+		assertThat(props.getExact().getL0MaxBytes()).isEqualTo(1024);
 		assertThat(props.getExact().getL0InMemoryTtl()).isEqualTo(Duration.ofSeconds(30));
 		assertThat(props.getExact().isL1RedisEnabled()).isFalse();
 

@@ -107,6 +107,13 @@ public class KeyAuthFilter extends OncePerRequestFilter {
 	public static final String KEY_HASH_ATTRIBUTE = "cacherelay.keyHash";
 
 	/**
+	 * Request attribute carrying the resolved virtual key policy downstream (SEC-01).
+	 * Cache scope resolution reads the key's server-side allowlist from here instead
+	 * of trusting client headers; absent means fail closed to TENANT-only.
+	 */
+	public static final String VIRTUAL_KEY_ATTRIBUTE = "cacherelay.virtualKey";
+
+	/**
 	 * RPM limit header.
 	 */
 	public static final String HEADER_LIMIT_RPM = "X-RateLimit-Limit-RPM";
@@ -300,6 +307,7 @@ public class KeyAuthFilter extends OncePerRequestFilter {
 
 		request.setAttribute(OWNER_ID_ATTRIBUTE, key.ownerId());
 		request.setAttribute(KEY_HASH_ATTRIBUTE, keyHash.hex());
+		request.setAttribute(VIRTUAL_KEY_ATTRIBUTE, key);
 		filterChain.doFilter(request, response);
 	}
 

@@ -9,7 +9,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
  * @param defaultScope         default multi-tenant isolation scope (TENANT, USER, GLOBAL)
  * @param similarityThreshold  active cosine similarity threshold for L2 semantic hits
  * @param embeddingModel       configured embedding model alias
- * @param l0InMemorySize       maximum number of entries in local L0 cache
+ * @param l0MaxBytes           maximum bytes held in the local L0 cache (weight-weighed)
  * @param l0InMemoryTtlSeconds local L0 cache entry TTL in seconds
  * @param l1RedisEnabled       whether L1 distributed Redis exact cache is active
  * @param l2SemanticEnabled    whether L2 distributed RediSearch vector cache is active
@@ -30,8 +30,8 @@ public record CacheStatsResponse(
 		@Schema(description = "Embedding model alias used for vector caching", example = "text-embedding-3-small")
 		String embeddingModel,
 
-		@Schema(description = "Maximum capacity of L0 Caffeine in-memory cache", example = "50000")
-		int l0InMemorySize,
+		@Schema(description = "Maximum bytes held in the local L0 cache (payload-weighed)", example = "268435456")
+		long l0MaxBytes,
 
 		@Schema(description = "Time-to-live for L0 in-memory entries in seconds", example = "60")
 		long l0InMemoryTtlSeconds,

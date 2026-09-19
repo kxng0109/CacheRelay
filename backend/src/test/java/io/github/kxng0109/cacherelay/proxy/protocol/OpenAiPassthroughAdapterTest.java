@@ -50,6 +50,14 @@ class OpenAiPassthroughAdapterTest {
 	}
 
 	@Test
+	@DisplayName("idle requests forward byte-identical (no re-serialization)")
+	void idleRequestByteIdentical() {
+		String body = "{ \"model\" : \"m\", \"messages\" : [ { \"role\" : \"user\" , \"content\" : \"hi\" } ] }";
+
+		assertEquals(body, adapter.buildRequestBody(body, null));
+	}
+
+	@Test
 	@DisplayName("explicit stream:false leaves the body without stream_options")
 	void explicitStreamFalseUntouched() {
 		String body = "{\"model\":\"m\",\"stream\":false}";

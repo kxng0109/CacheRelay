@@ -1335,7 +1335,7 @@ class ProxyControllerTest {
 		CacheLookupResult hit = CacheLookupResult.hit(
 				CacheStatus.HIT_L2, entry, 0.96f, 15L
 		);
-		when(cacheService.evaluateCache(any(), any(), eq("owner-1"))).thenReturn(hit);
+		when(cacheService.evaluateCache(any(), any(), eq("owner-1"), any())).thenReturn(hit);
 
 		ResponseEntity<StreamingResponseBody> res = cachedController.proxyChatCompletions(
 				"{\"model\":\"gpt-5.6-luna\",\"messages\":[{\"role\":\"user\",\"content\":\"Hi\"}]}",
@@ -1376,7 +1376,7 @@ class ProxyControllerTest {
 				cacheService, streamReconstitution
 		);
 
-		when(cacheService.evaluateCache(any(), any(), eq("owner-1"))).thenReturn(
+		when(cacheService.evaluateCache(any(), any(), eq("owner-1"), any())).thenReturn(
 				CacheLookupResult.miss(5L)
 		);
 
@@ -1398,7 +1398,7 @@ class ProxyControllerTest {
 		ByteArrayOutputStream out = new ByteArrayOutputStream();
 		res.getBody().writeTo(out);
 
-		verify(cacheService).storeResponse(any(), any(), eq("owner-1"), contains("fresh result"), eq(8), eq(12));
+		verify(cacheService).storeResponse(any(), any(), eq("owner-1"), any(), contains("fresh result"), eq(8), eq(12));
 	}
 
 	@Test
@@ -1427,7 +1427,7 @@ class ProxyControllerTest {
 				java.time.Instant.now(), 1.0f, null
 		);
 
-		when(cacheService.evaluateCache(any(), any(), eq("owner-1"))).thenReturn(
+		when(cacheService.evaluateCache(any(), any(), eq("owner-1"), any())).thenReturn(
 				CacheLookupResult.hit(
 						CacheStatus.HIT_L0, entry, 1.0f, 1L
 				)
@@ -1436,7 +1436,7 @@ class ProxyControllerTest {
 		ResponseEntity<StreamingResponseBody> resL0 = cachedController.proxyChatCompletions(PATH_BODY, request());
 		assertEquals("HIT (L0-Memory)", resL0.getHeaders().getFirst("X-Cache"));
 
-		when(cacheService.evaluateCache(any(), any(), eq("owner-1"))).thenReturn(
+		when(cacheService.evaluateCache(any(), any(), eq("owner-1"), any())).thenReturn(
 				CacheLookupResult.hit(
 						CacheStatus.HIT_L1, entry, 1.0f, 2L
 				)
@@ -1450,7 +1450,7 @@ class ProxyControllerTest {
 				"id1", "owner-1", CacheScope.TENANT, "gpt-5.6-luna",
 				"Hi", "", "", "{\"choices\":[]}", 1, 1, 2, null, 1.0f, null
 		);
-		when(cacheService.evaluateCache(any(), any(), eq("owner-1"))).thenReturn(
+		when(cacheService.evaluateCache(any(), any(), eq("owner-1"), any())).thenReturn(
 				CacheLookupResult.hit(
 						CacheStatus.HIT_L0, entryNullCreated, 1.0f, 1L
 				)
@@ -1482,7 +1482,7 @@ class ProxyControllerTest {
 				cacheService, streamReconstitution
 		);
 
-		when(cacheService.evaluateCache(any(), any(), eq("owner-1"))).thenReturn(
+		when(cacheService.evaluateCache(any(), any(), eq("owner-1"), any())).thenReturn(
 				CacheLookupResult.miss(1L)
 		);
 
@@ -1509,7 +1509,7 @@ class ProxyControllerTest {
 		res.getBody().writeTo(out);
 
 		// Verified that valid delta was captured
-		verify(cacheService, atLeastOnce()).storeResponse(any(), any(), eq("owner-1"), anyString(), anyInt(), anyInt());
+		verify(cacheService, atLeastOnce()).storeResponse(any(), any(), eq("owner-1"), any(), anyString(), anyInt(), anyInt());
 
 		// Edge case branches in extractDeltaContent and buildCompletionJson
 		ProxyController plainController = new ProxyController(
@@ -1543,7 +1543,7 @@ class ProxyControllerTest {
 		assertEquals(200, halfCachedRes.getStatusCode().value());
 
 		// Edge case: cache hit is true but entry is null -> proceeds to orchestrator
-		when(cacheService.evaluateCache(any(), any(), eq("owner-1"))).thenReturn(
+		when(cacheService.evaluateCache(any(), any(), eq("owner-1"), any())).thenReturn(
 				new CacheLookupResult(
 						CacheStatus.HIT_L0, null, 1.0f, 1L
 				)
@@ -1593,7 +1593,7 @@ class ProxyControllerTest {
 				cacheService, streamReconstitution
 		);
 
-		when(cacheService.evaluateCache(any(), any(), eq("owner-1"))).thenReturn(
+		when(cacheService.evaluateCache(any(), any(), eq("owner-1"), any())).thenReturn(
 				CacheLookupResult.miss(1L)
 		);
 
@@ -1614,7 +1614,7 @@ class ProxyControllerTest {
 		ByteArrayOutputStream out = new ByteArrayOutputStream();
 		res.getBody().writeTo(out);
 
-		verify(cacheService).storeResponse(any(), any(), eq("owner-1"), contains("\"content\":\"\""), eq(1), eq(1));
+		verify(cacheService).storeResponse(any(), any(), eq("owner-1"), any(), contains("\"content\":\"\""), eq(1), eq(1));
 	}
 
 	@Test
@@ -1655,7 +1655,7 @@ class ProxyControllerTest {
 				cacheService, streamReconstitution
 		);
 
-		when(cacheService.evaluateCache(any(), any(), eq("owner-1"))).thenReturn(
+		when(cacheService.evaluateCache(any(), any(), eq("owner-1"), any())).thenReturn(
 				CacheLookupResult.miss(1L)
 		);
 
@@ -1682,7 +1682,7 @@ class ProxyControllerTest {
 		ByteArrayOutputStream cachedOut = new ByteArrayOutputStream();
 		cachedRes.getBody().writeTo(cachedOut);
 
-		verify(cacheService).storeResponse(any(), any(), eq("owner-1"), contains("Hello World!"), eq(5), eq(5));
+		verify(cacheService).storeResponse(any(), any(), eq("owner-1"), any(), contains("Hello World!"), eq(5), eq(5));
 	}
 
 	@Test
@@ -1724,7 +1724,7 @@ class ProxyControllerTest {
 		ByteArrayOutputStream out = new ByteArrayOutputStream();
 		res.getBody().writeTo(out);
 		assertTrue(out.toString(StandardCharsets.UTF_8).contains("OK"));
-		verify(cacheService, never()).storeResponse(any(), any(), any(), any(), anyInt(), anyInt());
+		verify(cacheService, never()).storeResponse(any(), any(), any(), any(), any(), anyInt(), anyInt());
 
 		// Test buildCompletionJson exception branch when ObjectMapper fails on writeValueAsString
 		ObjectMapper throwingMapper = spy(new ObjectMapper());
@@ -1742,7 +1742,7 @@ class ProxyControllerTest {
 						"data: [DONE]"
 				)
 		);
-		when(cacheService.evaluateCache(any(), any(), any())).thenReturn(CacheLookupResult.miss(1L));
+		when(cacheService.evaluateCache(any(), any(), any(), any())).thenReturn(CacheLookupResult.miss(1L));
 		when(orchestrator.execute(any(), anyString())).thenReturn(CompletableFuture.completedFuture(response2));
 		ResponseEntity<StreamingResponseBody> throwingRes = throwingController.proxyChatCompletions(
 				PATH_BODY,
@@ -1754,6 +1754,7 @@ class ProxyControllerTest {
 				any(),
 				any(),
 				eq("owner-1"),
+				any(),
 				contains("\"content\":\"\""),
 				eq(1),
 				eq(1)
@@ -1965,7 +1966,7 @@ class ProxyControllerTest {
 		// execute lazily inside writeTo, not when the 200 status is built.
 		body(entity);
 		verify(eventPublisher).publishEvent(any(TokenUsageEvent.class));
-		verify(cache).storeResponse(any(), any(), any(), anyString(), eq(5), eq(7));
+		verify(cache).storeResponse(any(), any(), any(), any(), anyString(), eq(5), eq(7));
 	}
 
 	@Test
@@ -1973,7 +1974,7 @@ class ProxyControllerTest {
 	void jsonRelayCacheFailureDegrades() throws Exception {
 		CacheRelayCacheService cache = mock(CacheRelayCacheService.class);
 		doThrow(new RuntimeException("redis down")).when(cache)
-		                                           .storeResponse(any(), any(), any(), anyString(), anyInt(), anyInt());
+		                                           .storeResponse(any(), any(), any(), any(), anyString(), anyInt(), anyInt());
 		ProtocolAdapterResolver cachingResolver = new ProtocolAdapterResolver(
 				new OpenAiPassthroughAdapter(objectMapper),
 				new AnthropicAdapter(objectMapper),

@@ -99,6 +99,8 @@ public class RediSearchVectorClient {
 					"TAG".getBytes(StandardCharsets.UTF_8),
 					"system_prompt_hash".getBytes(StandardCharsets.UTF_8),
 					"TAG".getBytes(StandardCharsets.UTF_8),
+					"temperature".getBytes(StandardCharsets.UTF_8),
+					"TAG".getBytes(StandardCharsets.UTF_8),
 					"embedding".getBytes(StandardCharsets.UTF_8),
 					"VECTOR".getBytes(StandardCharsets.UTF_8),
 					"HNSW".getBytes(StandardCharsets.UTF_8),
@@ -484,6 +486,61 @@ public class RediSearchVectorClient {
 		} catch (Exception ex) {
 			log.debug("Could not read vector dimension for '{}': {}", indexName, ex.getMessage());
 			return -1;
+		}
+	}
+
+	/**
+	 * Returns the field names declared by an existing index, or an empty set when the
+	 * index does not exist or its schema cannot be read. Used for schema migration
+	 * decisions (never for request-path gating).
+	 *
+	 * @param indexName index identifier
+	 * @return indexed field names, possibly empty
+	 */
+	public Set<String> indexSchemaFields(String indexName) {
+		try (RedisConnection connection = redisConnectionFactory.getConnection()) {
+			Object info = ((LettuceConnection) connection).execute("FT.INFO",
+					new NestedMultiOutput<>(ByteArrayCodec.INSTANCE),
+					new byte[][]{indexName.getBytes(StandardCharsets.UTF_8)});
+			return parseSchemaFields(info);
+		} catch (Exception ex) {
+			log.debug("Could not read schema fields for '{}': {}", indexName, ex.getMessage());
+			return Set.of();
+		}
+	}
+
+	private static Set<String> parseSchemaFields(Object info) {
+		if (!(info instanceof List<?> list) || list.isEmpty()) {
+			return Set.of();
+		}
+		Object attributesSection = null;
+		for (int i = 0; i + 1 < list.size(); i++) {
+			if ("attributes".equals(toUtf8String(list.get(i)))) {
+				attributesSection = list.get(i + 1);
+				break;
+			}
+		}
+		if (attributesSection == null) {
+			return Set.of();
+		}
+		Set<String> fields = new HashSet<>();
+		collectSchemaFields(attributesSection, fields);
+		return Set.copyOf(fields);
+	}
+
+	private static void collectSchemaFields(Object node, Set<String> fields) {
+		if (!(node instanceof List<?> list)) {
+			return;
+		}
+		for (int i = 0; i + 1 < list.size(); i++) {
+			String key = toUtf8String(list.get(i));
+			if (("identifier".equals(key) || "attribute".equals(key))) {
+				String name = toUtf8String(list.get(i + 1));
+				if (!name.isEmpty()) {
+					fields.add(name);
+				}
+			}
+			collectSchemaFields(list.get(i), fields);
 		}
 	}
 

@@ -26,6 +26,20 @@ public class CacheRelayCacheProperties {
 	private CacheScope defaultScope = CacheScope.TENANT;
 
 	/**
+	 * Operator-only master switch for the GLOBAL cache scope (SEC-01). When false, GLOBAL
+	 * requests fall back to the default scope even for keys that allow it, so cross-tenant
+	 * sharing can never be enabled by client headers alone.
+	 */
+	private boolean globalScopeEnabled = false;
+
+	/**
+	 * Bound on how long single-flight followers wait for a leader lookup (PERF-08).
+	 * A hung leader no longer leaks blocked virtual threads; timed-out followers throw
+	 * {@code TimeoutException} (mapped by the service to a miss) and a fresh flight starts.
+	 */
+	private Duration singleFlightTimeout = Duration.ofSeconds(30);
+
+	/**
 	 * Default Time-To-Live for cached completions in Redis.
 	 */
 	private Duration ttl = Duration.ofHours(24);
@@ -44,9 +58,12 @@ public class CacheRelayCacheProperties {
 	@Setter
 	public static class ExactCacheProperties {
 		/**
-		 * Maximum number of entries kept in the local JVM Caffeine L0 cache.
+		 * Maximum bytes held in the local JVM Caffeine L0 cache (PERF-11): entries are
+		 * weighed by key + prompt + response payload so a few huge completions cannot
+		 * crowd out the heap. This replaced the old entry-count bound (Caffeine forbids
+		 * combining count and weight bounds); the entry count is now emergent.
 		 */
-		private int l0InMemorySize = 50_000;
+		private long l0MaxBytes = 256L * 1024 * 1024;
 
 		/**
 		 * Expiry duration for local L0 in-memory entries.

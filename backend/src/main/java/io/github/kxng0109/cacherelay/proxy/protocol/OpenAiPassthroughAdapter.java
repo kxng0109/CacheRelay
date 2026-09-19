@@ -50,7 +50,16 @@ public final class OpenAiPassthroughAdapter implements ProtocolAdapter {
 			// orchestrator surfaces without failing over the whole chain.
 			return rawRequestBody;
 		}
-		ObjectNode rewritten = (ObjectNode) root.deepCopy();
+		if (!(root instanceof ObjectNode rewritten)) {
+			return rawRequestBody;
+		}
+		// PERF-04: the tree is freshly parsed and exclusively owned — mutate it in
+		// place (no deepCopy), and skip re-serialization entirely when nothing changes
+		// so idle requests forward byte-identical.
+		boolean streaming = isStreamingRequest(rewritten);
+		if (modelOverride == null && !streaming) {
+			return rawRequestBody;
+		}
 		if (modelOverride != null) {
 			rewritten.put("model", modelOverride);
 		}
@@ -59,7 +68,7 @@ public final class OpenAiPassthroughAdapter implements ProtocolAdapter {
 		// stream_options with stream:false/absent as a 400). Inject include_usage
 		// solely on the streaming path so usage-billing stays intact there while
 		// non-streaming requests forward untouched for relayJson.
-		if (isStreamingRequest(rewritten)) {
+		if (streaming) {
 			streamOptions(rewritten).put("include_usage", true);
 		}
 		return objectMapper.writeValueAsString(rewritten);

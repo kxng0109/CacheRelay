@@ -168,6 +168,23 @@ public class RateLimitEngine {
 	}
 
 	private RateLimitDecision decide(SHA256Hash keyHash, int rpmLimit, int tpmLimit, int tokens) {
+		// PERF-02: fully unlimited keys skip the Lua round trip. Exactly equivalent to what
+		// rate_limit.lua returns for 0 limits (allowed, zero remaining, full-window resets;
+		// unlimited dimensions never touch Redis).
+		if (rpmLimit == 0 && tpmLimit == 0) {
+			long resetSeconds = Math.max(1, properties.windowMillis() / 1_000);
+			Instant now = Instant.ofEpochMilli(System.currentTimeMillis());
+			RateLimitState state = new RateLimitState(
+					0,
+					0,
+					now.plusSeconds(resetSeconds),
+					0,
+					0,
+					now.plusSeconds(resetSeconds)
+			);
+			recordDecision(true);
+			return new RateLimitDecision.Allowed(state);
+		}
 		// Hash-tagged keys ({hex}) so the RPM/TPM pair shares one Cluster slot; the Lua script
 		// touches both keys atomically and would fail with CROSSSLOT otherwise.
 		String tag = "{" + keyHash.hex() + "}";

@@ -230,13 +230,18 @@ Supported methods: `initialize`, `ping`, `tools/list`, `tools/call`, `resources/
   hijacking across servers.
 - **Tool-level RBAC/ABAC**: every virtual API key carries `allowedTools` / `deniedTools` glob policies (e.g.
   `postgres__*`, `*:delete_*`). Tools are pruned from `tools/list` per caller and denied at `tools/call` with JSON-RPC
-  error `-32603`.
+  error `-32603`. Glob matching is linear-time (no regex, no ReDoS) with ASCII-only case folding; policy sets are
+  capped at 64 patterns of 256 chars each (blank patterns rejected with 400).
 - **Resource/prompt visibility**: keys carry `allowedResources` / `deniedResources` (URI globs, e.g.
   `postgres://*`) and `allowedPrompts` / `deniedPrompts` (name globs); deny wins, empty means visible, and null
   callers fail closed to an empty catalog. Keys stored before these fields default to fully visible.
+  Prompt patterns match the namespaced name (`server__prompt`, e.g. `server__review_*`); `resources/list` and
+  `prompts/list` are filtered per caller — `resources/read` / `prompts/get` are not dispatched and not advertised.
 - **Egress injection policy**: indirect prompt injection markers in tool output block delivery by default
   (JSON-RPC `-32603`, offending output never returned); per-key `injectionBlock` lets an admin flip
-  noisy-but-legitimate keys to warn-and-deliver.
+  noisy-but-legitimate keys to warn-and-deliver. Output is wrapped in a nonce-bound envelope (tool name escaped);
+  non-text (binary/image) blocks bypass screening and are counted. Metrics: `mcp_egress_injection_detected_total`,
+  `mcp_egress_blocked_total`, `mcp_egress_unscanned_total`.
 - **JSON Schema Draft 2020-12 parameter validation**: tool arguments are validated strictly (required fields, types,
   string bounds, regex formats, IEEE 754 safe-integer limits, `additionalProperties: false`) with dangerous-path
   pre-filtering for path traversal and command separators.
@@ -383,7 +388,23 @@ The Maven wrapper is included, so no separate Maven installation is needed.
 
 ### Running with Docker Compose
 
-The gateway includes production-ready multi-stage containers and pre-configured Docker Compose profiles:
+Everything runs locally with free, open-source images — **no paid service or subscription is required**.
+Provider API keys are optional: the gateway boots without them, and you can use a locally installed
+[Ollama](https://ollama.com) for free models and embeddings (`OLLAMA_BASE_URL` in `.env`).
+
+First run — generate `.env` with random local secrets (no external tools needed):
+
+```powershell
+# Windows
+scripts\init-env.cmd
+```
+
+```bash
+# macOS / Linux
+./scripts/init-env.sh
+```
+
+Then start what you need:
 
 ```bash
 # Start only the dependencies (Redis 8 & PostgreSQL 16 for local IDE development)
@@ -396,19 +417,18 @@ docker compose --profile monitoring up -d
 docker compose --profile all up -d --build
 ```
 
-Copy `.env.docker.example` to `.env` to configure ports, provider API keys, and Grafana credentials:
+The bootstrap fills every hard-required secret (`POSTGRES_PASSWORD`, `POSTGRES_EXPORTER_PASSWORD`,
+`REDIS_PASSWORD`, `REDIS_CACHE_PASSWORD`, `GATEWAY_ADMIN_MASTERKEY`, `GATEWAY_AUTH_JWT_SECRET`,
+`GATEWAY_MCP_HITL_SECRET`, `GRAFANA_ADMIN_PASSWORD`) with locally generated random hex values. It refuses to
+overwrite an existing `.env` unless you force it, and `.env` is gitignored — never commit it.
 
 - **CacheRelay Gateway**: `http://localhost:8080` (Actuator & Health: `http://localhost:8080/actuator/health`)
 - **Grafana Dashboard**: `http://localhost:3000` (Pre-configured `CacheRelay — Production Operations` dashboard, 51 panels across 12 rows: request path, rate limiting, ledger, JVM, pools, Redis, Postgres, client connections)
 - **Prometheus TSDB**: `http://localhost:9090` (Scraping the app plus `redis-exporter:9121` and `postgres-exporter:9187`, with 20 pre-loaded alert rules)
 
 The Postgres exporter role is provisioned automatically: `backend/deploy/postgres-init/01-exporter-role.sh`
-runs once at first volume init and creates the least-privilege `pg_monitor` member from your `.env` — just set
-a real password (fail-fast if unset, and the role is never created if you skip it):
-
-```bash
-POSTGRES_EXPORTER_PASSWORD=<a real value in your .env>
-```
+runs once at first volume init and creates the least-privilege `pg_monitor` member from your `.env`
+(`POSTGRES_EXPORTER_PASSWORD` is filled by `scripts/init-env.*`; compose refuses to start while it is blank):
 
 Configuration is startup-bound: provider, embedding-model, budget, and pricing-source changes require a
 container recreate (`docker compose up -d --force-recreate cacherelay`, ~15 s boot) — there is no hot reload
@@ -420,9 +440,15 @@ environment is immutable.
 If you prefer starting containers individually:
 
 ```bash
-docker run -d --name cacherelay-redis -p 6379:6379 redis:8.10.1-alpine3.23
-docker run -d --name cacherelay-postgres -p 5432:5432 -e POSTGRES_USER=cacherelay -e POSTGRES_PASSWORD=<your-password> -e POSTGRES_DB=cacherelay postgres:16.15-alpine
+docker run -d --name cacherelay-redis -p 127.0.0.1:6379:6379 redis:8.10.1-alpine3.23 redis-server --requirepass <your-redis-password>
+docker run -d --name cacherelay-postgres -p 127.0.0.1:5432:5432 -e POSTGRES_USER=cacherelay -e POSTGRES_PASSWORD=<your-password> -e POSTGRES_DB=cacherelay postgres:16.15-alpine
 ```
+
+Every port binds `127.0.0.1` by default — including the gateway itself (`GATEWAY_BIND_HOST`, default
+`127.0.0.1`). Set it to `0.0.0.0` only behind a firewall/load balancer, and never together with the seeded
+dev bootstrap keys (they are public by design). Both Redis tiers require AUTH
+(`REDIS_PASSWORD` / `REDIS_CACHE_PASSWORD`, distinct secrets, `openssl rand -hex 32`); Postgres enforces
+`scram-sha-256` with a hard-required password. The k8s equivalent is `backend/deploy/k8s/networkpolicy-allow.yaml`.
 
 Provide your provider keys and, optionally, a bootstrap key for local testing:
 
@@ -578,7 +604,9 @@ Supports:
 ### Administrative Endpoints (`/v1/admin/**`)
 
 Administrative endpoints require the configured master key via `Authorization: Bearer <GATEWAY_ADMIN_MASTERKEY>` or
-`X-Admin-Key`:
+`X-Admin-Key`. The key is mandatory: the application fails fast at startup when `GATEWAY_ADMIN_MASTERKEY` is
+missing, blank, shorter than 32 bytes, or a published default (e.g. `cacherelay_admin_secret_key` — rotate
+immediately if the old shipped default was ever used; generate fresh with `openssl rand -base64 32`):
 
 - **`POST /v1/admin/keys`**: Creates a new virtual API key with custom RPM/TPM quotas and allowlists. Returns the
   single-exposure plaintext key:
@@ -660,6 +688,9 @@ Humans log in with local username+password or any configured SSO provider; API k
   (`null` before settle), and lifecycle state; 404 once the hold record expires.
 - **Prometheus**: `cacherelay.circuit.breaker.state` / `.failures` per provider and
   `cacherelay.mcp.circuit.breaker.state` / `.failures` per server (state encoded 0/1/2).
+- **Embeddings** (`/v1/embeddings`): single attempt (no failover) with `X-CacheRelay-Tried` naming the provider;
+  upstream errors return a generic message plus correlation id; `embedding_requests_total{provider,model,outcome}`
+  and `embedding_upstream_latency` meters; check-only budget gate (no holds).
 
 Every proxied request passes a single atomic Lua spend gate (`budget_limit.lua`, V7 `budget_limits` + `budget_audit`
 tables, V8 append-only trigger) across KEY → TEAM → ORG levels: check-before-increment (denials consume nothing),
@@ -683,7 +714,7 @@ body is 422, and a concurrent duplicate is 409.
 
 CacheRelay provides an enterprise-grade, high-throughput (2,000+ concurrent users) multi-tiered caching architecture:
 
-- **L0 (In-Memory)**: Bounded Caffeine cache for sub-millisecond ($<0.1\text{ms}$) exact-match hot prompt lookups.
+- **L0 (In-Memory)**: Bounded Caffeine cache for sub-millisecond ($<0.1\text{ms}$) exact-match hot prompt lookups, payload-weighed at 256 MiB (`gateway.cache.exact.l0-max-bytes`).
 - **L1 (Distributed Exact Match)**: Redis key-value store partitioned by SHA-256 compound keys.
 - **L2 (Vector Similarity Search)**: RediSearch / Redis VSS HNSW vector search executing cosine distance queries over
   dense float32 vectors generated by CacheRelay's configured embedding model.
@@ -693,9 +724,13 @@ CacheRelay provides an enterprise-grade, high-throughput (2,000+ concurrent user
 - **Anti-Hallucination Guardrails**:
     - **Polarity Guard**: Rejects intent reversals (`enable` vs `disable`, `true` vs `false`).
     - **Entity Guard**: Rejects conflicting named entities and numbers (`Apple` vs `Microsoft`, `42` vs `100`).
-    - **Temperature Gating**: Requests with $T > 0.1$ bypass caching to preserve requested stochastic creativity.
+    - **Temperature Gating**: Requests with $T > 0.1$ bypass caching to preserve requested stochastic creativity; requests without a temperature bypass the L2 semantic tier both ways (no read, no store).
 - **Synthetic Streaming SSE Replay**: Automatically reconstitutes cached completions into valid OpenAI SSE chunk
   sequences with Time-To-First-Token (**TTFT**) in **$< 5\text{ms}$**.
+- **Server-side scope isolation (SEC-01)**: `X-CacheRelay-Cache-Scope` only selects within the key's server-side
+  `allowedCacheScopes` (default TENANT-only; out-of-policy values are silently ignored). `X-User-Id` is never
+  trusted — USER scope degrades to TENANT until a server-verified end-user claim exists. GLOBAL additionally
+  requires the operator flag `GATEWAY_CACHE_GLOBAL_SCOPE_ENABLED=true` (default false).
 
 ### Interactive Swagger & OpenAPI 3.1 Documentation
 
@@ -728,6 +763,7 @@ tracking, syntax highlighting, and live Try-It-Out execution:
 - Operator SPA shell (`/`, `/index.html`, `/assets/**` + extensionless deep links) is served with immutable
   caching on versioned assets and `no-store` on the shell; unknown `/v1/**` routes still refuse with 403.
 - Human sessions are hybrid: short-lived Bearer JWTs plus rotating `__Host-` refresh cookies with reuse
+- `GATEWAY_AUTH_JWT_SECRET` (32+ bytes) is mandatory outside the `dev`/`test` profiles — startup fails without it, so sessions survive restarts and validate across instances.
   revocation; admin paths deny with stealth-404 and audit every mutation.
 
 ## Testing

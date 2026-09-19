@@ -2,12 +2,15 @@ package io.github.kxng0109.cacherelay.cache.engine;
 
 import io.github.kxng0109.cacherelay.cache.config.CacheRelayCacheProperties;
 import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
+import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
 import io.github.kxng0109.cacherelay.proxy.protocol.OpenAiChatRequest;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Component;
 
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * Evaluates HTTP RFC 9111 caching headers, gateway extension headers, and request parameters to decide caching
@@ -95,20 +98,68 @@ public class CachePolicyEngine {
 	}
 
 	/**
-	 * Resolves the multi-tenant isolation scope for the request.
+	 * Resolves the multi-tenant isolation scope for the request against the
+	 * authenticated key's server-side allowlist (SEC-01).
+	 *
+	 * <p>The {@code X-CacheRelay-Cache-Scope} header can only <em>select within</em>
+	 * the key's {@code allowedCacheScopes}; anything outside is silently ignored
+	 * (no error oracle distinguishing allowed from denied). {@code USER} always
+	 * degrades to {@code TENANT} because no server-verified end-user claim exists
+	 * ({@code X-User-Id} is never trusted). {@code GLOBAL} additionally requires
+	 * the operator flag {@code gateway.cache.global-scope-enabled}. A missing key
+	 * identity fails closed to {@code TENANT}.</p>
 	 *
 	 * @param httpRequest servlet HTTP request
-	 * @return resolved CacheScope
+	 * @param apiKey      authenticated virtual key, or {@code null} when unavailable
+	 * @return resolved CacheScope, never {@code null}
 	 */
-	public CacheScope resolveScope(HttpServletRequest httpRequest) {
+	public CacheScope resolveScope(HttpServletRequest httpRequest, @Nullable VirtualApiKey apiKey) {
+		Set<CacheScope> allowlist =
+				apiKey == null ? Set.of(CacheScope.TENANT) : apiKey.allowedCacheScopes();
 		String scopeHeader = httpRequest.getHeader("X-CacheRelay-Cache-Scope");
+		CacheScope requested = null;
 		if (scopeHeader != null) {
 			try {
-				return CacheScope.valueOf(scopeHeader.trim().toUpperCase(Locale.ROOT));
+				requested = CacheScope.valueOf(scopeHeader.trim().toUpperCase(Locale.ROOT));
 			} catch (IllegalArgumentException ignored) {
 			}
 		}
-		return properties.getDefaultScope();
+		if (requested == null) {
+			return floorScope(allowlist);
+		}
+		if (requested == CacheScope.USER) {
+			return CacheScope.TENANT;
+		}
+		if (requested == CacheScope.GLOBAL
+				&& (!properties.isGlobalScopeEnabled() || !allowlist.contains(CacheScope.GLOBAL))) {
+			return floorScope(allowlist);
+		}
+		if (!allowlist.contains(requested)) {
+			return floorScope(allowlist);
+		}
+		return requested;
+	}
+
+	/**
+	 * Computes the safe fallback scope: the configured default when the key allows
+	 * it (and the operator flag permits GLOBAL), otherwise TENANT.
+	 *
+	 * @param allowlist key's server-side scope allowlist (non-empty)
+	 * @return fallback CacheScope
+	 */
+	private CacheScope floorScope(Set<CacheScope> allowlist) {
+		CacheScope configured = properties.getDefaultScope();
+		if (configured == null || configured == CacheScope.USER) {
+			return CacheScope.TENANT;
+		}
+		if (configured == CacheScope.GLOBAL
+				&& (!properties.isGlobalScopeEnabled() || !allowlist.contains(CacheScope.GLOBAL))) {
+			return CacheScope.TENANT;
+		}
+		if (!allowlist.contains(configured)) {
+			return CacheScope.TENANT;
+		}
+		return configured;
 	}
 
 	/**

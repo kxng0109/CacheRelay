@@ -88,12 +88,22 @@ public class CostCalculator {
 		                   .longValue();
 	}
 
+	/**
+	 * Precomputed cache multipliers (PERF-09): the string constructor parses on every
+	 * call, so these are hoisted. Billing math itself stays {@link BigDecimal} —
+	 * precision is not traded for speed.
+	 */
+	private static final BigDecimal ANTHROPIC_WRITE_MULTIPLIER = new BigDecimal("1.25");
+	private static final BigDecimal ANTHROPIC_READ_MULTIPLIER = new BigDecimal("0.10");
+	private static final BigDecimal OPENAI_READ_MULTIPLIER = new BigDecimal("0.50");
+	private static final BigDecimal DEEPSEEK_READ_MULTIPLIER = new BigDecimal("0.10");
+
 	private BigDecimal resolveWriteRate(ProviderType type, ModelPricingEntry entry, BigDecimal baseRate) {
 		if (entry.cacheCreationInputTokenCost() != null) {
 			return entry.cacheCreationInputTokenCost();
 		}
 		if (type == ProviderType.ANTHROPIC) {
-			return baseRate.multiply(new BigDecimal("1.25"));
+			return baseRate.multiply(ANTHROPIC_WRITE_MULTIPLIER);
 		}
 		if (type == ProviderType.DEEPSEEK) {
 			return BigDecimal.ZERO;
@@ -106,13 +116,13 @@ public class CostCalculator {
 			return entry.cacheReadInputTokenCost();
 		}
 		if (type == ProviderType.ANTHROPIC) {
-			return baseRate.multiply(new BigDecimal("0.10"));
+			return baseRate.multiply(ANTHROPIC_READ_MULTIPLIER);
 		}
 		if (type == ProviderType.OPENAI) {
-			return baseRate.multiply(new BigDecimal("0.50"));
+			return baseRate.multiply(OPENAI_READ_MULTIPLIER);
 		}
 		if (type == ProviderType.DEEPSEEK) {
-			return baseRate.multiply(new BigDecimal("0.10"));
+			return baseRate.multiply(DEEPSEEK_READ_MULTIPLIER);
 		}
 		return baseRate;
 	}

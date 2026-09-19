@@ -84,7 +84,7 @@ class TemperatureIsolationTest {
 	}
 
 	@Test
-	@DisplayName("L2 filter: non-null temperature injects temperature tag clause; null omits it")
+	@DisplayName("L2 filter: non-null temperature injects temperature tag clause; null bypasses the tier")
 	@SuppressWarnings("unchecked")
 	void l2FilterClause() {
 		when(vectorClient.searchKnn(anyString(), anyString(), any(), anyInt()))
@@ -106,23 +106,17 @@ class TemperatureIsolationTest {
 		assertThat(firstFilter.getValue()).contains("@temperature:{");
 		assertThat(firstFilter.getValue()).contains(RediSearchVectorClient.escapeTag("0.0"));
 
-		l2.findSemanticMatch(key(), null);
-		ArgumentCaptor<String> secondFilter = ArgumentCaptor.forClass(String.class);
-		verify(vectorClient, times(2)).searchKnn(
-				eq(RedisSemanticVectorCache.INDEX_NAME),
-				secondFilter.capture(),
-				any(),
-				eq(2)
-		);
-		assertThat(secondFilter.getValue()).doesNotContain("@temperature:{");
+		clearInvocations(vectorClient, embeddingService);
+		assertThat(l2.findSemanticMatch(key(), null)).isNull();
+		verify(vectorClient, never()).searchKnn(anyString(), anyString(), any(), anyInt());
+		verify(embeddingService, never()).processEmbedding(any(), any());
 	}
 
 	@Test
-	@DisplayName("store with temperature persists the tag; null omits it for backward compatibility")
+	@DisplayName("store with temperature persists the tag; null skips the store entirely")
 	@SuppressWarnings({"unchecked", "rawtypes"})
 	void storeTemperatureTag() {
 		ArgumentCaptor<Map> firstFields = ArgumentCaptor.forClass(Map.class);
-		ArgumentCaptor<Map> secondFields = ArgumentCaptor.forClass(Map.class);
 
 		l2.storeSemanticEntry(key(), "{}", 5, 5, 10, Duration.ofMinutes(5), 0.0);
 		verify(vectorClient, times(1)).saveVectorDocument(anyString(), firstFields.capture(), any());
@@ -130,10 +124,9 @@ class TemperatureIsolationTest {
 		                             .anyMatch(k -> new String((byte[]) k).equals("temperature"));
 		assertThat(hasTemp).isTrue();
 
+		clearInvocations(vectorClient, embeddingService);
 		l2.storeSemanticEntry(key(), "{}", 5, 5, 10, Duration.ofMinutes(5), null);
-		verify(vectorClient, times(2)).saveVectorDocument(anyString(), secondFields.capture(), any());
-		boolean hasTempAfterNull = secondFields.getValue().keySet().stream()
-		                                       .anyMatch(k -> new String((byte[]) k).equals("temperature"));
-		assertThat(hasTempAfterNull).isFalse();
+		verify(vectorClient, never()).saveVectorDocument(anyString(), anyMap(), any());
+		verify(embeddingService, never()).processEmbedding(any(), any());
 	}
 }

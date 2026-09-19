@@ -165,12 +165,12 @@ class CacheFullCoverageTest {
 		when(embeddingService.processEmbedding(any(), eq("t1"))).thenReturn(
 				new EmbeddingResponse("list", List.of(), "m", null)
 		);
-		assertThat(semanticCache.findSemanticMatch(key)).isNull();
+		assertThat(semanticCache.findSemanticMatch(key, 0.0)).isNull();
 
 		when(embeddingService.processEmbedding(any(), eq("t1"))).thenReturn(
 				new EmbeddingResponse("list", null, "m", null)
 		);
-		assertThat(semanticCache.findSemanticMatch(key)).isNull();
+		assertThat(semanticCache.findSemanticMatch(key, 0.0)).isNull();
 
 		when(embeddingService.processEmbedding(any(), eq("t1"))).thenReturn(
 				new EmbeddingResponse(
@@ -184,8 +184,8 @@ class CacheFullCoverageTest {
 						null
 				)
 		);
-		assertThat(semanticCache.findSemanticMatch(key)).isNull();
-		semanticCache.storeSemanticEntry(key, "{}", 1, 1, 2, Duration.ofHours(1));
+		assertThat(semanticCache.findSemanticMatch(key, 0.0)).isNull();
+		semanticCache.storeSemanticEntry(key, "{}", 1, 1, 2, Duration.ofHours(1), 0.0);
 
 		// 3. Unsupported embedding object type
 		when(embeddingService.processEmbedding(any(), eq("t1"))).thenReturn(
@@ -199,7 +199,7 @@ class CacheFullCoverageTest {
 						"m", null
 				)
 		);
-		assertThat(semanticCache.findSemanticMatch(key)).isNull();
+		assertThat(semanticCache.findSemanticMatch(key, 0.0)).isNull();
 
 		// 4. RediSearchVectorClient string conversions and odd list boundaries
 		RedisConnectionFactory factory = mock(RedisConnectionFactory.class);
@@ -253,7 +253,7 @@ class CacheFullCoverageTest {
 						null
 				)
 		);
-		CacheEntry nullTokensEntry = semanticCache.findSemanticMatch(key);
+		CacheEntry nullTokensEntry = semanticCache.findSemanticMatch(key, 0.0);
 		assertThat(nullTokensEntry).isNotNull();
 		assertThat(nullTokensEntry.promptTokens()).isZero();
 	}

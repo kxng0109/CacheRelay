@@ -8,6 +8,10 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      # Accounting-tier AUTH (SEC-12): empty = unauthenticated (local dev, tests).
+      # Compose injects REDIS_PASSWORD; the circuit-breaker factories already
+      # apply it when non-blank.
+      password: ${REDIS_PASSWORD:}
       # No Redis repositories exist by design (boot logs prove 0 Redis
       # repository interfaces): all Redis access goes through the qualified
       # templates on the custom LettuceConnectionFactory beans. Disabling the
@@ -55,6 +59,13 @@ spring:
   # azure-b2c, okta, generic (explicit endpoint URIs, no boot-time discovery calls).
 
 gateway:
+  admin:
+    # Master admin key — injected exclusively from the runtime environment.
+    # NEVER hardcode a value here. Generate with: openssl rand -base64 32
+    # Required: GATEWAY_ADMIN_MASTERKEY=<32+ byte secret, not a published default>
+    # The application refuses to start if this is absent, blank, shorter than
+    # 32 bytes, or equal to a known default (e.g. cacherelay_admin_secret_key).
+    master-key: ${GATEWAY_ADMIN_MASTERKEY:}
   auth:
     # Human authentication lifetimes: relaxed defaults, strict admin counterparts.
     access-ttl: ${GATEWAY_AUTH_ACCESS_TTL:10m}
@@ -67,7 +78,8 @@ gateway:
     cookie-name: ${GATEWAY_AUTH_COOKIE_NAME:__Host-refresh}
     cookie-same-site: ${GATEWAY_AUTH_COOKIE_SAMESITE:Lax}
     jwt-issuer: ${GATEWAY_AUTH_JWT_ISSUER:cacherelay}
-    # 32+ bytes; blank mints an ephemeral secret (single-instance safe, restart-invalid).
+    # 32+ bytes; mandatory outside dev/test (startup fails without it). Blank mints an
+    # ephemeral secret under dev/test only (single-instance safe, restart-invalid).
     jwt-secret: ${GATEWAY_AUTH_JWT_SECRET:}
     audit-retention-days: ${GATEWAY_AUTH_AUDIT_RETENTION_DAYS:180}
     login-max-attempts: ${GATEWAY_AUTH_LOGIN_MAX_ATTEMPTS:5}
@@ -163,6 +175,7 @@ gateway:
   #   GATEWAY_BOOTSTRAPKEYS_0_TPMLIMIT=100000
   #   GATEWAY_BOOTSTRAPKEYS_0_ALLOWEDMODELS=
   #   GATEWAY_BOOTSTRAPKEYS_0_ALLOWEDPROVIDERS=
+  #   GATEWAY_BOOTSTRAPKEYS_0_ALLOWEDCACHESCOPES=TENANT (GLOBAL needs GATEWAY_CACHE_GLOBAL_SCOPE_ENABLED=true)
   bootstrap-keys-seed-interval: ${GATEWAY_BOOTSTRAP_KEYS_SEED_INTERVAL:30s}
   database-migrate-enabled: ${GATEWAY_DATABASE_MIGRATE_ENABLED:true}
   database-migrate-interval: ${GATEWAY_DATABASE_MIGRATE_INTERVAL:30s}
@@ -214,6 +227,9 @@ gateway:
       # Cache-tier Redis (L1/L2/replay-hot): evictable instance, best-effort by design.
       host: ${REDIS_CACHE_HOST:localhost}
       port: ${REDIS_CACHE_PORT:6380}
+      # Cache-tier AUTH (SEC-12): empty = unauthenticated (local dev, tests).
+      # Compose injects REDIS_CACHE_PASSWORD (a different secret from REDIS_PASSWORD).
+      password: ${REDIS_CACHE_PASSWORD:}
   embeddings:
     # Embedding batching and provider fan-out ceilings.
     max-batch-items: ${GATEWAY_EMBEDDINGS_MAX_BATCH_ITEMS:2048}
@@ -241,6 +257,18 @@ gateway:
       intra-op-threads: ${GATEWAY_EMBEDDINGS_LOCAL_ONNX_INTRA_OP_THREADS:2}
       max-tokens: ${GATEWAY_EMBEDDINGS_LOCAL_ONNX_MAX_TOKENS:2048}
   cache:
+    # Operator-only master switch for the GLOBAL cache scope (SEC-01, default false):
+    # GLOBAL requests fall back to the default scope unless this is true AND the key
+    # allows GLOBAL. Cross-tenant sharing can never be enabled by client headers alone.
+    # Override: GATEWAY_CACHE_GLOBAL_SCOPE_ENABLED=true
+    global-scope-enabled: ${GATEWAY_CACHE_GLOBAL_SCOPE_ENABLED:false}
+    # Follower wait bound for single-flight cache lookups (PERF-08, default 30s).
+    # Override: GATEWAY_CACHE_SINGLE_FLIGHT_TIMEOUT=30s
+    single-flight-timeout: ${GATEWAY_CACHE_SINGLE_FLIGHT_TIMEOUT:30s}
+    exact:
+      # L0 heap cap in bytes (PERF-11, default 256 MiB): entries are payload-weighed,
+      # so huge completions cannot crowd out the heap. Override: GATEWAY_CACHE_L0_MAX_BYTES.
+      l0-max-bytes: ${GATEWAY_CACHE_L0_MAX_BYTES:268435456}
     semantic:
       # Model alias used to generate embeddings for semantic (L2) cache lookups.
       # Resolved through gateway.providers/aliases like any other request, so the
@@ -257,6 +285,8 @@ gateway:
     snapshot-ttl-minutes: ${GATEWAY_PRICING_SNAPSHOT_TTL_MINUTES:15}
     snapshot-maximum-size: ${GATEWAY_PRICING_SNAPSHOT_MAXIMUM_SIZE:1}
   ledger:
+    # Durable spillway journal for ledger batches the database rejects (PERF-03: the
+    # per-row dead-letter file is gone; failed batches stage shared-first, journal-second).
     dead-letter-path: ${GATEWAY_LEDGER_DEAD_LETTER_PATH:logs/ledger-deadletter.log}
     executor:
       # Bounded async ledger pool: bursts queue (then CallerRuns) instead of
@@ -296,6 +326,9 @@ gateway:
     hitl-secret: ${GATEWAY_MCP_HITL_SECRET:}
     catalog-cache-maximum-size: ${GATEWAY_MCP_CATALOG_CACHE_MAXIMUM_SIZE:16}
     legacy-sse-emitter-timeout-minutes: ${GATEWAY_MCP_LEGACY_SSE_EMITTER_TIMEOUT_MINUTES:30}
+    # Cap on one tools/call result body (PERF-11): larger upstream results fail with 502
+    # instead of OOMing the heap. Override: GATEWAY_MCP_MAX_RESULT_BYTES.
+    max-result-bytes: ${GATEWAY_MCP_MAX_RESULT_BYTES:1048576}
 
 cacherelay:
   sse:

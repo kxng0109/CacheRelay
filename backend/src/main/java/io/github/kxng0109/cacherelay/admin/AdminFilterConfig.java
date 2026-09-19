@@ -1,6 +1,5 @@
 package io.github.kxng0109.cacherelay.admin;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -19,7 +18,11 @@ public class AdminFilterConfig {
 	/**
 	 * Registers the admin authentication filter with high precedence.
 	 *
-	 * @param masterKey    the configured master admin secret
+	 * <p>The master key comes from the validated {@link AdminProperties}: the
+	 * application fails fast at startup when it is missing, short, or a
+	 * published default, so this filter only ever sees a compliant secret.</p>
+	 *
+	 * @param properties   validated admin control-plane properties
 	 * @param objectMapper JSON serializer for RFC 9457 Problem Details responses
 	 * @param jwtService   access-token validator for admin sessions
 	 * @param users        account lookup for admin sessions
@@ -28,14 +31,14 @@ public class AdminFilterConfig {
 	 */
 	@Bean
 	FilterRegistrationBean<AdminAuthFilter> adminAuthFilterRegistration(
-			@Value("${gateway.admin.master-key:}") String masterKey,
+			AdminProperties properties,
 			ObjectMapper objectMapper,
 			JwtService jwtService,
 			UserAccountRepository users,
 			AuthAuditService audit
 	) {
 		FilterRegistrationBean<AdminAuthFilter> registration = new FilterRegistrationBean<>(
-				new AdminAuthFilter(masterKey, objectMapper, jwtService, users, audit)
+				new AdminAuthFilter(properties.getMasterKey().value(), objectMapper, jwtService, users, audit)
 		);
 		registration.setOrder(1);
 		registration.addUrlPatterns("/v1/admin/*");

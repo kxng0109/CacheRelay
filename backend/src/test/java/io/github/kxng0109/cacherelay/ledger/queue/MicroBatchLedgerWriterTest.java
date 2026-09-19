@@ -2,17 +2,21 @@ package io.github.kxng0109.cacherelay.ledger.queue;
 
 import io.github.kxng0109.cacherelay.ledger.SpillwayJournalManager;
 import io.github.kxng0109.cacherelay.ledger.TokenUsageEvent;
+import io.github.kxng0109.cacherelay.ledger.UsageLedgerEntry;
 import io.github.kxng0109.cacherelay.ledger.UsageLedgerRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
@@ -155,6 +159,32 @@ class MicroBatchLedgerWriterTest {
 				UUID.randomUUID(), tenant, "openai", "gpt-5.6-luna",
 				100, 50, 150, 200, 1500, Instant.now()
 		);
+	}
+
+	@Test
+	@DisplayName("Flush cycle dedupes with one batch existence check (no per-row SELECT)")
+	void shouldDedupeBatchWithSingleExistenceCheck() {
+		UUID dupId = UUID.randomUUID();
+		TokenUsageEvent dupA = new TokenUsageEvent(
+				dupId, "tenant-1", "openai", "gpt-5.6-luna", 100, 50, 150, 200, 1500, Instant.now());
+		TokenUsageEvent dupB = new TokenUsageEvent(
+				dupId, "tenant-1", "openai", "gpt-5.6-luna", 100, 50, 150, 200, 1500, Instant.now());
+		TokenUsageEvent fresh = createEvent("tenant-2");
+		queue.offer(dupA);
+		queue.offer(dupB);
+		queue.offer(fresh);
+
+		when(repository.findByRequestIdIn(anyCollection())).thenReturn(List.of());
+
+		int flushed = writer.flushCycle();
+
+		assertThat(flushed).isEqualTo(2);
+		verify(repository, times(1)).findByRequestIdIn(anyCollection());
+		ArgumentCaptor<List<UsageLedgerEntry>> savedCaptor = ArgumentCaptor.forClass(List.class);
+		verify(repository).saveAll(savedCaptor.capture());
+		assertThat(savedCaptor.getValue())
+				.extracting(entry -> entry.getRequestId())
+				.containsExactlyInAnyOrder(dupId, fresh.requestId());
 	}
 
 	@Test

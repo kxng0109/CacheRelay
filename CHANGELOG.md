@@ -9,6 +9,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Admin master key fail-fast (SEC-03):** `GATEWAY_ADMIN_MASTERKEY` is mandatory with no shipped default;
+  startup fails when it is missing, blank, shorter than 32 bytes, or a published default
+  (`cacherelay_admin_secret_key`, `changeme`, ...). The compose fallback was removed — set the variable
+  (generate with `openssl rand -base64 32`) and rotate anywhere the old default was used.
+- **Infrastructure exposure + AUTH (SEC-12):** only the app port is public — Redis 6379/6380, Postgres 5432,
+  Prometheus 9090, Grafana 3000, and Alertmanager 9093 bind `127.0.0.1`. Both Redis tiers enforce
+  `requirepass` (`REDIS_PASSWORD` / `REDIS_CACHE_PASSWORD`, distinct, hard-required, `openssl rand -hex 32`;
+  exporters and the app authenticate); Postgres pins `scram-sha-256` and hard-requires `POSTGRES_PASSWORD`
+  (the `cacherelay_secret` default is gone). Set the three passwords in `.env` before recreating the stack.
+- **Server-side cache scope (SEC-01):** `X-CacheRelay-Cache-Scope` / `X-User-Id` no longer control isolation —
+  scope resolves against the key's server-side `allowedCacheScopes` (TENANT-only by default, persisted in Redis,
+  settable via admin API / `GATEWAY_BOOTSTRAPKEYS_*_ALLOWEDCACHESCOPES`); out-of-policy headers are ignored,
+  USER degrades to TENANT, and GLOBAL additionally needs `GATEWAY_CACHE_GLOBAL_SCOPE_ENABLED=true`.
+- **Atomic HITL approval claim (SEC-02):** resumption consumes the single-use approval with one Lua script
+  (GET-check + DEL approval/pending atomically) — N concurrent resumptions yield exactly one execution;
+  missing/non-approved values deny and re-suspend, never execute.
+- **Mandatory JWT secret (SUP-08/07):** `GATEWAY_AUTH_JWT_SECRET` fails startup when missing/short outside the
+  `dev`/`test` profiles (stable 32+ bytes; `openssl rand -base64 32`); wired into compose and k8s
+  (`cacherelay-secrets`: `auth-jwt-secret`, plus `admin-master-key`). Multi-instance tokens now agree.
+- **MCP list RBAC (SEC-04/FS-01):** `resources/list` / `prompts/list` are filtered by the key's
+  `allowedResources`/`deniedResources`/`allowedPrompts`/`deniedPrompts` (deny wins); prompt globs match the
+  namespaced name (`server__review_*` — admin examples updated); `resources/read` / `prompts/get` unadvertised
+  until implemented.
+- **Bootstrap seed parity (SEC-05/FS-02):** seeded keys persist the full RBAC policy (visibility sets,
+  injection-block default, cache scopes) via a shared store/seed field builder — restrictions survive restarts.
+- **JSON RBAC persistence (SEC-21/FS-04):** visibility sets store as sorted JSON arrays (comma/quote/bracket-safe)
+  with legacy-CSV tolerant reads; corrupt values fail closed to a key miss, never allow-all.
+- **Linear glob matcher + policy bounds (SEC-06/FS-03):** `*`/`?` matching without regex (no backtracking,
+  ASCII-only folding, null-safe); admin DTOs and bootstrap binding cap sets at 64×256 chars and reject blanks
+  (400 / startup failure).
+- **Egress envelope + metrics (SEC-09/FS-05):** tool name escaped, nonce-bound closing tag, data-free `-32603`
+  block (code decision documented), non-text bypass counted + documented, block/warn/unscanned counters.
+- **Embeddings headers + telemetry (FS-06):** `X-CacheRelay-Tried` (single attempt, no failover); upstream errors
+  sanitized to generic + correlation id; `embedding_requests_total` / `embedding_upstream_latency` metrics; no
+  held-budget header by decision (check-only gate; holds remain COST-04).
+- **Single embedding per request (PERF-01/COST-12):** L2 lookup and store share a per-request vector memo —
+  a miss plus store costs one embedding call; failures never memoized, no cross-request state.
+- **Rate-limit fast path (PERF-02 partial):** fully unlimited keys skip the Lua round trip (byte-equivalent).
+  The Lua admission merge is contradicted (cross-slot tags + deliberate separation) and the breaker
+  mirror-skip regressed recovery — both documented, not forced.
+- **Ledger micro-batching wired (PERF-03/DC-01):** usage events flow listener → ring buffer → batched `saveAll`
+  with single-SELECT dedupe; failed batches stage shared-first, journal-second; per-row SELECT and dead-letter
+  file removed; JDBC never on request threads (non-blocking offer even under CallerRuns).
+- **Parse-once chat path (PERF-04 partial):** one `readTree` + `treeToValue` instead of three parses; adapter
+  mutates in place with byte-identical idle fast-path; idempotency hash gated on the header.
+- **PII pre-filter (PERF-05 partial):** one character pass gates digit/`@`-requiring regexes with identical
+  verdicts; no scan skipping/sampling (fail-open refused); AC merge deferred (needs RE2/J review).
+- **SSE hot-path trims (PERF-06 partial):** chunk delta parsed once; flush inline (hop removed as pure
+  overhead); line-guard meters shared per provider/action; watchdog reaper deferred.
+- **Cache/flight/cost/scheduler bundle (PERF-07/08/09/10):** thread-local SHA-256 + key built once per request;
+  L0 bypasses single-flight, leader returns directly, follower timeout (30s default); billing multipliers as
+  constants (math untouched); bounded scheduler pool for all thirteen jobs.
+- **Bounded buffers + L0 weight (PERF-11 partial):** MCP results byte-capped (1 MB, 502 on exceed); L0 is
+  payload-weighed at 256 MiB (admin `l0MaxBytes`; entry-count bound retired — frontend flag).
+- **Cache correctness (PERF-14):** temperature TAG + one-time migration; null temperature bypasses L2 both
+  ways; exact key covers all generation-affecting fields (new penalty/seed DTO fields); purge is SCAN-based,
+  dimension-aware, and clears replay keys. L2 serves temperature-bearing traffic only.
+- **2 vCPU JVM profile (PERF-15/SUP-05):** GC threads pinned 2/1, direct memory 256m, dead flags dropped
+  (Xmx1152m kept deliberately for 2G headroom); `JvmDirectMemoryHigh` / `JvmHeapPressureHigh` alerts added.
+
 ### Added
 
 - **Resource/prompt governance (no more unfiltered surfaces):** virtual keys carry `allowedResources` /

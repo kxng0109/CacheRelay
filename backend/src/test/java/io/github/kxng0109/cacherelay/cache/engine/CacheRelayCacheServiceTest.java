@@ -3,6 +3,7 @@ package io.github.kxng0109.cacherelay.cache.engine;
 import io.github.kxng0109.cacherelay.cache.config.CacheRelayCacheProperties;
 import io.github.kxng0109.cacherelay.cache.contracts.CacheEntry;
 import io.github.kxng0109.cacherelay.cache.contracts.CacheLookupResult;
+import io.github.kxng0109.cacherelay.cache.contracts.CompoundCacheKey;
 import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
 import io.github.kxng0109.cacherelay.cache.contracts.CacheStatus;
 import io.github.kxng0109.cacherelay.cache.engine.l0.InMemoryExactCache;
@@ -45,6 +46,34 @@ class CacheRelayCacheServiceTest {
 	}
 
 	@Test
+	@DisplayName("evaluate plus store builds the compound key once (PERF-07)")
+	void keyBuiltOncePerRequest() {
+		CacheKeyGenerator mockedGenerator = mock(CacheKeyGenerator.class);
+		CompoundCacheKey fixedKey = new CompoundCacheKey(
+				"tenant1", CacheScope.TENANT, "gpt-4o", "exactHash", "", "", "Hello");
+		when(mockedGenerator.generateKey(any(), any(), any(), any(), anyInt())).thenReturn(fixedKey);
+		CacheRelayCacheService keyedService = new CacheRelayCacheService(
+				l0Cache, l1Cache, l2Cache, mockedGenerator, policyEngine, singleFlightManager,
+				properties, meterRegistry
+		);
+
+		OpenAiChatRequest request = new OpenAiChatRequest(
+				"gpt-4o",
+				List.of(new OpenAiChatRequest.Message("user", objectMapper.valueToTree("Hello"))),
+				0.0, null, null, null, null, true, null
+		);
+		MockHttpServletRequest httpReq = new MockHttpServletRequest();
+		when(l0Cache.get(any())).thenReturn(null);
+		when(l1Cache.get(any())).thenReturn(null);
+		when(l2Cache.findSemanticMatch(any(), any(), any())).thenReturn(null);
+
+		keyedService.evaluateCache(request, httpReq, "tenant1", null);
+		keyedService.storeResponse(request, httpReq, "tenant1", null, "{\"content\":\"Hi\"}", 5, 10);
+
+		verify(mockedGenerator, times(1)).generateKey(any(), any(), any(), any(), anyInt());
+	}
+
+	@Test
 	@DisplayName("evaluateCache returns HIT_L0 when in-memory cache resolves entry")
 	void evaluateCacheL0Hit() {
 		OpenAiChatRequest request = new OpenAiChatRequest(
@@ -72,7 +101,7 @@ class CacheRelayCacheServiceTest {
 		);
 		when(l0Cache.get(anyString())).thenReturn(entry);
 
-		CacheLookupResult result = cacheService.evaluateCache(request, httpReq, "tenant1");
+		CacheLookupResult result = cacheService.evaluateCache(request, httpReq, "tenant1", null);
 		assertThat(result.isHit()).isTrue();
 		assertThat(result.status()).isEqualTo(CacheStatus.HIT_L0);
 		assertThat(result.entry()).isEqualTo(entry);
@@ -107,7 +136,7 @@ class CacheRelayCacheServiceTest {
 		);
 		when(l1Cache.get(any())).thenReturn(entry);
 
-		CacheLookupResult result = cacheService.evaluateCache(request, httpReq, "tenant1");
+		CacheLookupResult result = cacheService.evaluateCache(request, httpReq, "tenant1", null);
 		assertThat(result.isHit()).isTrue();
 		assertThat(result.status()).isEqualTo(CacheStatus.HIT_L1);
 		verify(l0Cache).put(anyString(), eq(entry));
@@ -142,9 +171,9 @@ class CacheRelayCacheServiceTest {
 				0.94f,
 				null
 		);
-		when(l2Cache.findSemanticMatch(any(), any())).thenReturn(entry);
+		when(l2Cache.findSemanticMatch(any(), any(), any())).thenReturn(entry);
 
-		CacheLookupResult result = cacheService.evaluateCache(request, httpReq, "tenant1");
+		CacheLookupResult result = cacheService.evaluateCache(request, httpReq, "tenant1", null);
 		assertThat(result.isHit()).isTrue();
 		assertThat(result.status()).isEqualTo(CacheStatus.HIT_L2);
 		assertThat(result.similarityScore()).isEqualTo(0.94f);
@@ -163,9 +192,9 @@ class CacheRelayCacheServiceTest {
 
 		when(l0Cache.get(anyString())).thenReturn(null);
 		when(l1Cache.get(any())).thenReturn(null);
-		when(l2Cache.findSemanticMatch(any(), any())).thenReturn(null);
+		when(l2Cache.findSemanticMatch(any(), any(), any())).thenReturn(null);
 
-		CacheLookupResult result = cacheService.evaluateCache(request, httpReq, "tenant1");
+		CacheLookupResult result = cacheService.evaluateCache(request, httpReq, "tenant1", null);
 		assertThat(result.isHit()).isFalse();
 		assertThat(result.status()).isEqualTo(CacheStatus.MISS);
 	}
@@ -180,19 +209,19 @@ class CacheRelayCacheServiceTest {
 		);
 		MockHttpServletRequest httpReq = new MockHttpServletRequest();
 
-		cacheService.storeResponse(request, httpReq, "tenant1", "{\"content\":\"Hi\"}", 5, 10);
+		cacheService.storeResponse(request, httpReq, "tenant1", null, "{\"content\":\"Hi\"}", 5, 10);
 
 		verify(l0Cache).put(anyString(), any());
 		verify(l1Cache).put(any(), any(), any());
-		verify(l2Cache).storeSemanticEntry(any(), eq("{\"content\":\"Hi\"}"), eq(5), eq(10), eq(15), any(), any());
+		verify(l2Cache).storeSemanticEntry(any(), eq("{\"content\":\"Hi\"}"), eq(5), eq(10), eq(15), any(), any(), any());
 
 		// When shouldStoreInCache is false
 		properties.setEnabled(false);
-		cacheService.storeResponse(request, httpReq, null, "{}", 1, 1);
+		cacheService.storeResponse(request, httpReq, null, null, "{}", 1, 1);
 		properties.setEnabled(true);
 
 		// storeResponse with blank ownerId
-		cacheService.storeResponse(request, httpReq, "   ", "{\"content\":\"Hi\"}", 2, 2);
+		cacheService.storeResponse(request, httpReq, "   ", null, "{\"content\":\"Hi\"}", 2, 2);
 	}
 
 	@Test
@@ -229,17 +258,17 @@ class CacheRelayCacheServiceTest {
 		// Bypass with null model and null owner
 		MockHttpServletRequest ccNoCache = new MockHttpServletRequest();
 		ccNoCache.addHeader("Cache-Control", "no-cache");
-		CacheLookupResult bypassRes = cacheService.evaluateCache(request, ccNoCache, null);
+		CacheLookupResult bypassRes = cacheService.evaluateCache(request, ccNoCache, null, null);
 		assertThat(bypassRes.status()).isEqualTo(CacheStatus.BYPASS);
 
 		// Singleflight failure fallback to MISS
 		SingleFlightManager mockFlight = mock(SingleFlightManager.class);
-		when(mockFlight.execute(any(), any())).thenThrow(new RuntimeException("Singleflight boom"));
+		when(mockFlight.execute(any(), any(), any())).thenThrow(new RuntimeException("Singleflight boom"));
 		CacheRelayCacheService flightFailService = new CacheRelayCacheService(
 				l0Cache, l1Cache, l2Cache, keyGenerator, policyEngine, mockFlight, properties, meterRegistry
 		);
 
-		CacheLookupResult failRes = flightFailService.evaluateCache(request, httpReq, "");
+		CacheLookupResult failRes = flightFailService.evaluateCache(request, httpReq, "", null);
 		assertThat(failRes.status()).isEqualTo(CacheStatus.MISS);
 
 		// Record savings exception branch
@@ -269,7 +298,7 @@ class CacheRelayCacheServiceTest {
 				null
 		);
 		when(l0Cache.get(anyString())).thenReturn(entry);
-		CacheLookupResult hitFaulty = faultyMeterService.evaluateCache(request, httpReq, "t1");
+		CacheLookupResult hitFaulty = faultyMeterService.evaluateCache(request, httpReq, "t1", null);
 		assertThat(hitFaulty.isHit()).isTrue();
 	}
 }

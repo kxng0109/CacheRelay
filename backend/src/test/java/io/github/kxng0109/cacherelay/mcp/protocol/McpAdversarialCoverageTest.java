@@ -13,6 +13,7 @@ import io.github.kxng0109.cacherelay.mcp.router.McpAggregatedCatalog;
 import io.github.kxng0109.cacherelay.mcp.router.McpCatalogAggregator;
 import io.github.kxng0109.cacherelay.mcp.router.McpResolvedRoute;
 import io.github.kxng0109.cacherelay.mcp.router.McpRouter;
+import io.github.kxng0109.cacherelay.mcp.security.McpEgressMetrics;
 import io.github.kxng0109.cacherelay.mcp.security.McpGuardrailScanner;
 import io.github.kxng0109.cacherelay.mcp.security.McpJsonSchemaValidator;
 import io.github.kxng0109.cacherelay.mcp.security.McpToolRbacPolicyEngine;
@@ -28,6 +29,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
@@ -134,7 +136,8 @@ class McpAdversarialCoverageTest {
 				keyManagementService,
 				rateLimitEngine,
 				httpClient,
-				objectMapper
+				objectMapper,
+				new McpEgressMetrics(new SimpleMeterRegistry())
 		);
 	}
 

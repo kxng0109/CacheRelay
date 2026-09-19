@@ -9,7 +9,6 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 /**
  * Tool-level RBAC/ABAC authorization engine for Model Context Protocol (MCP) tool execution and catalog filtering.
@@ -107,7 +106,10 @@ public class McpToolRbacPolicyEngine {
 	/**
 	 * Checks whether a virtual API key may see a prompt definition.
 	 *
-	 * @param promptName prompt name
+	 * <p>Matching is against the namespaced prompt name (e.g. {@code server__review_code}),
+	 * which is what the catalog emits; key patterns must use the same form.</p>
+	 *
+	 * @param promptName namespaced prompt name
 	 * @param apiKey     authenticated virtual API key
 	 * @return true if visible, false if hidden
 	 */
@@ -141,34 +143,72 @@ public class McpToolRbacPolicyEngine {
 	}
 
 	/**
-	 * Evaluates standard glob pattern syntax (* and ?).
+	 * Evaluates standard glob pattern syntax ({@code *} and {@code ?}) with a linear
+	 * two-pointer matcher (SEC-06): no regex is built or compiled, so adversarial patterns
+	 * cannot trigger catastrophic backtracking (worst case O(n*m), no exponential blowup).
+	 *
+	 * <p>Case folding is ASCII-only and locale-independent: {@code A}-{@code Z} match their
+	 * lowercase forms; every other character (including non-ASCII) must match exactly. All
+	 * other characters are literals — {@code .[]()%} carry no special meaning.</p>
+	 *
+	 * @param text        text to test, possibly {@code null} (never matches)
+	 * @param globPattern glob pattern, possibly {@code null} or blank (never matches)
+	 * @return true when the whole text matches the pattern
 	 */
 	public static boolean matchesPattern(String text, String globPattern) {
-		if (globPattern == null || globPattern.isBlank()) {
+		if (text == null || globPattern == null || globPattern.isBlank()) {
 			return false;
 		}
-		String trimmedGlob = globPattern.trim();
-		if ("*".equals(trimmedGlob)) {
+		String pattern = globPattern.trim();
+		if ("*".equals(pattern)) {
 			return true;
 		}
-		if (text.equals(trimmedGlob)) {
-			return true;
-		}
-
-		// Convert glob to regex
-		StringBuilder regex = new StringBuilder("^");
-		for (int i = 0; i < trimmedGlob.length(); i++) {
-			char c = trimmedGlob.charAt(i);
-			switch (c) {
-				case '*' -> regex.append(".*");
-				case '?' -> regex.append(".");
-				case '.', '(', ')', '+', '|', '^', '$', '@', '%', '[', ']', '{', '}', '\\' -> {
-					regex.append("\\").append(c);
-				}
-				default -> regex.append(c);
+		int textIndex = 0;
+		int patternIndex = 0;
+		int starIndex = -1;
+		int resumeIndex = 0;
+		while (textIndex < text.length()) {
+			if (patternIndex < pattern.length()
+					&& (pattern.charAt(patternIndex) == '?'
+					|| asciiEqual(pattern.charAt(patternIndex), text.charAt(textIndex)))) {
+				textIndex++;
+				patternIndex++;
+			} else if (patternIndex < pattern.length() && pattern.charAt(patternIndex) == '*') {
+				starIndex = patternIndex++;
+				resumeIndex = textIndex;
+			} else if (starIndex != -1) {
+				patternIndex = starIndex + 1;
+				textIndex = ++resumeIndex;
+			} else {
+				return false;
 			}
 		}
-		regex.append("$");
-		return Pattern.compile(regex.toString(), Pattern.CASE_INSENSITIVE).matcher(text).matches();
+		while (patternIndex < pattern.length() && pattern.charAt(patternIndex) == '*') {
+			patternIndex++;
+		}
+		return patternIndex == pattern.length();
+	}
+
+	/**
+	 * Compares two characters with ASCII-only case folding.
+	 *
+	 * @param patternChar pattern character
+	 * @param textChar    text character
+	 * @return true when equal ignoring ASCII case
+	 */
+	private static boolean asciiEqual(char patternChar, char textChar) {
+		return patternChar == textChar
+				|| asciiLower(patternChar) == asciiLower(textChar);
+	}
+
+	/**
+	 * Lowercase-folds ASCII uppercase only; every other character is returned unchanged
+	 * so non-ASCII text never folds into an ASCII allow rule (homoglyph safety).
+	 *
+	 * @param value character to fold
+	 * @return folded character
+	 */
+	private static char asciiLower(char value) {
+		return value >= 'A' && value <= 'Z' ? (char) (value + ('a' - 'A')) : value;
 	}
 }

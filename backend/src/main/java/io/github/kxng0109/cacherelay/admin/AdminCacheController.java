@@ -7,6 +7,7 @@ import io.github.kxng0109.cacherelay.cache.engine.CacheRelayCacheService;
 import io.github.kxng0109.cacherelay.cache.engine.l2.RediSearchVectorClient;
 import io.github.kxng0109.cacherelay.cache.engine.l2.RedisSemanticVectorCache;
 import io.github.kxng0109.cacherelay.config.OpenApiConfig;
+import io.github.kxng0109.cacherelay.replay.ReplayService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -19,11 +20,14 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.Nullable;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Set;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * REST controller for administrative management and inspection of the multi-tier semantic cache under
@@ -69,7 +73,7 @@ public class AdminCacheController {
 											  "defaultScope": "TENANT",
 											  "similarityThreshold": 0.80,
 											  "embeddingModel": "text-embedding-3-small",
-											  "l0InMemorySize": 50000,
+											  "l0MaxBytes": 268435456,
 											  "l0InMemoryTtlSeconds": 60,
 											  "l1RedisEnabled": true,
 											  "l2SemanticEnabled": true,
@@ -89,7 +93,7 @@ public class AdminCacheController {
 				properties.getDefaultScope().name(),
 				properties.getSemantic().getSimilarityThreshold(),
 				properties.getSemantic().getEmbeddingModel(),
-				properties.getExact().getL0InMemorySize(),
+				properties.getExact().getL0MaxBytes(),
 				properties.getExact().getL0InMemoryTtl().toSeconds(),
 				properties.getExact().isL1RedisEnabled(),
 				properties.getSemantic().isEnabled(),
@@ -150,13 +154,24 @@ public class AdminCacheController {
 
 		purgeKeysByPattern("cacherelay:cache:exact:*");
 		purgeKeysByPattern("cacherelay:cache:doc:*");
+		purgeKeysByPattern(ReplayService.PREFIX + "*");
+		purgeKeysByPattern(ReplayService.FILL_PREFIX + "*");
 		try {
-			vectorClient.dropIndex(RedisSemanticVectorCache.INDEX_NAME, false);
-			vectorClient.createIndexIfNotExists(
-					RedisSemanticVectorCache.INDEX_NAME,
-					RedisSemanticVectorCache.PREFIX,
-					1536
-			);
+			// PERF-14: rebuild at the live dimension read back from FT.INFO — the old
+			// hardcoded 1536 broke L2 whenever the model used another width. When the
+			// dimension is unreadable the rebuild is skipped (fail-safe: a wrong-dim
+			// index is worse than a stale graph over deleted keys).
+			int dimensions = vectorClient.vectorDimensionOf(RedisSemanticVectorCache.INDEX_NAME);
+			if (dimensions > 0) {
+				vectorClient.dropIndex(RedisSemanticVectorCache.INDEX_NAME, false);
+				vectorClient.createIndexIfNotExists(
+						RedisSemanticVectorCache.INDEX_NAME,
+						RedisSemanticVectorCache.PREFIX,
+						dimensions
+				);
+			} else {
+				log.warn("Purge skipped index rebuild: live dimension unreadable");
+			}
 		} catch (Exception ex) {
 			log.debug("Index re-creation notice: {}", ex.getMessage());
 		}
@@ -165,14 +180,41 @@ public class AdminCacheController {
 		return ResponseEntity.ok(new CachePurgeResponse(true, "Global cache purge completed successfully", "ALL"));
 	}
 
-	private void purgeKeysByPattern(String pattern) {
-		try {
-			Set<String> keys = stringRedisTemplate.keys(pattern);
-			if (keys != null && !keys.isEmpty()) {
-				stringRedisTemplate.delete(keys);
+	/**
+	 * Deletes keys matching a pattern with cursor SCAN (PERF-14): never blocking
+	 * KEYS, batched deletes, best-effort per batch.
+	 *
+	 * @param pattern Redis match pattern
+	 * @return count of deleted keys
+	 */
+	private long purgeKeysByPattern(String pattern) {
+		long deleted = 0;
+		try (Cursor<String> cursor = stringRedisTemplate.scan(
+				ScanOptions.scanOptions().match(pattern).count(500).build())) {
+			List<String> batch = new ArrayList<>(500);
+			while (cursor.hasNext()) {
+				batch.add(cursor.next());
+				if (batch.size() >= 500) {
+					deleted += deleteKeyBatch(batch, pattern);
+					batch.clear();
+				}
+			}
+			if (!batch.isEmpty()) {
+				deleted += deleteKeyBatch(batch, pattern);
 			}
 		} catch (Exception ex) {
 			log.warn("Failed to purge keys with pattern '{}': {}", pattern, ex.getMessage());
+		}
+		return deleted;
+	}
+
+	private long deleteKeyBatch(List<String> batch, String pattern) {
+		try {
+			Long removed = stringRedisTemplate.delete(batch);
+			return removed == null ? 0 : removed;
+		} catch (Exception ex) {
+			log.warn("Failed to delete purged key batch for pattern '{}': {}", pattern, ex.getMessage());
+			return 0;
 		}
 	}
 }

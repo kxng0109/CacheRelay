@@ -15,8 +15,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
@@ -35,6 +38,27 @@ class RedisSemanticVectorCacheTest {
 		properties.getSemantic().setEnabled(true);
 		properties.getSemantic().setSimilarityThreshold(0.90);
 		cache = new RedisSemanticVectorCache(vectorClient, embeddingService, guardrails, properties);
+	}
+
+	@Test
+	@DisplayName("lookup miss plus store for one prompt computes the embedding once (PERF-01)")
+	void embeddingComputedOncePerRequest() {
+		CompoundCacheKey key = new CompoundCacheKey(
+				"tenant1", CacheScope.TENANT, "gpt-4o", "exactHash", "", "", "Hello"
+		);
+
+		EmbeddingResponse mockEmbedding = new EmbeddingResponse(
+				"list", List.of(EmbeddingData.of(0, new float[]{0.1f, 0.2f})), "text-embedding-3-small", null
+		);
+		when(embeddingService.processEmbedding(any(), eq("tenant1"))).thenReturn(mockEmbedding);
+		when(vectorClient.searchKnn(anyString(), anyString(), any(), eq(2))).thenReturn(List.of());
+
+		Map<String, float[]> memo = new HashMap<>();
+		assertThat(cache.findSemanticMatch(key, 0.0, memo)).isNull();
+		cache.storeSemanticEntry(key, "{}", 1, 1, 2, Duration.ofMinutes(5), 0.0, memo);
+
+		verify(embeddingService, times(1)).processEmbedding(any(), eq("tenant1"));
+		verify(vectorClient).saveVectorDocument(anyString(), anyMap(), any());
 	}
 
 	@Test
@@ -62,7 +86,7 @@ class RedisSemanticVectorCacheTest {
 		);
 		when(vectorClient.searchKnn(anyString(), anyString(), any(), eq(2))).thenReturn(List.of(match));
 
-		CacheEntry entry = cache.findSemanticMatch(key);
+		CacheEntry entry = cache.findSemanticMatch(key, 0.0);
 		assertThat(entry).isNotNull();
 		assertThat(entry.promptText()).isEqualTo("I forgot my password");
 		assertThat(entry.similarityScore()).isBetween(0.949f, 0.951f);
@@ -88,7 +112,7 @@ class RedisSemanticVectorCacheTest {
 		);
 		when(vectorClient.searchKnn(anyString(), anyString(), any(), eq(2))).thenReturn(List.of(lowMatch));
 
-		CacheEntry entry = cache.findSemanticMatch(key);
+		CacheEntry entry = cache.findSemanticMatch(key, 0.0);
 		assertThat(entry).isNull();
 	}
 
@@ -104,7 +128,7 @@ class RedisSemanticVectorCacheTest {
 		);
 		when(embeddingService.processEmbedding(any(), eq("tenant1"))).thenReturn(mockEmbedding);
 
-		cache.storeSemanticEntry(key, "{\"choices\":[]}", 15, 30, 45, Duration.ofHours(1));
+		cache.storeSemanticEntry(key, "{\"choices\":[]}", 15, 30, 45, Duration.ofHours(1), 0.0);
 
 		verify(vectorClient).saveVectorDocument(
 				startsWith("cacherelay:cache:doc:tenant1:"),
@@ -139,7 +163,7 @@ class RedisSemanticVectorCacheTest {
 		);
 		when(vectorClient.searchKnn(anyString(), anyString(), any(), eq(2))).thenReturn(List.of(match));
 
-		CacheEntry entry = cache.findSemanticMatch(key);
+		CacheEntry entry = cache.findSemanticMatch(key, 0.0);
 		assertThat(entry).isNotNull();
 		assertThat(entry.similarityScore()).isBetween(0.979f, 0.981f);
 
@@ -151,7 +175,7 @@ class RedisSemanticVectorCacheTest {
 				null
 		);
 		when(embeddingService.processEmbedding(any(), eq("tenant1"))).thenReturn(listEmbedding);
-		CacheEntry entry2 = cache.findSemanticMatch(key);
+		CacheEntry entry2 = cache.findSemanticMatch(key, 0.0);
 		assertThat(entry2).isNotNull();
 
 		// Null embedding object in EmbeddingData
@@ -159,7 +183,60 @@ class RedisSemanticVectorCacheTest {
 				"list", List.of(new EmbeddingData("embedding", 0, null)), "text-embedding-3-small", null
 		);
 		when(embeddingService.processEmbedding(any(), eq("tenant1"))).thenReturn(nullEmbedding);
-		assertThat(cache.findSemanticMatch(key)).isNull();
+		assertThat(cache.findSemanticMatch(key, 0.0)).isNull();
+	}
+
+	@Test
+	@DisplayName("initializeIndex migrates a pre-temperature schema once (PERF-14)")
+	void initializeIndexMigratesSchema() {
+		float[] vector768 = new float[768];
+		Arrays.fill(vector768, 0.1f);
+		EmbeddingResponse probe = new EmbeddingResponse(
+				"list", List.of(EmbeddingData.of(0, vector768)), "text-embedding-3-small", null);
+		when(embeddingService.processEmbedding(any(), any())).thenReturn(probe);
+		when(vectorClient.vectorDimensionOf(RedisSemanticVectorCache.INDEX_NAME)).thenReturn(768);
+		when(vectorClient.indexSchemaFields(RedisSemanticVectorCache.INDEX_NAME))
+				.thenReturn(Set.of("owner_id", "model", "prefix_hash", "system_prompt_hash", "embedding"));
+
+		cache.initializeIndex();
+
+		verify(vectorClient).dropIndex(RedisSemanticVectorCache.INDEX_NAME, true);
+		verify(vectorClient).createIndexIfNotExists(
+				eq(RedisSemanticVectorCache.INDEX_NAME), eq(RedisSemanticVectorCache.PREFIX), eq(768));
+	}
+
+	@Test
+	@DisplayName("initializeIndex keeps a current schema untouched (PERF-14)")
+	void initializeIndexKeepsCurrentSchema() {
+		float[] vector768 = new float[768];
+		Arrays.fill(vector768, 0.1f);
+		EmbeddingResponse probe = new EmbeddingResponse(
+				"list", List.of(EmbeddingData.of(0, vector768)), "text-embedding-3-small", null);
+		when(embeddingService.processEmbedding(any(), any())).thenReturn(probe);
+		when(vectorClient.vectorDimensionOf(RedisSemanticVectorCache.INDEX_NAME)).thenReturn(768);
+		when(vectorClient.indexSchemaFields(RedisSemanticVectorCache.INDEX_NAME)).thenReturn(
+				Set.of("owner_id", "model", "prefix_hash", "system_prompt_hash", "temperature", "embedding"));
+
+		cache.initializeIndex();
+
+		verify(vectorClient, never()).dropIndex(anyString(), anyBoolean());
+		verify(vectorClient).createIndexIfNotExists(
+				eq(RedisSemanticVectorCache.INDEX_NAME), eq(RedisSemanticVectorCache.PREFIX), eq(768));
+	}
+
+	@Test
+	@DisplayName("null temperature bypasses lookup and store without embedding (PERF-14)")
+	void nullTemperatureBypassesTier() {
+		CompoundCacheKey key = new CompoundCacheKey(
+				"tenant1", CacheScope.TENANT, "gpt-4o", "exactHash", "", "", "Hello"
+		);
+
+		assertThat(cache.findSemanticMatch(key, null)).isNull();
+		cache.storeSemanticEntry(key, "{}", 1, 1, 2, Duration.ofMinutes(5), null);
+
+		verify(embeddingService, never()).processEmbedding(any(), any());
+		verify(vectorClient, never()).searchKnn(anyString(), anyString(), any(), anyInt());
+		verify(vectorClient, never()).saveVectorDocument(anyString(), anyMap(), any());
 	}
 
 	@Test
@@ -185,7 +262,7 @@ class RedisSemanticVectorCacheTest {
 		);
 		when(vectorClient.searchKnn(anyString(), contains("prefix_hash"), any(), eq(2))).thenReturn(List.of(match));
 
-		CacheEntry entry = cache.findSemanticMatch(fullKey);
+		CacheEntry entry = cache.findSemanticMatch(fullKey, 0.0);
 		assertThat(entry).isNotNull();
 		assertThat(entry.promptTokens()).isZero();
 	}
@@ -241,7 +318,7 @@ class RedisSemanticVectorCacheTest {
 		verify(vectorClient, never()).searchKnn(anyString(), anyString(), any(), anyInt());
 
 		// storeSemanticEntry must also short-circuit instead of throwing.
-		cache.storeSemanticEntry(key, "{\"content\":\"Click reset\"}", 10, 20, 30, Duration.ofHours(1));
+		cache.storeSemanticEntry(key, "{\"content\":\"Click reset\"}", 10, 20, 30, Duration.ofHours(1), 0.0);
 		verify(vectorClient, never()).saveVectorDocument(anyString(), anyMap(), any());
 	}
 
@@ -362,7 +439,7 @@ class RedisSemanticVectorCacheTest {
 		CompoundCacheKey key = new CompoundCacheKey(
 				"tenant1", CacheScope.TENANT, "gpt-4o", "exactHash", "", "", "How to reset password"
 		);
-		cache.findSemanticMatch(key);
+		cache.findSemanticMatch(key, 0.0);
 
 		verify(local).embed("How to reset password");
 		verify(embeddingService, never()).processEmbedding(any(), anyString());
@@ -383,7 +460,7 @@ class RedisSemanticVectorCacheTest {
 		CompoundCacheKey key = new CompoundCacheKey(
 				"tenant1", CacheScope.TENANT, "gpt-4o", "exactHash", "", "", "How to reset password"
 		);
-		cache.findSemanticMatch(key);
+		cache.findSemanticMatch(key, 0.0);
 
 		verify(local).embed("How to reset password");
 		verify(embeddingService).processEmbedding(any(), eq("tenant1"));
@@ -404,7 +481,7 @@ class RedisSemanticVectorCacheTest {
 		CompoundCacheKey key = new CompoundCacheKey(
 				"tenant1", CacheScope.TENANT, "gpt-4o", "exactHash", "", "", "How to reset password"
 		);
-		cache.findSemanticMatch(key);
+		cache.findSemanticMatch(key, 0.0);
 
 		verify(embeddingService).processEmbedding(any(), eq("tenant1"));
 	}

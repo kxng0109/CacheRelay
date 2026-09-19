@@ -1,5 +1,6 @@
 package io.github.kxng0109.cacherelay.admin.dto;
 
+import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.time.Instant;
@@ -24,6 +25,7 @@ import java.util.Set;
  * @param deniedPrompts    hidden prompt globs
  * @param enabled          whether the key is active
  * @param createdAt        creation timestamp
+ * @param allowedCacheScopes cache isolation scopes (SEC-01; TENANT-only when unset)
  */
 @Schema(name = "KeyResponse", description = "Safe public metadata representation of a registered virtual API key")
 public record KeyResponse(
@@ -63,10 +65,10 @@ public record KeyResponse(
 		@Schema(description = "Hidden resource URI globs", example = "[\"postgres://secret/*\"]")
 		Set<String> deniedResources,
 
-		@Schema(description = "Visible prompt globs", example = "[\"review_*\"]")
+		@Schema(description = "Visible prompt globs (namespaced names)", example = "[\"server__review_*\"]")
 		Set<String> allowedPrompts,
 
-		@Schema(description = "Hidden prompt globs", example = "[\"admin_*\"]")
+		@Schema(description = "Hidden prompt globs (namespaced names)", example = "[\"server__admin_*\"]")
 		Set<String> deniedPrompts,
 
 		@Schema(description = "Whether indirect prompt injection blocks tool delivery", example = "true")
@@ -76,7 +78,10 @@ public record KeyResponse(
 		boolean enabled,
 
 		@Schema(description = "Creation timestamp (ISO-8601)", example = "2026-09-01T12:00:00Z")
-		Instant createdAt
+		Instant createdAt,
+
+		@Schema(description = "Cache isolation scopes (TENANT-only when unset)", example = "[\"TENANT\"]")
+		Set<CacheScope> allowedCacheScopes
 ) {
 	public KeyResponse(
 			String keyId,
@@ -107,7 +112,8 @@ public record KeyResponse(
 				Set.of(),
 				true,
 				enabled,
-				createdAt
+				createdAt,
+				Set.of(CacheScope.TENANT)
 		);
 	}
 
@@ -145,7 +151,8 @@ public record KeyResponse(
 				Set.of(),
 				true,
 				enabled,
-				createdAt
+				createdAt,
+				Set.of(CacheScope.TENANT)
 		);
 	}
 
@@ -187,7 +194,8 @@ public record KeyResponse(
 				deniedPrompts,
 				true,
 				enabled,
-				createdAt
+				createdAt,
+				Set.of(CacheScope.TENANT)
 		);
 	}
 }

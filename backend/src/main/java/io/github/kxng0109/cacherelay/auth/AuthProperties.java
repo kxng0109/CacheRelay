@@ -23,7 +23,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param cookieName         refresh-cookie name (dev profile drops the {@code __Host-} prefix)
  * @param cookieSameSite     refresh-cookie {@code SameSite} attribute, always explicit
  * @param jwtIssuer          {@code iss} claim stamped on self-issued access JWTs
- * @param jwtSecret          HMAC secret for self-issued JWTs (env-supplied; ephemeral when blank)
+ * @param jwtSecret          HMAC secret for self-issued JWTs (env-supplied; mandatory outside
+ *                           dev/test, ephemeral when blank under dev/test)
  * @param auditRetentionDays default audit-event retention in days
  * @param auditRetentionDaysByJurisdiction per-jurisdiction retention overrides (legal floor wins)
  * @param loginMaxAttempts   failed logins before lockout within {@code loginAttemptWindow}

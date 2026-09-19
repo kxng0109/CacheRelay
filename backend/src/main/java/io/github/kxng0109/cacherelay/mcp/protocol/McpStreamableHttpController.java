@@ -12,6 +12,7 @@ import io.github.kxng0109.cacherelay.mcp.router.McpAggregatedCatalog;
 import io.github.kxng0109.cacherelay.mcp.router.McpCatalogAggregator;
 import io.github.kxng0109.cacherelay.mcp.router.McpResolvedRoute;
 import io.github.kxng0109.cacherelay.mcp.router.McpRouter;
+import io.github.kxng0109.cacherelay.mcp.security.McpEgressMetrics;
 import io.github.kxng0109.cacherelay.mcp.security.McpGuardrailScanner;
 import io.github.kxng0109.cacherelay.mcp.security.McpJsonSchemaValidator;
 import io.github.kxng0109.cacherelay.mcp.security.McpToolRbacPolicyEngine;
@@ -73,6 +74,7 @@ public class McpStreamableHttpController {
 	private final RateLimitEngine rateLimitEngine;
 	private final HttpClient httpClient;
 	private final ObjectMapper objectMapper;
+	private final McpEgressMetrics egressMetrics;
 
 	public McpStreamableHttpController(
 			McpGatewayProperties properties,
@@ -86,7 +88,8 @@ public class McpStreamableHttpController {
 			KeyManagementService keyManagementService,
 			RateLimitEngine rateLimitEngine,
 			@Qualifier("mcpHttpClient") HttpClient httpClient,
-			ObjectMapper objectMapper
+			ObjectMapper objectMapper,
+			McpEgressMetrics egressMetrics
 	) {
 		this.properties = properties;
 		this.catalogAggregator = catalogAggregator;
@@ -100,6 +103,7 @@ public class McpStreamableHttpController {
 		this.rateLimitEngine = rateLimitEngine;
 		this.httpClient = httpClient;
 		this.objectMapper = objectMapper;
+		this.egressMetrics = egressMetrics;
 	}
 
 	/**
@@ -107,7 +111,7 @@ public class McpStreamableHttpController {
 	 */
 	@Operation(
 			summary = "Streamable HTTP MCP JSON-RPC 2.0 endpoint",
-			description = "Processes tools/list, tools/call, resources/read, prompts/list, ping, and initialize methods with RBAC, schema validation, and guardrails.",
+			description = "Processes tools/list, tools/call, resources/list, prompts/list, ping, and initialize methods with RBAC, schema validation, and guardrails.",
 			security = {
 					@SecurityRequirement(name = OpenApiConfig.SCHEME_BEARER_AUTH)
 			}
@@ -428,8 +432,8 @@ public class McpStreamableHttpController {
 			case "initialize" -> handleInitialize(request, protocolVersion);
 			case "tools/list" -> handleToolsList(request, apiKey);
 			case "tools/call" -> handleToolsCall(request, apiKey);
-			case "resources/list" -> handleResourcesList(request);
-			case "prompts/list" -> handlePromptsList(request);
+			case "resources/list" -> handleResourcesList(request, apiKey);
+			case "prompts/list" -> handlePromptsList(request, apiKey);
 			default -> McpJsonRpcResponse.failure(request.id(), McpJsonRpcError.methodNotFound(method));
 		};
 	}
@@ -481,8 +485,13 @@ public class McpStreamableHttpController {
 		return McpJsonRpcResponse.success(request.id(), result);
 	}
 
-	private McpJsonRpcResponse handleResourcesList(McpJsonRpcRequest request) {
-		McpAggregatedCatalog catalog = catalogAggregator.getAggregatedCatalog();
+	/**
+	 * Serves {@code resources/list} filtered by the key's resource policy (SEC-04):
+	 * only URIs passing {@code allowedResources}/{@code deniedResources} are returned.
+	 */
+	private McpJsonRpcResponse handleResourcesList(McpJsonRpcRequest request, VirtualApiKey apiKey) {
+		McpAggregatedCatalog catalog =
+				rbacPolicyEngine.filterCatalog(catalogAggregator.getAggregatedCatalog(), apiKey);
 		ObjectNode result = objectMapper.createObjectNode();
 		ArrayNode resArr = result.putArray("resources");
 		for (McpResourceDefinition res : catalog.resources()) {
@@ -491,8 +500,14 @@ public class McpStreamableHttpController {
 		return McpJsonRpcResponse.success(request.id(), result);
 	}
 
-	private McpJsonRpcResponse handlePromptsList(McpJsonRpcRequest request) {
-		McpAggregatedCatalog catalog = catalogAggregator.getAggregatedCatalog();
+	/**
+	 * Serves {@code prompts/list} filtered by the key's prompt policy (SEC-04).
+	 * Matching is against the namespaced prompt name ({@code server__prompt}), which is
+	 * what the catalog emits; see the admin API examples.
+	 */
+	private McpJsonRpcResponse handlePromptsList(McpJsonRpcRequest request, VirtualApiKey apiKey) {
+		McpAggregatedCatalog catalog =
+				rbacPolicyEngine.filterCatalog(catalogAggregator.getAggregatedCatalog(), apiKey);
 		ObjectNode result = objectMapper.createObjectNode();
 		ArrayNode prmArr = result.putArray("prompts");
 		for (McpPromptDefinition prm : catalog.prompts()) {
@@ -631,9 +646,10 @@ public class McpStreamableHttpController {
 				reqBuilder.header("Authorization", "Bearer " + server.apiKey().value());
 			}
 
+			// PERF-11: byte-capped body — a misbehaving tool server cannot OOM the heap.
 			HttpResponse<String> upstreamResponse = httpClient.send(
 					reqBuilder.build(),
-					HttpResponse.BodyHandlers.ofString()
+					new BoundedResultBodyHandler(properties.getMaxResultBytes())
 			);
 
 			if (upstreamResponse.statusCode() >= 200 && upstreamResponse.statusCode() < 300) {
@@ -645,30 +661,36 @@ public class McpStreamableHttpController {
 					JsonNode resultNode = respNode.get("result");
 					if (resultNode.has("content") && resultNode.path("content").isArray()) {
 						boolean injectionDetected = false;
-						for (JsonNode contentItem : resultNode.path("content")) {
-							if ("text".equals(contentItem.path("type").asString()) && contentItem.has("text")) {
-								String originalText = contentItem.path("text").asString();
-								if (guardrailScanner.containsIndirectPromptInjection(originalText)) {
-									injectionDetected = true;
-									log.warn(
-											"MCP egress signal: indirect prompt injection markers in tool '{}' output for tenant '{}'",
-											route.namespacedName(),
-											apiKey.ownerId()
-									);
-								}
-								String wrapped = guardrailScanner.wrapToolOutputWithNonce(
+					for (JsonNode contentItem : resultNode.path("content")) {
+						if ("text".equals(contentItem.path("type").asString()) && contentItem.has("text")) {
+							String originalText = contentItem.path("text").asString();
+							if (guardrailScanner.containsIndirectPromptInjection(originalText)) {
+								injectionDetected = true;
+								egressMetrics.injectionDetected(route.namespacedName(),
+										apiKey.injectionBlock() ? "block" : "warn");
+								log.warn(
+										"MCP egress signal: indirect prompt injection markers in tool '{}' output for tenant '{}'",
 										route.namespacedName(),
-										originalText
+										apiKey.ownerId()
 								);
-								((ObjectNode) contentItem).put("text", wrapped);
 							}
-						}
-						if (injectionDetected && apiKey.injectionBlock()) {
-							return McpJsonRpcResponse.failure(
-									request.id(),
-									McpJsonRpcError.policyBlocked(route.namespacedName())
+							String wrapped = guardrailScanner.wrapToolOutputWithNonce(
+									route.namespacedName(),
+									originalText
 							);
+							((ObjectNode) contentItem).put("text", wrapped);
+						} else {
+							// Binary/image/audio blocks carry no scannable text: counted, documented as unscreened.
+							egressMetrics.unscanned(contentItem.path("type").asString("unknown"));
 						}
+					}
+					if (injectionDetected && apiKey.injectionBlock()) {
+						egressMetrics.blocked(route.namespacedName());
+						return McpJsonRpcResponse.failure(
+								request.id(),
+								McpJsonRpcError.policyBlocked(route.namespacedName())
+						);
+					}
 						return McpJsonRpcResponse.success(request.id(), resultNode);
 					}
 					return McpJsonRpcResponse.success(request.id(), resultNode);

@@ -10,12 +10,14 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.Nullable;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -31,6 +33,18 @@ public class McpHitlSuspensionEngine {
 
 	private static final String REDIS_PENDING_PREFIX = "mcp:hitl:pending:";
 	private static final String REDIS_APPROVED_PREFIX = "mcp:hitl:approved:";
+
+	/**
+	 * Atomically claims a single-use HITL approval (SEC-02): returns {@code 1} only to the
+	 * caller that observes {@code APPROVED} and deletes both the approval and the pending
+	 * keys in the same script. Concurrent resumptions converge on exactly one winner; a
+	 * missing or non-approved value returns {@code 0} (denial, never an execution).
+	 */
+	private static final DefaultRedisScript<Long> CLAIM_APPROVAL_SCRIPT = new DefaultRedisScript<>(
+			"if redis.call('GET', KEYS[1]) == ARGV[1] then "
+					+ "redis.call('DEL', KEYS[1], KEYS[2]) "
+					+ "return 1 else return 0 end",
+			Long.class);
 
 	private final McpGatewayProperties properties;
 	private final McpAeadResumptionTokenService tokenService;
@@ -56,6 +70,11 @@ public class McpHitlSuspensionEngine {
 
 	/**
 	 * Evaluates an incoming tool invocation under HITL policies.
+	 *
+	 * <p>Approval consumption is atomic (SEC-02): the approval value is claimed with
+	 * {@link #CLAIM_APPROVAL_SCRIPT}, so N concurrent resumptions of the same single-use
+	 * token yield exactly one execution. A missing or non-approved value denies (the call
+	 * re-suspends) and never executes.</p>
 	 *
 	 * @param request            incoming JSON-RPC request
 	 * @param serverConfig       target server configuration
@@ -91,18 +110,21 @@ public class McpHitlSuspensionEngine {
 
 			if (verifiedClaims.isPresent()) {
 				McpResumptionClaims claims = verifiedClaims.get();
-				String approvalKey = REDIS_APPROVED_PREFIX + claims.tokenId();
-				String approvalStatus = redisTemplate.opsForValue().get(approvalKey);
+				Long claimed = redisTemplate.execute(
+						CLAIM_APPROVAL_SCRIPT,
+						List.of(
+								REDIS_APPROVED_PREFIX + claims.tokenId(),
+								REDIS_PENDING_PREFIX + claims.tokenId()
+						),
+						"APPROVED"
+				);
 
-				if ("APPROVED".equalsIgnoreCase(approvalStatus)) {
+				if (Long.valueOf(1L).equals(claimed)) {
 					log.info(
 							"HITL approval verified for token '{}' on tool '{}'",
 							claims.tokenId(),
 							namespacedToolName
 					);
-					// Single-use token consumption (replay protection)
-					redisTemplate.delete(approvalKey);
-					redisTemplate.delete(REDIS_PENDING_PREFIX + claims.tokenId());
 					return Optional.empty(); // Cleared to execute!
 				}
 			}

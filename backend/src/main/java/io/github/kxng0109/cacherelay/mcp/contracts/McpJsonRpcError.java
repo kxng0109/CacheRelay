@@ -87,7 +87,13 @@ public record McpJsonRpcError(
 	/**
 	 * Tool output blocked by the egress injection policy. Surfaced as {@code INTERNAL_ERROR}
 	 * (-32603): blocking is a local implementation decision, and the MCP spec forbids emitting
-	 * undefined codes from the -32020..-32099 sub-range. The offending output is never returned.
+	 * undefined codes from the -32020..-32099 sub-range. The offending output is never returned
+	 * and no {@code data} payload is attached (data-free failure).
+	 *
+	 * <p>Code decision (FS-05): JSON-RPC reserves -32000..-32099 for implementation-defined
+	 * server errors, so a dedicated code would be legal — but the gateway standardizes every
+	 * local policy decision (RBAC denial, breaker state, throttling, egress block) on
+	 * {@code INTERNAL_ERROR} so clients never branch on codes. This is stable and documented.</p>
 	 *
 	 * @param toolName namespaced tool whose output was blocked
 	 */

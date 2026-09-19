@@ -4,11 +4,14 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.env.Environment;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for self-issued JWTs: roundtrip, tamper rejection, secret handling.
@@ -17,7 +20,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class JwtServiceTest {
 
 	private final AuthProperties properties = AuthProperties.defaults();
-	private final AuthConfig config = new AuthConfig(properties);
+	private final AuthConfig config = new AuthConfig(properties, devEnvironment());
+
+	private static Environment devEnvironment() {
+		Environment environment = mock(Environment.class);
+		when(environment.getActiveProfiles()).thenReturn(new String[]{"dev"});
+		return environment;
+	}
 	private final JwtService service = new JwtService(
 			config.authJwtEncoder(), config.authJwtDecoder(), properties);
 
@@ -40,7 +49,7 @@ class JwtServiceTest {
 	void configuredSecretRoundtrip() {
 		AuthProperties configured = new AuthProperties(null, null, null, null, null, null,
 				null, null, null, "cacherelay", "x".repeat(32), 180, null, 5, null, null);
-		AuthConfig authConfig = new AuthConfig(configured);
+		AuthConfig authConfig = new AuthConfig(configured, devEnvironment());
 		JwtService service = new JwtService(authConfig.authJwtEncoder(),
 				authConfig.authJwtDecoder(), configured);
 		UUID userId = UUID.randomUUID();

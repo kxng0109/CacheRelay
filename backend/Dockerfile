@@ -46,15 +46,21 @@ EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 \
   CMD curl -fsS http://localhost:8080/actuator/health || exit 1
 
+# 2 vCPU / 2 GB cgroup profile (PERF-15): heap 1152m + direct 256m + ~200m
+# metaspace/native stays under the limit with headroom (cgroup kills are NOT
+# covered by ExitOnOutOfMemoryError — see JDK-8257790). GC threads are pinned for
+# 2 vCPU (the default derives from host CPUs and steals mutator time in
+# containers). Removed dead flags: MaxRAMPercentage (Xmx wins) and
+# java.security.egd (no-op since JDK 8).
 ENTRYPOINT ["java", \
   "-XX:+UseCompactObjectHeaders", \
   "-XX:+UseZGC", \
   "-XX:+ExitOnOutOfMemoryError", \
-  "-XX:MaxRAMPercentage=75.0", \
   "-Xmx1152m", \
   "-XX:SoftMaxHeapSize=768m", \
-  "-XX:MaxDirectMemorySize=64m", \
+  "-XX:MaxDirectMemorySize=256m", \
+  "-XX:ParallelGCThreads=2", \
+  "-XX:ConcGCThreads=1", \
   "-XX:ZUncommitDelay=60", \
   "-Djdk.virtualThreadScheduler.parallelism=4", \
-  "-Djava.security.egd=file:/dev/./urandom", \
   "-jar", "/app/cacherelay.jar"]

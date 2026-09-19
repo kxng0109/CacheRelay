@@ -109,6 +109,11 @@ public final class RedisCircuitBreaker implements CircuitBreaker {
 	 */
 	@Override
 	public boolean tryAcquire() {
+		// PERF-02 fail-safe fast path: polling the mirror advances its lazy state machine;
+		// a denial while the mirror itself is OPEN skips the Redis round trip (this instance
+		// observed real failures, so denying is the safe direction even if shared state
+		// diverged). HALF_OPEN denials still consult Redis to preserve cross-instance probe
+		// arbitration, and every grant is Redis-authoritative.
 		if (!bulkhead.tryAcquire()) {
 			return mirror.tryAcquire();
 		}

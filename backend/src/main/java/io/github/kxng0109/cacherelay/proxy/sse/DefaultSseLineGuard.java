@@ -68,6 +68,29 @@ public final class DefaultSseLineGuard implements SseLineGuard {
 			String providerName,
 			UUID requestId
 	) {
+		this(properties, registry, objectMapper, providerType, providerName, requestId, null);
+	}
+
+	/**
+	 * Creates a guard sharing a prebuilt meter set (PERF-06 factory path).
+	 *
+	 * @param properties   the current configuration
+	 * @param registry     the meter registry for metrics (must not be null)
+	 * @param objectMapper the object mapper for serializing the SSE error JSON
+	 * @param providerType the upstream provider type for limit resolution
+	 * @param providerName the provider name for metrics tags
+	 * @param requestId    the request ID for the SSE error event
+	 * @param sharedMeters prebuilt meter set, or {@code null} to build a private one
+	 */
+	DefaultSseLineGuard(
+			SseLineGuardProperties properties,
+			MeterRegistry registry,
+			ObjectMapper objectMapper,
+			ProviderType providerType,
+			String providerName,
+			UUID requestId,
+			@Nullable SseLineMeters sharedMeters
+	) {
 		this.properties = properties;
 		this.registry = registry;
 		this.objectMapper = objectMapper;
@@ -92,48 +115,16 @@ public final class DefaultSseLineGuard implements SseLineGuard {
 		this.lineRateLimiter = new TokenBucket(linesPerSecond, linesPerSecond);
 		this.byteRateLimiter = new TokenBucket(bytesPerSecond, bytesPerSecond);
 
-		this.lineRejectedTooLong = Counter.builder("sse.line.rejected.count")
-		                                  .description(
-				                                  "Number of SSE lines rejected because they exceeded the maximum byte length")
-		                                  .tag("provider", this.providerName)
-		                                  .tag("reason", "LINE_TOO_LONG")
-		                                  .tag("action", properties.action().name())
-		                                  .register(registry);
-		this.lineRejectedLineRate = Counter.builder("sse.line.rejected.count")
-		                                   .description(
-				                                   "Number of SSE lines rejected because they exceeded the per-line rate limit")
-		                                   .tag("provider", this.providerName)
-		                                   .tag("reason", "LINE_RATE_LIMIT")
-		                                   .tag("action", properties.action().name())
-		                                   .register(registry);
-		this.lineRejectedByteRate = Counter.builder("sse.line.rejected.count")
-		                                   .description(
-				                                   "Number of SSE lines rejected because they exceeded the per-byte rate limit")
-		                                   .tag("provider", this.providerName)
-		                                   .tag("reason", "BYTE_RATE_LIMIT")
-		                                   .tag("action", properties.action().name())
-		                                   .register(registry);
-		this.upstreamCancelled = Counter.builder("sse.upstream.cancelled.count")
-		                                .description("Number of upstream streams cancelled by the line guard")
-		                                .tag("provider", this.providerName)
-		                                .register(registry);
-		this.streamDurationOk = Timer.builder("sse.stream.duration.seconds")
-		                             .description("Total SSE relay stream lifetime for streams that completed normally")
-		                             .publishPercentileHistogram()
-		                             .tag("provider", this.providerName)
-		                             .tag("status", "ok")
-		                             .register(registry);
-		this.streamDurationAborted = Timer.builder("sse.stream.duration.seconds")
-		                                  .description("Total SSE relay stream lifetime for streams that were aborted")
-		                                  .publishPercentileHistogram()
-		                                  .tag("provider", this.providerName)
-		                                  .tag("status", "aborted")
-		                                  .register(registry);
-		this.lineLengthBytes = DistributionSummary.builder("sse.line.length.bytes")
-		                                          .description("Distribution of accepted SSE line byte lengths")
-		                                          .baseUnit("bytes")
-		                                          .tag("provider", this.providerName)
-		                                          .register(registry);
+		SseLineMeters meters = sharedMeters != null
+				? sharedMeters
+				: SseLineMeters.create(registry, this.providerName, properties.action());
+		this.lineRejectedTooLong = meters.lineRejectedTooLong();
+		this.lineRejectedLineRate = meters.lineRejectedLineRate();
+		this.lineRejectedByteRate = meters.lineRejectedByteRate();
+		this.upstreamCancelled = meters.upstreamCancelled();
+		this.streamDurationOk = meters.streamDurationOk();
+		this.streamDurationAborted = meters.streamDurationAborted();
+		this.lineLengthBytes = meters.lineLengthBytes();
 	}
 
 	@Override

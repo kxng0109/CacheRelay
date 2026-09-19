@@ -44,6 +44,12 @@ public class EmbeddingController {
 	/**
 	 * Handles embedding generation requests across configured providers with automatic batching and normalization.
 	 *
+	 * <p>Response headers (FS-06): {@code X-CacheRelay-Provider} names the winner and
+	 * {@code X-CacheRelay-Tried} names the attempted provider (single attempt — embeddings have
+	 * no failover today, so both carry the same value; the chain grows here if retry is added).
+	 * No held-budget header is emitted: embeddings use a synchronous check-only budget gate
+	 * (no estimate→hold→settle; see COST-04), documented here rather than implied.</p>
+	 *
 	 * @param request            client embedding request
 	 * @param httpServletRequest servlet request used to retrieve authenticated owner context
 	 * @return HTTP 200 OK with standardized OpenAI embedding response
@@ -126,9 +132,13 @@ public class EmbeddingController {
 		}
 		EmbeddingResponse response = embeddingService.processEmbedding(request, ownerId, idempotencyKey,
 				(String) httpServletRequest.getAttribute(KeyAuthFilter.KEY_HASH_ATTRIBUTE));
+		// resolveProviderName repeats the request-path alias lookup (pure in-memory map
+		// lookups, no I/O); kept as the single source of the provider name rather than
+		// widening the service response contract for one header.
+		String providerName = embeddingService.resolveProviderName(request.model());
 		return ResponseEntity.ok()
-				.header("X-CacheRelay-Provider",
-						embeddingService.resolveProviderName(request.model()))
+				.header("X-CacheRelay-Provider", providerName)
+				.header("X-CacheRelay-Tried", providerName)
 				.body(response);
 	}
 

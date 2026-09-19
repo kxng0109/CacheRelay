@@ -4,6 +4,7 @@ import io.github.kxng0109.cacherelay.admin.dto.CreateKeyRequest;
 import io.github.kxng0109.cacherelay.admin.dto.CreatedKeyResponse;
 import io.github.kxng0109.cacherelay.admin.dto.KeyResponse;
 import io.github.kxng0109.cacherelay.admin.dto.UpdateKeyRequest;
+import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
 import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
 import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
 import io.github.kxng0109.cacherelay.security.ratelimit.KeyManagementService;
@@ -139,7 +140,7 @@ class AdminKeyControllerTest {
 				eq(Set.of()), eq(Set.of()),
 				eq(Set.of()), eq(Set.of()),
 				eq(Set.of()), eq(Set.of()),
-				eq(false)
+				eq(false), eq(Set.of(CacheScope.TENANT))
 		)).thenReturn(new KeyManagementService.CreatedKey(hash, "gw-secretFlag1", metadata));
 
 		CreateKeyRequest request = new CreateKeyRequest(
@@ -155,6 +156,7 @@ class AdminKeyControllerTest {
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
 		assertThat(response.getBody().injectionBlock()).isFalse();
+		assertThat(response.getBody().allowedCacheScopes()).isEqualTo(Set.of(CacheScope.TENANT));
 	}
 
 	@Test
@@ -176,7 +178,7 @@ class AdminKeyControllerTest {
 				eq(null), eq(null),
 				eq(null), eq(null),
 				eq(null), eq(null),
-				eq(false), eq(null)
+				eq(false), eq(null), eq(null)
 		)).thenReturn(Optional.of(metadata));
 
 		UpdateKeyRequest request = new UpdateKeyRequest(
@@ -271,7 +273,7 @@ class AdminKeyControllerTest {
 				eq(Set.of("postgres__*")), eq(Set.of()),
 				eq(Set.of()), eq(Set.of()),
 				eq(Set.of()), eq(Set.of()),
-				eq(true)
+				eq(true), eq(Set.of(CacheScope.TENANT))
 		)).thenReturn(new KeyManagementService.CreatedKey(hash, "gw-secretCombo2", metadata));
 
 		CreateKeyRequest request = new CreateKeyRequest(
@@ -287,6 +289,45 @@ class AdminKeyControllerTest {
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
 		assertThat(response.getBody().injectionBlock()).isTrue();
+	}
+
+	@Test
+	@DisplayName("createKey forwards a non-default cache-scope allowlist")
+	void createKeyForwardsCacheScopes() {
+		SHA256Hash hash = SHA256Hash.fromRawKey("gw-secretScope1");
+		VirtualApiKey metadata = new VirtualApiKey(
+				hash, "gw-", "owner-1", "scope-key", 60, 1000,
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				true,
+				true, Instant.now(),
+				Set.of(CacheScope.TENANT, CacheScope.GLOBAL)
+		);
+		when(keyManagementService.createKey(
+				eq("owner-1"), eq("scope-key"), eq(60), eq(1000),
+				eq(Set.of()), eq(Set.of()),
+				eq(Set.of()), eq(Set.of()),
+				eq(Set.of()), eq(Set.of()),
+				eq(Set.of()), eq(Set.of()),
+				eq(null), eq(Set.of(CacheScope.TENANT, CacheScope.GLOBAL))
+		)).thenReturn(new KeyManagementService.CreatedKey(hash, "gw-secretScope1", metadata));
+
+		CreateKeyRequest request = new CreateKeyRequest(
+				"owner-1", "scope-key", 60, 1000,
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				null, Set.of(CacheScope.TENANT, CacheScope.GLOBAL)
+		);
+
+		ResponseEntity<CreatedKeyResponse> response = controller.createKey(request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+		assertThat(response.getBody().allowedCacheScopes())
+				.isEqualTo(Set.of(CacheScope.TENANT, CacheScope.GLOBAL));
 	}
 
 	@Test

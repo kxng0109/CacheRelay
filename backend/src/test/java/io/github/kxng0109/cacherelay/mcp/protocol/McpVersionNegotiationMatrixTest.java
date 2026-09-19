@@ -11,6 +11,7 @@ import io.github.kxng0109.cacherelay.mcp.resilience.McpServerCircuitBreakerManag
 import io.github.kxng0109.cacherelay.mcp.router.McpAggregatedCatalog;
 import io.github.kxng0109.cacherelay.mcp.router.McpCatalogAggregator;
 import io.github.kxng0109.cacherelay.mcp.router.McpRouter;
+import io.github.kxng0109.cacherelay.mcp.security.McpEgressMetrics;
 import io.github.kxng0109.cacherelay.mcp.security.McpGuardrailScanner;
 import io.github.kxng0109.cacherelay.mcp.security.McpJsonSchemaValidator;
 import io.github.kxng0109.cacherelay.mcp.security.McpToolRbacPolicyEngine;
@@ -30,6 +31,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
 import tools.jackson.databind.JsonNode;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import tools.jackson.databind.ObjectMapper;
 
 import java.net.URI;
@@ -129,7 +131,8 @@ class McpVersionNegotiationMatrixTest {
 				keyManagementService,
 				rateLimitEngine,
 				httpClient,
-				objectMapper
+				objectMapper,
+				new McpEgressMetrics(new SimpleMeterRegistry())
 		);
 
 		lenient().when(catalogAggregator.getAggregatedCatalog())

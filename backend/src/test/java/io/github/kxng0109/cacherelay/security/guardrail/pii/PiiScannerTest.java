@@ -22,6 +22,26 @@ class PiiScannerTest {
 	}
 
 	@Test
+	@DisplayName("digitless text without @ yields nothing (pre-filter fast path)")
+	void digitlessTextYieldsNothing() {
+		assertThat(scanner.scan("Hello world, how are you today")).isEmpty();
+	}
+
+	@Test
+	@DisplayName("honorific names match without any digit present (gate does not suppress)")
+	void honorificWithoutDigits() {
+		List<PiiEntity> entities = scanner.scan("Please ask Dr Alice Smith for help");
+		assertThat(entities).extracting(PiiEntity::type).contains(PiiType.PERSON_NAME);
+	}
+
+	@Test
+	@DisplayName("email matches without any digit present (independent gate)")
+	void emailWithoutDigits() {
+		List<PiiEntity> entities = scanner.scan("Contact support at help desk via support@cacherelay.io please");
+		assertThat(entities).extracting(PiiEntity::type).contains(PiiType.EMAIL);
+	}
+
+	@Test
 	@DisplayName("scans and extracts US SSN conforming to SSA rules")
 	void scansUsSsn() {
 		String text = "Customer SSN is 123-45-6789 for tax records";

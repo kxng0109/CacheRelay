@@ -89,13 +89,13 @@ class SemanticCacheIntegrationTest {
 		when(vectorClient.searchKnn(anyString(), anyString(), any(), eq(2))).thenReturn(List.of(match));
 
 		// 1. First evaluation: Hits L2 Semantic tier
-		CacheLookupResult res1 = cacheService.evaluateCache(request, httpReq, "tenant1");
+		CacheLookupResult res1 = cacheService.evaluateCache(request, httpReq, "tenant1", null);
 		assertThat(res1.isHit()).isTrue();
 		assertThat(res1.status()).isEqualTo(CacheStatus.HIT_L2);
 		assertThat(res1.similarityScore()).isBetween(0.959f, 0.961f);
 
 		// 2. Second evaluation for identical query: Hits L0 In-Memory tier instantly!
-		CacheLookupResult res2 = cacheService.evaluateCache(request, httpReq, "tenant1");
+		CacheLookupResult res2 = cacheService.evaluateCache(request, httpReq, "tenant1", null);
 		assertThat(res2.isHit()).isTrue();
 		assertThat(res2.status()).isEqualTo(CacheStatus.HIT_L0);
 		assertThat(res2.similarityScore()).isEqualTo(1.0f);
@@ -114,7 +114,7 @@ class SemanticCacheIntegrationTest {
 		// When querying for Tenant B, RediSearch receives @owner_id:{tenantB} and returns empty
 		when(vectorClient.searchKnn(anyString(), contains("tenantB"), any(), eq(2))).thenReturn(List.of());
 
-		CacheLookupResult res = cacheService.evaluateCache(request, httpReq, "tenantB");
+		CacheLookupResult res = cacheService.evaluateCache(request, httpReq, "tenantB", null);
 		assertThat(res.isHit()).isFalse();
 		assertThat(res.status()).isEqualTo(CacheStatus.MISS);
 	}

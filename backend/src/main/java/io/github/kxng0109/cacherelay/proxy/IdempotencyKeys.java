@@ -65,12 +65,14 @@ public final class IdempotencyKeys {
 	 * @param rawKey   the raw header value, possibly {@code null}
 	 * @param ownerId  authenticated tenant/owner (empty string when unknown)
 	 * @param route    request route (for example the servlet path)
-	 * @param bodyHash SHA-256 hex of the canonical request bytes the retry must match byte-for-byte
+	 * @param bodyHash SHA-256 hex of the canonical request bytes the retry must match byte-for-byte;
+	 *                 may be {@code null} only when {@code rawKey} is {@code null} (it is ignored then,
+	 *                 so callers skip the hash — PERF-04)
 	 * @return the request UUID to record
 	 * @throws IllegalArgumentException when the key is present but malformed
 	 */
 	public static UUID resolveRequestId(
-			@Nullable String rawKey, String ownerId, String route, String bodyHash) {
+			@Nullable String rawKey, String ownerId, String route, @Nullable String bodyHash) {
 		String key = validateOrNull(rawKey);
 		if (key == null) {
 			return UUID.randomUUID();

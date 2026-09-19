@@ -27,13 +27,12 @@ import java.util.function.LongSupplier;
  * so one shared {@link ScheduledExecutorService} at 10&nbsp;ms granularity scans the connection registry instead
  * ({@link #onTimerTick()}).</p>
  *
- * <p>The actual {@code flush()} never runs on the scheduler's thread: Tomcat's {@code OutputBuffer} is not
- * thread-safe, so a platform thread flushing would corrupt it. Instead the flush executes through
- * {@link CompletableFuture#delayedExecutor(long, TimeUnit, Executor)} onto a virtual-thread-per-task executor and the
- * streaming virtual thread joins the future. The streaming thread unmounts while waiting, the flush virtual thread
- * unmounts again if the downstream socket blocks (a slow client never pins a carrier), and the join serializes the
- * flush against the next write, so there is zero pinning, zero races, and no extra platform threads. The shared timer
- * only marks due connections and records the flush lag for the health indicator.</p>
+ * <p>The actual {@code flush()} runs inline on the owning streaming virtual thread: the shared
+ * timer only marks due connections (never touches the non-thread-safe Tomcat
+ * {@code OutputBuffer}), and the streaming thread is already a virtual thread, so a blocking
+ * socket write unmounts the carrier exactly as a hopped flush would — without spawning a fresh
+ * virtual thread and a join per flush. The watchdog still aborts a stuck flush by closing the
+ * stream, which surfaces as an {@code IOException} on this same call path.</p>
  *
  * <p>Hardening: a flush slower than {@code flushBackpressureThresholdMs} or buffered bytes above
  * {@code maxBufferBytes} aborts the stream ({@code onWrite} returns {@code true}) so the caller cancels the upstream
@@ -77,10 +76,6 @@ public final class AdaptiveSseFlushStrategy implements SseFlushStrategy, AutoClo
 	private final Semaphore connectionGate;
 
 	private final int maxConnections;
-
-	private final ExecutorService flushExecutor;
-
-	private final Executor delayedFlushExecutor;
 
 	private final ScheduledExecutorService ticker;
 
@@ -158,8 +153,6 @@ public final class AdaptiveSseFlushStrategy implements SseFlushStrategy, AutoClo
 		this.watchdogTimeoutMs = watchdogTimeoutMs;
 		this.connectionGate = new Semaphore(maxConnections);
 		this.maxConnections = maxConnections;
-		this.flushExecutor = Executors.newVirtualThreadPerTaskExecutor();
-		this.delayedFlushExecutor = CompletableFuture.delayedExecutor(0, TimeUnit.MILLISECONDS, flushExecutor);
 		this.ticker = Executors.newScheduledThreadPool(1, Thread.ofVirtual().name("sse-flush-ticker", 0).factory());
 		this.flushDuration = Timer.builder("sse.flush.duration")
 		                          .description("Time spent flushing SSE output buffers to downstream clients")
@@ -294,7 +287,6 @@ public final class AdaptiveSseFlushStrategy implements SseFlushStrategy, AutoClo
 			state.terminated = true;
 			LockSupport.unpark(state.watchdog);
 		}
-		flushExecutor.shutdownNow();
 		ticker.shutdownNow();
 	}
 
@@ -360,7 +352,10 @@ public final class AdaptiveSseFlushStrategy implements SseFlushStrategy, AutoClo
 		state.flushInProgress = true;
 		state.flushStartedNanos = now;
 		try {
-			CompletableFuture.runAsync(() -> flush(state.out), delayedFlushExecutor).join();
+			// PERF-06: flush inline on the streaming virtual thread. The previous
+			// runAsync(+join) hop spawned a fresh virtual thread per flush for no
+			// benefit (zero delay, immediate join); direct flush is identical.
+			flush(state.out);
 		} catch (RuntimeException ex) {
 			// The flush failed: the client disconnected or the watchdog closed the stream.
 			state.flushInProgress = false;

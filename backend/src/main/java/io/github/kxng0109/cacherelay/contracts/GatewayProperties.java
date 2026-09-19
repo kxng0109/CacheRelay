@@ -1,6 +1,8 @@
 package io.github.kxng0109.cacherelay.contracts;
 
+import jakarta.validation.Valid;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.validation.annotation.Validated;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -23,6 +25,7 @@ import java.util.Map;
  *       committed to the repository).</li>
  * </ul>
  */
+@Validated
 @ConfigurationProperties("gateway")
 public class GatewayProperties {
 
@@ -30,7 +33,8 @@ public class GatewayProperties {
 
 	private Map<String, ModelAlias> aliases = new LinkedHashMap<>();
 
-	private List<BootstrapKey> bootstrapKeys = new ArrayList<>();
+	@Valid
+	private List<@Valid BootstrapKey> bootstrapKeys = new ArrayList<>();
 
 	/**
 	 * @return the configured providers, keyed by {@link ProviderConfig#name()}

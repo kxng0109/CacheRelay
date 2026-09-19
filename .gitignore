@@ -4,6 +4,8 @@ target/
 session-*.md
 !**/src/main/**/target/
 !**/src/test/**/target/
+*.pdf
+/findings/
 
 ### STS ###
 .apt_generated
@@ -62,3 +64,6 @@ frontend/.env.local
 
 # Locally built k6 SSE binary (49 MB; rebuild via go install + xk6, see loadtest/k6/31-sse-hold-xk6.js header)
 k6-sse.exe
+
+# Local opencode enforcement wall (machine-local only; never commit)
+.opencode/

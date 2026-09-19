@@ -22,6 +22,7 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -66,6 +67,19 @@ public class RedisSemanticVectorCache {
 	public void initializeIndex() {
 		try {
 			int existing = vectorClient.vectorDimensionOf(INDEX_NAME);
+		// PERF-14 schema migration: indexes created before the temperature TAG cannot
+		// serve temperature-filtered queries (they silently return nothing). A present
+		// index whose readable schema lacks the field is dropped once and recreated
+		// below; L2 cold-starts. An unreadable schema (empty set) never triggers a drop.
+		Set<String> schemaFields = vectorClient.indexSchemaFields(INDEX_NAME);
+		if (existing > 0 && !schemaFields.isEmpty() && !schemaFields.contains("temperature")) {
+				log.warn(
+						"RediSearch index '{}' predates the temperature field; dropping and recreating it",
+						INDEX_NAME
+				);
+				vectorClient.dropIndex(INDEX_NAME, true);
+				existing = -1;
+			}
 			float[] probed = probeDimension();
 			if (probed != null && probed.length > 0) {
 				// Authoritative path: the live model declares its dimension, so a mismatch is real
@@ -177,18 +191,40 @@ public class RedisSemanticVectorCache {
 	/**
 	 * L2 semantic lookup scoped by sampling temperature. When {@code temperature} is non-null, only entries stored with
 	 * the identical temperature are eligible; this prevents a low-temperature deterministic request from hitting a
-	 * high-temperature stochastic cached entry. A null temperature disables the filter for backward compatibility.
+	 * high-temperature stochastic cached entry. A null temperature bypasses the semantic tier entirely (no read, no
+	 * write): an unknown sampling regime must not consume stochastic entries.
 	 *
 	 * @param key         compound partition key
-	 * @param temperature sampling temperature of the incoming request, or null to bypass filtering
+	 * @param temperature sampling temperature of the incoming request, or null to bypass the tier
 	 * @return matching entry or null
 	 */
 	public @Nullable CacheEntry findSemanticMatch(CompoundCacheKey key, Double temperature) {
+		return findSemanticMatch(key, temperature, null);
+	}
+
+	/**
+	 * L2 semantic lookup sharing one per-request embedding memo (PERF-01): the query
+	 * vector is computed at most once per prompt text and reused by the later store,
+	 * so a lookup miss plus store costs a single embedding call.
+	 *
+	 * @param key         compound partition key
+	 * @param temperature sampling temperature of the incoming request, or null to bypass filtering
+	 * @param embeddingMemo per-request prompt-text to vector cache, or {@code null} for no sharing
+	 * @return matching entry or null
+	 */
+	public @Nullable CacheEntry findSemanticMatch(
+			CompoundCacheKey key, Double temperature, @Nullable Map<String, float[]> embeddingMemo) {
 		if (!properties.getSemantic().isEnabled() || key.promptText().isBlank()) {
 			return null;
 		}
+		// PERF-14: null temperature bypasses semantic lookup. An unknown sampling regime
+		// must neither read stochastic entries nor (see store) write them — correctness
+		// over hit rate. (High-temperature bypass lives in CachePolicyEngine.)
+		if (temperature == null) {
+			return null;
+		}
 
-		float[] queryVector = generateEmbedding(key.promptText(), key.ownerId());
+		float[] queryVector = generateEmbedding(key.promptText(), key.ownerId(), embeddingMemo);
 		if (queryVector == null || queryVector.length == 0) {
 			return null;
 		}
@@ -272,11 +308,42 @@ public class RedisSemanticVectorCache {
 			Duration ttl,
 			Double temperature
 	) {
+		storeSemanticEntry(
+				key, responseJson, promptTokens, completionTokens, totalTokens, ttl, temperature, null);
+	}
+
+	/**
+	 * Stores a completion reusing the request's memoized query vector when present
+	 * (PERF-01): pass the same memo the lookup used and no second embedding is computed.
+	 *
+	 * @param key              compound partition key
+	 * @param responseJson     completion JSON payload
+	 * @param promptTokens     tokens in prompt
+	 * @param completionTokens tokens in completion
+	 * @param totalTokens      total tokens
+	 * @param ttl              time-to-live duration
+	 * @param temperature      sampling temperature of the producing request, or null if unknown
+	 * @param embeddingMemo    per-request prompt-text to vector cache, or {@code null}
+	 */
+	public void storeSemanticEntry(
+			CompoundCacheKey key,
+			String responseJson,
+			int promptTokens,
+			int completionTokens,
+			int totalTokens,
+			Duration ttl,
+			Double temperature,
+			@Nullable Map<String, float[]> embeddingMemo
+	) {
 		if (!properties.getSemantic().isEnabled() || key.promptText().isBlank()) {
 			return;
 		}
+		// PERF-14: null temperature bypasses semantic store (mirror of the lookup bypass).
+		if (temperature == null) {
+			return;
+		}
 
-		float[] vector = generateEmbedding(key.promptText(), key.ownerId());
+		float[] vector = generateEmbedding(key.promptText(), key.ownerId(), embeddingMemo);
 		if (vector == null || vector.length == 0) {
 			return;
 		}
@@ -322,6 +389,29 @@ public class RedisSemanticVectorCache {
 	}
 
 	private @Nullable float[] generateEmbedding(String text, String ownerId) {
+		return generateEmbedding(text, ownerId, null);
+	}
+
+	/**
+	 * Generates one embedding, memoizing by prompt text when a memo is supplied. Failures
+	 * are never cached: a miss recomputes on the next call.
+	 */
+	private @Nullable float[] generateEmbedding(
+			String text, String ownerId, @Nullable Map<String, float[]> embeddingMemo) {
+		if (embeddingMemo != null) {
+			float[] memoized = embeddingMemo.get(text);
+			if (memoized != null && memoized.length > 0) {
+				return memoized;
+			}
+		}
+		float[] computed = computeEmbedding(text, ownerId);
+		if (embeddingMemo != null && computed != null && computed.length > 0) {
+			embeddingMemo.put(text, computed);
+		}
+		return computed;
+	}
+
+	private @Nullable float[] computeEmbedding(String text, String ownerId) {
 		OnnxLocalEmbedder local = onnxLocalEmbedder;
 		if (local != null) {
 			try {

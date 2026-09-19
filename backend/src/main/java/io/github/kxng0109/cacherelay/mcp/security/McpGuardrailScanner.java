@@ -53,6 +53,15 @@ public class McpGuardrailScanner {
 	/**
 	 * Wraps tool output content in a secure, nonced XML delimiter block to defend against indirect prompt injection.
 	 *
+	 * <p>Envelope-breakout hardening (SEC-09): the tool name is XML-attribute-escaped so a
+	 * crafted name cannot break out of the {@code name} attribute, and the closing tag
+	 * carries the same nonce ({@code </tool_result nonce="…">}) so a verbatim
+	 * {@code </tool_result>} inside untrusted output does not terminate the envelope. The
+	 * text itself is preserved verbatim (consumers are LLMs, not XML parsers). Outputs
+	 * containing the nonce itself are NOT rejected: a 16-hex-char coincidence (e.g. inside
+	 * UUIDs/hashes) would false-positive, while the nonce-bound closer already defeats
+	 * practical forgery (the attacker cannot predict the nonce).</p>
+	 *
 	 * @param toolName namespaced tool name
 	 * @param rawText  raw output string produced by the tool
 	 * @return nonced delimiter block
@@ -62,10 +71,35 @@ public class McpGuardrailScanner {
 		RANDOM.nextBytes(nonceBytes);
 		String nonce = HexFormat.of().formatHex(nonceBytes);
 
+		String safeName = escapeXmlAttribute(toolName == null ? "" : toolName);
 		String safeText = rawText == null ? "" : rawText;
-		return "<tool_result name=\"" + toolName + "\" nonce=\"" + nonce + "\" context=\"EXTERNAL_UNTRUSTED_DATA\">\n"
+		return "<tool_result name=\"" + safeName + "\" nonce=\"" + nonce + "\" context=\"EXTERNAL_UNTRUSTED_DATA\">\n"
 				+ safeText + "\n"
-				+ "</tool_result>";
+				+ "</tool_result nonce=\"" + nonce + "\">";
+	}
+
+	/**
+	 * Escapes a value for an XML double-quoted attribute context.
+	 *
+	 * @param value raw value, possibly {@code null}
+	 * @return escaped value
+	 */
+	static String escapeXmlAttribute(String value) {
+		if (value == null) {
+			return "";
+		}
+		StringBuilder escaped = new StringBuilder(value.length());
+		for (int i = 0; i < value.length(); i++) {
+			char c = value.charAt(i);
+			switch (c) {
+				case '&' -> escaped.append("&amp;");
+				case '"' -> escaped.append("&quot;");
+				case '<' -> escaped.append("&lt;");
+				case '>' -> escaped.append("&gt;");
+				default -> escaped.append(c);
+			}
+		}
+		return escaped.toString();
 	}
 
 	/**

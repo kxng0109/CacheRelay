@@ -4,6 +4,7 @@ import io.github.kxng0109.cacherelay.admin.dto.CreateKeyRequest;
 import io.github.kxng0109.cacherelay.admin.dto.CreatedKeyResponse;
 import io.github.kxng0109.cacherelay.admin.dto.KeyResponse;
 import io.github.kxng0109.cacherelay.admin.dto.UpdateKeyRequest;
+import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
 import io.github.kxng0109.cacherelay.config.OpenApiConfig;
 import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
 import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
@@ -27,6 +28,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * REST controller for administrative management of virtual API keys under {@code /v1/admin/keys}.
@@ -88,8 +90,9 @@ public class AdminKeyController {
 		KeyManagementService.CreatedKey created;
 		boolean visibilityEmpty = request.allowedResources().isEmpty() && request.deniedResources().isEmpty()
 				&& request.allowedPrompts().isEmpty() && request.deniedPrompts().isEmpty();
+		boolean scopesDefault = request.allowedCacheScopes().equals(Set.of(CacheScope.TENANT));
 		if (request.allowedTools().isEmpty() && request.deniedTools().isEmpty() && visibilityEmpty
-				&& request.injectionBlock() == null) {
+				&& request.injectionBlock() == null && scopesDefault) {
 			created = keyManagementService.createKey(
 					request.ownerId(),
 					request.name(),
@@ -98,7 +101,7 @@ public class AdminKeyController {
 					request.allowedModels(),
 					request.allowedProviders()
 			);
-		} else if (visibilityEmpty && request.injectionBlock() == null) {
+		} else if (visibilityEmpty && request.injectionBlock() == null && scopesDefault) {
 			created = keyManagementService.createKey(
 					request.ownerId(),
 					request.name(),
@@ -109,7 +112,7 @@ public class AdminKeyController {
 					request.allowedTools(),
 					request.deniedTools()
 			);
-		} else if (request.injectionBlock() == null) {
+		} else if (request.injectionBlock() == null && scopesDefault) {
 			created = keyManagementService.createKey(
 					request.ownerId(),
 					request.name(),
@@ -138,7 +141,8 @@ public class AdminKeyController {
 					request.deniedResources(),
 					request.allowedPrompts(),
 					request.deniedPrompts(),
-					request.injectionBlock()
+					request.injectionBlock(),
+					request.allowedCacheScopes()
 			);
 		}
 		CreatedKeyResponse response = new CreatedKeyResponse(
@@ -159,7 +163,8 @@ public class AdminKeyController {
 				created.key().deniedPrompts(),
 				created.key().injectionBlock(),
 				created.key().enabled(),
-				created.key().createdAt()
+				created.key().createdAt(),
+				created.key().allowedCacheScopes()
 		);
 		return ResponseEntity.status(HttpStatus.CREATED).body(response);
 	}
@@ -259,7 +264,7 @@ public class AdminKeyController {
 		boolean visibilityNull = request.allowedResources() == null && request.deniedResources() == null
 				&& request.allowedPrompts() == null && request.deniedPrompts() == null;
 		if (request.allowedTools() == null && request.deniedTools() == null && visibilityNull
-				&& request.injectionBlock() == null) {
+				&& request.injectionBlock() == null && request.allowedCacheScopes() == null) {
 			updated = keyManagementService.updateKey(
 					hash,
 					request.name(),
@@ -269,7 +274,8 @@ public class AdminKeyController {
 					request.allowedProviders(),
 					request.enabled()
 			);
-		} else if (visibilityNull && request.injectionBlock() == null) {
+		} else if (visibilityNull && request.injectionBlock() == null
+				&& request.allowedCacheScopes() == null) {
 			updated = keyManagementService.updateKey(
 					hash,
 					request.name(),
@@ -281,7 +287,7 @@ public class AdminKeyController {
 					request.deniedTools(),
 					request.enabled()
 			);
-		} else if (request.injectionBlock() == null) {
+		} else if (request.injectionBlock() == null && request.allowedCacheScopes() == null) {
 			updated = keyManagementService.updateKey(
 					hash,
 					request.name(),
@@ -312,6 +318,7 @@ public class AdminKeyController {
 					request.allowedPrompts(),
 					request.deniedPrompts(),
 					request.injectionBlock(),
+					request.allowedCacheScopes(),
 					request.enabled()
 			);
 		}
@@ -370,7 +377,8 @@ public class AdminKeyController {
 				key.deniedPrompts(),
 				key.injectionBlock(),
 				key.enabled(),
-				key.createdAt()
+				key.createdAt(),
+				key.allowedCacheScopes()
 		);
 	}
 

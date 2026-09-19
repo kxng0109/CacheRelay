@@ -229,3 +229,26 @@ groups:
         annotations:
           summary: "Ledger ring buffer above 50K pending"
           description: "Micro-batch writer is behind; spillway journal growth and insert latency likely."
+
+      # -----------------------------------------------------------------------
+      # JVM / container ergonomics (PERF-15: 2 vCPU / 2 GB profile)
+      # -----------------------------------------------------------------------
+      - alert: JvmDirectMemoryHigh
+        expr: jvm_buffer_memory_used_bytes{bufferPool="direct"} / (256 * 1024 * 1024) > 0.8
+        for: 2m
+        labels:
+          severity: warning
+          team: platform-core
+        annotations:
+          summary: "JVM direct memory above 80% of the 256m cap"
+          description: "Netty/Lettuce pooled buffers near MaxDirectMemorySize; exhaustion OOMs without ExitOnOutOfMemoryError (JDK-8257790). Denominator tracks the Dockerfile cap — update together."
+
+      - alert: JvmHeapPressureHigh
+        expr: max by (instance) (jvm_memory_used_bytes{area="heap"} / jvm_memory_max_bytes{area="heap"}) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          team: platform-core
+        annotations:
+          summary: "JVM heap above 90% sustained"
+          description: "Heap pressure near Xmx; expect ZGC allocation pacing then OOM. Correlate with GcPauseHigh."

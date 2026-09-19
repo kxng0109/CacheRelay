@@ -579,10 +579,10 @@ class KeyManagementServiceTest {
 		ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
 		verify(hashOps).putAll(eq(redisKey(created.hash())), fieldsCaptor.capture());
 		Map<String, String> stored = fieldsCaptor.getValue();
-		assertEquals("postgres://*", stored.get("allowedResources"));
-		assertEquals("postgres://secret/*", stored.get("deniedResources"));
-		assertEquals("", stored.get("allowedPrompts"));
-		assertEquals("admin_*", stored.get("deniedPrompts"));
+		assertEquals("[\"postgres://*\"]", stored.get("allowedResources"));
+		assertEquals("[\"postgres://secret/*\"]", stored.get("deniedResources"));
+		assertEquals("[]", stored.get("allowedPrompts"));
+		assertEquals("[\"admin_*\"]", stored.get("deniedPrompts"));
 	}
 
 	@Test
@@ -693,10 +693,10 @@ class KeyManagementServiceTest {
 		ArgumentCaptor<Map<String, String>> updateCaptor = ArgumentCaptor.forClass(Map.class);
 		verify(hashOps).putAll(eq(redisKey(hash)), updateCaptor.capture());
 		Map<String, String> written = updateCaptor.getValue();
-		assertEquals("postgres://*", written.get("allowedResources"));
-		assertEquals("postgres://secret/*", written.get("deniedResources"));
-		assertEquals("review_*", written.get("allowedPrompts"));
-		assertEquals("admin_*", written.get("deniedPrompts"));
+		assertEquals("[\"postgres://*\"]", written.get("allowedResources"));
+		assertEquals("[\"postgres://secret/*\"]", written.get("deniedResources"));
+		assertEquals("[\"review_*\"]", written.get("allowedPrompts"));
+		assertEquals("[\"admin_*\"]", written.get("deniedPrompts"));
 		assertEquals("true", written.get("injectionBlock"));
 	}
 }

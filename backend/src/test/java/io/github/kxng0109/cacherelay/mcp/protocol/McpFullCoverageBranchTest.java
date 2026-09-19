@@ -11,6 +11,7 @@ import io.github.kxng0109.cacherelay.mcp.hitl.McpAeadResumptionTokenService;
 import io.github.kxng0109.cacherelay.mcp.hitl.McpHitlSuspensionEngine;
 import io.github.kxng0109.cacherelay.mcp.resilience.McpServerCircuitBreakerManager;
 import io.github.kxng0109.cacherelay.mcp.router.*;
+import io.github.kxng0109.cacherelay.mcp.security.McpEgressMetrics;
 import io.github.kxng0109.cacherelay.mcp.security.McpGuardrailScanner;
 import io.github.kxng0109.cacherelay.mcp.security.McpJsonSchemaValidator;
 import io.github.kxng0109.cacherelay.mcp.security.McpToolRbacPolicyEngine;
@@ -27,6 +28,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import tools.jackson.databind.JsonNode;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
@@ -144,7 +146,8 @@ class McpFullCoverageBranchTest {
 		McpStreamableHttpController controller = new McpStreamableHttpController(
 				properties, catalogAggregator, router, rbacPolicyEngine,
 				jsonSchemaValidator, guardrailScanner, hitlSuspensionEngine,
-				circuitBreakerManager, keyManagementService, rateLimitEngine, httpClient, objectMapper
+				circuitBreakerManager, keyManagementService, rateLimitEngine, httpClient, objectMapper,
+				new McpEgressMetrics(new SimpleMeterRegistry())
 		);
 
 		// 1. Legacy SSE disabled
@@ -461,7 +464,8 @@ class McpFullCoverageBranchTest {
 		McpStreamableHttpController controller = new McpStreamableHttpController(
 				properties, catalogAggregator, router, rbacPolicyEngine,
 				jsonSchemaValidator, guardrailScanner, hitlSuspensionEngine,
-				circuitBreakerManager, keyManagementService, rateLimitEngine, httpClient, objectMapper
+				circuitBreakerManager, keyManagementService, rateLimitEngine, httpClient, objectMapper,
+				new McpEgressMetrics(new SimpleMeterRegistry())
 		);
 
 		VirtualApiKey apiKey = new VirtualApiKey(

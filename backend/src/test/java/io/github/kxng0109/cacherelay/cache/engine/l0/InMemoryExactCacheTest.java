@@ -14,6 +14,33 @@ import static org.assertj.core.api.Assertions.assertThat;
 class InMemoryExactCacheTest {
 
 	@Test
+	@DisplayName("entry weight counts payload bytes plus overhead (PERF-11)")
+	void weighEntryCountsPayload() {
+		CacheEntry entry = new CacheEntry(
+				"id1",
+				"tenant1",
+				CacheScope.TENANT,
+				"gpt-4o",
+				"prompt",
+				"sys",
+				"prefix",
+				"{}",
+				10,
+				20,
+				30,
+				Instant.now(),
+				1.0f,
+				null
+		);
+
+		int weight = InMemoryExactCache.weighEntry("key1", entry);
+
+		assertThat(weight).isEqualTo(512 + 2 * ("key1".length() + "prompt".length()
+				+ "{}".length() + "sys".length() + "prefix".length()));
+		assertThat(InMemoryExactCache.weighEntry(null, null)).isEqualTo(512);
+	}
+
+	@Test
 	@DisplayName("get, put, invalidate, and invalidateAll operate properly on Caffeine L0 cache")
 	void cacheOperations() {
 		CacheRelayCacheProperties props = new CacheRelayCacheProperties();

@@ -1,5 +1,7 @@
 package io.github.kxng0109.cacherelay.ledger.queue;
 
+import io.github.kxng0109.cacherelay.ledger.LedgerStagingEntry;
+import io.github.kxng0109.cacherelay.ledger.LedgerStagingRepository;
 import io.github.kxng0109.cacherelay.ledger.SpillwayJournalManager;
 import io.github.kxng0109.cacherelay.ledger.TokenUsageEvent;
 import io.github.kxng0109.cacherelay.ledger.UsageLedgerEntry;
@@ -15,10 +17,14 @@ import org.jspecify.annotations.Nullable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.SmartLifecycle;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -47,6 +53,19 @@ public class MicroBatchLedgerWriter implements SmartLifecycle {
 	private final int shutdownAwaitSeconds;
 	private final AtomicBoolean running = new AtomicBoolean(false);
 	private @Nullable ScheduledExecutorService scheduler;
+	private volatile @Nullable LedgerStagingRepository stagingRepository;
+
+	/**
+	 * Wires the shared staging table for cross-instance replay of failed batches.
+	 * Optional on purpose: without it, failed batches fall back to the per-pod
+	 * spillway journal only.
+	 *
+	 * @param stagingRepository the shared staging repository, if available
+	 */
+	@Autowired
+	public void setStagingRepository(@Nullable LedgerStagingRepository stagingRepository) {
+		this.stagingRepository = stagingRepository;
+	}
 
 	/**
 	 * Creates a new micro-batch ledger writer.
@@ -138,8 +157,12 @@ public class MicroBatchLedgerWriter implements SmartLifecycle {
 			return 0;
 		}
 
-		List<UsageLedgerEntry> entries = new ArrayList<>(drained);
-		for (TokenUsageEvent event : batch) {
+		List<TokenUsageEvent> fresh = dedupeEvents(batch);
+		if (fresh.isEmpty()) {
+			return 0;
+		}
+		List<UsageLedgerEntry> entries = new ArrayList<>(fresh.size());
+		for (TokenUsageEvent event : fresh) {
 			entries.add(new UsageLedgerEntry(
 					event.requestId(),
 					event.ownerId(),
@@ -171,17 +194,100 @@ public class MicroBatchLedgerWriter implements SmartLifecycle {
 			DistributionSummary.builder("cacherelay.ledger.batch.size")
 			                   .description("Rows per bulk flush")
 			                   .register(meterRegistry)
-			                   .record(drained);
-			recordBatchMetrics(batch);
-			return drained;
+			                   .record(fresh.size());
+			recordBatchMetrics(fresh);
+			return fresh.size();
 		} catch (Exception ex) {
 			log.warn(
-					"Database bulk insert of {} records failed: {}; spilling to disk journal",
-					drained, ex.getMessage()
+					"Database bulk insert of {} records failed: {}; staging for shared replay",
+					fresh.size(), ex.getMessage()
 			);
-			spillwayJournal.appendBatch(batch, "DB batch write failed: " + ex.getMessage());
+			if (!stageForSharedReplay(fresh)) {
+				spillwayJournal.appendBatch(fresh, "DB batch write failed: " + ex.getMessage());
+			}
 			return 0;
 		}
+	}
+
+	/**
+	 * Parks a failed batch in the shared staging table for replay by any instance
+	 * (preserving the pre-PERF-03 listener contract at batch granularity). Duplicates
+	 * already staged elsewhere are benign success; any other staging failure falls
+	 * through to the per-pod spillway journal below.
+	 *
+	 * @param batch failed events
+	 * @return {@code true} when the spillway path must be skipped
+	 */
+	private boolean stageForSharedReplay(List<TokenUsageEvent> batch) {
+		LedgerStagingRepository staging = this.stagingRepository;
+		if (staging == null || batch.isEmpty()) {
+			return false;
+		}
+		try {
+			List<LedgerStagingEntry> rows = new ArrayList<>(batch.size());
+			for (TokenUsageEvent event : batch) {
+				rows.add(LedgerStagingEntry.pendingFrom(event));
+			}
+			staging.saveAll(rows);
+			staging.flush();
+			return true;
+		} catch (DataIntegrityViolationException duplicate) {
+			return true;
+		} catch (RuntimeException ex) {
+			log.debug("Staging unavailable, falling back to disk journal: {}", ex.getMessage());
+			return false;
+		}
+	}
+
+	/**
+	 * Filters a drained batch to fresh events (PERF-03): within-batch duplicates collapse
+	 * to the first occurrence and already-persisted ids are removed with one batch
+	 * existence SELECT (replacing the old per-row check), so retries can never double-record.
+	 * A failed existence check persists everything (dedupe is best-effort; the unique
+	 * constraint remains the final guard).
+	 *
+	 * @param batch drained events
+	 * @return fresh events in original order
+	 */
+	private List<TokenUsageEvent> dedupeEvents(List<TokenUsageEvent> batch) {
+		Set<UUID> kept = new HashSet<>();
+		List<TokenUsageEvent> unique = new ArrayList<>(batch.size());
+		for (TokenUsageEvent event : batch) {
+			if (event != null && event.requestId() != null && kept.add(event.requestId())) {
+				unique.add(event);
+			}
+		}
+		if (unique.isEmpty()) {
+			return unique;
+		}
+		List<UUID> ids = new ArrayList<>(unique.size());
+		for (TokenUsageEvent event : unique) {
+			ids.add(event.requestId());
+		}
+		Set<UUID> storedIds = new HashSet<>();
+		try {
+			List<UsageLedgerEntry> stored = repository.findByRequestIdIn(ids);
+			if (stored != null) {
+				for (UsageLedgerEntry existing : stored) {
+					if (existing != null && existing.getRequestId() != null) {
+						storedIds.add(existing.getRequestId());
+					}
+				}
+			}
+		} catch (Exception ex) {
+			log.debug("Batch existence check unavailable, persisting without dedupe: {}", ex.getMessage());
+			return unique;
+		}
+		if (storedIds.isEmpty()) {
+			return unique;
+		}
+		List<TokenUsageEvent> fresh = new ArrayList<>(unique.size());
+		for (TokenUsageEvent event : unique) {
+			if (!storedIds.contains(event.requestId())) {
+				fresh.add(event);
+			}
+		}
+		return fresh;
 	}
 
 	void replayCycle() {

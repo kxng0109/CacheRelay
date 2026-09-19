@@ -64,64 +64,94 @@ public class PiiScanner {
 			return entities;
 		}
 
+		// PERF-05: single cheap character pre-pass. Every pattern below except email
+		// and honorific names requires an ASCII digit, and email requires '@'; patterns
+		// whose required character is absent cannot match, so their regex scans are
+		// skipped with identical verdicts (Java \d is ASCII-only without
+		// UNICODE_CHARACTER_CLASS, matching the gate exactly).
+		boolean hasDigit = false;
+		boolean hasAt = false;
+		for (int i = 0; i < text.length(); i++) {
+			char c = text.charAt(i);
+			if (c >= '0' && c <= '9') {
+				hasDigit = true;
+			} else if (c == '@') {
+				hasAt = true;
+			}
+			if (hasDigit && hasAt) {
+				break;
+			}
+		}
+
 		// 1. US SSN
-		Matcher ssnMatcher = US_SSN_PATTERN.matcher(text);
-		while (ssnMatcher.find()) {
-			entities.add(new PiiEntity(
-					PiiType.US_SSN,
-					ssnMatcher.group(),
-					null,
-					ssnMatcher.start(),
-					ssnMatcher.end(),
-					1.0
-			));
-		}
-
-		// 2. Email Address
-		Matcher emailMatcher = EMAIL_PATTERN.matcher(text);
-		while (emailMatcher.find()) {
-			entities.add(new PiiEntity(
-					PiiType.EMAIL,
-					emailMatcher.group(),
-					null,
-					emailMatcher.start(),
-					emailMatcher.end(),
-					1.0
-			));
-		}
-
-		// 3. Nigerian E.164 Phone
-		Matcher ngPhoneMatcher = NIGERIAN_E164_PHONE.matcher(text);
-		while (ngPhoneMatcher.find()) {
-			entities.add(new PiiEntity(
-					PiiType.PHONE_E164,
-					ngPhoneMatcher.group(),
-					null,
-					ngPhoneMatcher.start(),
-					ngPhoneMatcher.end(),
-					0.98
-			));
-		}
-
-		// 4. Generic E.164 Phone
-		Matcher genericPhoneMatcher = GENERIC_E164_PHONE.matcher(text);
-		while (genericPhoneMatcher.find()) {
-			int start = genericPhoneMatcher.start();
-			int end = genericPhoneMatcher.end();
-			if (!isOverlapping(entities, start, end)) {
+		if (hasDigit) {
+			Matcher ssnMatcher = US_SSN_PATTERN.matcher(text);
+			while (ssnMatcher.find()) {
 				entities.add(new PiiEntity(
-						PiiType.PHONE_E164,
-						genericPhoneMatcher.group(),
+						PiiType.US_SSN,
+						ssnMatcher.group(),
 						null,
-						start,
-						end,
-						0.90
+						ssnMatcher.start(),
+						ssnMatcher.end(),
+						1.0
 				));
 			}
 		}
 
+		// 2. Email Address
+		if (hasAt) {
+			Matcher emailMatcher = EMAIL_PATTERN.matcher(text);
+			while (emailMatcher.find()) {
+				entities.add(new PiiEntity(
+						PiiType.EMAIL,
+						emailMatcher.group(),
+						null,
+						emailMatcher.start(),
+						emailMatcher.end(),
+						1.0
+				));
+			}
+		}
+
+		// 3. Nigerian E.164 Phone
+		// 4. Generic E.164 Phone
+		if (hasDigit) {
+			Matcher ngPhoneMatcher = NIGERIAN_E164_PHONE.matcher(text);
+			while (ngPhoneMatcher.find()) {
+				entities.add(new PiiEntity(
+						PiiType.PHONE_E164,
+						ngPhoneMatcher.group(),
+						null,
+						ngPhoneMatcher.start(),
+						ngPhoneMatcher.end(),
+						0.98
+				));
+			}
+
+			Matcher genericPhoneMatcher = GENERIC_E164_PHONE.matcher(text);
+			while (genericPhoneMatcher.find()) {
+				int start = genericPhoneMatcher.start();
+				int end = genericPhoneMatcher.end();
+				if (!isOverlapping(entities, start, end)) {
+					entities.add(new PiiEntity(
+							PiiType.PHONE_E164,
+							genericPhoneMatcher.group(),
+							null,
+							start,
+							end,
+							0.90
+					));
+				}
+			}
+		}
+
 		// 5. IBAN (with ISO 7064 Mod-97-10 check)
-		Matcher ibanMatcher = IBAN_CANDIDATE.matcher(text);
+		// 6. Payment Cards (Verve, Visa, Mastercard)
+		// 7. Nigerian FIRS TIN
+		// 8. 11-Digit Disambiguation (Phone vs BVN vs NIN)
+		// All four require ASCII digits (see the pre-pass above).
+		if (hasDigit) {
+			Matcher ibanMatcher = IBAN_CANDIDATE.matcher(text);
 		while (ibanMatcher.find()) {
 			String candidate = ibanMatcher.group();
 			if (IbanValidator.isValid(candidate)) {
@@ -168,21 +198,22 @@ public class PiiScanner {
 		}
 
 		// 8. 11-Digit Disambiguation (Phone vs BVN vs NIN)
-		Matcher elevenDigitMatcher = ELEVEN_DIGIT_CANDIDATE.matcher(text);
-		while (elevenDigitMatcher.find()) {
-			int start = elevenDigitMatcher.start(1);
-			int end = elevenDigitMatcher.end(1);
-			if (!isOverlapping(entities, start, end)) {
-				String candidate = elevenDigitMatcher.group(1);
-				PiiDisambiguationEngine.disambiguate(candidate, text, start)
-				                       .ifPresent(res -> entities.add(new PiiEntity(
-						                       res.type(),
-						                       candidate,
-						                       null,
-						                       start,
-						                       end,
-						                       res.confidence()
-				                       )));
+			Matcher elevenDigitMatcher = ELEVEN_DIGIT_CANDIDATE.matcher(text);
+			while (elevenDigitMatcher.find()) {
+				int start = elevenDigitMatcher.start(1);
+				int end = elevenDigitMatcher.end(1);
+				if (!isOverlapping(entities, start, end)) {
+					String candidate = elevenDigitMatcher.group(1);
+					PiiDisambiguationEngine.disambiguate(candidate, text, start)
+					                       .ifPresent(res -> entities.add(new PiiEntity(
+							                       res.type(),
+							                       candidate,
+							                       null,
+							                       start,
+							                       end,
+							                       res.confidence()
+					                       )));
+				}
 			}
 		}
 

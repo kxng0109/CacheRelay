@@ -21,6 +21,7 @@ import tools.jackson.databind.node.ObjectNode;
 
 import java.net.URI;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
@@ -158,7 +159,7 @@ class McpHitlSuspensionEngineTest {
 				params
 		);
 
-		when(valueOperations.get("mcp:hitl:approved:tok-approved-1")).thenReturn("APPROVED");
+		when(redisTemplate.execute(any(), anyList(), any(Object[].class))).thenReturn(1L);
 
 		Optional<McpJsonRpcResponse> cleared = suspensionEngine.evaluateOrSuspend(
 				request,
@@ -169,8 +170,10 @@ class McpHitlSuspensionEngineTest {
 		);
 
 		assertThat(cleared).isEmpty(); // Cleared to execute!
-		verify(redisTemplate).delete("mcp:hitl:approved:tok-approved-1");
-		verify(redisTemplate).delete("mcp:hitl:pending:tok-approved-1");
+		verify(redisTemplate).execute(any(), eq(List.of(
+				"mcp:hitl:approved:tok-approved-1",
+				"mcp:hitl:pending:tok-approved-1"
+		)), eq("APPROVED"));
 	}
 
 	@Test
@@ -203,7 +206,7 @@ class McpHitlSuspensionEngineTest {
 				params
 		);
 
-		when(valueOperations.get("mcp:hitl:approved:tok-pending-1")).thenReturn(null); // Not approved
+		when(redisTemplate.execute(any(), anyList(), any(Object[].class))).thenReturn(0L); // Not approved
 
 		Optional<McpJsonRpcResponse> suspendedOpt = suspensionEngine.evaluateOrSuspend(
 				request,
