@@ -251,6 +251,9 @@ gateway:
   pricing:
     source-url: ${GATEWAY_PRICING_URL:https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json}
     refresh-cron: ${GATEWAY_PRICING_REFRESH_CRON:0 0 3 * * *}
+    fetch-timeout-seconds: ${GATEWAY_PRICING_FETCH_TIMEOUT_SECONDS:30}
+    max-attempts: ${GATEWAY_PRICING_MAX_ATTEMPTS:5}
+    backoff-base-seconds: ${GATEWAY_PRICING_BACKOFF_BASE_SECONDS:5}
     snapshot-ttl-minutes: ${GATEWAY_PRICING_SNAPSHOT_TTL_MINUTES:15}
     snapshot-maximum-size: ${GATEWAY_PRICING_SNAPSHOT_MAXIMUM_SIZE:1}
   ledger:
