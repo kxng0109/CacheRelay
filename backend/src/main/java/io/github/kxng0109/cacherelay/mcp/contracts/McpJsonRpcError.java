@@ -84,6 +84,18 @@ public record McpJsonRpcError(
 				+ Math.max(1, retryAfterSeconds) + "s");
 	}
 
+	/**
+	 * Tool output blocked by the egress injection policy. Surfaced as {@code INTERNAL_ERROR}
+	 * (-32603): blocking is a local implementation decision, and the MCP spec forbids emitting
+	 * undefined codes from the -32020..-32099 sub-range. The offending output is never returned.
+	 *
+	 * @param toolName namespaced tool whose output was blocked
+	 */
+	public static McpJsonRpcError policyBlocked(String toolName) {
+		return internalError("Tool output blocked by egress policy: indirect prompt injection "
+				+ "markers detected in '" + toolName + "'");
+	}
+
 	public static McpJsonRpcError headerMismatch(String detail) {
 		return new McpJsonRpcError(HEADER_MISMATCH, "Header mismatch: " + detail, null);
 	}

@@ -18,6 +18,10 @@ import java.util.Set;
  * @param allowedProviders allowed providers
  * @param allowedTools     allowed tools
  * @param deniedTools      denied tools
+ * @param allowedResources visible resource URI globs
+ * @param deniedResources  hidden resource URI globs
+ * @param allowedPrompts   visible prompt globs
+ * @param deniedPrompts    hidden prompt globs
  * @param enabled          whether the key is active
  * @param createdAt        creation timestamp
  */
@@ -53,6 +57,21 @@ public record KeyResponse(
 		@Schema(description = "Denied MCP tools", example = "[\"*:delete_*\"]")
 		Set<String> deniedTools,
 
+		@Schema(description = "Visible resource URI globs", example = "[\"postgres://*\"]")
+		Set<String> allowedResources,
+
+		@Schema(description = "Hidden resource URI globs", example = "[\"postgres://secret/*\"]")
+		Set<String> deniedResources,
+
+		@Schema(description = "Visible prompt globs", example = "[\"review_*\"]")
+		Set<String> allowedPrompts,
+
+		@Schema(description = "Hidden prompt globs", example = "[\"admin_*\"]")
+		Set<String> deniedPrompts,
+
+		@Schema(description = "Whether indirect prompt injection blocks tool delivery", example = "true")
+		boolean injectionBlock,
+
 		@Schema(description = "Whether key is enabled", example = "true")
 		boolean enabled,
 
@@ -82,6 +101,91 @@ public record KeyResponse(
 				allowedProviders,
 				Set.of(),
 				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				true,
+				enabled,
+				createdAt
+		);
+	}
+
+	/**
+	 * Backwards-compatible constructor omitting resource/prompt visibility sets.
+	 */
+	public KeyResponse(
+			String keyId,
+			String keyPrefix,
+			String ownerId,
+			String name,
+			int rpmLimit,
+			int tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			boolean enabled,
+			Instant createdAt
+	) {
+		this(
+				keyId,
+				keyPrefix,
+				ownerId,
+				name,
+				rpmLimit,
+				tpmLimit,
+				allowedModels,
+				allowedProviders,
+				allowedTools,
+				deniedTools,
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				true,
+				enabled,
+				createdAt
+		);
+	}
+
+	/**
+	 * Backwards-compatible constructor omitting the injection handling flag.
+	 */
+	public KeyResponse(
+			String keyId,
+			String keyPrefix,
+			String ownerId,
+			String name,
+			int rpmLimit,
+			int tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts,
+			boolean enabled,
+			Instant createdAt
+	) {
+		this(
+				keyId,
+				keyPrefix,
+				ownerId,
+				name,
+				rpmLimit,
+				tpmLimit,
+				allowedModels,
+				allowedProviders,
+				allowedTools,
+				deniedTools,
+				allowedResources,
+				deniedResources,
+				allowedPrompts,
+				deniedPrompts,
+				true,
 				enabled,
 				createdAt
 		);

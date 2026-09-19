@@ -19,6 +19,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
@@ -81,6 +82,211 @@ class AdminKeyControllerTest {
 		assertThat(responseTools.getStatusCode()).isEqualTo(HttpStatus.CREATED);
 		assertThat(responseTools.getBody().allowedTools()).containsExactly("postgres__*");
 		assertThat(responseTools.getBody().deniedTools()).containsExactly("*:delete_*");
+	}
+
+	@Test
+	@DisplayName("createKey forwards resource and prompt visibility sets")
+	void createKeyForwardsVisibility() {
+		SHA256Hash hash = SHA256Hash.fromRawKey("gw-secretVis1");
+		VirtualApiKey metadata = new VirtualApiKey(
+				hash, "gw-", "owner-1", "vis-key", 60, 1000,
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of("postgres://*"), Set.of(),
+				Set.of(), Set.of("admin_*"),
+				true,
+				true, Instant.now()
+		);
+		when(keyManagementService.createKey(
+				"owner-1", "vis-key", 60, 1000,
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of("postgres://*"), Set.of(),
+				Set.of(), Set.of("admin_*")
+		)).thenReturn(new KeyManagementService.CreatedKey(hash, "gw-secretVis1", metadata));
+
+		CreateKeyRequest request = new CreateKeyRequest(
+				"owner-1", "vis-key", 60, 1000,
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of("postgres://*"), Set.of(),
+				Set.of(), Set.of("admin_*")
+		);
+
+		ResponseEntity<CreatedKeyResponse> response = controller.createKey(request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+		assertThat(response.getBody().allowedResources()).containsExactly("postgres://*");
+		assertThat(response.getBody().deniedPrompts()).containsExactly("admin_*");
+	}
+
+	@Test
+	@DisplayName("createKey forwards an explicit injection flag")
+	void createKeyForwardsInjectionFlag() {
+		SHA256Hash hash = SHA256Hash.fromRawKey("gw-secretFlag1");
+		VirtualApiKey metadata = new VirtualApiKey(
+				hash, "gw-", "owner-1", "flag-key", 60, 1000,
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				false,
+				true, Instant.now()
+		);
+		when(keyManagementService.createKey(
+				eq("owner-1"), eq("flag-key"), eq(60), eq(1000),
+				eq(Set.of()), eq(Set.of()),
+				eq(Set.of()), eq(Set.of()),
+				eq(Set.of()), eq(Set.of()),
+				eq(Set.of()), eq(Set.of()),
+				eq(false)
+		)).thenReturn(new KeyManagementService.CreatedKey(hash, "gw-secretFlag1", metadata));
+
+		CreateKeyRequest request = new CreateKeyRequest(
+				"owner-1", "flag-key", 60, 1000,
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				false
+		);
+
+		ResponseEntity<CreatedKeyResponse> response = controller.createKey(request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+		assertThat(response.getBody().injectionBlock()).isFalse();
+	}
+
+	@Test
+	@DisplayName("updateKey forwards an explicit injection flag")
+	void updateKeyForwardsInjectionFlag() {
+		SHA256Hash hash = SHA256Hash.fromRawKey("gw-secretFlag2");
+		VirtualApiKey metadata = new VirtualApiKey(
+				hash, "gw-", "owner-1", "flag-key", 60, 1000,
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				false,
+				true, Instant.now()
+		);
+		when(keyManagementService.updateKey(
+				eq(hash), eq(null), eq(null), eq(null),
+				eq(null), eq(null),
+				eq(null), eq(null),
+				eq(null), eq(null),
+				eq(null), eq(null),
+				eq(false), eq(null)
+		)).thenReturn(Optional.of(metadata));
+
+		UpdateKeyRequest request = new UpdateKeyRequest(
+				null, null, null,
+				null, null,
+				null, null,
+				null, null,
+				null, null,
+				false, null
+		);
+
+		ResponseEntity<KeyResponse> response = controller.updateKey(hash.hex(), request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody().injectionBlock()).isFalse();
+	}
+
+	@Test
+	@DisplayName("create and update cover remaining visibility combinations")
+	void visibilityCombinations() {
+		SHA256Hash hash = SHA256Hash.fromRawKey("gw-secretCombo1");
+		VirtualApiKey metadata = new VirtualApiKey(
+				hash, "gw-", "owner-1", "combo-key", 60, 1000,
+				Set.of(), Set.of(),
+				Set.of("postgres__*"), Set.of(),
+				Set.of(), Set.of("postgres://secret/*"),
+				Set.of("review_*"), Set.of(),
+				true,
+				true, Instant.now()
+		);
+		when(keyManagementService.createKey(
+				eq("owner-1"), eq("combo-key"), eq(60), eq(1000),
+				eq(Set.of()), eq(Set.of()),
+				eq(Set.of("postgres__*")), eq(Set.of()),
+				eq(Set.of()), eq(Set.of("postgres://secret/*")),
+				eq(Set.of("review_*")), eq(Set.of())
+		)).thenReturn(new KeyManagementService.CreatedKey(hash, "gw-secretCombo1", metadata));
+
+		CreateKeyRequest create = new CreateKeyRequest(
+				"owner-1", "combo-key", 60, 1000,
+				Set.of(), Set.of(),
+				Set.of("postgres__*"), Set.of(),
+				Set.of(), Set.of("postgres://secret/*"),
+				Set.of("review_*"), Set.of()
+		);
+
+		ResponseEntity<CreatedKeyResponse> created = controller.createKey(create);
+
+		assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+		assertThat(created.getBody().deniedResources()).containsExactly("postgres://secret/*");
+		assertThat(created.getBody().allowedPrompts()).containsExactly("review_*");
+
+		when(keyManagementService.updateKey(
+				eq(hash), eq(null), eq(null), eq(null),
+				eq(null), eq(null),
+				eq(null), eq(null),
+				eq(Set.of("postgres://*")), eq(Set.of()),
+				eq(null), eq(null),
+				eq(null)
+		)).thenReturn(Optional.of(metadata));
+
+		UpdateKeyRequest update = new UpdateKeyRequest(
+				null, null, null,
+				null, null,
+				null, null,
+				Set.of("postgres://*"), Set.of(),
+				null, null,
+				null, null
+		);
+
+		ResponseEntity<KeyResponse> updated = controller.updateKey(hash.hex(), update);
+
+		assertThat(updated.getStatusCode()).isEqualTo(HttpStatus.OK);
+	}
+
+	@Test
+	@DisplayName("create with tools and an explicit flag takes the full path")
+	void createToolsPlusFlag() {
+		SHA256Hash hash = SHA256Hash.fromRawKey("gw-secretCombo2");
+		VirtualApiKey metadata = new VirtualApiKey(
+				hash, "gw-", "owner-1", "combo2-key", 60, 1000,
+				Set.of(), Set.of(),
+				Set.of("postgres__*"), Set.of(),
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				true,
+				true, Instant.now()
+		);
+		when(keyManagementService.createKey(
+				eq("owner-1"), eq("combo2-key"), eq(60), eq(1000),
+				eq(Set.of()), eq(Set.of()),
+				eq(Set.of("postgres__*")), eq(Set.of()),
+				eq(Set.of()), eq(Set.of()),
+				eq(Set.of()), eq(Set.of()),
+				eq(true)
+		)).thenReturn(new KeyManagementService.CreatedKey(hash, "gw-secretCombo2", metadata));
+
+		CreateKeyRequest request = new CreateKeyRequest(
+				"owner-1", "combo2-key", 60, 1000,
+				Set.of(), Set.of(),
+				Set.of("postgres__*"), Set.of(),
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				true
+		);
+
+		ResponseEntity<CreatedKeyResponse> response = controller.createKey(request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+		assertThat(response.getBody().injectionBlock()).isTrue();
 	}
 
 	@Test

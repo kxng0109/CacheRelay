@@ -231,6 +231,12 @@ Supported methods: `initialize`, `ping`, `tools/list`, `tools/call`, `resources/
 - **Tool-level RBAC/ABAC**: every virtual API key carries `allowedTools` / `deniedTools` glob policies (e.g.
   `postgres__*`, `*:delete_*`). Tools are pruned from `tools/list` per caller and denied at `tools/call` with JSON-RPC
   error `-32603`.
+- **Resource/prompt visibility**: keys carry `allowedResources` / `deniedResources` (URI globs, e.g.
+  `postgres://*`) and `allowedPrompts` / `deniedPrompts` (name globs); deny wins, empty means visible, and null
+  callers fail closed to an empty catalog. Keys stored before these fields default to fully visible.
+- **Egress injection policy**: indirect prompt injection markers in tool output block delivery by default
+  (JSON-RPC `-32603`, offending output never returned); per-key `injectionBlock` lets an admin flip
+  noisy-but-legitimate keys to warn-and-deliver.
 - **JSON Schema Draft 2020-12 parameter validation**: tool arguments are validated strictly (required fields, types,
   string bounds, regex formats, IEEE 754 safe-integer limits, `additionalProperties: false`) with dangerous-path
   pre-filtering for path traversal and command separators.

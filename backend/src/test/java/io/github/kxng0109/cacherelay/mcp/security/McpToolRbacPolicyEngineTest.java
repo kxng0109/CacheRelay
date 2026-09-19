@@ -2,6 +2,8 @@ package io.github.kxng0109.cacherelay.mcp.security;
 
 import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
 import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
+import io.github.kxng0109.cacherelay.mcp.contracts.McpPromptDefinition;
+import io.github.kxng0109.cacherelay.mcp.contracts.McpResourceDefinition;
 import io.github.kxng0109.cacherelay.mcp.contracts.McpToolDefinition;
 import io.github.kxng0109.cacherelay.mcp.router.McpAggregatedCatalog;
 import org.junit.jupiter.api.BeforeEach;
@@ -120,5 +122,140 @@ class McpToolRbacPolicyEngineTest {
 		// Null handling
 		assertThat(rbacEngine.filterCatalog(null, pgOnlyKey).tools()).isEmpty();
 		assertThat(rbacEngine.filterCatalog(globalCatalog, null).tools()).isEmpty();
+		assertThat(rbacEngine.filterCatalog(globalCatalog, null).resources()).isEmpty();
+		assertThat(rbacEngine.filterCatalog(globalCatalog, null).prompts()).isEmpty();
+	}
+
+	@Test
+	@DisplayName("resource visibility follows URI globs with deny precedence")
+	void resourceVisibility() {
+		VirtualApiKey key = keyWithResources(Set.of("postgres://*"), Set.of("postgres://secret/*"));
+
+		assertThat(rbacEngine.isResourceVisible("postgres://table/orders", key)).isTrue();
+		assertThat(rbacEngine.isResourceVisible("postgres://secret/keys", key)).isFalse();
+		assertThat(rbacEngine.isResourceVisible("github://repo/main", key)).isFalse();
+		assertThat(rbacEngine.isResourceVisible(null, key)).isFalse();
+		assertThat(rbacEngine.isResourceVisible("postgres://table/orders", null)).isFalse();
+	}
+
+	@Test
+	@DisplayName("prompt visibility follows name globs with deny precedence")
+	void promptVisibility() {
+		VirtualApiKey key = keyWithPrompts(Set.of(), Set.of("admin_*"));
+
+		assertThat(rbacEngine.isPromptVisible("review_code", key)).isTrue();
+		assertThat(rbacEngine.isPromptVisible("admin_reset", key)).isFalse();
+		assertThat(rbacEngine.isPromptVisible(null, key)).isFalse();
+	}
+
+	@Test
+	@DisplayName("filterCatalog prunes hidden resources and prompts")
+	void filterCatalogPrunesResourcesAndPrompts() {
+		McpResourceDefinition open = new McpResourceDefinition("postgres://table/orders",
+				"orders", null, null, null);
+		McpResourceDefinition secret = new McpResourceDefinition("postgres://secret/keys",
+				"keys", null, null, null);
+		McpPromptDefinition review = new McpPromptDefinition("review_code", null, List.of(), null);
+		McpPromptDefinition admin = new McpPromptDefinition("admin_reset", null, List.of(), null);
+		McpAggregatedCatalog catalog = new McpAggregatedCatalog(
+				List.of(),
+				List.of(open, secret),
+				List.of(review, admin),
+				Instant.now());
+		VirtualApiKey key = new VirtualApiKey(
+				SHA256Hash.fromRawKey("gw-key-rbac"),
+				"gw-",
+				"tenant-1",
+				"rbac-key",
+				100,
+				1000,
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of("postgres://*"),
+				Set.of("postgres://secret/*"),
+				Set.of(),
+				Set.of("admin_*"),
+				true,
+				true,
+				Instant.now());
+
+		McpAggregatedCatalog filtered = rbacEngine.filterCatalog(catalog, key);
+
+		assertThat(filtered.resources()).containsExactly(open);
+		assertThat(filtered.prompts()).containsExactly(review);
+	}
+
+	@Test
+	@DisplayName("blank inputs deny and keys without lists permit everything")
+	void blankAndDefaultPermit() {
+		VirtualApiKey openKey = new VirtualApiKey(
+				SHA256Hash.fromRawKey("gw-key-open"),
+				"gw-",
+				"tenant-1",
+				"open-key",
+				100,
+				1000,
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				null,
+				null,
+				null,
+				null,
+				true,
+				true,
+				Instant.now());
+
+		assertThat(rbacEngine.isResourceVisible("   ", openKey)).isFalse();
+		assertThat(rbacEngine.isPromptVisible("", openKey)).isFalse();
+		assertThat(rbacEngine.isResourceVisible("postgres://table/orders", openKey)).isTrue();
+		assertThat(rbacEngine.isPromptVisible("review_code", openKey)).isTrue();
+		assertThat(openKey.allowedResources()).isEmpty();
+		assertThat(openKey.deniedPrompts()).isEmpty();
+	}
+
+	private VirtualApiKey keyWithResources(Set<String> allowed, Set<String> denied) {
+		return new VirtualApiKey(
+				SHA256Hash.fromRawKey("gw-key-res"),
+				"gw-",
+				"tenant-1",
+				"res-key",
+				100,
+				1000,
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				allowed,
+				denied,
+				Set.of(),
+				Set.of(),
+				true,
+				true,
+				Instant.now());
+	}
+
+	private VirtualApiKey keyWithPrompts(Set<String> allowed, Set<String> denied) {
+		return new VirtualApiKey(
+				SHA256Hash.fromRawKey("gw-key-prompt"),
+				"gw-",
+				"tenant-1",
+				"prompt-key",
+				100,
+				1000,
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				allowed,
+				denied,
+				true,
+				true,
+				Instant.now());
 	}
 }

@@ -23,6 +23,8 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -56,8 +58,8 @@ class ModelControllerTest {
 
 		assertThat(listed.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(listed.getBody().get("object")).isEqualTo("list");
-		List<Map<String, Object>> data
-				= (List<Map<String, Object>>) listed.getBody().get("data");
+		List<Map<String, Object>> data =
+				(List<Map<String, Object>>) listed.getBody().get("data");
 		assertThat(data).hasSize(2);
 		assertThat(data.get(0).get("id")).isEqualTo("claude-sonnet-5");
 		assertThat(data.get(0).get("owned_by")).isEqualTo("anthropic");
@@ -69,8 +71,7 @@ class ModelControllerTest {
 
 	@Test
 	@DisplayName("missing, unknown, and disabled keys are 401")
-	void rejectsBadKeys() {
-		assertThat(controller.listModels(new MockHttpServletRequest()).getStatusCode())
+	void rejectsBadKeys() {		assertThat(controller.listModels(new MockHttpServletRequest()).getStatusCode())
 				.isEqualTo(HttpStatus.UNAUTHORIZED);
 
 		when(keys.findByHash(any())).thenReturn(Optional.empty());
@@ -91,6 +92,33 @@ class ModelControllerTest {
 
 		assertThat(empty.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(empty.getBody().get("data")).isEqualTo(List.of());
+	}
+
+	@Test
+	@DisplayName("non-Bearer credentials are 401 without a lookup")
+	void rejectsNonBearer() {
+		MockHttpServletRequest request = new MockHttpServletRequest("GET", "/v1/models");
+		request.addHeader("Authorization", "Basic dXNlcjpwYXNz");
+
+		ResponseEntity<Map<String, Object>> response = controller.listModels(request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+		verify(keys, never()).findByHash(any());
+	}
+
+	@Test
+	@DisplayName("aliases without a chain owned by the gateway itself")
+	@SuppressWarnings("unchecked")
+	void emptyChainOwnedByGateway() {
+		gatewayProperties.setAliases(Map.of("lonely", new ModelAlias(List.of(), null)));
+
+		ResponseEntity<Map<String, Object>> response = controller.listModels(bearerRequest("gw-test-key"));
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		List<Map<String, Object>> data =
+				(List<Map<String, Object>>) response.getBody().get("data");
+		assertThat(data).hasSize(1);
+		assertThat(data.getFirst().get("owned_by")).isEqualTo("cacherelay");
 	}
 
 	private MockHttpServletRequest bearerRequest(String token) {

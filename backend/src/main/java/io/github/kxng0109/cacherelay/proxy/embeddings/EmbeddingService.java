@@ -285,6 +285,17 @@ public class EmbeddingService {
 		}
 	}
 
+	/**
+	 * Resolves the upstream provider name for a model alias without executing anything.
+	 * Throws the same 404 as {@link #processEmbedding} for unknown models.
+	 *
+	 * @param model requested model alias
+	 * @return upstream provider name
+	 */
+	public String resolveProviderName(String model) {
+		return resolveTarget(model).config().name();
+	}
+
 	private ResolvedEmbeddingTarget resolveTarget(String model) {
 		ModelAlias alias = gatewayProperties.getAliases().get(model);
 		if (alias != null && !alias.chain().isEmpty()) {

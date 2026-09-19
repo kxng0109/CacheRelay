@@ -156,7 +156,12 @@ public class KeyManagementService {
 				template.allowedModels(),
 				template.allowedProviders(),
 				template.allowedTools(),
-				template.deniedTools()
+				template.deniedTools(),
+				template.allowedResources(),
+				template.deniedResources(),
+				template.allowedPrompts(),
+				template.deniedPrompts(),
+				true
 		);
 		return plaintext;
 	}
@@ -207,6 +212,82 @@ public class KeyManagementService {
 			Set<String> allowedTools,
 			Set<String> deniedTools
 	) {
+		return createKey(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders,
+				allowedTools, deniedTools, Set.of(), Set.of(), Set.of(), Set.of());
+	}
+
+	/**
+	 * Creates a new virtual API key with full governance rules including resource and
+	 * prompt visibility.
+	 *
+	 * @param ownerId          owner identifier
+	 * @param name             label for the key
+	 * @param rpmLimit         requests per minute limit (0 = unlimited)
+	 * @param tpmLimit         tokens per minute limit (0 = unlimited)
+	 * @param allowedModels    allowed model names (empty = all)
+	 * @param allowedProviders allowed provider names (empty = all)
+	 * @param allowedTools     allowed tool names or glob patterns (empty = all)
+	 * @param deniedTools      denied tool names or glob patterns (empty = none)
+	 * @param allowedResources allowed resource URI globs (empty = all visible)
+	 * @param deniedResources  denied resource URI globs (empty = none hidden)
+	 * @param allowedPrompts   allowed prompt name globs (empty = all visible)
+	 * @param deniedPrompts    denied prompt name globs (empty = none hidden)
+	 * @param injectionBlock   whether indirect prompt injection blocks delivery (null = keep default block)
+	 * @return the created key object containing the plaintext and metadata
+	 */
+	public CreatedKey createKey(
+			String ownerId,
+			String name,
+			int rpmLimit,
+			int tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts
+	) {
+		return createKey(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders,
+				allowedTools, deniedTools, allowedResources, deniedResources, allowedPrompts,
+				deniedPrompts, null);
+	}
+
+	/**
+	 * Creates a new virtual API key with full governance rules including resource,
+	 * prompt, and injection handling.
+	 *
+	 * @param ownerId          owner identifier
+	 * @param name             label for the key
+	 * @param rpmLimit         requests per minute limit (0 = unlimited)
+	 * @param tpmLimit         tokens per minute limit (0 = unlimited)
+	 * @param allowedModels    allowed model names (empty = all)
+	 * @param allowedProviders allowed provider names (empty = all)
+	 * @param allowedTools     allowed tool names or glob patterns (empty = all)
+	 * @param deniedTools      denied tool names or glob patterns (empty = none)
+	 * @param allowedResources allowed resource URI globs (empty = all visible)
+	 * @param deniedResources  denied resource URI globs (empty = none hidden)
+	 * @param allowedPrompts   allowed prompt name globs (empty = all visible)
+	 * @param deniedPrompts    denied prompt name globs (empty = none hidden)
+	 * @param injectionBlock   whether indirect prompt injection blocks delivery (null = default block)
+	 * @return the created key object containing the plaintext and metadata
+	 */
+	public CreatedKey createKey(
+			String ownerId,
+			String name,
+			int rpmLimit,
+			int tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts,
+			Boolean injectionBlock
+	) {
 		String plaintext = randomPlaintext();
 		Instant now = Instant.now();
 		SHA256Hash hash = SHA256Hash.fromRawKey(plaintext);
@@ -222,6 +303,11 @@ public class KeyManagementService {
 				allowedProviders,
 				allowedTools,
 				deniedTools,
+				allowedResources,
+				deniedResources,
+				allowedPrompts,
+				deniedPrompts,
+				injectionBlock == null || injectionBlock,
 				true,
 				now
 		);
@@ -234,7 +320,12 @@ public class KeyManagementService {
 				allowedModels,
 				allowedProviders,
 				allowedTools,
-				deniedTools
+				deniedTools,
+				allowedResources,
+				deniedResources,
+				allowedPrompts,
+				deniedPrompts,
+				injectionBlock == null || injectionBlock
 		);
 		return new CreatedKey(hash, plaintext, metadata);
 	}
@@ -316,6 +407,84 @@ public class KeyManagementService {
 			Set<String> deniedTools,
 			Boolean enabled
 	) {
+		return updateKey(hash, name, rpmLimit, tpmLimit, allowedModels, allowedProviders,
+				allowedTools, deniedTools, null, null, null, null, enabled);
+	}
+
+	/**
+	 * Updates an existing key's metadata including resource and prompt visibility,
+	 * invalidating the local cache.
+	 *
+	 * @param hash             key hash to update
+	 * @param name             new name (or null to keep)
+	 * @param rpmLimit         new RPM limit (or null to keep)
+	 * @param tpmLimit         new TPM limit (or null to keep)
+	 * @param allowedModels    new allowed models (or null to keep)
+	 * @param allowedProviders new allowed providers (or null to keep)
+	 * @param allowedTools     new allowed tools (or null to keep)
+	 * @param deniedTools      new denied tools (or null to keep)
+	 * @param allowedResources new allowed resource URI globs (or null to keep)
+	 * @param deniedResources  new denied resource URI globs (or null to keep)
+	 * @param allowedPrompts   new allowed prompt globs (or null to keep)
+	 * @param deniedPrompts    new denied prompt globs (or null to keep)
+	 * @param enabled          new enabled state (or null to keep)
+	 * @return the updated key metadata, or empty if key was not found
+	 */
+	public Optional<VirtualApiKey> updateKey(
+			SHA256Hash hash,
+			String name,
+			Integer rpmLimit,
+			Integer tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts,
+			Boolean enabled
+	) {
+		return updateKey(hash, name, rpmLimit, tpmLimit, allowedModels, allowedProviders,
+				allowedTools, deniedTools, allowedResources, deniedResources, allowedPrompts,
+				deniedPrompts, null, enabled);
+	}
+
+	/**
+	 * Updates an existing key's metadata including full governance rules, invalidating the local cache.
+	 *
+	 * @param hash             key hash to update
+	 * @param name             new name (or null to keep)
+	 * @param rpmLimit         new RPM limit (or null to keep)
+	 * @param tpmLimit         new TPM limit (or null to keep)
+	 * @param allowedModels    new allowed models (or null to keep)
+	 * @param allowedProviders new allowed providers (or null to keep)
+	 * @param allowedTools     new allowed tools (or null to keep)
+	 * @param deniedTools      new denied tools (or null to keep)
+	 * @param allowedResources new allowed resource URI globs (or null to keep)
+	 * @param deniedResources  new denied resource URI globs (or null to keep)
+	 * @param allowedPrompts   new allowed prompt globs (or null to keep)
+	 * @param deniedPrompts    new denied prompt globs (or null to keep)
+	 * @param injectionBlock   new injection handling (or null to keep)
+	 * @param enabled          new enabled state (or null to keep)
+	 * @return the updated key metadata, or empty if key was not found
+	 */
+	public Optional<VirtualApiKey> updateKey(
+			SHA256Hash hash,
+			String name,
+			Integer rpmLimit,
+			Integer tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts,
+			Boolean injectionBlock,
+			Boolean enabled
+	) {
 		String key = redisKey(hash);
 		if (Boolean.FALSE.equals(redisTemplate.hasKey(key))) {
 			return Optional.empty();
@@ -341,6 +510,21 @@ public class KeyManagementService {
 		}
 		if (deniedTools != null) {
 			updates.put("deniedTools", toCsv(deniedTools));
+		}
+		if (allowedResources != null) {
+			updates.put("allowedResources", toCsv(allowedResources));
+		}
+		if (deniedResources != null) {
+			updates.put("deniedResources", toCsv(deniedResources));
+		}
+		if (allowedPrompts != null) {
+			updates.put("allowedPrompts", toCsv(allowedPrompts));
+		}
+		if (deniedPrompts != null) {
+			updates.put("deniedPrompts", toCsv(deniedPrompts));
+		}
+		if (injectionBlock != null) {
+			updates.put("injectionBlock", injectionBlock.toString());
 		}
 		if (enabled != null) {
 			updates.put("enabled", enabled.toString());
@@ -483,7 +667,12 @@ public class KeyManagementService {
 			Set<String> allowedModels,
 			Set<String> allowedProviders,
 			Set<String> allowedTools,
-			Set<String> deniedTools
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts,
+			boolean injectionBlock
 	) {
 		SHA256Hash hash = SHA256Hash.fromRawKey(plaintextKey);
 		Map<String, String> fields = new LinkedHashMap<>();
@@ -496,6 +685,11 @@ public class KeyManagementService {
 		fields.put("allowedProviders", toCsv(allowedProviders));
 		fields.put("allowedTools", toCsv(allowedTools));
 		fields.put("deniedTools", toCsv(deniedTools));
+		fields.put("allowedResources", toCsv(allowedResources));
+		fields.put("deniedResources", toCsv(deniedResources));
+		fields.put("allowedPrompts", toCsv(allowedPrompts));
+		fields.put("deniedPrompts", toCsv(deniedPrompts));
+		fields.put("injectionBlock", Boolean.toString(injectionBlock));
 		fields.put("createdAt", Instant.now().toString());
 		fields.put("keyPrefix", prefixOf(plaintextKey));
 		redisTemplate.opsForHash().putAll(redisKey(hash), fields);
@@ -525,6 +719,11 @@ public class KeyManagementService {
 			Set<String> allowedProviders = parseCsv((String) raw.get("allowedProviders"));
 			Set<String> allowedTools = parseCsv((String) raw.get("allowedTools"));
 			Set<String> deniedTools = parseCsv((String) raw.get("deniedTools"));
+			Set<String> allowedResources = parseCsv((String) raw.get("allowedResources"));
+			Set<String> deniedResources = parseCsv((String) raw.get("deniedResources"));
+			Set<String> allowedPrompts = parseCsv((String) raw.get("allowedPrompts"));
+			Set<String> deniedPrompts = parseCsv((String) raw.get("deniedPrompts"));
+			boolean injectionBlock = !"false".equalsIgnoreCase((String) raw.get("injectionBlock"));
 			Instant createdAt = Instant.parse((String) raw.get("createdAt"));
 			String keyPrefix = (String) raw.getOrDefault("keyPrefix", KEY_PREFIX_RAW);
 			return Optional.of(new VirtualApiKey(
@@ -538,6 +737,11 @@ public class KeyManagementService {
 					allowedProviders,
 					allowedTools,
 					deniedTools,
+					allowedResources,
+					deniedResources,
+					allowedPrompts,
+					deniedPrompts,
+					injectionBlock,
 					enabled,
 					createdAt
 			));

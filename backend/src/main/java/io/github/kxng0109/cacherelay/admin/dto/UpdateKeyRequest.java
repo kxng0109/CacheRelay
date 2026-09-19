@@ -15,6 +15,10 @@ import java.util.Set;
  * @param allowedProviders new allowed providers (or null to preserve)
  * @param allowedTools     new allowed tools (or null to preserve)
  * @param deniedTools      new denied tools (or null to preserve)
+ * @param allowedResources new allowed resource URI globs (or null to preserve)
+ * @param deniedResources  new denied resource URI globs (or null to preserve)
+ * @param allowedPrompts   new allowed prompt globs (or null to preserve)
+ * @param deniedPrompts    new denied prompt globs (or null to preserve)
  * @param enabled          new enabled state (or null to preserve)
  */
 @Schema(name = "UpdateKeyRequest", description = "Patch payload for modifying virtual key quotas, allowlists, or enabled status")
@@ -42,6 +46,21 @@ public record UpdateKeyRequest(
 		@Schema(description = "New denied MCP tools set (optional)", example = "[\"*:delete_*\"]")
 		Set<String> deniedTools,
 
+		@Schema(description = "New allowed resource URI globs (optional)", example = "[\"postgres://*\"]")
+		Set<String> allowedResources,
+
+		@Schema(description = "New denied resource URI globs (optional)", example = "[\"postgres://secret/*\"]")
+		Set<String> deniedResources,
+
+		@Schema(description = "New allowed prompt globs (optional)", example = "[\"review_*\"]")
+		Set<String> allowedPrompts,
+
+		@Schema(description = "New denied prompt globs (optional)", example = "[\"admin_*\"]")
+		Set<String> deniedPrompts,
+
+		@Schema(description = "Block tool delivery on injection markers (optional, null = keep)", example = "false")
+		Boolean injectionBlock,
+
 		@Schema(description = "Enable or disable key (optional)", example = "true")
 		Boolean enabled
 ) {
@@ -53,6 +72,46 @@ public record UpdateKeyRequest(
 			Set<String> allowedProviders,
 			Boolean enabled
 	) {
-		this(name, rpmLimit, tpmLimit, allowedModels, allowedProviders, null, null, enabled);
+		this(name, rpmLimit, tpmLimit, allowedModels, allowedProviders, null, null, null, null,
+				null, null, null, enabled);
+	}
+
+	/**
+	 * Backwards-compatible constructor omitting resource/prompt visibility sets.
+	 */
+	public UpdateKeyRequest(
+			String name,
+			Integer rpmLimit,
+			Integer tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			Boolean enabled
+	) {
+		this(name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
+				deniedTools, null, null, null, null, null, enabled);
+	}
+
+	/**
+	 * Backwards-compatible constructor omitting the injection handling flag.
+	 */
+	public UpdateKeyRequest(
+			String name,
+			Integer rpmLimit,
+			Integer tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts,
+			Boolean enabled
+	) {
+		this(name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
+				deniedTools, allowedResources, deniedResources, allowedPrompts, deniedPrompts,
+				null, enabled);
 	}
 }

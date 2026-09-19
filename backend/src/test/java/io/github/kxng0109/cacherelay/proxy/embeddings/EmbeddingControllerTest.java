@@ -36,11 +36,13 @@ class EmbeddingControllerTest {
 		);
 
 		when(embeddingService.processEmbedding(request, "tenant-alpha", null, null)).thenReturn(expected);
+		when(embeddingService.resolveProviderName("text-embedding-3-small")).thenReturn("openai");
 
 		ResponseEntity<EmbeddingResponse> response = controller.createEmbeddings(request, httpRequest);
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(response.getBody()).isEqualTo(expected);
+		assertThat(response.getHeaders().getFirst("X-CacheRelay-Provider")).isEqualTo("openai");
 		verify(embeddingService).processEmbedding(request, "tenant-alpha", null, null);
 	}
 

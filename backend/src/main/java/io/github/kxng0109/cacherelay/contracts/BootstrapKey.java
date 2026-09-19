@@ -16,6 +16,12 @@ import java.util.Set;
  * @param tpmLimit         tokens-per-minute (0 = unlimited)
  * @param allowedModels    empty means all
  * @param allowedProviders empty means all
+ * @param allowedTools     empty means all
+ * @param deniedTools      empty means none
+ * @param allowedResources empty means all visible
+ * @param deniedResources  empty means none hidden
+ * @param allowedPrompts   empty means all visible
+ * @param deniedPrompts    empty means none hidden
  */
 public record BootstrapKey(
 		String ownerId,
@@ -26,7 +32,11 @@ public record BootstrapKey(
 		Set<String> allowedModels,
 		Set<String> allowedProviders,
 		Set<String> allowedTools,
-		Set<String> deniedTools
+		Set<String> deniedTools,
+		Set<String> allowedResources,
+		Set<String> deniedResources,
+		Set<String> allowedPrompts,
+		Set<String> deniedPrompts
 ) {
 	/**
 	 * Canonical constructor: stores immutable copies of the allow and deny lists so callers
@@ -42,7 +52,11 @@ public record BootstrapKey(
 			Set<String> allowedModels,
 			Set<String> allowedProviders,
 			Set<String> allowedTools,
-			Set<String> deniedTools
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts
 	) {
 		this.ownerId = ownerId;
 		this.name = name;
@@ -53,6 +67,10 @@ public record BootstrapKey(
 		this.allowedProviders = allowedProviders == null ? Set.of() : Set.copyOf(allowedProviders);
 		this.allowedTools = allowedTools == null ? Set.of() : Set.copyOf(allowedTools);
 		this.deniedTools = deniedTools == null ? Set.of() : Set.copyOf(deniedTools);
+		this.allowedResources = allowedResources == null ? Set.of() : Set.copyOf(allowedResources);
+		this.deniedResources = deniedResources == null ? Set.of() : Set.copyOf(deniedResources);
+		this.allowedPrompts = allowedPrompts == null ? Set.of() : Set.copyOf(allowedPrompts);
+		this.deniedPrompts = deniedPrompts == null ? Set.of() : Set.copyOf(deniedPrompts);
 	}
 
 	/**
@@ -75,6 +93,41 @@ public record BootstrapKey(
 				tpmLimit,
 				allowedModels,
 				allowedProviders,
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of()
+		);
+	}
+
+	/**
+	 * Backwards-compatible constructor omitting resource/prompt visibility sets.
+	 */
+	public BootstrapKey(
+			String ownerId,
+			String name,
+			String plaintextKey,
+			int rpmLimit,
+			int tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools
+	) {
+		this(
+				ownerId,
+				name,
+				plaintextKey,
+				rpmLimit,
+				tpmLimit,
+				allowedModels,
+				allowedProviders,
+				allowedTools,
+				deniedTools,
+				Set.of(),
+				Set.of(),
 				Set.of(),
 				Set.of()
 		);

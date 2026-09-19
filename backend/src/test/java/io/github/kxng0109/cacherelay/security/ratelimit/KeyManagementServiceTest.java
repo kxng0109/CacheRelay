@@ -122,8 +122,7 @@ class KeyManagementServiceTest {
 	}
 
 	@Test
-	void revokeKeyDisablesKeyAndInvalidatesCache() {
-		KeyManagementService service = newService();
+	void revokeKeyDisablesKeyAndInvalidatesCache() {		KeyManagementService service = newService();
 		SHA256Hash hash = hashOf(FIXED_PLAINTEXT);
 		when(redisTemplate.hasKey(redisKey(hash))).thenReturn(Boolean.TRUE);
 		when(hashOps.entries(redisKey(hash))).thenReturn(
@@ -548,8 +547,7 @@ class KeyManagementServiceTest {
 	}
 
 	@Test
-	void deleteKeyRemovesFromRedisAndIndexSet() {
-		KeyManagementService service = newService();
+	void deleteKeyRemovesFromRedisAndIndexSet() {		KeyManagementService service = newService();
 
 		SHA256Hash hash = hashOf("gw-key11111111111111111111111111111");
 		when(redisTemplate.delete(redisKey(hash))).thenReturn(Boolean.TRUE);
@@ -562,5 +560,143 @@ class KeyManagementServiceTest {
 		SHA256Hash missingHash = hashOf("gw-missing");
 		when(redisTemplate.delete(redisKey(missingHash))).thenReturn(Boolean.FALSE);
 		assertFalse(service.deleteKey(missingHash));
+	}
+
+	@Test
+	void createKeyPersistsResourceAndPromptVisibility() {
+		KeyManagementService service = newService();
+
+		KeyManagementService.CreatedKey created = service.createKey(
+				"owner", "name", 5, 50, Set.of(), Set.of(), Set.of(), Set.of(),
+				Set.of("postgres://*"), Set.of("postgres://secret/*"),
+				Set.of(), Set.of("admin_*"));
+
+		assertEquals(Set.of("postgres://*"), created.key().allowedResources());
+		assertEquals(Set.of("postgres://secret/*"), created.key().deniedResources());
+		assertEquals(Set.of(), created.key().allowedPrompts());
+		assertEquals(Set.of("admin_*"), created.key().deniedPrompts());
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
+		verify(hashOps).putAll(eq(redisKey(created.hash())), fieldsCaptor.capture());
+		Map<String, String> stored = fieldsCaptor.getValue();
+		assertEquals("postgres://*", stored.get("allowedResources"));
+		assertEquals("postgres://secret/*", stored.get("deniedResources"));
+		assertEquals("", stored.get("allowedPrompts"));
+		assertEquals("admin_*", stored.get("deniedPrompts"));
+	}
+
+	@Test
+	void legacyKeysWithoutVisibilityFieldsLoadAsFullyVisible() {		KeyManagementService service = newService();
+		SHA256Hash hash = hashOf(FIXED_PLAINTEXT);
+		when(redisTemplate.hasKey(redisKey(hash))).thenReturn(Boolean.TRUE);
+		when(hashOps.entries(redisKey(hash))).thenReturn(
+				fields("owner", "name", "5", "50", "true", "", "", CREATED_AT, "gw-"));
+
+		Optional<VirtualApiKey> loaded = service.findByHash(hash);
+
+		assertTrue(loaded.isPresent());
+		assertEquals(Set.of(), loaded.get().allowedResources());
+		assertEquals(Set.of(), loaded.get().deniedResources());
+		assertEquals(Set.of(), loaded.get().allowedPrompts());
+		assertEquals(Set.of(), loaded.get().deniedPrompts());
+	}
+
+	@Test
+	void explicitInjectionFlagRoundTripsThroughCreateAndUpdate() {
+		KeyManagementService service = newService();
+
+		KeyManagementService.CreatedKey created = service.createKey(
+				"owner", "name", 5, 50, Set.of(), Set.of(), Set.of(), Set.of(),
+				Set.of(), Set.of(), Set.of(), Set.of(), Boolean.FALSE);
+
+		assertFalse(created.key().injectionBlock());
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
+		verify(hashOps).putAll(eq(redisKey(created.hash())), fieldsCaptor.capture());
+		assertEquals("false", fieldsCaptor.getValue().get("injectionBlock"));
+
+		SHA256Hash hash = created.hash();
+		when(redisTemplate.hasKey(redisKey(hash))).thenReturn(Boolean.TRUE);
+		when(hashOps.entries(redisKey(hash))).thenReturn(
+				fields("owner", "name", "5", "50", "true", "", "", CREATED_AT, "gw-"));
+
+		Optional<VirtualApiKey> updated = service.updateKey(
+				hash, null, null, null, null, null, null, null,
+				null, null, null, null, Boolean.FALSE, null);
+
+		assertTrue(updated.isPresent());
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<Map<String, String>> updateCaptor = ArgumentCaptor.forClass(Map.class);
+		verify(hashOps, times(2))
+				.putAll(eq(redisKey(hash)), updateCaptor.capture());
+		assertEquals("false", updateCaptor.getAllValues().getLast().get("injectionBlock"));
+	}
+
+	@Test
+	void missingInjectionFlagDefaultsToBlock() {		KeyManagementService service = newService();
+		SHA256Hash hash = hashOf(FIXED_PLAINTEXT);
+		when(redisTemplate.hasKey(redisKey(hash))).thenReturn(Boolean.TRUE);
+		when(hashOps.entries(redisKey(hash))).thenReturn(
+				fields("owner", "name", "5", "50", "true", "", "", CREATED_AT, "gw-"));
+
+		Optional<VirtualApiKey> loaded = service.findByHash(hash);
+
+		assertTrue(loaded.isPresent());
+		assertTrue(loaded.get().injectionBlock());
+	}
+
+	@Test
+	void explicitTrueInjectionFlagRoundTrips() {
+		KeyManagementService service = newService();
+
+		KeyManagementService.CreatedKey created = service.createKey(
+				"owner", "name", 5, 50, Set.of(), Set.of(), Set.of(), Set.of(),
+				Set.of(), Set.of(), Set.of(), Set.of(), Boolean.TRUE);
+
+		assertTrue(created.key().injectionBlock());
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
+		verify(hashOps).putAll(eq(redisKey(created.hash())), fieldsCaptor.capture());
+		assertEquals("true", fieldsCaptor.getValue().get("injectionBlock"));
+	}
+
+	@Test
+	void storedFalseInjectionFlagLoadsAsFlagMode() {		KeyManagementService service = newService();
+		SHA256Hash hash = hashOf(FIXED_PLAINTEXT);
+		when(redisTemplate.hasKey(redisKey(hash))).thenReturn(Boolean.TRUE);
+		Map<String, String> stored = new LinkedHashMap<>(fields(
+				"owner", "name", "5", "50", "true", "", "", CREATED_AT, "gw-"));
+		stored.put("injectionBlock", "false");
+		when(hashOps.entries(redisKey(hash))).thenReturn(stored);
+
+		Optional<VirtualApiKey> loaded = service.findByHash(hash);
+
+		assertTrue(loaded.isPresent());
+		assertFalse(loaded.get().injectionBlock());
+	}
+
+	@Test
+	void updateAllVisibilityFieldsWritesEveryColumn() {
+		KeyManagementService service = newService();
+		SHA256Hash hash = hashOf(FIXED_PLAINTEXT);
+		when(redisTemplate.hasKey(redisKey(hash))).thenReturn(Boolean.TRUE);
+		when(hashOps.entries(redisKey(hash))).thenReturn(
+				fields("owner", "name", "5", "50", "true", "", "", CREATED_AT, "gw-"));
+
+		Optional<VirtualApiKey> updated = service.updateKey(
+				hash, null, null, null, null, null, null, null,
+				Set.of("postgres://*"), Set.of("postgres://secret/*"),
+				Set.of("review_*"), Set.of("admin_*"), Boolean.TRUE, null);
+
+		assertTrue(updated.isPresent());
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<Map<String, String>> updateCaptor = ArgumentCaptor.forClass(Map.class);
+		verify(hashOps).putAll(eq(redisKey(hash)), updateCaptor.capture());
+		Map<String, String> written = updateCaptor.getValue();
+		assertEquals("postgres://*", written.get("allowedResources"));
+		assertEquals("postgres://secret/*", written.get("deniedResources"));
+		assertEquals("review_*", written.get("allowedPrompts"));
+		assertEquals("admin_*", written.get("deniedPrompts"));
+		assertEquals("true", written.get("injectionBlock"));
 	}
 }

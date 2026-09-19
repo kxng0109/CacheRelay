@@ -86,7 +86,10 @@ public class AdminKeyController {
 	@PostMapping
 	public ResponseEntity<CreatedKeyResponse> createKey(@Valid @RequestBody CreateKeyRequest request) {
 		KeyManagementService.CreatedKey created;
-		if (request.allowedTools().isEmpty() && request.deniedTools().isEmpty()) {
+		boolean visibilityEmpty = request.allowedResources().isEmpty() && request.deniedResources().isEmpty()
+				&& request.allowedPrompts().isEmpty() && request.deniedPrompts().isEmpty();
+		if (request.allowedTools().isEmpty() && request.deniedTools().isEmpty() && visibilityEmpty
+				&& request.injectionBlock() == null) {
 			created = keyManagementService.createKey(
 					request.ownerId(),
 					request.name(),
@@ -94,6 +97,32 @@ public class AdminKeyController {
 					request.tpmLimit(),
 					request.allowedModels(),
 					request.allowedProviders()
+			);
+		} else if (visibilityEmpty && request.injectionBlock() == null) {
+			created = keyManagementService.createKey(
+					request.ownerId(),
+					request.name(),
+					request.rpmLimit(),
+					request.tpmLimit(),
+					request.allowedModels(),
+					request.allowedProviders(),
+					request.allowedTools(),
+					request.deniedTools()
+			);
+		} else if (request.injectionBlock() == null) {
+			created = keyManagementService.createKey(
+					request.ownerId(),
+					request.name(),
+					request.rpmLimit(),
+					request.tpmLimit(),
+					request.allowedModels(),
+					request.allowedProviders(),
+					request.allowedTools(),
+					request.deniedTools(),
+					request.allowedResources(),
+					request.deniedResources(),
+					request.allowedPrompts(),
+					request.deniedPrompts()
 			);
 		} else {
 			created = keyManagementService.createKey(
@@ -104,7 +133,12 @@ public class AdminKeyController {
 					request.allowedModels(),
 					request.allowedProviders(),
 					request.allowedTools(),
-					request.deniedTools()
+					request.deniedTools(),
+					request.allowedResources(),
+					request.deniedResources(),
+					request.allowedPrompts(),
+					request.deniedPrompts(),
+					request.injectionBlock()
 			);
 		}
 		CreatedKeyResponse response = new CreatedKeyResponse(
@@ -119,6 +153,11 @@ public class AdminKeyController {
 				created.key().allowedProviders(),
 				created.key().allowedTools(),
 				created.key().deniedTools(),
+				created.key().allowedResources(),
+				created.key().deniedResources(),
+				created.key().allowedPrompts(),
+				created.key().deniedPrompts(),
+				created.key().injectionBlock(),
 				created.key().enabled(),
 				created.key().createdAt()
 		);
@@ -217,7 +256,10 @@ public class AdminKeyController {
 	) {
 		SHA256Hash hash = parseHash(hashHex);
 		Optional<VirtualApiKey> updated;
-		if (request.allowedTools() == null && request.deniedTools() == null) {
+		boolean visibilityNull = request.allowedResources() == null && request.deniedResources() == null
+				&& request.allowedPrompts() == null && request.deniedPrompts() == null;
+		if (request.allowedTools() == null && request.deniedTools() == null && visibilityNull
+				&& request.injectionBlock() == null) {
 			updated = keyManagementService.updateKey(
 					hash,
 					request.name(),
@@ -225,6 +267,34 @@ public class AdminKeyController {
 					request.tpmLimit(),
 					request.allowedModels(),
 					request.allowedProviders(),
+					request.enabled()
+			);
+		} else if (visibilityNull && request.injectionBlock() == null) {
+			updated = keyManagementService.updateKey(
+					hash,
+					request.name(),
+					request.rpmLimit(),
+					request.tpmLimit(),
+					request.allowedModels(),
+					request.allowedProviders(),
+					request.allowedTools(),
+					request.deniedTools(),
+					request.enabled()
+			);
+		} else if (request.injectionBlock() == null) {
+			updated = keyManagementService.updateKey(
+					hash,
+					request.name(),
+					request.rpmLimit(),
+					request.tpmLimit(),
+					request.allowedModels(),
+					request.allowedProviders(),
+					request.allowedTools(),
+					request.deniedTools(),
+					request.allowedResources(),
+					request.deniedResources(),
+					request.allowedPrompts(),
+					request.deniedPrompts(),
 					request.enabled()
 			);
 		} else {
@@ -237,6 +307,11 @@ public class AdminKeyController {
 					request.allowedProviders(),
 					request.allowedTools(),
 					request.deniedTools(),
+					request.allowedResources(),
+					request.deniedResources(),
+					request.allowedPrompts(),
+					request.deniedPrompts(),
+					request.injectionBlock(),
 					request.enabled()
 			);
 		}
@@ -289,6 +364,11 @@ public class AdminKeyController {
 				key.allowedProviders(),
 				key.allowedTools(),
 				key.deniedTools(),
+				key.allowedResources(),
+				key.deniedResources(),
+				key.allowedPrompts(),
+				key.deniedPrompts(),
+				key.injectionBlock(),
 				key.enabled(),
 				key.createdAt()
 		);

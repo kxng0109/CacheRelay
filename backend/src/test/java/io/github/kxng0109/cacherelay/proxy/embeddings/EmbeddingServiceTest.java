@@ -42,6 +42,23 @@ class EmbeddingServiceTest {
 	);
 
 	@Test
+	@DisplayName("resolveProviderName exposes the upstream provider without executing")
+	void resolveProviderNameExposesProvider() {
+		ProviderConfig provider = new ProviderConfig(
+				"openai-main", ProviderType.OPENAI, URI.create("https://api.openai.com/v1"),
+				new SensitiveString("key"), Duration.ofSeconds(5), Duration.ofSeconds(30)
+		);
+		gatewayProperties.setProviders(Map.of("openai-main", provider));
+		ModelAlias alias = new ModelAlias(
+				List.of(new ProviderRef("openai-main", "text-embedding-3-small")),
+				FailoverStrategy.SEQUENTIAL
+		);
+		gatewayProperties.setAliases(Map.of("text-embedding-3-small", alias));
+
+		assertThat(service.resolveProviderName("text-embedding-3-small")).isEqualTo("openai-main");
+	}
+
+	@Test
 	@DisplayName("processEmbedding resolves alias, executes batch, calculates cost, and publishes ledger event")
 	void processEmbeddingHappyPath() throws Exception {
 		ProviderConfig provider = new ProviderConfig(

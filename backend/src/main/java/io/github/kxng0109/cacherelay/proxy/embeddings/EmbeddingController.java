@@ -126,7 +126,10 @@ public class EmbeddingController {
 		}
 		EmbeddingResponse response = embeddingService.processEmbedding(request, ownerId, idempotencyKey,
 				(String) httpServletRequest.getAttribute(KeyAuthFilter.KEY_HASH_ATTRIBUTE));
-		return ResponseEntity.ok(response);
+		return ResponseEntity.ok()
+				.header("X-CacheRelay-Provider",
+						embeddingService.resolveProviderName(request.model()))
+				.body(response);
 	}
 
 	/**

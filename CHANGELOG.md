@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Resource/prompt governance (no more unfiltered surfaces):** virtual keys carry `allowedResources` /
+  `deniedResources` (URI globs) and `allowedPrompts` / `deniedPrompts` (name globs) with deny-wins,
+  empty-means-visible semantics; catalog lists and filters enforce them (null keys fail closed). Redis-stored
+  keys without the fields load as fully visible, so existing keys keep working. Admin create/update DTOs,
+  responses, and bootstrap bindings extended.
+- **Egress injection blocking:** indirect prompt injection markers in tool output now block delivery by
+  default (JSON-RPC `-32603`, output never returned); per-key `injectionBlock` flag lets an admin flip
+  noisy-but-legitimate keys to warn-and-deliver (default block, legacy keys block).
+- **Embeddings provider header:** `POST /v1/embeddings` responses carry `X-CacheRelay-Provider` (already
+  CORS-exposed). No hold exists on the embeddings path, so no held header there by design.
 - **`GET /v1/models`:** OpenAI-compatible key-authenticated model catalog (sorted aliases with primary
   providers). Unmetered metadata. Full `verify` green, branch gate passing.
 - **Startup resilience + review queues:** pricing catalog sync no longer gates readiness (bounded async

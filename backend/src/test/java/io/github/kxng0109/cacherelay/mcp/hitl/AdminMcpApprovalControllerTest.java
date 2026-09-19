@@ -159,6 +159,25 @@ class AdminMcpApprovalControllerTest {
 				eq(TimeUnit.SECONDS));
 	}
 
+	@Test
+	@DisplayName("anonymous decisions and blank pending values resolve safely")
+	void anonymousAndBlankDecisions() {
+		when(valueOperations.get("mcp:hitl:pending:tok-blank")).thenReturn("   ");
+
+		assertThat(controller.approveToolCall("tok-blank", null).getStatusCode())
+				.isEqualTo(HttpStatus.NOT_FOUND);
+
+		when(valueOperations.get("mcp:hitl:pending:tok-8")).thenReturn("{\"tokenId\":\"tok-8\"}");
+
+		ResponseEntity<String> approved =
+				controller.approveToolCall("tok-8", new DecisionRequest(null, "commander"));
+
+		assertThat(approved.getStatusCode()).isEqualTo(HttpStatus.OK);
+		verify(valueOperations).set(
+				eq("mcp:hitl:decision:tok-8"), contains("commander"), eq(86_400L),
+				eq(TimeUnit.SECONDS));
+	}
+
 	private static String pendingJson(String tokenId, String createdAt, String expiresAt) {
 		return "{\"tokenId\":\"" + tokenId + "\",\"ownerId\":\"tenant-1\",\"keyName\":\"ops\","
 				+ "\"toolName\":\"postgres__run_query\",\"serverName\":\"postgres\","

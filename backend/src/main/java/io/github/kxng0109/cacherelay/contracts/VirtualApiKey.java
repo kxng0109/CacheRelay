@@ -17,6 +17,13 @@ import java.util.Set;
  * @param tpmLimit         tokens-per-minute limit (0 = unlimited)
  * @param allowedModels    empty set means "all models allowed"
  * @param allowedProviders empty set means "all providers allowed"
+ * @param allowedTools     empty set means "all tools allowed"
+ * @param deniedTools      empty set means "no tools denied"
+ * @param allowedResources empty set means "all resource servers visible"
+ * @param deniedResources  empty set means "no resource servers hidden"
+ * @param allowedPrompts   empty set means "all prompts visible"
+ * @param deniedPrompts    empty set means "no prompts hidden"
+ * @param injectionBlock   whether indirect prompt injection markers in tool output block delivery (true) or only warn (false)
  * @param enabled          whether the key is currently active
  * @param createdAt        creation timestamp
  */
@@ -31,6 +38,11 @@ public record VirtualApiKey(
 		Set<String> allowedProviders,
 		Set<String> allowedTools,
 		Set<String> deniedTools,
+		Set<String> allowedResources,
+		Set<String> deniedResources,
+		Set<String> allowedPrompts,
+		Set<String> deniedPrompts,
+		boolean injectionBlock,
 		boolean enabled,
 		Instant createdAt
 ) {
@@ -43,6 +55,10 @@ public record VirtualApiKey(
 		allowedProviders = allowedProviders == null ? Set.of() : Set.copyOf(allowedProviders);
 		allowedTools = allowedTools == null ? Set.of() : Set.copyOf(allowedTools);
 		deniedTools = deniedTools == null ? Set.of() : Set.copyOf(deniedTools);
+		allowedResources = allowedResources == null ? Set.of() : Set.copyOf(allowedResources);
+		deniedResources = deniedResources == null ? Set.of() : Set.copyOf(deniedResources);
+		allowedPrompts = allowedPrompts == null ? Set.of() : Set.copyOf(allowedPrompts);
+		deniedPrompts = deniedPrompts == null ? Set.of() : Set.copyOf(deniedPrompts);
 	}
 
 	/**
@@ -71,6 +87,49 @@ public record VirtualApiKey(
 				allowedProviders,
 				Set.of(),
 				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				true,
+				enabled,
+				createdAt
+		);
+	}
+
+	/**
+	 * Backwards-compatible constructor omitting resource/prompt visibility sets.
+	 */
+	public VirtualApiKey(
+			SHA256Hash keyHash,
+			String keyPrefix,
+			String ownerId,
+			String name,
+			int rpmLimit,
+			int tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			boolean enabled,
+			Instant createdAt
+	) {
+		this(
+				keyHash,
+				keyPrefix,
+				ownerId,
+				name,
+				rpmLimit,
+				tpmLimit,
+				allowedModels,
+				allowedProviders,
+				allowedTools,
+				deniedTools,
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				true,
 				enabled,
 				createdAt
 		);

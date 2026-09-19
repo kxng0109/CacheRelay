@@ -46,7 +46,22 @@ public record CreateKeyRequest(
 		Set<String> allowedTools,
 
 		@Schema(description = "Set of denied MCP tool identifiers or glob patterns (empty = none denied)", example = "[\"*:delete_*\", \"*:drop_*\"]")
-		Set<String> deniedTools
+		Set<String> deniedTools,
+
+		@Schema(description = "Set of visible MCP resource URI globs (empty = all visible)", example = "[\"postgres://*\"]")
+		Set<String> allowedResources,
+
+		@Schema(description = "Set of hidden MCP resource URI globs (empty = none hidden)", example = "[\"postgres://secret/*\"]")
+		Set<String> deniedResources,
+
+		@Schema(description = "Set of visible MCP prompt name globs (empty = all visible)", example = "[\"review_*\"]")
+		Set<String> allowedPrompts,
+
+		@Schema(description = "Set of hidden MCP prompt name globs (empty = none hidden)", example = "[\"admin_*\"]")
+		Set<String> deniedPrompts,
+
+		@Schema(description = "Block tool delivery on indirect prompt injection markers (null = default block, false = warn only)", example = "true")
+		Boolean injectionBlock
 ) {
 	public CreateKeyRequest {
 		rpmLimit = rpmLimit != null ? rpmLimit : 0;
@@ -55,6 +70,10 @@ public record CreateKeyRequest(
 		allowedProviders = allowedProviders != null ? Set.copyOf(allowedProviders) : Set.of();
 		allowedTools = allowedTools != null ? Set.copyOf(allowedTools) : Set.of();
 		deniedTools = deniedTools != null ? Set.copyOf(deniedTools) : Set.of();
+		allowedResources = allowedResources != null ? Set.copyOf(allowedResources) : Set.of();
+		deniedResources = deniedResources != null ? Set.copyOf(deniedResources) : Set.of();
+		allowedPrompts = allowedPrompts != null ? Set.copyOf(allowedPrompts) : Set.of();
+		deniedPrompts = deniedPrompts != null ? Set.copyOf(deniedPrompts) : Set.of();
 	}
 
 	public CreateKeyRequest(
@@ -65,6 +84,46 @@ public record CreateKeyRequest(
 			Set<String> allowedModels,
 			Set<String> allowedProviders
 	) {
-		this(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders, Set.of(), Set.of());
+		this(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders, Set.of(), Set.of(),
+				Set.of(), Set.of(), Set.of(), Set.of(), null);
+	}
+
+	/**
+	 * Backwards-compatible constructor omitting resource/prompt visibility sets.
+	 */
+	public CreateKeyRequest(
+			String ownerId,
+			String name,
+			Integer rpmLimit,
+			Integer tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools
+	) {
+		this(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
+				deniedTools, Set.of(), Set.of(), Set.of(), Set.of(), null);
+	}
+
+	/**
+	 * Backwards-compatible constructor omitting the injection handling flag.
+	 */
+	public CreateKeyRequest(
+			String ownerId,
+			String name,
+			Integer rpmLimit,
+			Integer tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts
+	) {
+		this(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
+				deniedTools, allowedResources, deniedResources, allowedPrompts, deniedPrompts,
+				null);
 	}
 }

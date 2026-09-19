@@ -644,23 +644,32 @@ public class McpStreamableHttpController {
 				if (respNode.has("result")) {
 					JsonNode resultNode = respNode.get("result");
 					if (resultNode.has("content") && resultNode.path("content").isArray()) {
-					for (JsonNode contentItem : resultNode.path("content")) {
-						if ("text".equals(contentItem.path("type").asString()) && contentItem.has("text")) {
-							String originalText = contentItem.path("text").asString();
-							if (guardrailScanner.containsIndirectPromptInjection(originalText)) {
-								log.warn(
-										"MCP egress signal: indirect prompt injection markers in tool '{}' output for tenant '{}' (delivered nonce-wrapped, not blocked)",
+						boolean injectionDetected = false;
+						for (JsonNode contentItem : resultNode.path("content")) {
+							if ("text".equals(contentItem.path("type").asString()) && contentItem.has("text")) {
+								String originalText = contentItem.path("text").asString();
+								if (guardrailScanner.containsIndirectPromptInjection(originalText)) {
+									injectionDetected = true;
+									log.warn(
+											"MCP egress signal: indirect prompt injection markers in tool '{}' output for tenant '{}'",
+											route.namespacedName(),
+											apiKey.ownerId()
+									);
+								}
+								String wrapped = guardrailScanner.wrapToolOutputWithNonce(
 										route.namespacedName(),
-										apiKey.ownerId()
+										originalText
 								);
+								((ObjectNode) contentItem).put("text", wrapped);
 							}
-							String wrapped = guardrailScanner.wrapToolOutputWithNonce(
-									route.namespacedName(),
-									originalText
-							);
-							((ObjectNode) contentItem).put("text", wrapped);
 						}
-					}
+						if (injectionDetected && apiKey.injectionBlock()) {
+							return McpJsonRpcResponse.failure(
+									request.id(),
+									McpJsonRpcError.policyBlocked(route.namespacedName())
+							);
+						}
+						return McpJsonRpcResponse.success(request.id(), resultNode);
 					}
 					return McpJsonRpcResponse.success(request.id(), resultNode);
 				} else if (respNode.has("error")) {
