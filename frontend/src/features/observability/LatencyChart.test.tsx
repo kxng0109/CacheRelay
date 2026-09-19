@@ -135,6 +135,19 @@ describe('LatencyChart', () => {
     expect(mockChart.dispose).toHaveBeenCalledTimes(1)
   })
 
+  it('labels the chart container once with a stable description', async () => {
+    mockScrape(200, SCRAPE)
+    renderApp(<LatencyChart />)
+    await waitFor(() => {
+      expect(mockChart.setOption).toHaveBeenCalled()
+    })
+    const option = lastOption() as unknown as {
+      aria?: { enabled?: boolean; label?: { description?: string } }
+    }
+    expect(option.aria?.enabled).toBe(true)
+    expect(option.aria?.label?.description).toContain('P50 and P95')
+  })
+
   it('follows the app theme without re-initializing', async () => {
     mockScrape(200, SCRAPE)
     act(() => {

@@ -102,6 +102,13 @@ export default function LatencyChart({ pollMs = POLL_MS }: LatencyChartProps): R
       tooltip: { trigger: 'axis', valueFormatter: (v) => `${String(v)} ms` },
       legend: { data: ['P50', 'P95'] },
       grid: { left: 48, right: 16, top: 32, bottom: 48 },
+      // Stable container label: the chart repaints every poll, so templated
+      // per-point announcements would spam screen readers. The throttled
+      // `role="status"` summary below stays the live announcer.
+      aria: {
+        enabled: true,
+        label: { description: 'Gateway request latency, P50 and P95 in milliseconds over time.' },
+      },
       xAxis: {
         type: 'time',
         name: 'time',

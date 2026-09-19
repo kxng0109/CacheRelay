@@ -136,7 +136,7 @@ reporter for CI step summaries.
 `cleanup()` after each test, and closes the server at the end.
 `src/test/utils.tsx` renders UI with a fresh query client (no retries),
 memory router, and seeded memory-only credentials.
-27 suites / 324 tests: pure-unit (SSE parser, rate-limit parser/selector/store,
+27 suites / 325 tests: pure-unit (SSE parser, rate-limit parser/selector/store,
 Prometheus histogram parser/quantiles, ECharts registration, app boot,
 error mapping, URL allow-list) plus MSW integration per screen
 (happy/error/empty/adversarial).
