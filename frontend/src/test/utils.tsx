@@ -22,8 +22,10 @@ export interface RenderAppOptions {
   route?: string
   /** Gateway key seeded into the memory store before render. */
   gatewayKey?: string
-  /** Admin key seeded into the memory store before render. */
-  adminKey?: string
+  /** Seeds a test admin session (`test-admin` / `test-admin-jwt`). */
+  adminSession?: boolean
+  /** Seeds a test non-admin session (tiles and admin routes stay hidden). */
+  nonAdminSession?: boolean
 }
 
 /**
@@ -37,7 +39,16 @@ export interface RenderAppOptions {
 export function renderApp(ui: ReactElement, options?: RenderAppOptions) {
   useAuthStore.getState().clear()
   if (options?.gatewayKey !== undefined) useAuthStore.getState().setGatewayKey(options.gatewayKey)
-  if (options?.adminKey !== undefined) useAuthStore.getState().setAdminKey(options.adminKey)
+  if (options?.adminSession === true) {
+    useAuthStore
+      .getState()
+      .setSession({ accessToken: 'test-admin-jwt', admin: true, username: 'test-admin' })
+  }
+  if (options?.nonAdminSession === true) {
+    useAuthStore
+      .getState()
+      .setSession({ accessToken: 'test-user-jwt', admin: false, username: 'test-user' })
+  }
   const client = freshClient()
   return render(
     <QueryClientProvider client={client}>

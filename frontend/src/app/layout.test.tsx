@@ -90,7 +90,7 @@ describe('Layout', () => {
   })
 
   it('shows session identity and route in the shell bars', () => {
-    renderApp(<Layout />, { gatewayKey: 'gw-test', adminKey: 'master-test' })
+    renderApp(<Layout />, { gatewayKey: 'gw-test', adminSession: true })
     expect(screen.getByText(/cacherelay ·/i)).toBeInTheDocument()
     expect(screen.getByText('auth: gateway + admin')).toBeInTheDocument()
     expect(screen.getByText('route: Overview')).toBeInTheDocument()
@@ -118,7 +118,7 @@ describe('Layout', () => {
     const { unmount } = renderApp(<Layout />, { gatewayKey: 'gw-test' })
     expect(screen.getByText('auth: gateway')).toBeInTheDocument()
     unmount()
-    renderApp(<Layout />, { adminKey: 'master-test' })
+    renderApp(<Layout />, { adminSession: true })
     expect(screen.getByText('auth: admin')).toBeInTheDocument()
   })
 
@@ -147,7 +147,7 @@ describe('Layout', () => {
   })
 
   it('groups all ten routes with Overview pinned first', () => {
-    renderApp(<Layout />)
+    renderApp(<Layout />, { adminSession: true })
     expect(screen.getByText('Run')).toBeInTheDocument()
     expect(screen.getByText('Guard')).toBeInTheDocument()
     expect(screen.getByText('Inspect')).toBeInTheDocument()
@@ -165,6 +165,15 @@ describe('Layout', () => {
     ]) {
       expect(screen.getByRole('link', { name: new RegExp(`^${label}$`) })).toBeInTheDocument()
     }
+  })
+
+  it('hides admin routes from non-admins without a hint', () => {
+    renderApp(<Layout />)
+    for (const label of ['Circuits', 'Approvals', 'Cache & budgets', 'Keys', 'Ledger']) {
+      expect(screen.queryByRole('link', { name: new RegExp(`^${label}$`) })).not.toBeInTheDocument()
+    }
+    expect(screen.getByRole('link', { name: /^Playground$/ })).toBeInTheDocument()
+    expect(screen.queryByText('Guard')).not.toBeInTheDocument()
   })
 
   it('collapses to icons and persists the preference', async () => {
@@ -193,8 +202,27 @@ describe('Layout', () => {
     renderApp(<Layout />)
     await user.click(screen.getByRole('button', { name: /open navigation/i }))
     expect(screen.getByRole('button', { name: /close navigation/i })).toBeInTheDocument()
-    await user.click(screen.getByRole('link', { name: /^Ledger$/ }))
+    await user.click(screen.getByRole('link', { name: /^Playground$/ }))
     expect(screen.queryByRole('button', { name: /close navigation/i })).not.toBeInTheDocument()
+  })
+
+  it('navigates to login from the sidebar', async () => {
+    const user = userEvent.setup()
+    renderApp(<Layout />)
+    await user.click(screen.getByRole('link', { name: /log in/i }))
+    expect(screen.getByRole('link', { name: /log in/i })).toHaveAttribute('href', '/login')
+  })
+
+  it('locks from the collapsed sidebar', async () => {
+    const user = userEvent.setup()
+    window.localStorage.setItem('cacherelay.sidebar', 'closed')
+    server.use(http.post('*/v1/auth/logout', () => new HttpResponse(null, { status: 204 })))
+    renderApp(<Layout />, { adminSession: true })
+    await user.click(screen.getByRole('button', { name: /lock console/i }))
+    await waitFor(() => {
+      expect(useAuthStore.getState().session).toBeNull()
+    })
+    expect(screen.getByRole('link', { name: /log in/i })).toBeInTheDocument()
   })
 
   it('closes the drawer from its overlay without navigating', async () => {
@@ -239,7 +267,7 @@ describe('Layout', () => {
         HttpResponse.json({ approvals: [{ id: 'a' }, { id: 'b' }] }),
       ),
     )
-    renderApp(<Layout />, { adminKey: 'master-test' })
+    renderApp(<Layout />, { adminSession: true })
     await waitFor(() => {
       expect(screen.getByLabelText('2 pending approvals')).toBeInTheDocument()
     })
@@ -248,6 +276,23 @@ describe('Layout', () => {
   it('shows no badge without an admin key', () => {
     renderApp(<Layout />)
     expect(screen.queryByLabelText(/pending approvals/i)).not.toBeInTheDocument()
+  })
+
+  it('offers login when logged out and lock when in session', () => {
+    renderApp(<Layout />)
+    expect(screen.getByRole('link', { name: /log in/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /lock/i })).not.toBeInTheDocument()
+  })
+
+  it('locks the console on demand', async () => {
+    const user = userEvent.setup()
+    server.use(http.post('*/v1/auth/logout', () => new HttpResponse(null, { status: 204 })))
+    renderApp(<Layout />, { adminSession: true })
+    await user.click(screen.getByRole('button', { name: /lock/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: /log in/i })).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Guard')).not.toBeInTheDocument()
   })
 
   it('mirrors live gateway headers into the strip', async () => {

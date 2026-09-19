@@ -6,36 +6,26 @@ import { server } from '../../test/setup.js'
 import { renderApp } from '../../test/utils.js'
 import { CircuitsPage } from './page.js'
 
-const STATE = {
-  circuits: [{ provider: 'openai', state: 'CLOSED', lastTransitionAt: null }],
-}
+const STATE = [
+  {
+    provider: 'openai',
+    state: 'CLOSED',
+    failures: 0,
+    cooldownMsRemaining: 0,
+    halfOpenProbe: false,
+  },
+]
 
 /**
  * Seeds the admin key then renders the circuits board.
  */
 function renderBoard() {
-  return renderApp(<CircuitsPage />, { adminKey: 'master-test' })
+  return renderApp(<CircuitsPage />, { adminSession: true })
 }
 
 describe('CircuitsPage', () => {
-  it('asks for the admin key when locked', () => {
-    renderApp(<CircuitsPage />)
-    expect(screen.getByLabelText(/master admin key/i)).toBeInTheDocument()
-  })
-
-  it('unlocks with a typed key', async () => {
-    const user = userEvent.setup()
-    server.use(http.get('*/v1/admin/circuits/state', () => HttpResponse.json({ circuits: [] })))
-    renderApp(<CircuitsPage />)
-    await user.type(screen.getByLabelText(/master admin key/i), 'master-test')
-    await user.click(screen.getByRole('button', { name: /unlock circuits/i }))
-    await waitFor(() => {
-      expect(screen.getByText(/no providers reported/i)).toBeInTheDocument()
-    })
-  })
-
   it('renders provider states with icon and text', async () => {
-    server.use(http.get('*/v1/admin/circuits/state', () => HttpResponse.json(STATE)))
+    server.use(http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)))
     renderBoard()
     await waitFor(() => {
       expect(screen.getByText('openai')).toBeInTheDocument()
@@ -46,8 +36,8 @@ describe('CircuitsPage', () => {
   it('resets a circuit and announces the outcome', async () => {
     const user = userEvent.setup()
     server.use(
-      http.get('*/v1/admin/circuits/state', () => HttpResponse.json(STATE)),
-      http.post('*/v1/admin/circuits/reset', () =>
+      http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)),
+      http.post('*/v1/admin/circuits/*/reset', () =>
         HttpResponse.json({ provider: 'openai', state: 'CLOSED' }),
       ),
     )
@@ -61,7 +51,7 @@ describe('CircuitsPage', () => {
   it('surfaces gateway errors without leaking internals', async () => {
     server.use(
       http.get(
-        '*/v1/admin/circuits/state',
+        '*/v1/admin/circuits',
         () => new HttpResponse(JSON.stringify({ title: 'x' }), { status: 503 }),
       ),
     )
@@ -74,8 +64,8 @@ describe('CircuitsPage', () => {
   it('reports reset failures honestly', async () => {
     const user = userEvent.setup()
     server.use(
-      http.get('*/v1/admin/circuits/state', () => HttpResponse.json(STATE)),
-      http.post('*/v1/admin/circuits/reset', () => new HttpResponse('x', { status: 500 })),
+      http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)),
+      http.post('*/v1/admin/circuits/*/reset', () => new HttpResponse('x', { status: 500 })),
     )
     renderBoard()
     await user.click(await screen.findByRole('button', { name: /reset circuit/i }))
@@ -84,23 +74,41 @@ describe('CircuitsPage', () => {
     })
   })
 
-  it('stays locked on empty submit', async () => {
-    const user = userEvent.setup()
-    renderApp(<CircuitsPage />)
-    await user.click(screen.getByRole('button', { name: /unlock circuits/i }))
-    expect(screen.getByLabelText(/master admin key/i)).toBeInTheDocument()
+  it('names an empty board honestly', async () => {
+    server.use(http.get('*/v1/admin/circuits', () => HttpResponse.json([])))
+    renderBoard()
+    await waitFor(() => {
+      expect(screen.getByText(/no providers reported/i)).toBeInTheDocument()
+    })
   })
 
   it('renders every known state plus unknown future states', async () => {
+    const user = userEvent.setup()
     server.use(
-      http.get('*/v1/admin/circuits/state', () =>
-        HttpResponse.json({
-          circuits: [
-            { provider: 'a', state: 'OPEN', lastTransitionAt: '2026-09-17T01:00:00Z' },
-            { provider: 'b', state: 'HALF_OPEN', lastTransitionAt: null },
-            { provider: 'c', state: 'DRAINING', lastTransitionAt: null },
-          ],
-        }),
+      http.get('*/v1/admin/circuits', () =>
+        HttpResponse.json([
+          {
+            provider: 'a',
+            state: 'OPEN',
+            failures: 3,
+            cooldownMsRemaining: 15000,
+            halfOpenProbe: false,
+          },
+          {
+            provider: 'b',
+            state: 'HALF_OPEN',
+            failures: 0,
+            cooldownMsRemaining: 0,
+            halfOpenProbe: true,
+          },
+          {
+            provider: 'c',
+            state: 'DRAINING',
+            failures: 0,
+            cooldownMsRemaining: 0,
+            halfOpenProbe: false,
+          },
+        ]),
       ),
     )
     renderBoard()
@@ -109,15 +117,25 @@ describe('CircuitsPage', () => {
     })
     expect(screen.getByText('▲ Half-open')).toBeInTheDocument()
     expect(screen.getByText('? Unknown')).toBeInTheDocument()
-    expect(screen.getByText('2026-09-17T01:00:00Z')).toBeInTheDocument()
+    expect(screen.getByText('15000')).toBeInTheDocument()
+    await user.click(within(screen.getByRole('table')).getByText('b'))
+    expect(screen.getByRole('complementary', { name: /circuit inspector/i })).toHaveTextContent(
+      'in flight',
+    )
   })
 
   it('renders future states under their own name', async () => {
     server.use(
-      http.get('*/v1/admin/circuits/state', () =>
-        HttpResponse.json({
-          circuits: [{ provider: 'c', state: 'DRAINING', lastTransitionAt: null }],
-        }),
+      http.get('*/v1/admin/circuits', () =>
+        HttpResponse.json([
+          {
+            provider: 'c',
+            state: 'DRAINING',
+            failures: 0,
+            cooldownMsRemaining: 0,
+            halfOpenProbe: false,
+          },
+        ]),
       ),
     )
     renderBoard()
@@ -128,7 +146,7 @@ describe('CircuitsPage', () => {
 
   it('shows the same-origin base when unconfigured', async () => {
     vi.stubEnv('VITE_API_BASE_URL', '')
-    server.use(http.get('*/v1/admin/circuits/state', () => HttpResponse.json({ circuits: [] })))
+    server.use(http.get('*/v1/admin/circuits', () => HttpResponse.json([])))
     renderBoard()
     await waitFor(() => {
       expect(screen.getByText(/same-origin/i)).toBeInTheDocument()
@@ -138,7 +156,7 @@ describe('CircuitsPage', () => {
   it('refreshes the board on demand', async () => {
     let calls = 0
     server.use(
-      http.get('*/v1/admin/circuits/state', () => {
+      http.get('*/v1/admin/circuits', () => {
         calls += 1
         return HttpResponse.json(STATE)
       }),
@@ -157,7 +175,7 @@ describe('CircuitsPage', () => {
 
   it('names a filter with zero matches honestly', async () => {
     const user = userEvent.setup()
-    server.use(http.get('*/v1/admin/circuits/state', () => HttpResponse.json(STATE)))
+    server.use(http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)))
     renderBoard()
     await waitFor(() => {
       expect(screen.getByText('openai')).toBeInTheDocument()
@@ -168,7 +186,7 @@ describe('CircuitsPage', () => {
 
   it('deselects a row on second click', async () => {
     const user = userEvent.setup()
-    server.use(http.get('*/v1/admin/circuits/state', () => HttpResponse.json(STATE)))
+    server.use(http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)))
     renderBoard()
     const table = await screen.findByRole('table')
     await user.click(within(table).getByText('openai'))
@@ -184,13 +202,23 @@ describe('CircuitsPage', () => {
   it('filters rows by provider text', async () => {
     const user = userEvent.setup()
     server.use(
-      http.get('*/v1/admin/circuits/state', () =>
-        HttpResponse.json({
-          circuits: [
-            { provider: 'openai', state: 'CLOSED', lastTransitionAt: null },
-            { provider: 'anthropic', state: 'OPEN', lastTransitionAt: null },
-          ],
-        }),
+      http.get('*/v1/admin/circuits', () =>
+        HttpResponse.json([
+          {
+            provider: 'openai',
+            state: 'CLOSED',
+            failures: 0,
+            cooldownMsRemaining: 0,
+            halfOpenProbe: false,
+          },
+          {
+            provider: 'anthropic',
+            state: 'OPEN',
+            failures: 0,
+            cooldownMsRemaining: 0,
+            halfOpenProbe: false,
+          },
+        ]),
       ),
     )
     renderBoard()
@@ -205,13 +233,23 @@ describe('CircuitsPage', () => {
   it('segments rows by state dimension', async () => {
     const user = userEvent.setup()
     server.use(
-      http.get('*/v1/admin/circuits/state', () =>
-        HttpResponse.json({
-          circuits: [
-            { provider: 'openai', state: 'CLOSED', lastTransitionAt: null },
-            { provider: 'anthropic', state: 'OPEN', lastTransitionAt: null },
-          ],
-        }),
+      http.get('*/v1/admin/circuits', () =>
+        HttpResponse.json([
+          {
+            provider: 'openai',
+            state: 'CLOSED',
+            failures: 0,
+            cooldownMsRemaining: 0,
+            halfOpenProbe: false,
+          },
+          {
+            provider: 'anthropic',
+            state: 'OPEN',
+            failures: 0,
+            cooldownMsRemaining: 0,
+            halfOpenProbe: false,
+          },
+        ]),
       ),
     )
     renderBoard()
@@ -226,8 +264,8 @@ describe('CircuitsPage', () => {
   it('inspects a row and resets from the inspector', async () => {
     const user = userEvent.setup()
     server.use(
-      http.get('*/v1/admin/circuits/state', () => HttpResponse.json(STATE)),
-      http.post('*/v1/admin/circuits/reset', () =>
+      http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)),
+      http.post('*/v1/admin/circuits/*/reset', () =>
         HttpResponse.json({ provider: 'openai', state: 'CLOSED' }),
       ),
     )

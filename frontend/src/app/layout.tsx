@@ -10,6 +10,7 @@ import {
   FlaskConical,
   KeyRound,
   LayoutDashboard,
+  Lock,
   Menu,
   Moon,
   Plug,
@@ -25,6 +26,7 @@ import {
   resolveApiBase,
   setHeadersReporter,
 } from '../shared/api/client.js'
+import { logout, startSessionHeartbeat } from '../shared/auth/session.js'
 import { CommandPalette } from '../shared/components/CommandPalette.js'
 import { RateLimitHeaders } from '../shared/components/RateLimitHeaders.js'
 import { useAuthStore } from '../shared/auth/store.js'
@@ -36,6 +38,8 @@ interface NavItem {
   to: string
   label: string
   icon: LucideIcon
+  /** True for admin-only routes (hidden from non-admins, no hint). */
+  admin: boolean
   badge?: (() => React.JSX.Element | null) | undefined
 }
 
@@ -109,8 +113,8 @@ export function Layout(): React.JSX.Element {
   const { dark, toggleDark } = useUiStore(
     useShallow((s) => ({ dark: s.dark, toggleDark: s.toggleDark })),
   )
-  const { gatewayKey, adminKey } = useAuthStore(
-    useShallow((s) => ({ gatewayKey: s.gatewayKey, adminKey: s.adminKey })),
+  const { gatewayKey, session } = useAuthStore(
+    useShallow((s) => ({ gatewayKey: s.gatewayKey, session: s.session })),
   )
   const snapshot = useRateLimitStore((s) => s.snapshot)
   const { pathname } = useLocation()
@@ -118,21 +122,18 @@ export function Layout(): React.JSX.Element {
   const [drawer, setDrawer] = useState(false)
   const base = resolveApiBase()
   const authLabel =
-    gatewayKey !== null && adminKey !== null
+    gatewayKey !== null && session !== null
       ? 'gateway + admin'
       : gatewayKey !== null
         ? 'gateway'
-        : adminKey !== null
+        : session !== null
           ? 'admin'
           : 'locked'
 
   const pending = useQuery({
     queryKey: ['approvals-badge'],
-    queryFn: ({ signal }) =>
-      new GatewayClient({ token: adminKey ?? '', adminKey: adminKey ?? '' }).hitlPending({
-        signal,
-      }),
-    enabled: adminKey !== null,
+    queryFn: ({ signal }) => new GatewayClient().hitlPending({ signal }),
+    enabled: session?.admin === true,
   })
   const pendingCount = pending.data?.approvals.length ?? 0
 
@@ -147,7 +148,9 @@ export function Layout(): React.JSX.Element {
 
   useEffect(() => {
     useRateLimitStore.getState().clear()
-  }, [gatewayKey, adminKey])
+  }, [gatewayKey, session])
+
+  useEffect(() => startSessionHeartbeat(), [])
 
   const toggleCollapsed = (): void => {
     setCollapsed((c) => {
@@ -157,22 +160,23 @@ export function Layout(): React.JSX.Element {
   }
 
   const groups: NavGroup[] = [
-    { label: null, items: [{ to: '/', label: 'Overview', icon: LayoutDashboard }] },
+    { label: null, items: [{ to: '/', label: 'Overview', icon: LayoutDashboard, admin: false }] },
     {
       label: 'Run',
       items: [
-        { to: '/playground', label: 'Playground', icon: FlaskConical },
-        { to: '/embeddings', label: 'Embeddings', icon: Brain },
+        { to: '/playground', label: 'Playground', icon: FlaskConical, admin: false },
+        { to: '/embeddings', label: 'Embeddings', icon: Brain, admin: false },
       ],
     },
     {
       label: 'Guard',
       items: [
-        { to: '/circuits', label: 'Circuits', icon: Zap },
+        { to: '/circuits', label: 'Circuits', icon: Zap, admin: true },
         {
           to: '/approvals',
           label: 'Approvals',
           icon: ShieldCheck,
+          admin: true,
           badge:
             pendingCount > 0
               ? () => (
@@ -185,24 +189,29 @@ export function Layout(): React.JSX.Element {
                 )
               : undefined,
         },
-        { to: '/cache', label: 'Cache & budgets', icon: Database },
-        { to: '/keys', label: 'Keys', icon: KeyRound },
+        { to: '/cache', label: 'Cache & budgets', icon: Database, admin: true },
+        { to: '/keys', label: 'Keys', icon: KeyRound, admin: true },
       ],
     },
     {
       label: 'Inspect',
       items: [
-        { to: '/ledger', label: 'Ledger', icon: BookOpen },
-        { to: '/mcp', label: 'MCP', icon: Plug },
-        { to: '/observability', label: 'Observability', icon: Activity },
+        { to: '/ledger', label: 'Ledger', icon: BookOpen, admin: true },
+        { to: '/mcp', label: 'MCP', icon: Plug, admin: false },
+        { to: '/observability', label: 'Observability', icon: Activity, admin: false },
       ],
     },
   ]
+  const isAdmin = session?.admin === true
+  const visibleGroups = groups
+    .map((g) => ({ ...g, items: g.items.filter((i) => isAdmin || !i.admin) }))
+    .filter((g) => g.items.length > 0)
 
   const routeLabel =
     pathname === '/'
       ? 'Overview'
-      : (groups.flatMap((g) => g.items).find((item) => item.to === pathname)?.label ?? pathname)
+      : (visibleGroups.flatMap((g) => g.items).find((item) => item.to === pathname)?.label ??
+        pathname)
 
   const sidebarBody = (
     <div className="flex h-full flex-col">
@@ -222,7 +231,7 @@ export function Layout(): React.JSX.Element {
         </button>
       </div>
       <nav aria-label="Primary" className="flex-1 space-y-4 overflow-y-auto px-2">
-        {groups.map((group) => (
+        {visibleGroups.map((group) => (
           <div key={group.label ?? 'home'}>
             {group.label === null || collapsed ? null : (
               <p className="px-2 pb-1 font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
@@ -262,9 +271,36 @@ export function Layout(): React.JSX.Element {
         ))}
       </nav>
       <div className="space-y-2 border-t border-ink/10 p-4 dark:border-parchment/10">
+        {session === null ? (
+          <NavLink
+            to="/login"
+            aria-label={collapsed ? 'Log in' : undefined}
+            onClick={() => {
+              setDrawer(false)
+            }}
+            className="flex w-full items-center gap-2 rounded-md p-2 text-xs"
+          >
+            <KeyRound size={16} aria-hidden="true" />
+            {collapsed ? null : <span>Log in</span>}
+          </NavLink>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              setDrawer(false)
+              void logout()
+            }}
+            aria-label={`Lock console (signed in as ${session.username})`}
+            className="flex w-full items-center gap-2 rounded-md p-2 text-xs"
+          >
+            <Lock size={16} aria-hidden="true" />
+            {collapsed ? null : <span>Lock</span>}
+          </button>
+        )}
         <button
           type="button"
           onClick={toggleDark}
+          aria-label={collapsed ? (dark ? 'Light theme' : 'Dark theme') : undefined}
           className="flex w-full items-center gap-2 rounded-md p-2 text-xs"
         >
           {dark ? <Sun size={16} aria-hidden="true" /> : <Moon size={16} aria-hidden="true" />}
@@ -330,7 +366,7 @@ export function Layout(): React.JSX.Element {
           </div>
           <p className="sr-only">Enterprise AI gateway console</p>
         </header>
-        {snapshot !== null && (gatewayKey !== null || adminKey !== null) ? (
+        {snapshot !== null && (gatewayKey !== null || session !== null) ? (
           <div className="mx-auto w-full max-w-6xl px-4 pt-4">
             <RateLimitHeaders snapshot={snapshot} />
           </div>

@@ -51,7 +51,7 @@ export function PlaygroundPage(): React.JSX.Element {
   } = useForm<FormData>({
     resolver: zodResolver(schema),
     mode: 'onSubmit',
-    defaultValues: { model: 'gpt-4o-mini', prompt: '', key: gatewayKey ?? '' },
+    defaultValues: { model: 'gpt-56-luna', prompt: '', key: gatewayKey ?? '' },
   })
   const promptLength = useWatch({ control, name: 'prompt' }).length
 

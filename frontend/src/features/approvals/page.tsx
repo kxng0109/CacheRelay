@@ -1,9 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { useShallow } from 'zustand/react/shallow'
 import { GatewayClient } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
-import { useAuthStore } from '../../shared/auth/store.js'
 
 /**
  * Human-in-the-loop approval queue for gated MCP tool calls.
@@ -13,50 +11,36 @@ import { useAuthStore } from '../../shared/auth/store.js'
  * @returns The approvals screen.
  */
 export function ApprovalsPage(): React.JSX.Element {
-  const { adminKey } = useAuthStore(useShallow((s) => ({ adminKey: s.adminKey })))
-
   return (
     <div className="space-y-4">
       <h1 className="font-display text-2xl font-medium tracking-tight">Approvals</h1>
-      {adminKey === null ? (
-        <p className="text-sm">Unlock the admin key on the Circuits page first.</p>
-      ) : (
-        <ApprovalsBoard adminKey={adminKey} />
-      )}
+      <ApprovalsBoard />
     </div>
   )
-}
-
-interface ApprovalsBoardProps {
-  /** Master admin key; the gate guarantees non-null before mounting. */
-  adminKey: string
 }
 
 /**
  * Pending gated tool calls with approve/reject decisions.
  *
- * @param props - The admin key for admin-surface calls.
+ * @remarks Behind the admin route guard; the session Bearer attaches
+ * automatically, so no credential prop is needed.
+ *
  * @returns The approvals board.
  */
-function ApprovalsBoard({ adminKey }: ApprovalsBoardProps): React.JSX.Element {
+function ApprovalsBoard(): React.JSX.Element {
   const qc = useQueryClient()
   const [notice, setNotice] = useState<string | null>(null)
 
   const pending = useQuery({
     queryKey: ['hitl-pending'],
-    queryFn: ({ signal }) =>
-      new GatewayClient({ token: adminKey, adminKey }).hitlPending({ signal }),
+    queryFn: ({ signal }) => new GatewayClient().hitlPending({ signal }),
     refetchInterval: 10_000,
   })
 
   const decide = async (approvalId: string, approved: boolean): Promise<void> => {
     setNotice(null)
     try {
-      await new GatewayClient({ token: adminKey, adminKey }).decideHitl(
-        approvalId,
-        approved,
-        'console-operator',
-      )
+      await new GatewayClient().decideHitl(approvalId, approved, 'console-operator')
       setNotice(`${approvalId}: ${approved ? 'approved' : 'rejected'}.`)
       await qc.invalidateQueries({ queryKey: ['hitl-pending'] })
     } catch (e) {

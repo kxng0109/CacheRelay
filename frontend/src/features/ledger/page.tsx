@@ -1,15 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { useShallow } from 'zustand/react/shallow'
 import { GatewayClient } from '../../shared/api/client.js'
-import { useAuthStore } from '../../shared/auth/store.js'
 
 const PAGE_SIZE = 25
-
-interface LedgerBoardProps {
-  /** Master admin key; the gate guarantees non-null before mounting. */
-  adminKey: string
-}
 
 /**
  * Billed totals plus the paginated audit log.
@@ -21,19 +14,17 @@ interface LedgerBoardProps {
  * @param props - The admin key for admin-surface calls.
  * @returns The ledger board.
  */
-function LedgerBoard({ adminKey }: LedgerBoardProps): React.JSX.Element {
+function LedgerBoard(): React.JSX.Element {
   const [page, setPage] = useState(0)
   const [selected, setSelected] = useState<string | null>(null)
 
   const summary = useQuery({
     queryKey: ['ledger-summary'],
-    queryFn: ({ signal }) =>
-      new GatewayClient({ token: adminKey, adminKey }).ledgerSummary({ signal }),
+    queryFn: ({ signal }) => new GatewayClient().ledgerSummary({ signal }),
   })
   const logs = useQuery({
     queryKey: ['ledger-logs', page],
-    queryFn: ({ signal }) =>
-      new GatewayClient({ token: adminKey, adminKey }).ledgerLogs(page, PAGE_SIZE, { signal }),
+    queryFn: ({ signal }) => new GatewayClient().ledgerLogs(page, PAGE_SIZE, { signal }),
   })
 
   const entries = logs.data?.content ?? []
@@ -183,19 +174,15 @@ function LedgerBoard({ adminKey }: LedgerBoardProps): React.JSX.Element {
 /**
  * Ledger page: billed totals plus the paginated audit log.
  *
+ * @remarks Behind the admin route guard; no gate lives here.
+ *
  * @returns The ledger screen.
  */
 export function LedgerPage(): React.JSX.Element {
-  const { adminKey } = useAuthStore(useShallow((s) => ({ adminKey: s.adminKey })))
-
   return (
     <div className="space-y-4">
       <h1 className="font-display text-2xl font-medium tracking-tight">Ledger</h1>
-      {adminKey === null ? (
-        <p className="text-sm">Unlock the admin key on the Circuits page first.</p>
-      ) : (
-        <LedgerBoard adminKey={adminKey} />
-      )}
+      <LedgerBoard />
     </div>
   )
 }

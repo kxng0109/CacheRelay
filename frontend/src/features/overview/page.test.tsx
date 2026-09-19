@@ -1,9 +1,27 @@
 import { screen, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { server } from '../../test/setup.js'
 import { renderApp } from '../../test/utils.js'
 import { OverviewPage } from './page.js'
+
+const { mockInit } = vi.hoisted(() => {
+  const mockChart = {
+    setOption: vi.fn(),
+    setTheme: vi.fn(),
+    resize: vi.fn(),
+    dispose: vi.fn(),
+  }
+  return { mockChart, mockInit: vi.fn(() => mockChart) }
+})
+
+vi.mock('../../shared/echarts/setup.js', () => ({
+  echarts: { init: mockInit },
+}))
+
+beforeEach(() => {
+  vi.clearAllMocks()
+})
 
 describe('OverviewPage', () => {
   it('renders tiles, chart fallback, and section links', async () => {
@@ -16,7 +34,7 @@ describe('OverviewPage', () => {
         () => new HttpResponse('', { headers: { 'Content-Type': 'text/plain' } }),
       ),
     )
-    renderApp(<OverviewPage />, { adminKey: 'master-test' })
+    renderApp(<OverviewPage />, { adminSession: true })
     expect(screen.getByRole('heading', { name: /overview/i })).toBeInTheDocument()
     await waitFor(() => {
       expect(screen.getByText('42')).toBeInTheDocument()
@@ -26,10 +44,18 @@ describe('OverviewPage', () => {
     }
   })
 
-  it('stays locked without an admin key', () => {
+  it('shows no spend totals and no hint without an admin session', () => {
     renderApp(<OverviewPage />)
-    expect(screen.getByText(/unlock the admin key/i)).toBeInTheDocument()
+    expect(screen.queryByText(/unlock the admin key/i)).not.toBeInTheDocument()
     expect(screen.queryByText('42')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /overview/i })).toBeInTheDocument()
+  })
+
+  it('hides tiles for non-admin sessions without a hint', () => {
+    renderApp(<OverviewPage />, { nonAdminSession: true })
+    expect(screen.queryByText(/unlock the admin key/i)).not.toBeInTheDocument()
+    expect(screen.queryByText('42')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /overview/i })).toBeInTheDocument()
   })
 
   it('reports summary failures as alerts', async () => {
@@ -40,7 +66,7 @@ describe('OverviewPage', () => {
         () => new HttpResponse('', { headers: { 'Content-Type': 'text/plain' } }),
       ),
     )
-    renderApp(<OverviewPage />, { adminKey: 'master-test' })
+    renderApp(<OverviewPage />, { adminSession: true })
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/HTTP 500/)
     })

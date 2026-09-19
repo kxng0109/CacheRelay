@@ -18,16 +18,16 @@ const PENDING = {
 }
 
 describe('ApprovalsPage', () => {
-  it('requires the admin key first', () => {
+  it('mounts the board without a session (router guards access)', () => {
     renderApp(<ApprovalsPage />)
-    expect(screen.getByText(/unlock the admin key/i)).toBeInTheDocument()
+    expect(screen.getByText(/loading pending approvals/i)).toBeInTheDocument()
   })
 
   it('shows the empty queue', async () => {
     server.use(
       http.get('*/v1/admin/mcp/approvals/pending', () => HttpResponse.json({ approvals: [] })),
     )
-    renderApp(<ApprovalsPage />, { adminKey: 'master-test' })
+    renderApp(<ApprovalsPage />, { adminSession: true })
     await waitFor(() => {
       expect(screen.getByText(/queue is empty/i)).toBeInTheDocument()
     })
@@ -45,7 +45,7 @@ describe('ApprovalsPage', () => {
         return new HttpResponse(null, { status: 200 })
       }),
     )
-    renderApp(<ApprovalsPage />, { adminKey: 'master-test' })
+    renderApp(<ApprovalsPage />, { adminSession: true })
     await user.click(await screen.findByRole('button', { name: /^approve$/i }))
     await waitFor(() => {
       expect(screen.getByText(/a1: approved/i)).toBeInTheDocument()
@@ -61,7 +61,7 @@ describe('ApprovalsPage', () => {
         () => new HttpResponse(null, { status: 200 }),
       ),
     )
-    renderApp(<ApprovalsPage />, { adminKey: 'master-test' })
+    renderApp(<ApprovalsPage />, { adminSession: true })
     await user.click(await screen.findByRole('button', { name: /^reject$/i }))
     await waitFor(() => {
       expect(screen.getByText(/a1: rejected/i)).toBeInTheDocument()
@@ -77,7 +77,7 @@ describe('ApprovalsPage', () => {
         () => new HttpResponse('x', { status: 409 }),
       ),
     )
-    renderApp(<ApprovalsPage />, { adminKey: 'master-test' })
+    renderApp(<ApprovalsPage />, { adminSession: true })
     await user.click(await screen.findByRole('button', { name: /^approve$/i }))
     await waitFor(() => {
       expect(screen.getByText(/HTTP 409/)).toBeInTheDocument()
@@ -88,7 +88,7 @@ describe('ApprovalsPage', () => {
     server.use(
       http.get('*/v1/admin/mcp/approvals/pending', () => new HttpResponse('x', { status: 500 })),
     )
-    renderApp(<ApprovalsPage />, { adminKey: 'master-test' })
+    renderApp(<ApprovalsPage />, { adminSession: true })
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/HTTP 500/)
     })

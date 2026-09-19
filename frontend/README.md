@@ -40,10 +40,13 @@ Never commit tokens, keys, or credentials.
 - `build.assetsInlineLimit: 0` (no `data:` inlining). ECharts is set up
   tree-shaken (`shared/echarts/setup.ts`) but no screen charts yet — import it
   lazily per route when the first chart lands, never globally.
-- Both credentials (gateway `gw-` key, master admin key) live in JS memory
-  only (zustand, never `localStorage`/cookies/IndexedDB). No refresh cookie
-  exists today; the `__Host-` cookie rules in the frontend skill apply the day
-  one is introduced. See `backend/docs/BACKEND_API_REFERENCE.md` §1–§3.
+- Auth model: the gateway `gw-` key (user-pasted per form) and the human
+  session (short-lived access JWT) live in JS memory only (zustand, never
+  `localStorage`/cookies/IndexedDB). The refresh token lives in an httpOnly
+  cookie the browser sends automatically. The master secret has no UI path
+  by design (terminal/curl-only). Admin screens render a missing page for
+  non-admins (stealth: identical to unknown routes). See
+  `backend/docs/BACKEND_API_REFERENCE.md` §1–§3.
 - The Observability route renders a live latency centerpiece (`LatencyChart`,
   `React.lazy` + `Suspense` so the `echarts-vendor` chunk stays out of the
   initial bundle): same-origin `/actuator/prometheus` (no auth), 15s poll,
@@ -70,15 +73,15 @@ Never commit tokens, keys, or credentials.
 
 ## Quality gates
 
-| Command                       | Gate                                                                                                            |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `npm.cmd run lint`            | ESLint 10 flat, zero warnings (`--max-warnings=0`)                                                              |
-| `npm.cmd run format:check`    | Prettier 3.9.7 exact, check only                                                                                |
-| `npm.cmd run typecheck`       | `tsc -b` (solution build; bare `--noEmit` is vacuous here)                                                      |
-| `npm.cmd run test`            | Vitest 5 unit run (jsdom)                                                                                       |
-| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently 100/98.5/100/100; only defensive `??`/null arms excluded from branches) |
-| `npm.cmd run test:e2e`        | Playwright 1.63 smoke, chromium, Vite dev reuse                                                                 |
-| `npm.cmd run build-storybook` | Storybook 10.6.0 static build                                                                                   |
+| Command                       | Gate                                                                                                               |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `npm.cmd run lint`            | ESLint 10 flat, zero warnings (`--max-warnings=0`)                                                                 |
+| `npm.cmd run format:check`    | Prettier 3.9.7 exact, check only                                                                                   |
+| `npm.cmd run typecheck`       | `tsc -b` (solution build; bare `--noEmit` is vacuous here)                                                         |
+| `npm.cmd run test`            | Vitest 5 unit run (jsdom)                                                                                          |
+| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently 99.5/97.8/99.7/99.8; only defensive `??`/null arms excluded from branches) |
+| `npm.cmd run test:e2e`        | Playwright 1.63 smoke, chromium, Vite dev reuse                                                                    |
+| `npm.cmd run build-storybook` | Storybook 10.6.0 static build                                                                                      |
 
 ### ESLint
 
@@ -133,7 +136,7 @@ reporter for CI step summaries.
 `cleanup()` after each test, and closes the server at the end.
 `src/test/utils.tsx` renders UI with a fresh query client (no retries),
 memory router, and seeded memory-only credentials.
-23 suites / 231 tests: pure-unit (SSE parser, rate-limit parser/selector/store,
+27 suites / 324 tests: pure-unit (SSE parser, rate-limit parser/selector/store,
 Prometheus histogram parser/quantiles, ECharts registration, app boot,
 error mapping, URL allow-list) plus MSW integration per screen
 (happy/error/empty/adversarial).

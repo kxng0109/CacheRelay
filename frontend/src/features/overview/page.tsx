@@ -26,15 +26,13 @@ const LINKS = [
  * @returns The overview screen.
  */
 export function OverviewPage(): React.JSX.Element {
-  const { adminKey } = useAuthStore(useShallow((s) => ({ adminKey: s.adminKey })))
+  const session = useAuthStore(useShallow((s) => s.session))
+  const isAdmin = session?.admin === true
 
   const summary = useQuery({
     queryKey: ['ledger-summary'],
-    queryFn: ({ signal }) =>
-      new GatewayClient({ token: adminKey ?? '', adminKey: adminKey ?? '' }).ledgerSummary({
-        signal,
-      }),
-    enabled: adminKey !== null,
+    queryFn: ({ signal }) => new GatewayClient().ledgerSummary({ signal }),
+    enabled: isAdmin,
   })
 
   return (
@@ -45,34 +43,34 @@ export function OverviewPage(): React.JSX.Element {
           Gateway health, spend, and latency at a glance.
         </p>
       </div>
-      {adminKey === null ? (
-        <p className="text-sm text-ink-soft dark:text-parchment-soft">
-          Unlock the admin key on the Circuits page to light up spend totals.
-        </p>
-      ) : summary.isPending ? (
-        <p role="status" className="text-sm">
-          Loading totals…
-        </p>
-      ) : summary.error instanceof Error ? (
-        <p role="alert" className="text-sm text-danger dark:text-danger-soft">
-          {summary.error.message}
-        </p>
-      ) : summary.data === undefined ? null : (
-        <dl className="grid gap-3 sm:grid-cols-3">
-          <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
-            <dt className="text-xs text-ink-soft dark:text-parchment-soft">Requests</dt>
-            <dd className="font-mono text-lg tnum">{summary.data.totalRequests}</dd>
-          </div>
-          <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
-            <dt className="text-xs text-ink-soft dark:text-parchment-soft">Billed (µ$)</dt>
-            <dd className="font-mono text-lg tnum">{summary.data.totalCostUsdMicros}</dd>
-          </div>
-          <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
-            <dt className="text-xs text-ink-soft dark:text-parchment-soft">Avg duration (ms)</dt>
-            <dd className="font-mono text-lg tnum">{summary.data.averageDurationMs.toFixed(1)}</dd>
-          </div>
-        </dl>
-      )}
+      {isAdmin ? (
+        summary.isPending ? (
+          <p role="status" className="text-sm">
+            Loading totals…
+          </p>
+        ) : summary.error instanceof Error ? (
+          <p role="alert" className="text-sm text-danger dark:text-danger-soft">
+            {summary.error.message}
+          </p>
+        ) : summary.data === undefined ? null : (
+          <dl className="grid gap-3 sm:grid-cols-3">
+            <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
+              <dt className="text-xs text-ink-soft dark:text-parchment-soft">Requests</dt>
+              <dd className="font-mono text-lg tnum">{summary.data.totalRequests}</dd>
+            </div>
+            <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
+              <dt className="text-xs text-ink-soft dark:text-parchment-soft">Billed (µ$)</dt>
+              <dd className="font-mono text-lg tnum">{summary.data.totalCostUsdMicros}</dd>
+            </div>
+            <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
+              <dt className="text-xs text-ink-soft dark:text-parchment-soft">Avg duration (ms)</dt>
+              <dd className="font-mono text-lg tnum">
+                {summary.data.averageDurationMs.toFixed(1)}
+              </dd>
+            </div>
+          </dl>
+        )
+      ) : null}
       <Suspense
         fallback={
           <p role="status" className="text-sm">

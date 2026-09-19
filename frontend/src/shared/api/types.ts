@@ -94,29 +94,45 @@ export interface CacheStats {
 export interface CircuitSnapshot {
   provider: string
   state: 'CLOSED' | 'OPEN' | 'HALF_OPEN'
-  lastTransitionAt: string | null
+  /** Consecutive failures counted by the breaker. */
+  failures: number
+  /** Milliseconds left on the open-state cooldown (live countdown source). */
+  cooldownMsRemaining: number
+  /** Whether a half-open trial request is currently in flight. */
+  halfOpenProbe: boolean
 }
 
 export interface ApiKeyRecord {
-  id: string
+  keyId: string
+  keyPrefix: string
+  ownerId: string
   name: string
   rpmLimit: number
-  dailyQuota: number
-  models: string[]
+  tpmLimit: number
+  allowedModels: string[]
+  allowedProviders: string[]
+  enabled: boolean
   createdAt: string
 }
 
-export interface ApiKeyCreated extends ApiKeyRecord {
+export interface ApiKeyCreated {
+  keyId: string
   /** Single-exposure plaintext. Never persisted, never re-fetched. */
-  plaintext: string
+  key: string
+  keyPrefix: string
+  ownerId: string
+  name: string
 }
 
 export interface BudgetRecord {
   id: string
-  name: string
-  limitMicros: number
-  spentMicros: number
-  remainingMicros: number
+  level: string
+  subjectId: string
+  minuteMicros: number
+  monthMicros: number
+  webhookUrl: string | null
+  createdAt: string
+  updatedAt: string
 }
 
 export interface LedgerSummary {
@@ -158,4 +174,18 @@ export interface McpSuspended {
   /** Backend defect: `/v1/mcp/**` answers 403 until fixed. */
   suspended: true
   status: number
+}
+
+export interface McpToolAnnotations {
+  readOnlyHint?: boolean
+  destructiveHint?: boolean
+  idempotentHint?: boolean
+  openWorldHint?: boolean
+}
+
+export interface McpTool {
+  name: string
+  description: string | null
+  inputSchema: unknown
+  annotations: McpToolAnnotations | null
 }

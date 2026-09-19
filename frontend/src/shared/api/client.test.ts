@@ -11,6 +11,7 @@ import {
   setHeadersReporter,
   toErrorMessage,
 } from './client.js'
+import { useAuthStore } from '../auth/store.js'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -282,6 +283,27 @@ describe('GatewayClient transport', () => {
     expect(out).toEqual({ data: [{ id: 'x' }] })
   })
 
+  it('reads the live OpenAI list shape with extra fields', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              object: 'list',
+              data: [
+                { id: 'gpt-56-luna', object: 'model', created: 1789775002, owned_by: 'openai' },
+              ],
+            }),
+            { status: 200 },
+          ),
+        ),
+      ),
+    )
+    const out = await new GatewayClient({ base: '', token: 'gw-test' }).models()
+    expect(out.data.map((m) => m.id)).toEqual(['gpt-56-luna'])
+  })
+
   it('throws ApiError with status and headers on failure', async () => {
     vi.stubGlobal(
       'fetch',
@@ -406,18 +428,38 @@ describe('GatewayClient transport', () => {
     expect((sent as Record<string, unknown>).stream).toBe(false)
   })
 
-  it('sends the admin key header form without a bearer token', async () => {
+  it('prefers the session bearer over the constructor token', async () => {
     let headers: Record<string, string> = {}
     vi.stubGlobal(
       'fetch',
       vi.fn((_url: string, init: RequestInit) => {
         headers = (init.headers ?? {}) as Record<string, string>
-        return Promise.resolve(new Response(JSON.stringify({ circuits: [] }), { status: 200 }))
+        return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))
       }),
     )
-    await new GatewayClient({ base: '', token: 'unused', adminKey: 'master-test' }).circuitState()
-    expect(headers['X-Admin-Key']).toBe('master-test')
-    expect(headers.Authorization).toBeUndefined()
+    useAuthStore
+      .getState()
+      .setSession({ accessToken: 'session-jwt', admin: true, username: 'test-admin' })
+    try {
+      await new GatewayClient({ base: '', token: 'gw-test' }).circuitState()
+      expect(headers.Authorization).toBe('Bearer session-jwt')
+      expect(headers['X-Admin-Key']).toBeUndefined()
+    } finally {
+      useAuthStore.getState().clear()
+    }
+  })
+
+  it('falls back to the constructor token without a session', async () => {
+    let headers: Record<string, string> = {}
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init: RequestInit) => {
+        headers = (init.headers ?? {}) as Record<string, string>
+        return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))
+      }),
+    )
+    await new GatewayClient({ base: '', token: 'gw-test' }).circuitState()
+    expect(headers.Authorization).toBe('Bearer gw-test')
   })
 
   it('resolves empty payloads as undefined', async () => {
@@ -483,19 +525,103 @@ describe('GatewayClient transport', () => {
     expect((err as ApiError).message).toContain('temporarily unavailable')
   })
 
-  it('scopes cache purges to a model when given', async () => {
+  it('scopes cache purges to an owner when given', async () => {
     let url = ''
+    let method = ''
     vi.stubGlobal(
       'fetch',
-      vi.fn((input: string) => {
+      vi.fn((input: string, init?: RequestInit) => {
         url = input
-        return Promise.resolve(new Response(JSON.stringify({ purged: true }), { status: 200 }))
+        method = init?.method ?? ''
+        return Promise.resolve(
+          new Response(JSON.stringify({ success: true, evictedScope: 'tenant-corp' }), {
+            status: 200,
+          }),
+        )
       }),
     )
-    await new GatewayClient({ base: '', token: 'unused', adminKey: 'master-test' }).purgeCache(
-      'gpt-4o-mini',
+    const out = await new GatewayClient({
+      base: '',
+      token: 'unused',
+    }).purgeCache('tenant-corp')
+    expect(url).toContain('ownerId=tenant-corp')
+    expect(method).toBe('DELETE')
+    expect(out.evictedScope).toBe('tenant-corp')
+  })
+
+  it('attempts a refresh on admin-path 401s with a session', async () => {
+    useAuthStore.getState().setSession({ accessToken: 'stale-jwt', admin: true, username: 'op' })
+    let refreshCalls = 0
+    const seen: Record<string, string>[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (typeof url === 'string' && url.endsWith('/v1/auth/refresh')) {
+          refreshCalls += 1
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ accessToken: 'fresh-jwt', expiresInSeconds: 300, admin: true }),
+              { status: 200 },
+            ),
+          )
+        }
+        seen.push((init?.headers ?? {}) as Record<string, string>)
+        return Promise.resolve(new Response('x', { status: 401 }))
+      }),
     )
-    expect(url).toContain('model=gpt-4o-mini')
+    try {
+      const err = await new GatewayClient({ base: '', token: 'gw-test' })
+        .circuitState()
+        .catch((e: unknown) => e)
+      expect(err).toBeInstanceOf(ApiError)
+      expect(refreshCalls).toBe(1)
+      expect(useAuthStore.getState().session?.accessToken).toBe('fresh-jwt')
+      expect(seen).toHaveLength(1)
+    } finally {
+      useAuthStore.getState().clear()
+    }
+  })
+
+  it('skips refresh on public-path 401s', async () => {
+    useAuthStore.getState().setSession({ accessToken: 'stale-jwt', admin: true, username: 'op' })
+    let refreshCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (typeof url === 'string' && url.endsWith('/v1/auth/refresh')) {
+          refreshCalls += 1
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ accessToken: 'fresh-jwt', expiresInSeconds: 300, admin: true }),
+              { status: 200 },
+            ),
+          )
+        }
+        return Promise.resolve(new Response('x', { status: 401 }))
+      }),
+    )
+    try {
+      await new GatewayClient({ base: '', token: 'gw-test' }).models().catch((e: unknown) => e)
+      expect(refreshCalls).toBe(0)
+      expect(useAuthStore.getState().session?.accessToken).toBe('stale-jwt')
+    } finally {
+      useAuthStore.getState().clear()
+    }
+  })
+
+  it('skips refresh without a session', async () => {
+    let refreshCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (typeof url === 'string' && url.endsWith('/v1/auth/refresh')) {
+          refreshCalls += 1
+        }
+        return Promise.resolve(new Response('x', { status: 401 }))
+      }),
+    )
+    await new GatewayClient({ base: '', token: 'gw-test' }).circuitState().catch((e: unknown) => e)
+    expect(refreshCalls).toBe(0)
   })
 
   it('notifies the module reporter with success-path headers', async () => {
@@ -568,5 +694,174 @@ describe('GatewayClient transport', () => {
       },
     })
     expect(calls).toEqual(['10'])
+  })
+
+  it('signals suspension on 403 without inventing tools', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('x', { status: 403 }))),
+    )
+    const out = await new GatewayClient({ base: '', token: 'gw-test' }).mcpTools()
+    expect(out).toEqual({ suspended: true, status: 403 })
+  })
+
+  it('parses tools defensively, skipping malformed entries', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: 'tools-list',
+              result: {
+                tools: [
+                  {
+                    name: 'a__b',
+                    description: 'does b',
+                    inputSchema: { type: 'object' },
+                    annotations: { readOnlyHint: true, destructiveHint: 'yes' },
+                  },
+                  'junk',
+                  { description: 'nameless' },
+                ],
+              },
+            }),
+            { status: 200 },
+          ),
+        ),
+      ),
+    )
+    const out = await new GatewayClient({ base: '', token: 'gw-test' }).mcpTools()
+    expect(out).toEqual({
+      tools: [
+        {
+          name: 'a__b',
+          description: 'does b',
+          inputSchema: { type: 'object' },
+          annotations: { readOnlyHint: true, destructiveHint: 'yes' },
+        },
+      ],
+    })
+  })
+
+  it('throws on JSON-RPC error envelopes instead of emptying', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ jsonrpc: '2.0', id: 'x', error: { code: -32603, message: 'boom' } }),
+            { status: 200 },
+          ),
+        ),
+      ),
+    )
+    const err = await new GatewayClient({ base: '', token: 'gw-test' })
+      .mcpTools()
+      .catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toContain('boom')
+  })
+
+  it('returns no tools for non-object bodies', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('null', { status: 200 }))),
+    )
+    const out = await new GatewayClient({ base: '', token: 'gw-test' }).mcpTools()
+    expect(out).toEqual({ tools: [] })
+  })
+
+  it('rethrows aborts from the catalog fetch', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new DOMException('stop', 'AbortError'))),
+    )
+    const err = await new GatewayClient({ base: '', token: 'gw-test' })
+      .mcpTools()
+      .catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(DOMException)
+  })
+
+  it('maps catalog network failures honestly', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new TypeError('down'))),
+    )
+    const err = await new GatewayClient({ base: '', token: 'gw-test' })
+      .mcpTools()
+      .catch((e: unknown) => e)
+    expect((err as Error).message).toContain('Network unreachable')
+  })
+
+  it('returns no tools when the envelope has no result', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(new Response(JSON.stringify({ jsonrpc: '2.0', id: 'x' }), { status: 200 })),
+      ),
+    )
+    const out = await new GatewayClient({ base: '', token: 'gw-test' }).mcpTools()
+    expect(out).toEqual({ tools: [] })
+  })
+
+  it('reads error bodies that fail mid-stream as empty', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            ctrl.error(new Error('truncated'))
+          },
+        })
+        return Promise.resolve(new Response(stream, { status: 500 }))
+      }),
+    )
+    const err = await new GatewayClient({ base: '', token: 'gw-test' })
+      .mcpTools()
+      .catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+  })
+
+  it('returns no tools for unparseable success bodies', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('not-json{{{', { status: 200 }))),
+    )
+    const out = await new GatewayClient({ base: '', token: 'gw-test' }).mcpTools()
+    expect(out).toEqual({ tools: [] })
+  })
+
+  it('returns no tools when tools is not an array', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ jsonrpc: '2.0', id: 'x', result: { tools: {} } }), {
+            status: 200,
+          }),
+        ),
+      ),
+    )
+    const out = await new GatewayClient({ base: '', token: 'gw-test' }).mcpTools()
+    expect(out).toEqual({ tools: [] })
+  })
+
+  it('throws a generic message for codeless error envelopes', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ jsonrpc: '2.0', id: 'x', error: { code: -32603 } }), {
+            status: 200,
+          }),
+        ),
+      ),
+    )
+    const err = await new GatewayClient({ base: '', token: 'gw-test' })
+      .mcpTools()
+      .catch((e: unknown) => e)
+    expect((err as Error).message).toBe('MCP catalog error.')
   })
 })

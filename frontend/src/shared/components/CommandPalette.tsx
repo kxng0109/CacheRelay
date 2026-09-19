@@ -1,11 +1,15 @@
 import { Command } from 'cmdk'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { useShallow } from 'zustand/react/shallow'
+import { useAuthStore } from '../auth/store.js'
 
 export interface PaletteAction {
   id: string
   label: string
   hint?: string
+  /** True for admin-only actions (hidden from non-admins, no hint). */
+  admin?: boolean
   run: () => void
 }
 
@@ -41,6 +45,9 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
     void navigate(to)
   }
 
+  const session = useAuthStore(useShallow((s) => s.session))
+  const isAdmin = session?.admin === true
+
   const nav: PaletteAction[] = [
     {
       id: 'nav-overview',
@@ -59,6 +66,7 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
     {
       id: 'nav-circuits',
       label: 'Go to Circuits',
+      admin: true,
       run: () => {
         go('/circuits')
       },
@@ -66,6 +74,7 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
     {
       id: 'nav-keys',
       label: 'Go to Keys',
+      admin: true,
       run: () => {
         go('/keys')
       },
@@ -73,6 +82,7 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
     {
       id: 'nav-ledger',
       label: 'Go to Ledger',
+      admin: true,
       run: () => {
         go('/ledger')
       },
@@ -80,6 +90,7 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
     {
       id: 'nav-cache',
       label: 'Go to Cache and budgets',
+      admin: true,
       run: () => {
         go('/cache')
       },
@@ -94,6 +105,7 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
     {
       id: 'nav-hitl',
       label: 'Go to Approvals',
+      admin: true,
       run: () => {
         go('/approvals')
       },
@@ -114,6 +126,8 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
     },
   ]
 
+  const visible = [...nav, ...actions].filter((a) => isAdmin || a.admin !== true)
+
   return (
     <>
       <button
@@ -130,7 +144,7 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
         <Command.Input placeholder="Search actions…" aria-label="Search actions" />
         <Command.List>
           <Command.Empty>No results found.</Command.Empty>
-          {[...nav, ...actions].map((a) => (
+          {visible.map((a) => (
             <Command.Item
               key={a.id}
               value={a.label}

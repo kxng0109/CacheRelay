@@ -31,9 +31,9 @@ function pageOf(requestIds: string[], hasNext: boolean, page = 0) {
 }
 
 describe('LedgerPage', () => {
-  it('requires the admin key first', () => {
+  it('mounts the board without a session (router guards access)', () => {
     renderApp(<LedgerPage />)
-    expect(screen.getByText(/unlock the admin key/i)).toBeInTheDocument()
+    expect(screen.getByText(/loading summary/i)).toBeInTheDocument()
   })
 
   it('renders summary totals and paginated entries', async () => {
@@ -41,7 +41,7 @@ describe('LedgerPage', () => {
       summary({ totalRequests: 42, totalCostUsdMicros: 9000, averageDurationMs: 123.45 }),
       http.get('*/v1/admin/ledger/entries', () => HttpResponse.json(pageOf(['r1'], false))),
     )
-    renderApp(<LedgerPage />, { adminKey: 'master-test' })
+    renderApp(<LedgerPage />, { adminSession: true })
     await waitFor(() => {
       expect(screen.getByText('r1')).toBeInTheDocument()
     })
@@ -55,7 +55,7 @@ describe('LedgerPage', () => {
       summary({ totalRequests: 0, totalCostUsdMicros: 0, averageDurationMs: 0 }),
       http.get('*/v1/admin/ledger/entries', () => HttpResponse.json(pageOf([], false))),
     )
-    renderApp(<LedgerPage />, { adminKey: 'master-test' })
+    renderApp(<LedgerPage />, { adminSession: true })
     await waitFor(() => {
       expect(screen.getByText(/no ledger entries yet/i)).toBeInTheDocument()
     })
@@ -72,7 +72,7 @@ describe('LedgerPage', () => {
         )
       }),
     )
-    renderApp(<LedgerPage />, { adminKey: 'master-test' })
+    renderApp(<LedgerPage />, { adminSession: true })
     await user.click(await screen.findByRole('button', { name: /next/i }))
     await waitFor(() => {
       expect(screen.getByText(/page 2/i)).toBeInTheDocument()
@@ -89,7 +89,7 @@ describe('LedgerPage', () => {
       summary({ totalRequests: 1, totalCostUsdMicros: 1, averageDurationMs: 1 }),
       http.get('*/v1/admin/ledger/entries', () => HttpResponse.json(pageOf(['r1'], false))),
     )
-    renderApp(<LedgerPage />, { adminKey: 'master-test' })
+    renderApp(<LedgerPage />, { adminSession: true })
     expect(await screen.findByRole('button', { name: /next/i })).toBeDisabled()
   })
 
@@ -99,7 +99,7 @@ describe('LedgerPage', () => {
       summary({ totalRequests: 1, totalCostUsdMicros: 12, averageDurationMs: 3 }),
       http.get('*/v1/admin/ledger/entries', () => HttpResponse.json(pageOf(['r9'], false))),
     )
-    renderApp(<LedgerPage />, { adminKey: 'master-test' })
+    renderApp(<LedgerPage />, { adminSession: true })
     const table = await screen.findByRole('table')
     await user.click(within(table).getByText('r9'))
     const inspector = screen.getByRole('complementary', { name: /receipt inspector/i })
@@ -118,7 +118,7 @@ describe('LedgerPage', () => {
         HttpResponse.json({ ...pageOf(['r1'], false), totalPages: 0 }),
       ),
     )
-    renderApp(<LedgerPage />, { adminKey: 'master-test' })
+    renderApp(<LedgerPage />, { adminSession: true })
     const pager = await screen.findByText(/page 1/i)
     expect(pager).toHaveTextContent('Page 1')
     expect(pager).not.toHaveTextContent('of')
@@ -129,7 +129,7 @@ describe('LedgerPage', () => {
       http.get('*/v1/admin/ledger/summary', () => new HttpResponse('x', { status: 500 })),
       http.get('*/v1/admin/ledger/entries', () => HttpResponse.json(pageOf([], false))),
     )
-    renderApp(<LedgerPage />, { adminKey: 'master-test' })
+    renderApp(<LedgerPage />, { adminSession: true })
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/HTTP 500/)
     })
@@ -140,7 +140,7 @@ describe('LedgerPage', () => {
       summary({ totalRequests: 1, totalCostUsdMicros: 1, averageDurationMs: 1 }),
       http.get('*/v1/admin/ledger/entries', () => new HttpResponse('x', { status: 503 })),
     )
-    renderApp(<LedgerPage />, { adminKey: 'master-test' })
+    renderApp(<LedgerPage />, { adminSession: true })
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/temporarily unavailable/i)
     })

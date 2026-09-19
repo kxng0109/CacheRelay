@@ -1,6 +1,8 @@
 import { Suspense, lazy } from 'react'
 import { createBrowserRouter } from 'react-router'
 import { Layout } from './layout.js'
+import { NotFound } from './NotFound.js'
+import { RequireAdmin } from './RequireAdmin.js'
 
 const OverviewPage = lazy(() =>
   import('../features/overview/page.js').then((m) => ({ default: m.OverviewPage })),
@@ -30,6 +32,22 @@ const McpPage = lazy(() => import('../features/mcp/page.js').then((m) => ({ defa
 const ObservabilityPage = lazy(() =>
   import('../features/observability/page.js').then((m) => ({ default: m.ObservabilityPage })),
 )
+const LoginPage = lazy(() =>
+  import('../features/auth/LoginPage.js').then((m) => ({ default: m.LoginPage })),
+)
+const RedeemPage = lazy(() =>
+  import('../features/auth/RedeemPage.js').then((m) => ({ default: m.RedeemPage })),
+)
+
+/**
+ * Wraps an admin screen in the stealth guard.
+ *
+ * @param element - Admin screen element.
+ * @returns Guarded element (missing page for non-admins).
+ */
+function guard(element: React.JSX.Element): React.JSX.Element {
+  return <RequireAdmin>{suspend(element)}</RequireAdmin>
+}
 
 /**
  * Wraps a lazy route element in a suspense boundary.
@@ -53,14 +71,17 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: suspend(<OverviewPage />) },
       { path: 'playground', element: suspend(<PlaygroundPage />) },
-      { path: 'circuits', element: suspend(<CircuitsPage />) },
-      { path: 'keys', element: suspend(<KeysPage />) },
-      { path: 'ledger', element: suspend(<LedgerPage />) },
-      { path: 'cache', element: suspend(<CachePage />) },
+      { path: 'login', element: suspend(<LoginPage />) },
+      { path: 'redeem', element: suspend(<RedeemPage />) },
+      { path: 'circuits', element: guard(<CircuitsPage />) },
+      { path: 'keys', element: guard(<KeysPage />) },
+      { path: 'ledger', element: guard(<LedgerPage />) },
+      { path: 'cache', element: guard(<CachePage />) },
       { path: 'embeddings', element: suspend(<EmbeddingsPage />) },
-      { path: 'approvals', element: suspend(<ApprovalsPage />) },
+      { path: 'approvals', element: guard(<ApprovalsPage />) },
       { path: 'mcp', element: suspend(<McpPage />) },
       { path: 'observability', element: suspend(<ObservabilityPage />) },
+      { path: '*', element: <NotFound /> },
     ],
   },
 ])

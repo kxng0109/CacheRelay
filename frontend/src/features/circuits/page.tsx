@@ -1,10 +1,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { useShallow } from 'zustand/react/shallow'
 import { GatewayClient } from '../../shared/api/client.js'
 import { resolveApiBase } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
-import { useAuthStore } from '../../shared/auth/store.js'
 
 const STATE_META: Record<string, { badge: string; dark: string; label: string; wash: string }> = {
   CLOSED: {
@@ -57,23 +55,16 @@ function stateWord(state: string): string {
   return state
 }
 
-interface CircuitsBoardProps {
-  /** Master admin key; the gate guarantees non-null before mounting. */
-  adminKey: string
-}
-
 /**
  * Live provider-state board plus force-reset.
  *
- * @remarks Proof-type: live (polls real `/v1/admin/circuits/state`).
- * Register-table layout: filter + state segments + refresh on top, dense
- * rows in the centre, inspector rail on the right. Row selection is local
- * UI state; reset reuses the single destructive action in both loci.
+ * @remarks Proof-type: live (polls real `/v1/admin/circuits`). The route
+ * guard guarantees an admin session, so no credential prop is needed —
+ * the client attaches the session Bearer automatically.
  *
- * @param props - The admin key for admin-surface calls.
  * @returns The circuits board.
  */
-function CircuitsBoard({ adminKey }: CircuitsBoardProps): React.JSX.Element {
+function CircuitsBoard(): React.JSX.Element {
   const [notice, setNotice] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
   const [segment, setSegment] = useState<'all' | 'CLOSED' | 'OPEN' | 'HALF_OPEN' | 'unknown'>('all')
@@ -82,15 +73,14 @@ function CircuitsBoard({ adminKey }: CircuitsBoardProps): React.JSX.Element {
 
   const query = useQuery({
     queryKey: ['circuits'],
-    queryFn: ({ signal }) =>
-      new GatewayClient({ token: adminKey, adminKey }).circuitState({ signal }),
+    queryFn: ({ signal }) => new GatewayClient().circuitState({ signal }),
     refetchInterval: 5000,
   })
 
   const reset = async (provider: string): Promise<void> => {
     setNotice(null)
     try {
-      const out = await new GatewayClient({ token: adminKey, adminKey }).resetCircuit(provider)
+      const out = await new GatewayClient().resetCircuit(provider)
       setNotice(`${out.provider}: ${out.state}`)
       await qc.invalidateQueries({ queryKey: ['circuits'] })
     } catch (e) {
@@ -202,7 +192,10 @@ function CircuitsBoard({ adminKey }: CircuitsBoardProps): React.JSX.Element {
                   Signal
                 </th>
                 <th scope="col" className="py-2 pr-3 text-right font-medium">
-                  Last transition
+                  Failures
+                </th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">
+                  Cooldown (ms)
                 </th>
                 <th scope="col" className="py-2 text-right font-medium">
                   <span className="sr-only">Actions</span>
@@ -231,9 +224,8 @@ function CircuitsBoard({ adminKey }: CircuitsBoardProps): React.JSX.Element {
                       </span>
                     </td>
                     <td className="py-2 pr-3 font-display text-lg tnum">{stateWord(c.state)}</td>
-                    <td className="py-2 pr-3 text-right text-xs tnum">
-                      {c.lastTransitionAt ?? '—'}
-                    </td>
+                    <td className="py-2 pr-3 text-right text-xs tnum">{c.failures}</td>
+                    <td className="py-2 pr-3 text-right text-xs tnum">{c.cooldownMsRemaining}</td>
                     <td className="py-2 text-right">
                       <button
                         type="button"
@@ -275,8 +267,16 @@ function CircuitsBoard({ adminKey }: CircuitsBoardProps): React.JSX.Element {
                 <dd className="tnum">{stateMeta(inspected.state).label}</dd>
               </div>
               <div className="flex justify-between gap-3">
-                <dt className="text-ink-soft dark:text-parchment-soft">Last transition</dt>
-                <dd className="tnum">{inspected.lastTransitionAt ?? '—'}</dd>
+                <dt className="text-ink-soft dark:text-parchment-soft">Failures</dt>
+                <dd className="tnum">{inspected.failures}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink-soft dark:text-parchment-soft">Cooldown (ms)</dt>
+                <dd className="tnum">{inspected.cooldownMsRemaining}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink-soft dark:text-parchment-soft">Half-open probe</dt>
+                <dd className="tnum">{inspected.halfOpenProbe ? 'in flight' : '—'}</dd>
               </div>
             </dl>
             <button
@@ -296,55 +296,18 @@ function CircuitsBoard({ adminKey }: CircuitsBoardProps): React.JSX.Element {
 }
 
 /**
- * Circuit breaker screen: admin-key gate plus the live board.
+ * Circuit breaker screen: live board behind the admin route guard.
+ *
+ * @remarks The router renders `NotFound` for non-admins, so no unlock
+ * form lives here — master-key entry is terminal-only by design.
  *
  * @returns The circuits screen.
  */
 export function CircuitsPage(): React.JSX.Element {
-  const { adminKey, setAdminKey } = useAuthStore(
-    useShallow((s) => ({ adminKey: s.adminKey, setAdminKey: s.setAdminKey })),
-  )
-  const [keyInput, setKeyInput] = useState(adminKey ?? '')
-
-  if (adminKey === null) {
-    return (
-      <div className="space-y-4">
-        <h1 className="font-display text-2xl font-medium tracking-tight">Circuits</h1>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault()
-            setAdminKey(keyInput.length > 0 ? keyInput : null)
-          }}
-          className="space-y-2 rounded-lg border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent"
-        >
-          <label htmlFor="admin-key" className="block text-xs font-medium">
-            Master admin key (memory only)
-          </label>
-          <input
-            id="admin-key"
-            type="password"
-            autoComplete="off"
-            value={keyInput}
-            onChange={(e) => {
-              setKeyInput(e.target.value)
-            }}
-            className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
-          />
-          <button
-            type="submit"
-            className="rounded-md bg-ink px-4 py-2 text-sm text-paper dark:bg-parchment dark:text-night"
-          >
-            Unlock circuits
-          </button>
-        </form>
-      </div>
-    )
-  }
-
   return (
     <div className="space-y-4">
       <h1 className="font-display text-2xl font-medium tracking-tight">Circuits</h1>
-      <CircuitsBoard adminKey={adminKey} />
+      <CircuitsBoard />
     </div>
   )
 }

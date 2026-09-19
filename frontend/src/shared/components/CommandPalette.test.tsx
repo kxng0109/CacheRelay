@@ -7,7 +7,7 @@ import { CommandPalette } from './CommandPalette.js'
 describe('CommandPalette', () => {
   it('opens the menu and navigates to a screen', async () => {
     const user = userEvent.setup()
-    renderApp(<CommandPalette />)
+    renderApp(<CommandPalette />, { adminSession: true })
     await user.click(screen.getByRole('button', { name: /commands/i }))
     await user.click(await screen.findByText('Go to Circuits'))
     await waitFor(() => {
@@ -66,7 +66,7 @@ describe('CommandPalette', () => {
       'Go to MCP',
       'Go to Observability',
     ]
-    renderApp(<CommandPalette />)
+    renderApp(<CommandPalette />, { adminSession: true })
     for (const label of labels) {
       await user.click(screen.getByRole('button', { name: /commands/i }))
       await user.click(await screen.findByText(label))
@@ -74,6 +74,28 @@ describe('CommandPalette', () => {
         expect(screen.queryByText(label)).not.toBeInTheDocument()
       })
     }
+  })
+
+  it('hides admin actions from non-admins without a hint', async () => {
+    const user = userEvent.setup()
+    renderApp(<CommandPalette />)
+    await user.click(screen.getByRole('button', { name: /commands/i }))
+    await user.keyboard('Go to ')
+    await waitFor(() => {
+      expect(screen.getByText('Go to Playground')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Go to Circuits')).not.toBeInTheDocument()
+    expect(screen.queryByText('Go to Approvals')).not.toBeInTheDocument()
+  })
+
+  it('shows admin actions for admin sessions', async () => {
+    const user = userEvent.setup()
+    renderApp(<CommandPalette />, { adminSession: true })
+    await user.click(screen.getByRole('button', { name: /commands/i }))
+    await user.keyboard('Go to ')
+    await waitFor(() => {
+      expect(screen.getByText('Go to Circuits')).toBeInTheDocument()
+    })
   })
 
   it('renders caller hints beside actions', async () => {

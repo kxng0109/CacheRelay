@@ -11,10 +11,15 @@ import type {
   HitlApproval,
   LedgerLogEntry,
   LedgerSummary,
+  McpSuspended,
+  McpTool,
+  McpToolAnnotations,
   PageResponse,
   RateLimitDimension,
   RateLimitSnapshot,
 } from './types.js'
+import { useAuthStore } from '../auth/store.js'
+import { refreshSession } from '../auth/session.js'
 
 /**
  * Extracts a user-safe message from an unknown throw.
@@ -298,6 +303,20 @@ export function setHeadersReporter(
 }
 
 /**
+ * Session-owned paths: 401s here mean the access token died (expiry or
+ * revocation), never a bad gateway key. Public paths keep their errors
+ * untouched so gateway-key problems are never misread as session loss.
+ *
+ * @param path - Gateway path starting with `/`.
+ * @returns True for session-owned routes (excluding the login exchange).
+ */
+function isSessionRoute(path: string): boolean {
+  if (path.startsWith('/v1/admin/')) return true
+  if (path.startsWith('/v1/auth/') && !path.startsWith('/v1/auth/login')) return true
+  return false
+}
+
+/**
  * Sends one gateway request with network-error and status guards.
  *
  * @remarks
@@ -307,6 +326,10 @@ export function setHeadersReporter(
  * non-2xx responses throw {@link ApiError} carrying the request id,
  * rate-limit snapshot, cache status, and debug id. Bodies are read as text
  * (never blind `res.json()`) so empty or non-JSON errors stay safe.
+ * A 401 on a session-owned route with a session present triggers one
+ * refresh attempt (the restored token serves the *next* request; this one
+ * still throws so callers never see a silently swapped credential). When
+ * refresh fails the session clears and the UI falls back to locked states.
  *
  * @param base - Resolved API base (or `''` for same-origin).
  * @param path - Gateway path starting with `/`.
@@ -336,6 +359,9 @@ async function sendGatewayRequest(
     const text = await res.text().catch(() => '')
     const code = parseGatewayErrorCode(text)
     ;(opts?.onHeaders ?? headersReporter)?.(res.headers, code)
+    if (res.status === 401 && useAuthStore.getState().session !== null && isSessionRoute(path)) {
+      await refreshSession()
+    }
     throw new ApiError({
       message: safeErrorMessage(res.status, text),
       status: res.status,
@@ -354,21 +380,20 @@ async function sendGatewayRequest(
  * Minimal typed gateway client over `fetch`.
  *
  * @remarks
- * Auth is phase-agnostic: callers pass either a `gw-` virtual key (public
- * surface) or the master admin key (admin surface) as a Bearer token. Tokens
- * live in memory only (zustand store) and are never written to storage by
- * this client. Admin callers may alternatively pass `adminKey` to send the
- * `X-Admin-Key` header form.
+ * Auth precedence: a logged-in human session attaches its short-lived
+ * access JWT as Bearer; otherwise the caller-supplied virtual key goes
+ * out as Bearer. The master secret has no UI path by design
+ * (terminal/curl-only), so no `X-Admin-Key` branch exists here. Tokens
+ * live in memory only (zustand store) and are never written to storage
+ * by this client.
  */
 export class GatewayClient {
   private readonly base: string
   private readonly token: string
-  private readonly adminKey: string | null
 
-  constructor(args: { base?: string; token: string; adminKey?: string | null }) {
+  constructor(args: { base?: string; token?: string } = {}) {
     this.base = args.base ?? resolveApiBase()
-    this.token = args.token
-    this.adminKey = args.adminKey ?? null
+    this.token = args.token ?? ''
   }
 
   private headers(extra?: Record<string, string>): Record<string, string> {
@@ -376,11 +401,8 @@ export class GatewayClient {
       Accept: 'application/json',
       ...(extra ?? {}),
     }
-    if (this.adminKey !== null) {
-      h['X-Admin-Key'] = this.adminKey
-    } else {
-      h.Authorization = `Bearer ${this.token}`
-    }
+    const session = useAuthStore.getState().session
+    h.Authorization = `Bearer ${session?.accessToken ?? this.token}`
     return h
   }
 
@@ -456,19 +478,25 @@ export class GatewayClient {
   /**
    * Reads aggregated circuit state for every known provider.
    *
+   * @remarks Backend truth (live-verified): `GET /v1/admin/circuits`
+   * returns a bare array — never `/state`, never a `{ circuits }`
+   * envelope. Rows carry live `failures` and `cooldownMsRemaining`
+   * counters; there is no transition timestamp, so none is mapped.
+   *
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns One snapshot per provider.
    */
-  circuitState(opts?: RequestOptions): Promise<{ circuits: CircuitSnapshot[] }> {
-    return this.request<{ circuits: CircuitSnapshot[] }>(
-      '/v1/admin/circuits/state',
+  async circuitState(opts?: RequestOptions): Promise<{ circuits: CircuitSnapshot[] }> {
+    const rows = await this.request<CircuitSnapshot[]>(
+      '/v1/admin/circuits',
       { headers: this.headers() },
       opts,
     )
+    return { circuits: rows }
   }
 
   /**
-   * Force-resets a provider circuit (observed-state passthrough).
+   * Force-resets a provider circuit. Live-verified against the gateway.
    *
    * @param provider - Provider name (for example `openai`).
    * @param opts - Optional request options (abort signal, headers listener).
@@ -478,11 +506,10 @@ export class GatewayClient {
     opts?: RequestOptions,
   ): Promise<{ provider: string; state: string }> {
     return this.request<{ provider: string; state: string }>(
-      '/v1/admin/circuits/reset',
+      `/v1/admin/circuits/${encodeURIComponent(provider)}/reset`,
       {
         method: 'POST',
-        headers: this.headers({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ provider }),
+        headers: this.headers(),
       },
       opts,
     )
@@ -494,23 +521,36 @@ export class GatewayClient {
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns Key metadata records.
    */
-  listKeys(opts?: RequestOptions): Promise<{ keys: ApiKeyRecord[] }> {
-    return this.request<{ keys: ApiKeyRecord[] }>(
+  async listKeys(opts?: RequestOptions): Promise<{ keys: ApiKeyRecord[] }> {
+    const rows = await this.request<ApiKeyRecord[]>(
       '/v1/admin/keys',
-      { headers: this.headers() },
+      {
+        headers: this.headers(),
+      },
       opts,
     )
+    return { keys: rows }
   }
 
   /**
    * Creates a virtual key. Plaintext is exposed exactly once.
+   *
+   * @remarks Backend truth (live-verified): `ownerId` and `name` are
+   * required; `0` means unlimited for both limits; empty model sets mean
+   * all allowed. There is no daily quota — TPM is the token dimension.
    *
    * @param body - Key parameters.
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns Metadata plus the single-exposure plaintext.
    */
   createKey(
-    body: { name: string; rpmLimit: number; dailyQuota: number; models: string[] },
+    body: {
+      ownerId: string
+      name: string
+      rpmLimit: number
+      tpmLimit: number
+      allowedModels: string[]
+    },
     opts?: RequestOptions,
   ): Promise<ApiKeyCreated> {
     return this.request<ApiKeyCreated>(
@@ -588,17 +628,23 @@ export class GatewayClient {
   }
 
   /**
-   * Purges cache entries, optionally scoped to one model.
+   * Purges cache entries, optionally scoped to one owner.
    *
-   * @param model - Optional model scope.
+   * @remarks Backend truth (live-verified): `DELETE /v1/admin/cache`
+   * with optional `ownerId` scope; the response names the evicted scope.
+   *
+   * @param ownerId - Optional tenant scope; omitted purges globally.
    * @param opts - Optional request options (abort signal, headers listener).
-   * @returns Purge outcome.
+   * @returns Purge outcome with the evicted scope.
    */
-  purgeCache(model?: string, opts?: RequestOptions): Promise<{ purged: boolean }> {
-    const q = model === undefined ? '' : `?${new URLSearchParams({ model }).toString()}`
-    return this.request<{ purged: boolean }>(
-      `/v1/admin/cache/purge${q}`,
-      { method: 'POST', headers: this.headers() },
+  purgeCache(
+    ownerId?: string,
+    opts?: RequestOptions,
+  ): Promise<{ success: boolean; evictedScope: string }> {
+    const q = ownerId === undefined ? '' : `?${new URLSearchParams({ ownerId }).toString()}`
+    return this.request<{ success: boolean; evictedScope: string }>(
+      `/v1/admin/cache${q}`,
+      { method: 'DELETE', headers: this.headers() },
       opts,
     )
   }
@@ -606,26 +652,42 @@ export class GatewayClient {
   /**
    * Lists budgets.
    *
+   * @remarks Backend truth (live-verified): `GET /v1/admin/budgets`
+   * returns a bare array of `{id, level, subjectId, minuteMicros,
+   * monthMicros, webhookUrl, createdAt, updatedAt}`. There is no
+   * single-limit or spent field — minute-vs-month is the money truth.
+   *
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns Budget records.
    */
-  listBudgets(opts?: RequestOptions): Promise<{ budgets: BudgetRecord[] }> {
-    return this.request<{ budgets: BudgetRecord[] }>(
+  async listBudgets(opts?: RequestOptions): Promise<{ budgets: BudgetRecord[] }> {
+    const rows = await this.request<BudgetRecord[]>(
       '/v1/admin/budgets',
       { headers: this.headers() },
       opts,
     )
+    return { budgets: rows }
   }
 
   /**
    * Creates a budget.
+   *
+   * @remarks Backend truth (live-verified): `{level, subjectId,
+   * minuteMicros, monthMicros, webhookUrl?}`; minute/month default 0
+   * means none. Display uses subjectId — there is no name field.
    *
    * @param body - Budget parameters.
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns The created record.
    */
   createBudget(
-    body: { name: string; limitMicros: number },
+    body: {
+      level: string
+      subjectId: string
+      minuteMicros: number
+      monthMicros: number
+      webhookUrl?: string
+    },
     opts?: RequestOptions,
   ): Promise<BudgetRecord> {
     return this.request<BudgetRecord>(
@@ -677,5 +739,83 @@ export class GatewayClient {
       },
       opts,
     )
+  }
+
+  /**
+   * Lists MCP tools via JSON-RPC `tools/list`.
+   *
+   * @remarks Backend truth: `POST /v1/mcp` with a JSON-RPC envelope;
+   * the result carries `tools[]`. A 403 means the catalog is suspended
+   * upstream (surfaced by callers, never fabricated). Tool fields are
+   * read defensively — malformed entries are skipped, never crash.
+   *
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns Tools plus the suspended signal on 403.
+   */
+  async mcpTools(opts?: RequestOptions): Promise<{ tools: McpTool[] } | McpSuspended> {
+    const init: RequestInit = {
+      method: 'POST',
+      headers: this.headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ jsonrpc: '2.0', id: 'tools-list', method: 'tools/list' }),
+    }
+    if (opts?.signal !== undefined) init.signal = opts.signal
+    let res: Response
+    try {
+      res = await fetch(`${this.base}/v1/mcp`, init)
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      throw new Error('Network unreachable. Check the gateway URL and connection, then retry.', {
+        cause: error,
+      })
+    }
+    if (res.status === 403) {
+      ;(opts?.onHeaders ?? headersReporter)?.(res.headers, null)
+      return { suspended: true as const, status: res.status }
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new ApiError({
+        message: safeErrorMessage(res.status, text),
+        status: res.status,
+        requestId: res.headers.get('X-Request-Id'),
+        rateLimit: parseRateLimit(res.headers),
+        cacheStatus: res.headers.get('X-Cache-Status'),
+        debugId: res.headers.get('X-Request-Debug'),
+        code: parseGatewayErrorCode(text),
+      })
+    }
+    const body: unknown = await res.json().catch(() => null)
+    ;(opts?.onHeaders ?? headersReporter)?.(res.headers, null)
+    if (typeof body !== 'object' || body === null) return { tools: [] }
+    const envelope = body as Record<string, unknown>
+    if (typeof envelope.error === 'object' && envelope.error !== null) {
+      const message = (envelope.error as Record<string, unknown>).message
+      throw new Error(
+        typeof message === 'string' && message.length > 0
+          ? `MCP catalog error: ${message}`
+          : 'MCP catalog error.',
+      )
+    }
+    const result = envelope.result
+    if (typeof result !== 'object' || result === null) return { tools: [] }
+    const raw = (result as Record<string, unknown>).tools
+    if (!Array.isArray(raw)) return { tools: [] }
+    const tools: McpTool[] = []
+    for (const entry of raw) {
+      if (typeof entry !== 'object' || entry === null) continue
+      const record = entry as Record<string, unknown>
+      if (typeof record.name !== 'string' || record.name.length === 0) continue
+      const annotations =
+        typeof record.annotations === 'object' && record.annotations !== null
+          ? (record.annotations as McpToolAnnotations)
+          : null
+      tools.push({
+        name: record.name,
+        description: typeof record.description === 'string' ? record.description : null,
+        inputSchema: 'inputSchema' in record ? record.inputSchema : null,
+        annotations,
+      })
+    }
+    return { tools }
   }
 }

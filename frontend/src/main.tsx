@@ -7,6 +7,7 @@ import '@fontsource-variable/martian-mono/wght.css'
 import './index.css'
 import { Providers } from './app/providers.tsx'
 import { router } from './app/router.tsx'
+import { restoreSession } from './shared/auth/session.js'
 
 const root = document.getElementById('root')
 // Boot guard: index.html always provides #root; the throw is unreachable by construction.
@@ -20,3 +21,6 @@ createRoot(root).render(
     </Providers>
   </StrictMode>,
 )
+
+// Restores a cookie-backed session without blocking first paint.
+void restoreSession()
