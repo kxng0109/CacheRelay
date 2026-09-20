@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { server } from '../../test/setup.js'
+import { scrolledIntoView } from '../../test/setup.js'
 import { renderApp } from '../../test/utils.js'
 import { PlaygroundPage } from './page.js'
 
@@ -10,6 +11,9 @@ const STREAM = 'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\ndata: [DONE
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  // Env stubs leak across tests otherwise: a `VITE_FEATURE_STREAMING=false`
+  // left behind silently flips every later test onto the static path.
+  vi.unstubAllEnvs()
 })
 
 describe('PlaygroundPage', () => {
@@ -136,5 +140,63 @@ describe('PlaygroundPage', () => {
     await user.clear(screen.getByLabelText(/prompt/i, { selector: 'textarea' }))
     await user.click(entry)
     expect(screen.getByLabelText(/prompt/i, { selector: 'textarea' })).toHaveValue('Say hello')
+  })
+
+  it('sends from the keyboard without leaving the prompt', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.post('*/v1/chat/completions', () => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            ctrl.enqueue(new TextEncoder().encode(STREAM))
+            ctrl.close()
+          },
+        })
+        return new HttpResponse(stream, { headers: { 'content-type': 'text/event-stream' } })
+      }),
+    )
+    renderApp(<PlaygroundPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    const prompt = screen.getByLabelText(/prompt/i, { selector: 'textarea' })
+    await user.type(prompt, 'Say hello')
+    await user.keyboard('{Control>}{Enter}{/Control}')
+    await waitFor(
+      () => {
+        expect(screen.getByRole('log')).toHaveTextContent('Hello')
+      },
+      { timeout: 5000 },
+    )
+    expect(screen.getByRole('region', { name: /run 1: gpt-56-luna/i })).toBeInTheDocument()
+  })
+
+  it('reruns the submitted run as a fresh block and scrolls to it', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.post('*/v1/chat/completions', () => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            ctrl.enqueue(new TextEncoder().encode(STREAM))
+            ctrl.close()
+          },
+        })
+        return new HttpResponse(stream, { headers: { 'content-type': 'text/event-stream' } })
+      }),
+    )
+    scrolledIntoView.length = 0
+    renderApp(<PlaygroundPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
+    await user.click(screen.getByRole('button', { name: /stream completion/i }))
+    await waitFor(
+      () => {
+        expect(screen.getByRole('log')).toHaveTextContent('Hello')
+      },
+      { timeout: 5000 },
+    )
+    expect(scrolledIntoView.length).toBeGreaterThan(0)
+    await user.click(screen.getByRole('button', { name: /^rerun$/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('region', { name: /run 2: gpt-56-luna/i })).toBeInTheDocument()
+    })
   })
 })

@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { GatewayClient } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
+import { useToastStore } from '../../shared/toast/store.js'
 
 /**
  * Human-in-the-loop approval queue for gated MCP tool calls.
@@ -29,7 +30,8 @@ export function ApprovalsPage(): React.JSX.Element {
  */
 function ApprovalsBoard(): React.JSX.Element {
   const qc = useQueryClient()
-  const [notice, setNotice] = useState<string | null>(null)
+  const pushToast = useToastStore((s) => s.push)
+  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set())
 
   const pending = useQuery({
     queryKey: ['hitl-pending'],
@@ -38,23 +40,25 @@ function ApprovalsBoard(): React.JSX.Element {
   })
 
   const decide = async (approvalId: string, approved: boolean): Promise<void> => {
-    setNotice(null)
+    setBusy((prev) => new Set(prev).add(approvalId))
     try {
       await new GatewayClient().decideHitl(approvalId, approved, 'console-operator')
-      setNotice(`${approvalId}: ${approved ? 'approved' : 'rejected'}.`)
+      const at = new Date().toISOString().slice(11, 19)
+      pushToast('success', `${approvalId}: ${approved ? 'approved' : 'rejected'} · ${at} UTC.`)
       await qc.invalidateQueries({ queryKey: ['hitl-pending'] })
     } catch (e) {
-      setNotice(toErrorMessage(e, 'Decision failed.'))
+      pushToast('error', `${approvalId}: ${toErrorMessage(e, 'Decision failed.')}`)
+    } finally {
+      setBusy((prev) => {
+        const next = new Set(prev)
+        next.delete(approvalId)
+        return next
+      })
     }
   }
 
   return (
     <div className="space-y-4">
-      {notice === null ? null : (
-        <p role="status" className="text-xs">
-          {notice}
-        </p>
-      )}
       {pending.isPending ? (
         <p role="status" className="text-sm">
           Loading pending approvals…
@@ -69,37 +73,44 @@ function ApprovalsBoard(): React.JSX.Element {
         </p>
       ) : (
         <ul className="space-y-2">
-          {pending.data.approvals.map((a) => (
-            <li
-              key={a.approvalId}
-              className="flex flex-wrap items-center gap-3 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="font-mono text-xs">{a.toolName}</p>
-                <p className="text-xs text-ink-soft tnum dark:text-parchment-soft">
-                  {a.approvalId} · {a.requestedAt}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  void decide(a.approvalId, true)
-                }}
-                className="rounded-md bg-success px-3 py-2 text-xs text-white"
+          {pending.data.approvals.map((a) => {
+            const working = busy.has(a.approvalId)
+            return (
+              <li
+                key={a.approvalId}
+                className="flex flex-wrap items-center gap-3 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent"
               >
-                Approve
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void decide(a.approvalId, false)
-                }}
-                className="rounded-md border border-danger/40 px-3 py-2 text-xs text-danger dark:text-danger-soft"
-              >
-                Reject
-              </button>
-            </li>
-          ))}
+                <div className="min-w-0 flex-1">
+                  <p className="font-mono text-xs">{a.toolName}</p>
+                  <p className="text-xs text-ink-soft tnum dark:text-parchment-soft">
+                    {a.approvalId} · {a.requestedAt}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={working}
+                  aria-busy={working}
+                  onClick={() => {
+                    void decide(a.approvalId, true)
+                  }}
+                  className="rounded-md bg-success px-3 py-2 text-xs text-white disabled:opacity-50"
+                >
+                  {working ? 'Working…' : 'Approve'}
+                </button>
+                <button
+                  type="button"
+                  disabled={working}
+                  aria-busy={working}
+                  onClick={() => {
+                    void decide(a.approvalId, false)
+                  }}
+                  className="rounded-md border border-danger/40 px-3 py-2 text-xs text-danger disabled:opacity-50 dark:text-danger-soft"
+                >
+                  {working ? 'Working…' : 'Reject'}
+                </button>
+              </li>
+            )
+          })}
         </ul>
       )}
     </div>

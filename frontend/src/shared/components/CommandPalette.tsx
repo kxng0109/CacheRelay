@@ -8,8 +8,8 @@ export interface PaletteAction {
   id: string
   label: string
   hint?: string
-  /** True for admin-only actions (hidden from non-admins, no hint). */
-  admin?: boolean
+  /** Visibility tier (guests see public actions only, no hint of the rest). */
+  audience?: 'public' | 'session' | 'admin'
   run: () => void
 }
 
@@ -52,6 +52,7 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
     {
       id: 'nav-overview',
       label: 'Go to Overview',
+      audience: 'session',
       run: () => {
         go('/')
       },
@@ -59,6 +60,7 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
     {
       id: 'nav-play',
       label: 'Go to Playground',
+      audience: 'public',
       run: () => {
         go('/playground')
       },
@@ -66,7 +68,7 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
     {
       id: 'nav-circuits',
       label: 'Go to Circuits',
-      admin: true,
+      audience: 'admin',
       run: () => {
         go('/circuits')
       },
@@ -74,7 +76,7 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
     {
       id: 'nav-keys',
       label: 'Go to Keys',
-      admin: true,
+      audience: 'admin',
       run: () => {
         go('/keys')
       },
@@ -82,7 +84,7 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
     {
       id: 'nav-ledger',
       label: 'Go to Ledger',
-      admin: true,
+      audience: 'admin',
       run: () => {
         go('/ledger')
       },
@@ -90,7 +92,7 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
     {
       id: 'nav-cache',
       label: 'Go to Cache and budgets',
-      admin: true,
+      audience: 'admin',
       run: () => {
         go('/cache')
       },
@@ -98,6 +100,7 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
     {
       id: 'nav-emb',
       label: 'Go to Embeddings',
+      audience: 'public',
       run: () => {
         go('/embeddings')
       },
@@ -105,7 +108,7 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
     {
       id: 'nav-hitl',
       label: 'Go to Approvals',
-      admin: true,
+      audience: 'admin',
       run: () => {
         go('/approvals')
       },
@@ -113,6 +116,7 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
     {
       id: 'nav-mcp',
       label: 'Go to MCP',
+      audience: 'session',
       run: () => {
         go('/mcp')
       },
@@ -120,13 +124,22 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
     {
       id: 'nav-obs',
       label: 'Go to Observability',
+      audience: 'session',
       run: () => {
         go('/observability')
       },
     },
   ]
 
-  const visible = [...nav, ...actions].filter((a) => isAdmin || a.admin !== true)
+  const visible = [...nav, ...actions].filter(
+    (a) =>
+      a.audience === undefined ||
+      a.audience === 'public' ||
+      (a.audience === 'session' && session !== null) ||
+      (a.audience === 'admin' && isAdmin),
+  )
+  const context =
+    session === null ? 'public console' : isAdmin ? `admin · ${session.username}` : session.username
 
   return (
     <>
@@ -161,6 +174,9 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
             </Command.Item>
           ))}
         </Command.List>
+        <p className="border-t border-ink/10 px-3 py-2 font-mono text-[11px] text-ink-soft dark:border-parchment/10 dark:text-parchment-soft">
+          {context} · ↑↓ move · Enter run · Esc close
+        </p>
       </Command.Dialog>
     </>
   )

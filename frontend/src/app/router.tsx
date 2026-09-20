@@ -3,6 +3,8 @@ import { createBrowserRouter } from 'react-router'
 import { Layout } from './layout.js'
 import { NotFound } from './NotFound.js'
 import { RequireAdmin } from './RequireAdmin.js'
+import { RequireAuth } from './RequireAuth.js'
+import { RequireGuest } from './RequireGuest.js'
 
 const OverviewPage = lazy(() =>
   import('../features/overview/page.js').then((m) => ({ default: m.OverviewPage })),
@@ -50,6 +52,26 @@ function guard(element: React.JSX.Element): React.JSX.Element {
 }
 
 /**
+ * Wraps a screen requiring any live session (admin or not).
+ *
+ * @param element - Session-gated screen element.
+ * @returns Guarded element (login redirect for guests).
+ */
+function authed(element: React.JSX.Element): React.JSX.Element {
+  return <RequireAuth>{suspend(element)}</RequireAuth>
+}
+
+/**
+ * Wraps a logged-out-only screen (login, redeem).
+ *
+ * @param element - Guest-only screen element.
+ * @returns Guarded element (homeward redirect for sessions).
+ */
+function guest(element: React.JSX.Element): React.JSX.Element {
+  return <RequireGuest>{suspend(element)}</RequireGuest>
+}
+
+/**
  * Wraps a lazy route element in a suspense boundary.
  *
  * @param element - The lazy route element.
@@ -69,18 +91,18 @@ export const router = createBrowserRouter([
   {
     element: <Layout />,
     children: [
-      { index: true, element: suspend(<OverviewPage />) },
+      { index: true, element: authed(<OverviewPage />) },
       { path: 'playground', element: suspend(<PlaygroundPage />) },
-      { path: 'login', element: suspend(<LoginPage />) },
-      { path: 'redeem', element: suspend(<RedeemPage />) },
+      { path: 'login', element: guest(<LoginPage />) },
+      { path: 'redeem', element: guest(<RedeemPage />) },
       { path: 'circuits', element: guard(<CircuitsPage />) },
       { path: 'keys', element: guard(<KeysPage />) },
       { path: 'ledger', element: guard(<LedgerPage />) },
       { path: 'cache', element: guard(<CachePage />) },
       { path: 'embeddings', element: suspend(<EmbeddingsPage />) },
       { path: 'approvals', element: guard(<ApprovalsPage />) },
-      { path: 'mcp', element: suspend(<McpPage />) },
-      { path: 'observability', element: suspend(<ObservabilityPage />) },
+      { path: 'mcp', element: authed(<McpPage />) },
+      { path: 'observability', element: authed(<ObservabilityPage />) },
       { path: '*', element: <NotFound /> },
     ],
   },

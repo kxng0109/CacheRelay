@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   Activity,
@@ -18,7 +18,7 @@ import {
   Sun,
   Zap,
 } from 'lucide-react'
-import { NavLink, Outlet, useLocation } from 'react-router'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router'
 import { useShallow } from 'zustand/react/shallow'
 import {
   GatewayClient,
@@ -29,17 +29,23 @@ import {
 import { logout, startSessionHeartbeat } from '../shared/auth/session.js'
 import { CommandPalette } from '../shared/components/CommandPalette.js'
 import { RateLimitHeaders } from '../shared/components/RateLimitHeaders.js'
+import { ShortcutSheet } from '../shared/components/ShortcutSheet.js'
+import { Toasts } from '../shared/components/Toasts.js'
 import { useAuthStore } from '../shared/auth/store.js'
 import { useRateLimitStore } from '../shared/ratelimit/store.js'
 import { useUiStore } from '../shared/store.js'
 import type { LucideIcon } from 'lucide-react'
+import { CHORD_WINDOW_MS, isEditable, targetForChord } from './shortcuts.js'
+
+/** Who may see a nav item: everyone, any live session, or admins only. */
+type Audience = 'public' | 'session' | 'admin'
 
 interface NavItem {
   to: string
   label: string
   icon: LucideIcon
-  /** True for admin-only routes (hidden from non-admins, no hint). */
-  admin: boolean
+  /** Visibility tier (guests see public items only, no hint of the rest). */
+  audience: Audience
   badge?: (() => React.JSX.Element | null) | undefined
 }
 
@@ -117,9 +123,13 @@ export function Layout(): React.JSX.Element {
     useShallow((s) => ({ gatewayKey: s.gatewayKey, session: s.session })),
   )
   const snapshot = useRateLimitStore((s) => s.snapshot)
-  const { pathname } = useLocation()
+  const location = useLocation()
+  const { pathname } = location
+  const navigate = useNavigate()
   const [collapsed, setCollapsed] = useState<boolean>(() => readStoredSidebar() === 'closed')
   const [drawer, setDrawer] = useState(false)
+  const [sheetOpen, setSheetOpen] = useState(false)
+  const chordAt = useRef(0)
   const base = resolveApiBase()
   const authLabel =
     gatewayKey !== null && session !== null
@@ -152,6 +162,19 @@ export function Layout(): React.JSX.Element {
 
   useEffect(() => startSessionHeartbeat(), [])
 
+  useEffect(() => {
+    // Post-login landing: move screen-reader and keyboard focus to the
+    // screen heading exactly once. Only the login redirect sets this flag.
+    const landed = location.state as { fromLogin?: boolean } | null
+    if (landed?.fromLogin === true) {
+      const heading = document.querySelector('#main h1')
+      if (heading instanceof HTMLElement) {
+        heading.tabIndex = -1
+        heading.focus({ preventScroll: true })
+      }
+    }
+  }, [location])
+
   const toggleCollapsed = (): void => {
     setCollapsed((c) => {
       writeStoredSidebar(c ? 'open' : 'closed')
@@ -160,23 +183,26 @@ export function Layout(): React.JSX.Element {
   }
 
   const groups: NavGroup[] = [
-    { label: null, items: [{ to: '/', label: 'Overview', icon: LayoutDashboard, admin: false }] },
+    {
+      label: null,
+      items: [{ to: '/', label: 'Overview', icon: LayoutDashboard, audience: 'session' }],
+    },
     {
       label: 'Run',
       items: [
-        { to: '/playground', label: 'Playground', icon: FlaskConical, admin: false },
-        { to: '/embeddings', label: 'Embeddings', icon: Brain, admin: false },
+        { to: '/playground', label: 'Playground', icon: FlaskConical, audience: 'public' },
+        { to: '/embeddings', label: 'Embeddings', icon: Brain, audience: 'public' },
       ],
     },
     {
       label: 'Guard',
       items: [
-        { to: '/circuits', label: 'Circuits', icon: Zap, admin: true },
+        { to: '/circuits', label: 'Circuits', icon: Zap, audience: 'admin' },
         {
           to: '/approvals',
           label: 'Approvals',
           icon: ShieldCheck,
-          admin: true,
+          audience: 'admin',
           badge:
             pendingCount > 0
               ? () => (
@@ -189,23 +215,69 @@ export function Layout(): React.JSX.Element {
                 )
               : undefined,
         },
-        { to: '/cache', label: 'Cache & budgets', icon: Database, admin: true },
-        { to: '/keys', label: 'Keys', icon: KeyRound, admin: true },
+        { to: '/cache', label: 'Cache & budgets', icon: Database, audience: 'admin' },
+        { to: '/keys', label: 'Keys', icon: KeyRound, audience: 'admin' },
       ],
     },
     {
       label: 'Inspect',
       items: [
-        { to: '/ledger', label: 'Ledger', icon: BookOpen, admin: true },
-        { to: '/mcp', label: 'MCP', icon: Plug, admin: false },
-        { to: '/observability', label: 'Observability', icon: Activity, admin: false },
+        { to: '/ledger', label: 'Ledger', icon: BookOpen, audience: 'admin' },
+        { to: '/mcp', label: 'MCP', icon: Plug, audience: 'session' },
+        { to: '/observability', label: 'Observability', icon: Activity, audience: 'session' },
       ],
     },
   ]
   const isAdmin = session?.admin === true
   const visibleGroups = groups
-    .map((g) => ({ ...g, items: g.items.filter((i) => isAdmin || !i.admin) }))
+    .map((g) => ({
+      ...g,
+      items: g.items.filter(
+        (i) =>
+          i.audience === 'public' ||
+          (i.audience === 'session' && session !== null) ||
+          (i.audience === 'admin' && isAdmin),
+      ),
+    }))
     .filter((g) => g.items.length > 0)
+  const visiblePaths = useMemo(
+    () => new Set(visibleGroups.flatMap((g) => g.items.map((i) => i.to))),
+    [visibleGroups],
+  )
+
+  useEffect(() => {
+    // G-chords, `?` sheet, Esc ladder. Chords never fire while typing and
+    // never travel anywhere the session may not see.
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') return
+      if (e.key === 'Escape') {
+        if (sheetOpen) setSheetOpen(false)
+        else setDrawer(false)
+        return
+      }
+      if (isEditable(e.target)) return
+      if (e.key === '?') {
+        setSheetOpen(true)
+        return
+      }
+      const bare = !e.metaKey && !e.ctrlKey && !e.altKey
+      if (e.key.toLowerCase() === 'g' && bare) {
+        chordAt.current = Date.now()
+        return
+      }
+      if (Date.now() - chordAt.current > CHORD_WINDOW_MS) return
+      chordAt.current = 0
+      const dest = targetForChord(e.key)
+      if (dest !== null && visiblePaths.has(dest)) {
+        setDrawer(false)
+        void navigate(dest)
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [navigate, sheetOpen, visiblePaths])
 
   const routeLabel =
     pathname === '/'
@@ -362,6 +434,16 @@ export function Layout(): React.JSX.Element {
               {routeLabel}
             </p>
             <span className="flex-1" />
+            <button
+              type="button"
+              onClick={() => {
+                setSheetOpen(true)
+              }}
+              aria-label="Keyboard shortcuts"
+              className="rounded-md border border-ink/15 px-3 py-2 font-mono text-xs dark:border-parchment/15"
+            >
+              ?
+            </button>
             <CommandPalette />
           </div>
           <p className="sr-only">Enterprise AI gateway console</p>
@@ -374,6 +456,13 @@ export function Layout(): React.JSX.Element {
         <main id="main" className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
           <Outlet />
         </main>
+        <ShortcutSheet
+          open={sheetOpen}
+          onClose={() => {
+            setSheetOpen(false)
+          }}
+        />
+        <Toasts />
         <footer className="border-t border-ink/10 dark:border-parchment/10">
           <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-1">
             <p className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">

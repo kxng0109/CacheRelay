@@ -88,6 +88,33 @@ describe('CommandPalette', () => {
     expect(screen.queryByText('Go to Approvals')).not.toBeInTheDocument()
   })
 
+  it('hides session actions from guests without a hint', async () => {
+    const user = userEvent.setup()
+    renderApp(<CommandPalette />)
+    await user.click(screen.getByRole('button', { name: /commands/i }))
+    await user.keyboard('Go to ')
+    await waitFor(() => {
+      expect(screen.getByText('Go to Playground')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Go to Overview')).not.toBeInTheDocument()
+    expect(screen.queryByText('Go to MCP')).not.toBeInTheDocument()
+    expect(screen.queryByText('Go to Observability')).not.toBeInTheDocument()
+    expect(screen.getByText(/public console/i)).toBeInTheDocument()
+  })
+
+  it('shows session actions to non-admin sessions with a user badge', async () => {
+    const user = userEvent.setup()
+    renderApp(<CommandPalette />, { nonAdminSession: true })
+    await user.click(screen.getByRole('button', { name: /commands/i }))
+    await user.keyboard('Go to ')
+    await waitFor(() => {
+      expect(screen.getByText('Go to Observability')).toBeInTheDocument()
+    })
+    expect(screen.getByText('Go to MCP')).toBeInTheDocument()
+    expect(screen.queryByText('Go to Circuits')).not.toBeInTheDocument()
+    expect(screen.getByText(/test-user/)).toBeInTheDocument()
+  })
+
   it('shows admin actions for admin sessions', async () => {
     const user = userEvent.setup()
     renderApp(<CommandPalette />, { adminSession: true })

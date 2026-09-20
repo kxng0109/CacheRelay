@@ -1,12 +1,36 @@
-import { screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { server } from '../../test/setup.js'
 import { renderApp } from '../../test/utils.js'
 import { SseStreamViewer } from './SseStreamViewer.js'
 
 const MESSAGES = [{ role: 'user' as const, content: 'hi' }]
+
+const STREAM_DONE = 'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\ndata: [DONE]\n\n'
+
+/**
+ * Installs a stub clipboard capturing written text.
+ *
+ * @returns The captured writes.
+ */
+function stubClipboard(): string[] {
+  const writes: string[] = []
+  Object.defineProperty(window.navigator, 'clipboard', {
+    value: { writeText: vi.fn((s: string) => Promise.resolve(s).then(() => writes.push(s))) },
+    configurable: true,
+  })
+  return writes
+}
+
+afterEach(() => {
+  // Clipboard is installed per-test via defineProperty; remove the stub so
+  // the absence path stays testable and cross-test leakage is impossible.
+  if ('clipboard' in window.navigator) {
+    delete (window.navigator as unknown as Record<string, unknown>).clipboard
+  }
+})
 
 describe('SseStreamViewer', () => {
   it('stops a hanging stream and settles gracefully', async () => {
@@ -102,6 +126,82 @@ describe('SseStreamViewer', () => {
     const rendered = renderApp(<SseStreamViewer token="gw-test" model="m" messages={MESSAGES} />)
     await screen.findByRole('button', { name: /^stop$/i })
     rendered.unmount()
+  })
+
+  it('shows a caret while streaming and removes it on completion', async () => {
+    server.use(
+      http.post('*/v1/chat/completions', () => {
+        // One chunk, never closed: text lands while the phase stays live.
+        const hanging = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            ctrl.enqueue(
+              new TextEncoder().encode('data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n'),
+            )
+          },
+        })
+        return new HttpResponse(hanging, { headers: { 'content-type': 'text/event-stream' } })
+      }),
+    )
+    const rendered = renderApp(<SseStreamViewer token="gw-test" model="m" messages={MESSAGES} />)
+    await waitFor(() => {
+      expect(screen.getByRole('log')).toHaveTextContent('Hi')
+    })
+    expect(screen.getByText('▍')).toBeInTheDocument()
+    rendered.unmount()
+  })
+
+  it('copies the transcript and confirms inline', async () => {
+    const user = userEvent.setup()
+    const writes = stubClipboard()
+    server.use(
+      http.post('*/v1/chat/completions', () => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            ctrl.enqueue(new TextEncoder().encode(STREAM_DONE))
+            ctrl.close()
+          },
+        })
+        return new HttpResponse(stream, { headers: { 'content-type': 'text/event-stream' } })
+      }),
+    )
+    renderApp(<SseStreamViewer token="gw-test" model="m" messages={MESSAGES} />)
+    await waitFor(() => {
+      expect(screen.getByRole('log')).toHaveTextContent('Hello')
+    })
+    const copy = screen.getByRole('button', { name: /^copy$/i })
+    expect(copy).toBeEnabled()
+    await user.click(copy)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^copied$/i })).toBeInTheDocument()
+    })
+    expect(writes).toEqual(['Hello'])
+  })
+
+  it('reports copy failure without throwing', async () => {
+    // No clipboard stub: jsdom has no clipboard, so the absence path runs.
+    // NOTE: fireEvent, not user-event — userEvent.setup() installs its own
+    // working clipboard stub, which would mask the absence branch.
+    server.use(
+      http.post('*/v1/chat/completions', () => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            ctrl.enqueue(new TextEncoder().encode(STREAM_DONE))
+            ctrl.close()
+          },
+        })
+        return new HttpResponse(stream, { headers: { 'content-type': 'text/event-stream' } })
+      }),
+    )
+    renderApp(<SseStreamViewer token="gw-test" model="m" messages={MESSAGES} />)
+    await waitFor(() => {
+      expect(screen.getByRole('log')).toHaveTextContent('Hello')
+    })
+    // Completion drops the caret: the transcript is final, nothing blinks.
+    expect(screen.queryByText('▍')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^copy$/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/copy unavailable/i)
+    })
   })
 
   it('stops before the handshake resolves without a reader', async () => {

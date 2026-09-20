@@ -67,6 +67,8 @@ export function SseStreamViewer({
   const [error, setError] = useState<string | null>(null)
   const [malformed, setMalformed] = useState(0)
   const [tokens, setTokens] = useState(0)
+  const [copied, setCopied] = useState(false)
+  const [copyError, setCopyError] = useState<string | null>(null)
   const bufferRef = useRef('')
   const rafRef = useRef(0)
   const ctrlRef = useRef<AbortController | null>(null)
@@ -82,6 +84,29 @@ export function SseStreamViewer({
     readerRef.current = null
     if (reader) void reader.cancel(new Error('Stopped by user.'))
     ctrlRef.current?.abort()
+  }
+
+  /**
+   * Copies the streamed transcript. Clipboard absence (non-secure contexts,
+   * denied permission) surfaces as an inline alert, never a throw.
+   */
+  const copyTranscript = (): void => {
+    setCopyError(null)
+    // `clipboard` is absent in non-secure contexts and older engines; the
+    // DOM type marks it present, so narrow through unknown honestly.
+    const clip = navigator.clipboard as Clipboard | undefined
+    if (clip === undefined) {
+      setCopyError('Copy unavailable in this browser.')
+      return
+    }
+    void clip.writeText(text).then(
+      () => {
+        setCopied(true)
+      },
+      () => {
+        setCopyError('Copy failed. Select the text manually.')
+      },
+    )
   }
 
   const { maxRetries, heartbeatMs } = streamOptions ?? {}
@@ -160,6 +185,14 @@ export function SseStreamViewer({
         <p className="text-xs tnum">Frames: {tokens}</p>
         <p className="text-xs tnum">Malformed: {malformed}</p>
         <span className="flex-1" />
+        <button
+          type="button"
+          onClick={copyTranscript}
+          disabled={text.length === 0}
+          className="rounded-md border border-ink/15 px-3 py-2 text-xs disabled:opacity-50 dark:border-parchment/15"
+        >
+          {copied ? 'Copied' : 'Copy'}
+        </button>
         {phase === 'streaming' ? (
           <button
             type="button"
@@ -172,6 +205,11 @@ export function SseStreamViewer({
           </button>
         ) : null}
       </div>
+      {copyError === null ? null : (
+        <p role="alert" className="mb-2 text-xs text-danger dark:text-danger-soft">
+          {copyError}
+        </p>
+      )}
       {error === null ? null : (
         <p role="alert" className="mb-2 text-xs text-danger dark:text-danger-soft">
           {error}
@@ -184,6 +222,11 @@ export function SseStreamViewer({
         className="min-h-32 font-mono text-sm whitespace-pre-wrap"
       >
         {text.length === 0 ? 'No output yet. Run a prompt to start streaming.' : text}
+        {phase === 'streaming' && text.length > 0 ? (
+          <span aria-hidden="true" className="stream-caret">
+            ▍
+          </span>
+        ) : null}
       </div>
     </section>
   )

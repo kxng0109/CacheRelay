@@ -36,6 +36,15 @@
   --font-sans: 'Inter Variable', system-ui, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'Martian Mono Variable', ui-monospace, Consolas, monospace;
   --font-display: 'Fraunces Variable', Georgia, serif;
+
+  /* Motion: feedback to input only, transform + opacity, never layout.
+     Keyboard-initiated and 100+/day actions stay instant (0ms). */
+  --dur-micro: 100ms;
+  --dur-ui: 180ms;
+  --dur-panel: 280ms;
+  --dur-shimmer: 1500ms;
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.5, 0, 0.75, 0);
 }
 
 /* Base canvas: light paper by default, dark night under `.dark`. */
@@ -93,4 +102,100 @@ select,
 textarea {
   min-height: 24px;
   min-width: 24px;
+}
+
+/* Streaming caret: static block by default, 1s blink only when motion is
+   welcome. Never a layout shift — pure opacity on an inline glyph. */
+.stream-caret {
+  display: inline-block;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .stream-caret {
+    animation: stream-blink 1s steps(2, start) infinite;
+  }
+}
+@keyframes stream-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+/* Skeleton shimmer for panel first-loads (300ms–10s waits only). Static
+   placeholder under reduced motion — shimmer is decoration, not state. */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background-color: color-mix(in srgb, currentcolor 8%, transparent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .skeleton::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      100deg,
+      transparent 20%,
+      color-mix(in srgb, currentcolor 12%, transparent) 50%,
+      transparent 80%
+    );
+    animation: skeleton-shimmer var(--dur-shimmer) linear infinite;
+  }
+}
+@keyframes skeleton-shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* Lift: the one permitted hover flourish — 1px rise on cards and history
+   rows. Killed by the reduced-motion switch below. */
+@media (prefers-reduced-motion: no-preference) {
+  .lift {
+    transition: transform var(--dur-micro) var(--ease-enter);
+  }
+  .lift:hover {
+    transform: translateY(-1px);
+  }
+}
+
+/* Reduced-motion kill-switch: state and color still change, nothing moves. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Toast stack: fixed bottom-right, above content, below dialogs. */
+.toast-stack {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: min(22rem, calc(100vw - 2rem));
+}
+
+/* Single toast entrance: fade plus 4px rise, killed by the switch above. */
+@media (prefers-reduced-motion: no-preference) {
+  .toast-enter {
+    animation: toast-in var(--dur-ui) var(--ease-enter);
+  }
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }

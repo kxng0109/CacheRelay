@@ -136,7 +136,10 @@ export function refreshSession(): Promise<Session | null> {
     try {
       const res = await fetch(`${resolveApiBase()}/v1/auth/refresh`, {
         method: 'POST',
-        headers: { Accept: 'application/json' },
+        // Required CSRF marker: the RefreshFilter rejects cookie-only calls
+        // without it (400 problem+json). Safe for CORS preflight in
+        // same-origin prod; dev needs the backend to allow-list it.
+        headers: { Accept: 'application/json', 'X-CacheRelay-Refresh': '1' },
         credentials: 'include',
       })
       if (!res.ok) {

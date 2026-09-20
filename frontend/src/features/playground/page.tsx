@@ -1,5 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { KeyboardEvent } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { useShallow } from 'zustand/react/shallow'
 import * as z from 'zod/v4'
@@ -40,6 +41,7 @@ export function PlaygroundPage(): React.JSX.Element {
   const [staticText, setStaticText] = useState<string | null>(null)
   const [staticError, setStaticError] = useState<string | null>(null)
   const [history, setHistory] = useState<RunRecord[]>([])
+  const outputRef = useRef<HTMLElement | null>(null)
   const streaming = isStreamingEnabled()
 
   const {
@@ -85,6 +87,24 @@ export function PlaygroundPage(): React.JSX.Element {
   const reloadRun = (run: RunRecord): void => {
     setValue('model', run.model)
     setValue('prompt', run.prompt)
+  }
+
+  // New runs pull the output block into view (instant jump, never smooth:
+  // operators re-run constantly and motion must not slow them down).
+  useEffect(() => {
+    if (runId > 0) outputRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [runId])
+
+  /**
+   * Submits the form from the keyboard without leaving the prompt box.
+   *
+   * @param e - Key event on the prompt textarea.
+   */
+  const submitOnShortcut = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault()
+      void handleSubmit(onSubmit)(e)
+    }
   }
 
   return (
@@ -154,7 +174,9 @@ export function PlaygroundPage(): React.JSX.Element {
                 id="pg-prompt"
                 rows={6}
                 {...register('prompt')}
+                onKeyDown={submitOnShortcut}
                 aria-invalid={errors.prompt !== undefined}
+                aria-describedby="pg-shortcut-hint"
                 className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
               />
               {errors.prompt === undefined ? null : (
@@ -166,6 +188,12 @@ export function PlaygroundPage(): React.JSX.Element {
             <div className="flex items-center justify-between gap-3">
               <p className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
                 run #{runId + 1} · {streaming ? 'streaming' : 'static'}
+              </p>
+              <p
+                id="pg-shortcut-hint"
+                className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft"
+              >
+                <kbd>Ctrl</kbd>+<kbd>Enter</kbd> to send
               </p>
               <button
                 type="submit"
@@ -180,31 +208,57 @@ export function PlaygroundPage(): React.JSX.Element {
             <div className="rounded-xl border border-dashed border-ink/20 p-6 text-center dark:border-parchment/20">
               <p className="font-display text-xl font-medium tracking-tight">No output yet</p>
               <p className="mt-1 text-xs text-ink-soft dark:text-parchment-soft">
-                Submit a prompt above. The stream lands here with tokens, cost, and phase.
+                Fill the prompt, pick a model, then <kbd>Ctrl</kbd>+<kbd>Enter</kbd>. The stream
+                lands here with tokens, cost, and phase.
               </p>
             </div>
-          ) : streaming ? (
-            <SseStreamViewer
-              key={runId}
-              token={submitted.key}
-              model={submitted.model}
-              messages={messages}
-            />
           ) : (
-            <section aria-label="Completion result" className="space-y-2">
-              {staticError === null ? null : (
-                <p role="alert" className="text-sm text-danger dark:text-danger-soft">
-                  {staticError}
+            <section
+              ref={outputRef}
+              aria-label={`Run ${String(runId)}: ${submitted.model}`}
+              className="space-y-3 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent"
+            >
+              <div className="flex flex-wrap items-center gap-3">
+                <p className="font-mono text-[11px] text-ink-soft tnum dark:text-parchment-soft">
+                  run #{runId} · {submitted.model} · {streaming ? 'streaming' : 'static'}
                 </p>
-              )}
-              {staticText === null ? null : (
-                <div
-                  role="log"
-                  aria-live="polite"
-                  aria-label="Non-streamed completion"
-                  className="min-h-32 font-mono text-sm whitespace-pre-wrap"
+                <span className="flex-1" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setValue('model', submitted.model)
+                    setValue('prompt', submitted.prompt)
+                    void handleSubmit(onSubmit)()
+                  }}
+                  className="rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
                 >
-                  {staticText}
+                  Rerun
+                </button>
+              </div>
+              {streaming ? (
+                <SseStreamViewer
+                  key={runId}
+                  token={submitted.key}
+                  model={submitted.model}
+                  messages={messages}
+                />
+              ) : (
+                <div aria-label="Completion result" className="space-y-2">
+                  {staticError === null ? null : (
+                    <p role="alert" className="text-sm text-danger dark:text-danger-soft">
+                      {staticError}
+                    </p>
+                  )}
+                  {staticText === null ? null : (
+                    <div
+                      role="log"
+                      aria-live="polite"
+                      aria-label="Non-streamed completion"
+                      className="min-h-32 font-mono text-sm whitespace-pre-wrap"
+                    >
+                      {staticText}
+                    </div>
+                  )}
                 </div>
               )}
             </section>
@@ -230,7 +284,7 @@ export function PlaygroundPage(): React.JSX.Element {
                     onClick={() => {
                       reloadRun(run)
                     }}
-                    className="w-full rounded-lg border border-ink/10 bg-cream p-3 text-left dark:border-parchment/10 dark:bg-transparent"
+                    className="lift w-full rounded-lg border border-ink/10 bg-cream p-3 text-left dark:border-parchment/10 dark:bg-transparent"
                   >
                     <p className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
                       run #{run.id} · {run.model}

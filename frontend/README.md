@@ -1,9 +1,9 @@
 # CacheRelay Frontend — Enterprise Console
 
 Vite 8.3.0 + React 19.3.0 + TypeScript 6.0.2 + Tailwind CSS 4.3.3.
-Nine lazy routes mapped to real gateway surfaces (`backend/docs/BACKEND_API_REFERENCE.md`):
-Playground (live SSE), Circuits, Keys, Ledger, Cache & budgets, Embeddings,
-Approvals (HITL), MCP (honestly suspended — backend 403 defect), Observability.
+Twelve lazy routes mapped to real gateway surfaces (`backend/docs/BACKEND_API_REFERENCE.md`):
+Overview, Playground (live SSE), Circuits, Keys, Ledger, Cache & budgets,
+Embeddings, Approvals (HITL), MCP, Observability, Login, Redeem.
 Product name resolves at runtime from `/v3/api-docs` `info.title`
 (`CacheRelay AI Gateway & Resilient Reverse Proxy`); the static
 `<title>CacheRelay</title>` in `index.html` is the offline fallback.
@@ -43,9 +43,16 @@ Never commit tokens, keys, or credentials.
 - Auth model: the gateway `gw-` key (user-pasted per form) and the human
   session (short-lived access JWT) live in JS memory only (zustand, never
   `localStorage`/cookies/IndexedDB). The refresh token lives in an httpOnly
-  cookie the browser sends automatically. The master secret has no UI path
-  by design (terminal/curl-only). Admin screens render a missing page for
-  non-admins (stealth: identical to unknown routes). See
+  cookie the browser sends automatically; refresh calls carry the required
+  `X-CacheRelay-Refresh: 1` CSRF marker (dev also needs the backend to
+  allow-list it for CORS — flagged, prod same-origin is unaffected). The
+  master secret has no UI path by design (terminal/curl-only). Route tiers:
+  public (Playground, Embeddings, Login, Redeem), session
+  (`RequireAuth`: Overview, MCP, Observability), admin (`RequireAdmin`
+  stealth 404: Circuits, Keys, Ledger, Cache, Approvals). Guests hitting `/`
+  land on `/login?next=<original>` and return after signing in; authed visits
+  to `/login`/`/redeem` bounce home. Sidebar, palette, and G-chords all hide
+  what the session may not see — no hints. See
   `backend/docs/BACKEND_API_REFERENCE.md` §1–§3.
 - The Observability route renders a live latency centerpiece (`LatencyChart`,
   `React.lazy` + `Suspense` so the `echarts-vendor` chunk stays out of the
@@ -70,18 +77,38 @@ Never commit tokens, keys, or credentials.
   / process-wide `setHeadersReporter` (per-call wins) plus the SSE handshake
   hook. Dev cross-origin reads need backend `Access-Control-Expose-Headers`;
   prod is same-origin and unaffected.
+- Keyboard-first shell: `Ctrl/⌘+K` palette (tier-filtered actions with a
+  session-context footer), `G then <key>` chords (`O`verview `P`layground
+  `E`mbeddings `B` observability `C`ircuits `K`eys `L`edger `A`pprovals `M`CP,
+  never while typing, never beyond the session tier), `Ctrl/⌘+Enter` sends
+  the playground prompt, `?` opens the shortcut sheet, `Esc` walks the
+  ladder (dialog → drawer). Post-login focus lands on the screen heading.
+- Playground runs as blocks: each submission renders a `run #N · model`
+  section (Rerun resubmits as a fresh run) around the `SseStreamViewer`
+  (`role="log"`, static `▍` caret while live, Copy with inline confirmation,
+  Stop settles the budget hold). History rail reloads past prompts; new runs
+  scroll into view instantly.
+- Mutation feedback is toasts (`shared/toast` store + `Toasts` viewport):
+  success `role="status"`, errors `role="alert"`, 4s auto-dismiss, `Esc`
+  clears all, stack capped at five. Approvals decisions hold their buttons
+  (`aria-busy`, `Working…`) and confirm with a UTC timestamp toast.
+- Motion tokens (`--dur-micro/ui/panel/shimmer`, enter/exit easings) drive
+  the only permitted flourish (card lift, toast entrance, caret blink,
+  skeleton shimmer); keyboard-initiated actions stay instant and a
+  `prefers-reduced-motion` switch kills every animation while keeping all
+  state changes.
 
 ## Quality gates
 
-| Command                       | Gate                                                                                                               |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `npm.cmd run lint`            | ESLint 10 flat, zero warnings (`--max-warnings=0`)                                                                 |
-| `npm.cmd run format:check`    | Prettier 3.9.7 exact, check only                                                                                   |
-| `npm.cmd run typecheck`       | `tsc -b` (solution build; bare `--noEmit` is vacuous here)                                                         |
-| `npm.cmd run test`            | Vitest 5 unit run (jsdom)                                                                                          |
-| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently 99.5/97.8/99.7/99.8; only defensive `??`/null arms excluded from branches) |
-| `npm.cmd run test:e2e`        | Playwright 1.63 smoke, chromium, Vite dev reuse                                                                    |
-| `npm.cmd run build-storybook` | Storybook 10.6.0 static build                                                                                      |
+| Command                       | Gate                                                         |
+| ----------------------------- | ------------------------------------------------------------ |
+| `npm.cmd run lint`            | ESLint 10 flat, zero warnings (`--max-warnings=0`)           |
+| `npm.cmd run format:check`    | Prettier 3.9.7 exact, check only                             |
+| `npm.cmd run typecheck`       | `tsc -b` (solution build; bare `--noEmit` is vacuous here)   |
+| `npm.cmd run test`            | Vitest 5 unit run (jsdom)                                    |
+| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently 98.6/97.0/98.7/99.2) |
+| `npm.cmd run test:e2e`        | Playwright 1.63 smoke, chromium, Vite dev reuse              |
+| `npm.cmd run build-storybook` | Storybook 10.6.0 static build                                |
 
 ### ESLint
 
@@ -136,10 +163,10 @@ reporter for CI step summaries.
 `cleanup()` after each test, and closes the server at the end.
 `src/test/utils.tsx` renders UI with a fresh query client (no retries),
 memory router, and seeded memory-only credentials.
-27 suites / 325 tests: pure-unit (SSE parser, rate-limit parser/selector/store,
+30 suites / 363 tests: pure-unit (SSE parser, rate-limit parser/selector/store,
 Prometheus histogram parser/quantiles, ECharts registration, app boot,
-error mapping, URL allow-list) plus MSW integration per screen
-(happy/error/empty/adversarial).
+error mapping, URL allow-list, `?next=` validation, chord map, toast store)
+plus MSW integration per screen (happy/error/empty/adversarial).
 
 ### E2E (Playwright 1.63)
 
@@ -150,11 +177,12 @@ error mapping, URL allow-list) plus MSW integration per screen
 (`Desktop Safari`) — locally all three, in CI one per matrix leg
 (`--project=<browser>`, `fail-fast: false`). `e2e/a11y.ts` exports `scanForA11yViolations(page,
 selector?)`, which injects the pinned `axe-core` bundle (no new
-dependency) and fails on any violation. `e2e/smoke.spec.ts` walks every
-screen idle state, the admin gate, and the palette.
+dependency) and fails on any violation.
 `PLAYWRIGHT_CHANNEL=chrome` runs specs against the installed branded
 browser (local escape hatch when the Playwright CDN is unreachable; CI
 always uses the version-pinned bundled Chromium).
+`e2e/smoke.spec.ts` walks the guest landing (login redirect), public
+screens, the stealth admin gate, and the palette.
 First run needs browsers:
 `npx playwright install chromium` (`--with-deps` on CI).
 
@@ -190,8 +218,11 @@ Syft, CycloneDX) with SLSA attestations and checksums next to the jar.
 `src/index.css` defines the `@theme` baseline (paper `#F7F5F0` / ink
 `#16130E`, night `#0E0D0B` / parchment `#F5F1E8`, ember `#C7431F`, status
 success `#2E7D32` / warn `#8A5E14` / danger `#C0392B` with `-soft` variants
-for dark-mode text, muted `ink-soft`/`parchment-soft`), `@custom-variant dark`,
-`.tnum` tabular figures, a 3:1 `:focus-visible` ring, and 24px minimum
-pointer targets. Every text/background pair holds WCAG 2.2 AA 4.5:1 in both
+for dark-mode text, muted `ink-soft`/`parchment-soft`, motion
+`--dur-micro/ui/panel/shimmer` + enter/exit easings), `@custom-variant dark`,
+`.tnum` tabular figures, `.lift` hover, `.stream-caret` blink,
+`.skeleton` shimmer, `.toast-stack`/`.toast-enter`, a 3:1 `:focus-visible`
+ring, 24px minimum pointer targets, and the `prefers-reduced-motion`
+kill-switch. Every text/background pair holds WCAG 2.2 AA 4.5:1 in both
 themes (verified by computation; the Playwright axe suite re-proves it on
 every run). No global margin/padding reset.

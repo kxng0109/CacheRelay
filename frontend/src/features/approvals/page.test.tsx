@@ -1,7 +1,9 @@
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { Toasts } from '../../shared/components/Toasts.js'
+import { useToastStore } from '../../shared/toast/store.js'
 import { server } from '../../test/setup.js'
 import { renderApp } from '../../test/utils.js'
 import { ApprovalsPage } from './page.js'
@@ -15,6 +17,25 @@ const PENDING = {
       requestedBy: 'agent',
     },
   ],
+}
+
+beforeEach(() => {
+  useToastStore.getState().clear()
+})
+
+/**
+ * Renders the board with the toast viewport, mirroring the shell layout.
+ *
+ * @returns The render result.
+ */
+function renderBoard() {
+  return renderApp(
+    <>
+      <ApprovalsPage />
+      <Toasts />
+    </>,
+    { adminSession: true },
+  )
 }
 
 describe('ApprovalsPage', () => {
@@ -45,7 +66,7 @@ describe('ApprovalsPage', () => {
         return new HttpResponse(null, { status: 200 })
       }),
     )
-    renderApp(<ApprovalsPage />, { adminSession: true })
+    renderBoard()
     await user.click(await screen.findByRole('button', { name: /^approve$/i }))
     await waitFor(() => {
       expect(screen.getByText(/a1: approved/i)).toBeInTheDocument()
@@ -61,10 +82,38 @@ describe('ApprovalsPage', () => {
         () => new HttpResponse(null, { status: 200 }),
       ),
     )
-    renderApp(<ApprovalsPage />, { adminSession: true })
+    renderBoard()
     await user.click(await screen.findByRole('button', { name: /^reject$/i }))
     await waitFor(() => {
       expect(screen.getByText(/a1: rejected/i)).toBeInTheDocument()
+    })
+  })
+
+  it('holds the decision buttons while the call is in flight', async () => {
+    const user = userEvent.setup()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    server.use(
+      http.get('*/v1/admin/mcp/approvals/pending', () => HttpResponse.json(PENDING)),
+      http.post('*/v1/admin/mcp/approvals/:id/approve', async () => {
+        await gate
+        return new HttpResponse(null, { status: 200 })
+      }),
+    )
+    renderBoard()
+    await user.click(await screen.findByRole('button', { name: /^approve$/i }))
+    // Both decision buttons hold while the call is in flight.
+    const working = await screen.findAllByRole('button', { name: /working/i })
+    expect(working).toHaveLength(2)
+    for (const button of working) {
+      expect(button).toBeDisabled()
+      expect(button).toHaveAttribute('aria-busy', 'true')
+    }
+    release()
+    await waitFor(() => {
+      expect(screen.getByText(/a1: approved/i)).toBeInTheDocument()
     })
   })
 
@@ -77,10 +126,10 @@ describe('ApprovalsPage', () => {
         () => new HttpResponse('x', { status: 409 }),
       ),
     )
-    renderApp(<ApprovalsPage />, { adminSession: true })
+    renderBoard()
     await user.click(await screen.findByRole('button', { name: /^approve$/i }))
     await waitFor(() => {
-      expect(screen.getByText(/HTTP 409/)).toBeInTheDocument()
+      expect(screen.getByText(/a1:.*HTTP 409/)).toBeInTheDocument()
     })
   })
 

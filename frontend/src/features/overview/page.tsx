@@ -85,7 +85,7 @@ export function OverviewPage(): React.JSX.Element {
           <Link
             key={link.to}
             to={link.to}
-            className="rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent"
+            className="lift rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent"
           >
             <p className="font-display text-xl font-medium tracking-tight">{link.title}</p>
             <p className="mt-1 text-xs text-ink-soft dark:text-parchment-soft">{link.body}</p>

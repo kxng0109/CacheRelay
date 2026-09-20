@@ -137,6 +137,18 @@ describe('redeemInvite', () => {
 })
 
 describe('refreshSession', () => {
+  it('sends the required refresh CSRF marker header', async () => {
+    let marker: string | null = null
+    server.use(
+      http.post('*/v1/auth/refresh', ({ request }) => {
+        marker = request.headers.get('X-CacheRelay-Refresh')
+        return HttpResponse.json({ accessToken: 'jwt-h', expiresInSeconds: 300, admin: false })
+      }),
+    )
+    await refreshSession()
+    expect(marker).toBe('1')
+  })
+
   it('restores the session and shares one flight', async () => {
     let calls = 0
     server.use(

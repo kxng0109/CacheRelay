@@ -1,8 +1,9 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
-import { useNavigate } from 'react-router'
+import { useNavigate, useSearchParams } from 'react-router'
 import * as z from 'zod/v4'
+import { resolveNext } from '../../shared/auth/next.js'
 import { login } from '../../shared/auth/session.js'
 
 const schema = z.object({
@@ -18,13 +19,16 @@ type FormData = z.infer<typeof schema>
  * @remarks Public route. The username is trimmed (identifiers are
  * canonicalized server-side); the password is never trimmed, stored,
  * logged, or rendered. Wrong credentials and lockouts surface distinct
- * honest messages.
+ * honest messages. A validated `?next=` returns the session to the screen
+ * that bounced it here; anything off-shape falls back to `/`.
  *
  * @returns The login screen.
  */
 export function LoginPage(): React.JSX.Element {
   const navigate = useNavigate()
+  const [params] = useSearchParams()
   const [error, setError] = useState<string | null>(null)
+  const [showPassword, setShowPassword] = useState(false)
 
   const {
     register,
@@ -36,7 +40,7 @@ export function LoginPage(): React.JSX.Element {
     setError(null)
     try {
       await login(d.username.trim(), d.password)
-      await navigate('/')
+      await navigate(resolveNext(params.get('next')), { state: { fromLogin: true } })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Login failed.')
     }
@@ -46,9 +50,6 @@ export function LoginPage(): React.JSX.Element {
     <div className="mx-auto w-full max-w-sm space-y-4">
       <div>
         <h1 className="font-display text-2xl font-medium tracking-tight">Log in</h1>
-        <p className="mt-1 text-sm text-ink-soft dark:text-parchment-soft">
-          Human accounts only. Gateway keys go on the Playground screen.
-        </p>
       </div>
       <form
         onSubmit={(e) => {
@@ -63,6 +64,7 @@ export function LoginPage(): React.JSX.Element {
           <input
             id="login-username"
             autoComplete="username"
+            autoFocus
             {...register('username')}
             aria-invalid={errors.username !== undefined}
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
@@ -77,14 +79,27 @@ export function LoginPage(): React.JSX.Element {
           <label htmlFor="login-password" className="mb-1 block text-xs font-medium">
             Password
           </label>
-          <input
-            id="login-password"
-            type="password"
-            autoComplete="current-password"
-            {...register('password')}
-            aria-invalid={errors.password !== undefined}
-            className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
-          />
+          <div className="flex gap-2">
+            <input
+              id="login-password"
+              type={showPassword ? 'text' : 'password'}
+              autoComplete="current-password"
+              {...register('password')}
+              aria-invalid={errors.password !== undefined}
+              className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                setShowPassword((s) => !s)
+              }}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              aria-pressed={showPassword}
+              className="shrink-0 rounded-md border border-ink/15 px-3 text-xs dark:border-parchment/15"
+            >
+              {showPassword ? 'Hide' : 'Show'}
+            </button>
+          </div>
           {errors.password === undefined ? null : (
             <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
               {errors.password.message}

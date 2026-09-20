@@ -2,10 +2,22 @@ import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
+import { Route, Routes, useLocation } from 'react-router'
 import { server } from '../../test/setup.js'
 import { renderApp } from '../../test/utils.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { LoginPage } from './LoginPage.js'
+
+/**
+ * Echoes the post-login location so navigation targets are asserted, not
+ * just the stored session.
+ *
+ * @returns The current path and query as text.
+ */
+function LocationProbe(): React.JSX.Element {
+  const { pathname, search } = useLocation()
+  return <p>{`at:${pathname}${search}`}</p>
+}
 
 describe('LoginPage', () => {
   it('logs in and stores a memory-only session', async () => {
@@ -66,6 +78,68 @@ describe('LoginPage', () => {
     await user.click(screen.getByRole('button', { name: /^log in$/i }))
     await waitFor(() => {
       expect(screen.getByText(/username is required/i)).toBeInTheDocument()
+    })
+  })
+
+  it('focuses the username field on arrival', () => {
+    renderApp(<LoginPage />)
+    expect(screen.getByLabelText(/username/i)).toHaveFocus()
+  })
+
+  it('toggles password visibility without submitting', async () => {
+    const user = userEvent.setup()
+    renderApp(<LoginPage />)
+    const password = screen.getByLabelText(/^password$/i)
+    expect(password).toHaveAttribute('type', 'password')
+    await user.click(screen.getByRole('button', { name: /show password/i }))
+    expect(password).toHaveAttribute('type', 'text')
+    expect(screen.getByRole('button', { name: /hide password/i })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+  })
+
+  it('returns to the validated ?next= destination after login', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.post('*/v1/auth/login', () =>
+        HttpResponse.json({ accessToken: 'jwt-next', expiresInSeconds: 300, admin: false }),
+      ),
+    )
+    renderApp(
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="*" element={<LocationProbe />} />
+      </Routes>,
+      { route: '/login?next=/observability' },
+    )
+    await user.type(screen.getByLabelText(/username/i), 'op')
+    await user.type(screen.getByLabelText(/^password$/i), 'correct horse battery staple')
+    await user.click(screen.getByRole('button', { name: /^log in$/i }))
+    await waitFor(() => {
+      expect(screen.getByText('at:/observability')).toBeInTheDocument()
+    })
+  })
+
+  it('falls back home for a hostile ?next= destination', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.post('*/v1/auth/login', () =>
+        HttpResponse.json({ accessToken: 'jwt-next', expiresInSeconds: 300, admin: false }),
+      ),
+    )
+    renderApp(
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="*" element={<LocationProbe />} />
+      </Routes>,
+      { route: '/login?next=https://evil.example/steal' },
+    )
+    await user.type(screen.getByLabelText(/username/i), 'op')
+    await user.type(screen.getByLabelText(/^password$/i), 'correct horse battery staple')
+    await user.click(screen.getByRole('button', { name: /^log in$/i }))
+    await waitFor(() => {
+      expect(screen.getByText('at:/')).toBeInTheDocument()
     })
   })
 })

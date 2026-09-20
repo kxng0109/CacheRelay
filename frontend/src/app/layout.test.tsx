@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -167,12 +167,33 @@ describe('Layout', () => {
     }
   })
 
-  it('hides admin routes from non-admins without a hint', () => {
+  it('hides session and admin routes from guests without a hint', () => {
     renderApp(<Layout />)
-    for (const label of ['Circuits', 'Approvals', 'Cache & budgets', 'Keys', 'Ledger']) {
+    for (const label of [
+      'Overview',
+      'Circuits',
+      'Approvals',
+      'Cache & budgets',
+      'Keys',
+      'Ledger',
+      'MCP',
+      'Observability',
+    ]) {
       expect(screen.queryByRole('link', { name: new RegExp(`^${label}$`) })).not.toBeInTheDocument()
     }
     expect(screen.getByRole('link', { name: /^Playground$/ })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /^Embeddings$/ })).toBeInTheDocument()
+    expect(screen.queryByText('Guard')).not.toBeInTheDocument()
+  })
+
+  it('shows session routes but not admin routes to non-admin sessions', () => {
+    renderApp(<Layout />, { nonAdminSession: true })
+    for (const label of ['Overview', 'MCP', 'Observability']) {
+      expect(screen.getByRole('link', { name: new RegExp(`^${label}$`) })).toBeInTheDocument()
+    }
+    for (const label of ['Circuits', 'Approvals', 'Cache & budgets', 'Keys', 'Ledger']) {
+      expect(screen.queryByRole('link', { name: new RegExp(`^${label}$`) })).not.toBeInTheDocument()
+    }
     expect(screen.queryByText('Guard')).not.toBeInTheDocument()
   })
 
@@ -293,6 +314,63 @@ describe('Layout', () => {
       expect(screen.getByRole('link', { name: /log in/i })).toBeInTheDocument()
     })
     expect(screen.queryByText('Guard')).not.toBeInTheDocument()
+  })
+
+  it('travels G-chords to visible routes only', () => {
+    renderApp(<Layout />, { adminSession: true })
+    expect(screen.getByText('route: Overview')).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'g' })
+    fireEvent.keyDown(document, { key: 'p' })
+    expect(screen.getByText('route: Playground')).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'g' })
+    fireEvent.keyDown(document, { key: 'c' })
+    expect(screen.getByText('route: Circuits')).toBeInTheDocument()
+  })
+
+  it('blocks chords to routes the session may not see', () => {
+    renderApp(<Layout />)
+    expect(screen.getByText('route: Overview')).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'g' })
+    fireEvent.keyDown(document, { key: 'c' })
+    expect(screen.getByText('route: Overview')).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'g' })
+    fireEvent.keyDown(document, { key: 'p' })
+    expect(screen.getByText('route: Playground')).toBeInTheDocument()
+  })
+
+  it('never fires chords while typing', () => {
+    renderApp(<Layout />, { adminSession: true })
+    const box = document.createElement('input')
+    document.body.appendChild(box)
+    box.focus()
+    fireEvent.keyDown(box, { key: 'g' })
+    fireEvent.keyDown(box, { key: 'p' })
+    expect(screen.getByText('route: Overview')).toBeInTheDocument()
+    box.remove()
+  })
+
+  it('opens the shortcut sheet on ? and closes it on Esc', async () => {
+    const user = userEvent.setup()
+    renderApp(<Layout />)
+    expect(screen.queryByRole('dialog', { name: /keyboard shortcuts/i })).not.toBeInTheDocument()
+    fireEvent.keyDown(document, { key: '?' })
+    expect(screen.getByRole('dialog', { name: /keyboard shortcuts/i })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /close shortcuts/i }))
+    expect(screen.queryByRole('dialog', { name: /keyboard shortcuts/i })).not.toBeInTheDocument()
+    fireEvent.keyDown(document, { key: '?' })
+    fireEvent.keyDown(screen.getByRole('button', { name: /close shortcuts/i }), {
+      key: 'Escape',
+    })
+    expect(screen.queryByRole('dialog', { name: /keyboard shortcuts/i })).not.toBeInTheDocument()
+  })
+
+  it('closes the mobile drawer on Esc', async () => {
+    const user = userEvent.setup()
+    renderApp(<Layout />)
+    await user.click(screen.getByRole('button', { name: /open navigation/i }))
+    expect(screen.getByRole('button', { name: /close navigation/i })).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('button', { name: /close navigation/i })).not.toBeInTheDocument()
   })
 
   it('mirrors live gateway headers into the strip', async () => {

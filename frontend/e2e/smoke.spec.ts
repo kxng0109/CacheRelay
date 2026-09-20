@@ -1,25 +1,30 @@
 import { expect, test } from '@playwright/test'
 
 /**
- * Console smoke: shell renders, public screens render their idle states,
- * admin screens render the missing page when logged out (stealth: identical
- * to an unknown route). No backend is expected to succeed here.
+ * Console smoke: guests land on login from `/`, public screens render their
+ * idle states, session screens offer no hint and bounce to login.
+ * No backend is expected to succeed here.
  */
-test('shell loads and every screen renders its idle state', async ({ page }) => {
+test('shell loads, guests land on login, public screens render idle', async ({ page }) => {
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: /log in/i })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Skip to content' })).toBeVisible()
 
   const screens: { link: string; heading: string }[] = [
     { link: 'Playground', heading: 'Playground' },
     { link: 'Embeddings', heading: 'Embeddings' },
-    { link: 'MCP', heading: 'MCP tools' },
-    { link: 'Observability', heading: 'Observability' },
   ]
   for (const s of screens) {
     await page.getByRole('link', { name: s.link, exact: true }).click()
     await expect(page.getByRole('heading', { name: s.heading })).toBeVisible()
   }
+  for (const label of ['Overview', 'MCP', 'Observability']) {
+    await expect(page.getByRole('link', { name: label, exact: true })).toHaveCount(0)
+  }
+  await page.goto('/observability')
+  await expect(page.getByRole('heading', { name: /log in/i })).toBeVisible()
+  await page.goto('/mcp')
+  await expect(page.getByRole('heading', { name: /log in/i })).toBeVisible()
 })
 
 /**
