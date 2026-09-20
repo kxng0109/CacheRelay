@@ -69,6 +69,15 @@ export function SseStreamViewer({
   const [tokens, setTokens] = useState(0)
   const [copied, setCopied] = useState(false)
   const [copyError, setCopyError] = useState<string | null>(null)
+  /**
+   * Cache provenance from response headers. `X-Cache` is present only on
+   * cache-hit chat (contract §3.1 swaps provider headers for it); its
+   * absence means a provider-backed live response. Similarity and Age ride
+   * alongside the tier on hits.
+   */
+  const [cacheTier, setCacheTier] = useState<string | null>(null)
+  const [cacheSimilarity, setCacheSimilarity] = useState<string | null>(null)
+  const [cacheAge, setCacheAge] = useState<string | null>(null)
   const bufferRef = useRef('')
   const rafRef = useRef(0)
   const ctrlRef = useRef<AbortController | null>(null)
@@ -139,6 +148,12 @@ export function SseStreamViewer({
       readerSlot: readerRef,
       onHeaders: (headers, code) => {
         useRateLimitStore.getState().setSnapshot(parseRateLimit(headers, code))
+        const tier = headers.get('X-Cache')
+        if (tier !== null) {
+          setCacheTier(tier)
+          setCacheSimilarity(headers.get('X-CacheRelay-Similarity-Score'))
+          setCacheAge(headers.get('Age'))
+        }
       },
       ...(maxRetries === undefined ? {} : { maxRetries }),
       ...(heartbeatMs === undefined ? {} : { heartbeatMs }),
@@ -184,6 +199,11 @@ export function SseStreamViewer({
         </p>
         <p className="text-xs tnum">Frames: {tokens}</p>
         <p className="text-xs tnum">Malformed: {malformed}</p>
+        <p className="text-xs tnum">
+          cache: {cacheTier ?? 'live'}
+          {cacheSimilarity === null ? null : ` · sim ${cacheSimilarity}`}
+          {cacheAge === null ? null : ` · age ${cacheAge}s`}
+        </p>
         <span className="flex-1" />
         <button
           type="button"

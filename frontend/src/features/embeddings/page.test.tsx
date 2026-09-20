@@ -7,6 +7,41 @@ import { renderApp } from '../../test/utils.js'
 import { EmbeddingsPage } from './page.js'
 
 describe('EmbeddingsPage', () => {
+  it('fills the sanctioned sample without submitting', async () => {
+    const user = userEvent.setup()
+    renderApp(<EmbeddingsPage />)
+    await user.click(screen.getByRole('button', { name: /fill sample text/i }))
+    expect(screen.getByLabelText(/input text/i)).toHaveValue(
+      'CacheRelay routes every request through admission, cache, and router stages.',
+    )
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+  })
+
+  it('diagnoses failures with a retry action', async () => {
+    const user = userEvent.setup()
+    let calls = 0
+    server.use(
+      http.post('*/v1/embeddings', () => {
+        calls += 1
+        if (calls === 1) return new HttpResponse('x', { status: 503 })
+        return HttpResponse.json({
+          data: [{ embedding: [0.1], index: 0 }],
+          model: 'text-embedding-3-small',
+        })
+      }),
+    )
+    renderApp(<EmbeddingsPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/input text/i), 'hello world')
+    await user.click(screen.getByRole('button', { name: /create embeddings/i }))
+    const retry = await screen.findByRole('button', { name: /^retry$/i })
+    expect(screen.getByRole('alert')).toHaveTextContent(/embedding request failed/i)
+    await user.click(retry)
+    await waitFor(() => {
+      expect(screen.getByRole('table')).toHaveTextContent('● ok')
+    })
+  })
+
   it('validates empty input before submitting', async () => {
     const user = userEvent.setup()
     renderApp(<EmbeddingsPage />)

@@ -92,6 +92,15 @@ export function ObservabilityPage(): React.JSX.Element {
     void qc.invalidateQueries({ queryKey: ['metrics-probe'] })
   }
 
+  /**
+   * Retries one probe without disturbing the other card's state.
+   *
+   * @param key - The probe query key to invalidate.
+   */
+  const retryProbe = (key: string): void => {
+    void qc.invalidateQueries({ queryKey: [key] })
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -127,9 +136,24 @@ export function ObservabilityPage(): React.JSX.Element {
               Probing gateway health…
             </p>
           ) : health.error instanceof Error ? (
-            <p role="alert" className="text-sm text-danger dark:text-danger-soft">
-              {health.error.message}
-            </p>
+            <div
+              role="alert"
+              className="rounded-md border border-ink/10 p-3 dark:border-parchment/10"
+            >
+              <p className="text-sm text-danger dark:text-danger-soft">{health.error.message}</p>
+              <p className="mt-1 font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+                GET /actuator/health · auto-retries every 15s
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  retryProbe('health')
+                }}
+                className="mt-2 rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+              >
+                Retry probe
+              </button>
+            </div>
           ) : health.data === undefined ? (
             <p role="status" className="text-sm">
               No health data. Retry the probe.
@@ -154,9 +178,24 @@ export function ObservabilityPage(): React.JSX.Element {
               Probing metrics…
             </p>
           ) : metrics.error instanceof Error ? (
-            <p role="alert" className="text-sm text-danger dark:text-danger-soft">
-              Metrics probe failed. Retry shortly.
-            </p>
+            <div
+              role="alert"
+              className="rounded-md border border-ink/10 p-3 dark:border-parchment/10"
+            >
+              <p className="text-sm text-danger dark:text-danger-soft">{metrics.error.message}</p>
+              <p className="mt-1 font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+                GET /actuator/prometheus · auto-retries every 15s
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  retryProbe('metrics-probe')
+                }}
+                className="mt-2 rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+              >
+                Retry probe
+              </button>
+            </div>
           ) : metrics.data === undefined ? (
             <p role="status" className="text-sm">
               No metrics data. Retry the probe.
@@ -177,6 +216,35 @@ export function ObservabilityPage(): React.JSX.Element {
       >
         <LatencyChart />
       </Suspense>
+      <details className="rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
+        <summary className="cursor-pointer font-mono text-xs">
+          Reading cache headers on a stream
+        </summary>
+        <dl className="mt-2 space-y-2 text-xs">
+          <div className="flex justify-between gap-3">
+            <dt className="font-mono">X-Cache</dt>
+            <dd className="text-right text-ink-soft dark:text-parchment-soft">
+              HIT (L0-Memory), HIT (L1-Exact), or HIT (L2-Semantic). Absent means a provider-backed
+              live response.
+            </dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="font-mono">X-CacheRelay-Similarity-Score</dt>
+            <dd className="text-right text-ink-soft dark:text-parchment-soft">
+              Semantic similarity, 4 decimals; 1.0 on exact tiers.
+            </dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="font-mono">Age</dt>
+            <dd className="text-right text-ink-soft dark:text-parchment-soft">
+              Seconds since the cached entry was stored.
+            </dd>
+          </div>
+        </dl>
+        <p className="mt-2 text-xs text-ink-soft dark:text-parchment-soft">
+          The Playground stream header prints all three live on every run.
+        </p>
+      </details>
       <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
         <ul className="space-y-2 text-sm">
           {ENDPOINTS.map((e) => (

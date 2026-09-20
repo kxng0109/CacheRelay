@@ -15,6 +15,9 @@ const schema = z.object({
 
 type FormData = z.infer<typeof schema>
 
+/** Sanctioned sample: fills the input box only, never fabricates vectors. */
+const SAMPLE_INPUT = 'CacheRelay routes every request through admission, cache, and router stages.'
+
 interface UsageRecord {
   id: number
   at: string
@@ -50,6 +53,7 @@ export function EmbeddingsPage(): React.JSX.Element {
   const {
     register,
     handleSubmit,
+    setValue,
     control,
     formState: { errors, isSubmitting },
   } = useForm<FormData>({
@@ -112,6 +116,21 @@ export function EmbeddingsPage(): React.JSX.Element {
   const visible = runs.filter((r) => query.length === 0 || r.model.toLowerCase().includes(query))
   const inspected = runs.find((r) => r.id === selected) ?? null
 
+  /**
+   * Fills the input box with the sanctioned sample. Vectors still require
+   * a real submission — the sample never fabricates a run.
+   */
+  const fillSample = (): void => {
+    setValue('input', SAMPLE_INPUT, { shouldValidate: true })
+  }
+
+  /**
+   * Retries the last submission with the current form values.
+   */
+  const retrySubmit = (): void => {
+    void handleSubmit(onSubmit)()
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -128,9 +147,21 @@ export function EmbeddingsPage(): React.JSX.Element {
         </p>
       </div>
       {error === null ? null : (
-        <p role="alert" className="text-sm text-danger dark:text-danger-soft">
-          {error}
-        </p>
+        <div
+          role="alert"
+          className="rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent"
+        >
+          <p className="text-sm text-danger dark:text-danger-soft">
+            Embedding request failed: {error}
+          </p>
+          <button
+            type="button"
+            onClick={retrySubmit}
+            className="mt-2 rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+          >
+            Retry
+          </button>
+        </div>
       )}
       <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
         <div className="space-y-4">
@@ -228,9 +259,18 @@ export function EmbeddingsPage(): React.JSX.Element {
             />
           </div>
           {runs.length === 0 ? (
-            <p className="text-sm text-ink-soft dark:text-parchment-soft">
-              No runs yet. Submit text above to populate the usage table.
-            </p>
+            <div>
+              <p className="text-sm text-ink-soft dark:text-parchment-soft">
+                No runs yet. Submit text above to populate the usage table.
+              </p>
+              <button
+                type="button"
+                onClick={fillSample}
+                className="mt-3 rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+              >
+                Fill sample text
+              </button>
+            </div>
           ) : visible.length === 0 ? (
             <p className="text-sm text-ink-soft dark:text-parchment-soft">
               No runs match this filter.
@@ -238,7 +278,7 @@ export function EmbeddingsPage(): React.JSX.Element {
           ) : (
             <table className="w-full text-left text-sm">
               <caption className="sr-only">Session embedding usage</caption>
-              <thead>
+              <thead className="sticky top-0 bg-paper dark:bg-night">
                 <tr className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
                   <th scope="col" className="py-2 pr-3 font-medium">
                     Time
@@ -273,7 +313,7 @@ export function EmbeddingsPage(): React.JSX.Element {
                     }`}
                   >
                     <td className="py-2 pr-3 font-mono text-xs tnum">{r.at}</td>
-                    <td className="py-2 pr-3 font-mono text-xs">{r.model}</td>
+                    <td className="max-w-44 truncate py-2 pr-3 font-mono text-xs">{r.model}</td>
                     <td className="py-2 pr-3 text-right text-xs tnum">{r.chars}</td>
                     <td className="py-2 pr-3 text-right text-xs tnum">{r.vecs ?? '—'}</td>
                     <td className="py-2 pr-3 text-right text-xs tnum">{r.dims ?? '—'}</td>

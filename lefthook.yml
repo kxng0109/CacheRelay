@@ -1,0 +1,37 @@
+# CacheRelay git hooks (lefthook 2.1.14).
+# Pre-commit stays under 10s (staged-only lint/format); pre-push under 2min
+# (typecheck + unit tests). Full verify (backend mvnw, E2E, Chromatic) lives in CI.
+# Backend stays out of local hooks on purpose: mvnw verify takes ~5min.
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: frontend eslint (staged)
+      root: frontend/
+      glob: "*.{ts,tsx}"
+      run: npx --no-install eslint {staged_files} --max-warnings=0
+      skip:
+        - merge
+        - rebase
+    - name: frontend prettier (staged)
+      root: frontend/
+      glob: "*.{ts,tsx,css,md,json}"
+      run: npx --no-install prettier --check {staged_files}
+      skip:
+        - merge
+        - rebase
+
+commit-msg:
+  jobs:
+    - name: lint commit message
+      run: npx --no-install commitlint --edit {1}
+
+pre-push:
+  parallel: true
+  jobs:
+    - name: frontend typecheck
+      root: frontend/
+      run: npx --no-install tsc -b
+    - name: frontend unit tests
+      root: frontend/
+      run: npx --no-install vitest run

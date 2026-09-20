@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
@@ -84,6 +84,34 @@ describe('LoginPage', () => {
   it('focuses the username field on arrival', () => {
     renderApp(<LoginPage />)
     expect(screen.getByLabelText(/username/i)).toHaveFocus()
+  })
+
+  it('warns about caps lock while typing the password', () => {
+    renderApp(<LoginPage />)
+    const password = screen.getByLabelText(/^password$/i)
+    const down = new KeyboardEvent('keydown', { key: 'a', bubbles: true })
+    Object.defineProperty(down, 'getModifierState', { value: () => true })
+    fireEvent(password, down)
+    expect(screen.getByText(/caps lock is on/i)).toBeInTheDocument()
+    const up = new KeyboardEvent('keyup', { key: 'a', bubbles: true })
+    Object.defineProperty(up, 'getModifierState', { value: () => false })
+    fireEvent(password, up)
+    expect(screen.queryByText(/caps lock is on/i)).not.toBeInTheDocument()
+  })
+
+  it('links first accounts to the invite screen', async () => {
+    const user = userEvent.setup()
+    renderApp(
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/redeem" element={<LocationProbe />} />
+      </Routes>,
+      { route: '/login' },
+    )
+    await user.click(screen.getByRole('link', { name: /redeem an invite instead/i }))
+    await waitFor(() => {
+      expect(screen.getByText('at:/redeem')).toBeInTheDocument()
+    })
   })
 
   it('toggles password visibility without submitting', async () => {

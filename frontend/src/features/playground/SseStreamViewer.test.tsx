@@ -250,4 +250,50 @@ describe('SseStreamViewer', () => {
       expect(screen.getByText(/phase: done/i)).toBeInTheDocument()
     })
   })
+
+  it('shows the cache tier, similarity, and age from response headers', async () => {
+    server.use(
+      http.post('*/v1/chat/completions', () => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            ctrl.enqueue(new TextEncoder().encode(STREAM_DONE))
+            ctrl.close()
+          },
+        })
+        return new HttpResponse(stream, {
+          headers: {
+            'content-type': 'text/event-stream',
+            'X-Cache': 'HIT (L1-Exact)',
+            'X-CacheRelay-Similarity-Score': '1.0000',
+            Age: '42',
+          },
+        })
+      }),
+    )
+    renderApp(<SseStreamViewer token="gw-test" model="m" messages={MESSAGES} />)
+    await waitFor(() => {
+      expect(screen.getByText(/cache: HIT \(L1-Exact\)/i)).toBeInTheDocument()
+    })
+    expect(screen.getByText(/sim 1\.0000/i)).toBeInTheDocument()
+    expect(screen.getByText(/age 42s/i)).toBeInTheDocument()
+  })
+
+  it('labels provider-backed responses live when no cache header arrives', async () => {
+    server.use(
+      http.post('*/v1/chat/completions', () => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            ctrl.enqueue(new TextEncoder().encode(STREAM_DONE))
+            ctrl.close()
+          },
+        })
+        return new HttpResponse(stream, { headers: { 'content-type': 'text/event-stream' } })
+      }),
+    )
+    renderApp(<SseStreamViewer token="gw-test" model="m" messages={MESSAGES} />)
+    await waitFor(() => {
+      expect(screen.getByText(/phase: done/i)).toBeInTheDocument()
+    })
+    expect(screen.getByText(/cache: live/i)).toBeInTheDocument()
+  })
 })

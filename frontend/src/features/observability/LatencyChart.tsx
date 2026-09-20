@@ -16,6 +16,12 @@ interface LatencyChartProps {
    * small value for fast determinism without fake timers.
    */
   pollMs?: number
+  /**
+   * Latest-point reporter. Called with the newest latency point (or null
+   * before two scrapes exist) so parents can surface one live number —
+   * e.g. the Overview RPS cell — without duplicating the scrape.
+   */
+  onLatest?: (point: { p50: number | null; p95: number | null; rps: number } | null) => void
 }
 
 /**
@@ -42,13 +48,20 @@ function describePoint(point: LatencyPoint | null): string {
  *
  * @returns The latency chart region with a textual summary for assistive tech.
  */
-export default function LatencyChart({ pollMs = POLL_MS }: LatencyChartProps): React.JSX.Element {
+export default function LatencyChart({
+  pollMs = POLL_MS,
+  onLatest,
+}: LatencyChartProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<ECharts | null>(null)
   const accRef = useRef<Accumulator | null>(null)
   const seenRef = useRef<string | null>(null)
   const dark = useUiStore((s) => s.dark)
   const [points, setPoints] = useState<LatencyPoint[]>([])
+  const latestRef = useRef(onLatest)
+  useEffect(() => {
+    latestRef.current = onLatest
+  })
 
   const metrics = useQuery({
     queryKey: ['prometheus-latency'],
@@ -136,6 +149,10 @@ export default function LatencyChart({ pollMs = POLL_MS }: LatencyChartProps): R
   // Points are appended whole and arrays have no holes; the element is never undefined here.
   /* v8 ignore next -- @preserve */
   const latest: LatencyPoint | null = points.length > 0 ? (points[points.length - 1] ?? null) : null
+
+  useEffect(() => {
+    latestRef.current?.(latest)
+  }, [points, latest])
 
   return (
     <section aria-label="Gateway latency">

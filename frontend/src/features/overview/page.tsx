@@ -1,4 +1,4 @@
-import { Suspense, lazy } from 'react'
+import { Suspense, lazy, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { useShallow } from 'zustand/react/shallow'
@@ -35,6 +35,13 @@ export function OverviewPage(): React.JSX.Element {
     enabled: isAdmin,
   })
 
+  /**
+   * Live requests-per-second from the latency chart's newest point. Null
+   * until two scrapes exist — the cell shows an em dash, never a zero that
+   * would read as a dead gateway.
+   */
+  const [liveRps, setLiveRps] = useState<number | null>(null)
+
   return (
     <div className="space-y-6">
       <div>
@@ -49,11 +56,23 @@ export function OverviewPage(): React.JSX.Element {
             Loading totals…
           </p>
         ) : summary.error instanceof Error ? (
-          <p role="alert" className="text-sm text-danger dark:text-danger-soft">
-            {summary.error.message}
-          </p>
+          <div
+            role="alert"
+            className="rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent"
+          >
+            <p className="text-sm text-danger dark:text-danger-soft">
+              Totals unavailable: {summary.error.message}
+            </p>
+            <button
+              type="button"
+              onClick={() => void summary.refetch()}
+              className="mt-2 text-sm underline"
+            >
+              Retry [r]
+            </button>
+          </div>
         ) : summary.data === undefined ? null : (
-          <dl className="grid gap-3 sm:grid-cols-3">
+          <dl className="grid gap-3 sm:grid-cols-4">
             <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
               <dt className="text-xs text-ink-soft dark:text-parchment-soft">Requests</dt>
               <dd className="font-mono text-lg tnum">{summary.data.totalRequests}</dd>
@@ -68,6 +87,12 @@ export function OverviewPage(): React.JSX.Element {
                 {summary.data.averageDurationMs.toFixed(1)}
               </dd>
             </div>
+            <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
+              <dt className="text-xs text-ink-soft dark:text-parchment-soft">Live RPS</dt>
+              <dd className="font-mono text-lg tnum">
+                {liveRps === null ? '—' : liveRps.toFixed(1)}
+              </dd>
+            </div>
           </dl>
         )
       ) : null}
@@ -78,7 +103,11 @@ export function OverviewPage(): React.JSX.Element {
           </p>
         }
       >
-        <LatencyChart />
+        <LatencyChart
+          onLatest={(point) => {
+            setLiveRps(point === null ? null : point.rps)
+          }}
+        />
       </Suspense>
       <nav aria-label="Console sections" className="grid gap-3 sm:grid-cols-2">
         {LINKS.map((link) => (

@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -167,6 +167,34 @@ describe('PlaygroundPage', () => {
       { timeout: 5000 },
     )
     expect(screen.getByRole('region', { name: /run 1: gpt-56-luna/i })).toBeInTheDocument()
+  })
+
+  it('fills the sanctioned sample without sending', async () => {
+    const user = userEvent.setup()
+    renderApp(<PlaygroundPage />)
+    await user.click(screen.getByRole('button', { name: /try sample prompt/i }))
+    expect(screen.getByLabelText(/prompt/i, { selector: 'textarea' })).toHaveValue(
+      'Summarize the three cache outcomes (HIT, MISS, STALE) in one sentence each.',
+    )
+    expect(screen.queryByRole('log')).not.toBeInTheDocument()
+  })
+
+  it('disables send past the prompt limit', async () => {
+    renderApp(<PlaygroundPage />)
+    fireEvent.change(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), {
+      target: { value: 'x'.repeat(8001) },
+    })
+    await waitFor(() => {
+      expect(screen.getByText(/over limit/i)).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: /stream completion/i })).toBeDisabled()
+  })
+
+  it('offers a copyable terminal example', async () => {
+    const user = userEvent.setup()
+    renderApp(<PlaygroundPage />)
+    await user.click(screen.getByText(/run it from a terminal instead/i))
+    expect(screen.getByText(/chat\/completions/i)).toBeInTheDocument()
   })
 
   it('reruns the submitted run as a fresh block and scrolls to it', async () => {

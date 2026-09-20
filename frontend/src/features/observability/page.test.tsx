@@ -104,8 +104,35 @@ describe('ObservabilityPage', () => {
     )
     renderApp(<ObservabilityPage />)
     await waitFor(() => {
-      expect(screen.getByText(/metrics probe failed/i)).toBeInTheDocument()
+      expect(screen.getByRole('alert')).toHaveTextContent(/HTTP 500/)
     })
+  })
+
+  it('retries one probe without disturbing the other', async () => {
+    const user = userEvent.setup()
+    let healthCalls = 0
+    server.use(
+      http.get('*/actuator/health', () => {
+        healthCalls += 1
+        if (healthCalls === 1) return new HttpResponse('x', { status: 503 })
+        return HttpResponse.json({ status: 'UP' })
+      }),
+    )
+    renderApp(<ObservabilityPage />)
+    const retry = await screen.findByRole('button', { name: /^retry probe$/i })
+    await user.click(retry)
+    await waitFor(() => {
+      expect(screen.getByText(/gateway is up/i)).toBeInTheDocument()
+    })
+    expect(healthCalls).toBeGreaterThan(1)
+  })
+
+  it('explains cache headers without a backend call', async () => {
+    const user = userEvent.setup()
+    server.use(http.get('*/actuator/health', () => HttpResponse.json({ status: 'UP' })))
+    renderApp(<ObservabilityPage />)
+    await user.click(screen.getByText(/reading cache headers on a stream/i))
+    expect(screen.getByText(/L0-Memory/i)).toBeInTheDocument()
   })
 
   it('reads scrape bodies that fail mid-stream as empty', async () => {

@@ -16,6 +16,9 @@ const schema = z.object({
   key: z.string().min(1, 'API key is required'),
 })
 
+/** Sanctioned sample: fills the prompt box only, never fabricates output. */
+const SAMPLE_PROMPT = 'Summarize the three cache outcomes (HIT, MISS, STALE) in one sentence each.'
+
 type FormData = z.infer<typeof schema>
 
 interface RunRecord {
@@ -42,6 +45,12 @@ export function PlaygroundPage(): React.JSX.Element {
   const [staticError, setStaticError] = useState<string | null>(null)
   const [history, setHistory] = useState<RunRecord[]>([])
   const outputRef = useRef<HTMLElement | null>(null)
+  /**
+   * Monotonic run counter. History entries must never be created inside a
+   * state updater: StrictMode double-invokes updaters in dev and a impure
+   * updater appends the same run twice.
+   */
+  const runCounter = useRef(0)
   const streaming = isStreamingEnabled()
 
   const {
@@ -56,6 +65,10 @@ export function PlaygroundPage(): React.JSX.Element {
     defaultValues: { model: 'gpt-56-luna', prompt: '', key: gatewayKey ?? '' },
   })
   const promptLength = useWatch({ control, name: 'prompt' }).length
+  const modelValue = useWatch({ control, name: 'model' })
+  const overLimit = promptLength > 8000
+  const [exampleCopied, setExampleCopied] = useState(false)
+  const [exampleError, setExampleError] = useState<string | null>(null)
 
   const messages = useMemo(
     () => [{ role: 'user' as const, content: submitted?.prompt ?? '' }],
@@ -65,10 +78,10 @@ export function PlaygroundPage(): React.JSX.Element {
   const onSubmit = (d: FormData): void => {
     setGatewayKey(d.key)
     setSubmitted(d)
-    setRunId((n) => {
-      setHistory((h) => [{ id: n + 1, model: d.model, prompt: d.prompt }, ...h].slice(0, 8))
-      return n + 1
-    })
+    runCounter.current += 1
+    const id = runCounter.current
+    setRunId(id)
+    setHistory((h) => [{ id, model: d.model, prompt: d.prompt }, ...h].slice(0, 8))
     setStaticText(null)
     setStaticError(null)
     if (!streaming) {
@@ -87,6 +100,44 @@ export function PlaygroundPage(): React.JSX.Element {
   const reloadRun = (run: RunRecord): void => {
     setValue('model', run.model)
     setValue('prompt', run.prompt)
+  }
+
+  /**
+   * Fills the prompt box with the sanctioned sample. Output still requires
+   * a real send — the sample never fabricates a completion.
+   */
+  const fillSample = (): void => {
+    setValue('prompt', SAMPLE_PROMPT, { shouldValidate: true })
+  }
+
+  /**
+   * Example request for the current model: the exact curl an operator can
+   * paste into a terminal. The key stays a placeholder — memory-only keys
+   * never leave the page.
+   *
+   * @returns The curl snippet text.
+   */
+  const exampleRequest = (): string =>
+    `curl -s http://localhost:8080/v1/chat/completions -H "Authorization: Bearer YOUR_KEY" -H "Content-Type: application/json" -d '{"model":"${modelValue}","messages":[{"role":"user","content":"Hello"}]}'`
+
+  /**
+   * Copies the example request. Clipboard absence surfaces inline, never throws.
+   */
+  const copyExample = (): void => {
+    setExampleError(null)
+    const clip = navigator.clipboard as Clipboard | undefined
+    if (clip === undefined) {
+      setExampleError('Copy unavailable in this browser.')
+      return
+    }
+    void clip.writeText(exampleRequest()).then(
+      () => {
+        setExampleCopied(true)
+      },
+      () => {
+        setExampleError('Copy failed. Select the text manually.')
+      },
+    )
   }
 
   // New runs pull the output block into view (instant jump, never smooth:
@@ -126,8 +177,14 @@ export function PlaygroundPage(): React.JSX.Element {
                 </span>
                 prompt
               </p>
-              <p className="font-mono text-[11px] text-ink-soft tnum dark:text-parchment-soft">
-                {promptLength}/8000
+              <p
+                className={`font-mono text-[11px] tnum ${
+                  overLimit
+                    ? 'text-danger dark:text-danger-soft'
+                    : 'text-ink-soft dark:text-parchment-soft'
+                }`}
+              >
+                {promptLength}/8000{overLimit ? ' — over limit' : null}
               </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -197,13 +254,35 @@ export function PlaygroundPage(): React.JSX.Element {
               </p>
               <button
                 type="submit"
-                disabled={isSubmitting}
+                disabled={isSubmitting || overLimit}
                 className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper disabled:opacity-50 dark:bg-parchment dark:text-night"
               >
                 {isSubmitting ? 'Starting…' : streaming ? 'Stream completion' : 'Send completion'}
               </button>
             </div>
           </form>
+          <details className="rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
+            <summary className="cursor-pointer font-mono text-xs">
+              Run it from a terminal instead
+            </summary>
+            <pre className="mt-2 overflow-auto rounded-md border border-ink/10 p-2 font-mono text-[11px] whitespace-pre-wrap dark:border-parchment/10">
+              {exampleRequest()}
+            </pre>
+            <div className="mt-2 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={copyExample}
+                className="rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+              >
+                {exampleCopied ? 'Copied' : 'Copy'}
+              </button>
+              {exampleError === null ? null : (
+                <p role="alert" className="text-xs text-danger dark:text-danger-soft">
+                  {exampleError}
+                </p>
+              )}
+            </div>
+          </details>
           {submitted === null ? (
             <div className="rounded-xl border border-dashed border-ink/20 p-6 text-center dark:border-parchment/20">
               <p className="font-display text-xl font-medium tracking-tight">No output yet</p>
@@ -211,6 +290,13 @@ export function PlaygroundPage(): React.JSX.Element {
                 Fill the prompt, pick a model, then <kbd>Ctrl</kbd>+<kbd>Enter</kbd>. The stream
                 lands here with tokens, cost, and phase.
               </p>
+              <button
+                type="button"
+                onClick={fillSample}
+                className="mt-3 rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+              >
+                Try sample prompt
+              </button>
             </div>
           ) : (
             <section

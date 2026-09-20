@@ -1,7 +1,8 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useState } from 'react'
+import type { KeyboardEvent } from 'react'
 import { useForm } from 'react-hook-form'
-import { useNavigate, useSearchParams } from 'react-router'
+import { Link, useNavigate, useSearchParams } from 'react-router'
 import * as z from 'zod/v4'
 import { resolveNext } from '../../shared/auth/next.js'
 import { login } from '../../shared/auth/session.js'
@@ -29,12 +30,25 @@ export function LoginPage(): React.JSX.Element {
   const [params] = useSearchParams()
   const [error, setError] = useState<string | null>(null)
   const [showPassword, setShowPassword] = useState(false)
+  const [capsLock, setCapsLock] = useState(false)
 
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm<FormData>({ resolver: zodResolver(schema), mode: 'onSubmit' })
+
+  /**
+   * Tracks Caps Lock while typing the password. A wrong-password failure
+   * with Caps Lock on is the most common avoidable login failure, so the
+   * warning is inline rather than a post-submit surprise.
+   *
+   * @param e - Key event on the password field.
+   */
+  const trackCapsLock = (e: KeyboardEvent<HTMLInputElement>): void => {
+    const active = typeof e.getModifierState === 'function' ? e.getModifierState('CapsLock') : false
+    setCapsLock(active)
+  }
 
   const onSubmit = async (d: FormData): Promise<void> => {
     setError(null)
@@ -85,6 +99,8 @@ export function LoginPage(): React.JSX.Element {
               type={showPassword ? 'text' : 'password'}
               autoComplete="current-password"
               {...register('password')}
+              onKeyDown={trackCapsLock}
+              onKeyUp={trackCapsLock}
               aria-invalid={errors.password !== undefined}
               className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
             />
@@ -105,11 +121,22 @@ export function LoginPage(): React.JSX.Element {
               {errors.password.message}
             </p>
           )}
+          {capsLock ? (
+            <p role="status" className="mt-1 text-xs text-ink-soft dark:text-parchment-soft">
+              Caps Lock is on. Passwords are case sensitive.
+            </p>
+          ) : null}
         </div>
         {error === null ? null : (
-          <p role="alert" className="text-sm text-danger dark:text-danger-soft">
-            {error}
-          </p>
+          <div
+            role="alert"
+            className="rounded-md border border-ink/10 bg-transparent p-3 dark:border-parchment/10"
+          >
+            <p className="text-sm text-danger dark:text-danger-soft">{error}</p>
+            <p className="mt-1 text-xs text-ink-soft dark:text-parchment-soft">
+              Check Caps Lock and try again. The form kept your entries.
+            </p>
+          </div>
         )}
         <button
           type="submit"
@@ -119,8 +146,15 @@ export function LoginPage(): React.JSX.Element {
           {isSubmitting ? 'Logging in…' : 'Log in'}
         </button>
       </form>
-      <p className="text-xs text-ink-soft dark:text-parchment-soft">
-        First account? Redeem an invite instead.
+      <p className="text-xs text-ink-soft dark:text-parchment-soft">First account?</p>
+      <Link
+        to="/redeem"
+        className="block w-full rounded-md border border-ink/15 px-4 py-2 text-center text-sm dark:border-parchment/15"
+      >
+        Redeem an invite instead
+      </Link>
+      <p className="text-center font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+        human accounts · session in memory only
       </p>
     </div>
   )

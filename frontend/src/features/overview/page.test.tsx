@@ -71,4 +71,22 @@ describe('OverviewPage', () => {
       expect(screen.getByRole('alert')).toHaveTextContent(/HTTP 500/)
     })
   })
+
+  it('shows a waiting live-RPS cell before two scrapes exist', async () => {
+    server.use(
+      http.get('*/v1/admin/ledger/summary', () =>
+        HttpResponse.json({ totalRequests: 7, totalCostUsdMicros: 100, averageDurationMs: 3.2 }),
+      ),
+      http.get(
+        '*/actuator/prometheus',
+        () => new HttpResponse('', { headers: { 'Content-Type': 'text/plain' } }),
+      ),
+    )
+    renderApp(<OverviewPage />, { adminSession: true })
+    await waitFor(() => {
+      expect(screen.getByText('7')).toBeInTheDocument()
+    })
+    expect(screen.getByText(/live rps/i)).toBeInTheDocument()
+    expect(screen.getByText('—')).toBeInTheDocument()
+  })
 })
