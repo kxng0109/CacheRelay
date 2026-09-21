@@ -16,9 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   authentication, per-key agent RBAC (`allowedAgents`/`deniedAgents` fields on the key contract, deny-first glob
   semantics), per-agent circuit breakers, bounded bodies, and MCP-style JSON-RPC error codes. Discovery:
   public `/.well-known/agent-card.json` (no agent inventory disclosed) and `GET /v1/a2a/{agent}/card` with
-  upstream URLs rewritten to the gateway. Streaming, push notifications, and resubscription are explicit slice
-  non-goals; the admin surface for agent allowlists and `message/stream` relay land in the next increment.
+  upstream URLs rewritten to the gateway. Push notifications, resubscription, gRPC, and HTTP+JSON transports remain explicit non-goals.
   Full `verify` green, branch ≥ 0.95.
+- **A2A streaming, rate limits, and per-key agent allowlists:** `message/stream` now answers
+  `text/event-stream` relayed byte-for-byte (pre-stream failures stay JSON-RPC errors, mid-stream upstream
+  failures close the stream, client disconnects never penalize breaker health); messaging methods enforce the
+  key RPM budget (`429` + `Retry-After`, fail-closed `503` when the limiter is down); and
+  `allowedAgents`/`deniedAgents` persist and are settable through the admin key API (bootstrap keys default
+  to empty). Full `verify` green, branch >= 0.95.
 - **HITL single-use hardening:** the approval claim script now records a terminal `consumed` marker (checked
   first), so a replay of an already-executed approval is denied with `-32603` instead of re-entering the
   suspension cycle — a re-armed approval key can never execute the same call twice. Unapproved retries

@@ -298,10 +298,12 @@ gateway:
 
 CacheRelay also fronts upstream A2A (Agent-to-Agent) agents with the same governance posture as MCP tools: a
 virtual-key authenticated JSON-RPC relay with per-key agent allow/deny lists, per-agent circuit breaking, bounded
-request/response bodies, and redirect-disabled upstream calls. Slice 1 relays the non-streaming interoperable core
-verbatim — `message/send`, `tasks/get`, `tasks/cancel`; unknown methods answer JSON-RPC `-32601`, notifications are
-accepted with `202`. Streaming (`message/stream`), push-notification configuration, task resubscription, gRPC, and
-HTTP+JSON transports are explicit non-goals of this slice.
+request/response bodies, and redirect-disabled upstream calls. `message/send`, `tasks/get`, and `tasks/cancel` are relayed verbatim as JSON; `message/stream`
+answers `text/event-stream` relayed byte-for-byte (transparent: each upstream SSE `data:` frame is a
+complete JSON-RPC response, and a mid-stream upstream failure simply closes the stream so clients detect
+the missing `final:true`). Unknown methods answer `-32601`, notifications are accepted with `202`, and RPM
+exhaustion answers `429` with `Retry-After`. Push-notification configuration, task resubscription, gRPC,
+and HTTP+JSON transports remain explicit non-goals.
 
 | Endpoint | Purpose |
 |---|---|
@@ -312,6 +314,10 @@ HTTP+JSON transports are explicit non-goals of this slice.
 Local policy decisions follow the MCP convention so clients never branch on codes: JSON-RPC errors are
 standardized on `-32603` (access denied, breaker open, agent unavailable), `-32700` for malformed JSON, `-32600`
 for batches and oversized bodies, `-32601` for unsupported methods.
+
+A rejected RPM budget answers HTTP `429` with `Retry-After` (fail-closed `503` when the limiter is down).
+Per-key agent access uses `allowedAgents`/`deniedAgents` on virtual keys (create/update key endpoints): an empty
+allow list means all agents, the deny list always wins, and glob patterns are supported.
 
 ```yaml
 gateway:
@@ -324,6 +330,7 @@ gateway:
     circuit-breaker-cooldown: 30s
     client-connect-timeout: 5s
     client-request-timeout: 60s
+    # Streams are bounded by spring.mvc.async.request-timeout (10m in this stack).
     agents:
       research-agent:
         base-url: "https://agents.internal/a2a"

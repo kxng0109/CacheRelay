@@ -26,6 +26,8 @@ import java.util.Set;
  * @param enabled          whether the key is active
  * @param createdAt        creation timestamp
  * @param allowedCacheScopes cache isolation scopes (SEC-01; TENANT-only when unset)
+ * @param allowedAgents    allowed A2A agents
+ * @param deniedAgents     denied A2A agents
  */
 @Schema(name = "KeyResponse", description = "Safe public metadata representation of a registered virtual API key")
 public record KeyResponse(
@@ -81,7 +83,13 @@ public record KeyResponse(
 		Instant createdAt,
 
 		@Schema(description = "Cache isolation scopes (TENANT-only when unset)", example = "[\"TENANT\"]")
-		Set<CacheScope> allowedCacheScopes
+		Set<CacheScope> allowedCacheScopes,
+
+		@Schema(description = "Allowed A2A agents", example = "[\"research-*\"]")
+		Set<String> allowedAgents,
+
+		@Schema(description = "Denied A2A agents", example = "[\"prod-*\"]")
+		Set<String> deniedAgents
 ) {
 	public KeyResponse(
 			String keyId,
@@ -113,7 +121,9 @@ public record KeyResponse(
 				true,
 				enabled,
 				createdAt,
-				Set.of(CacheScope.TENANT)
+				Set.of(CacheScope.TENANT),
+				Set.of(),
+				Set.of()
 		);
 	}
 
@@ -152,7 +162,9 @@ public record KeyResponse(
 				true,
 				enabled,
 				createdAt,
-				Set.of(CacheScope.TENANT)
+				Set.of(CacheScope.TENANT),
+				Set.of(),
+				Set.of()
 		);
 	}
 
@@ -195,7 +207,9 @@ public record KeyResponse(
 				true,
 				enabled,
 				createdAt,
-				Set.of(CacheScope.TENANT)
+				Set.of(CacheScope.TENANT),
+				Set.of(),
+				Set.of()
 		);
 	}
 }

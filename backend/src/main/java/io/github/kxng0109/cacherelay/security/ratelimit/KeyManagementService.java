@@ -212,7 +212,9 @@ public class KeyManagementService {
 			Set<String> allowedPrompts,
 			Set<String> deniedPrompts,
 			boolean injectionBlock,
-			Set<CacheScope> allowedCacheScopes
+			Set<CacheScope> allowedCacheScopes,
+			Set<String> allowedAgents,
+			Set<String> deniedAgents
 	) {
 		fields.put("allowedModels", toCsv(allowedModels));
 		fields.put("allowedProviders", toCsv(allowedProviders));
@@ -224,6 +226,8 @@ public class KeyManagementService {
 		fields.put("deniedPrompts", encodeSet(deniedPrompts));
 		fields.put("injectionBlock", Boolean.toString(injectionBlock));
 		fields.put("allowedCacheScopes", scopesToCsv(allowedCacheScopes));
+		fields.put("allowedAgents", toCsv(allowedAgents));
+		fields.put("deniedAgents", toCsv(deniedAgents));
 	}
 
 	/**
@@ -307,7 +311,9 @@ public class KeyManagementService {
 				template.allowedPrompts(),
 				template.deniedPrompts(),
 				true,
-				template.allowedCacheScopes()
+				template.allowedCacheScopes(),
+				Set.of(),
+				Set.of()
 		);
 		return plaintext;
 	}
@@ -436,12 +442,11 @@ public class KeyManagementService {
 	) {
 		return createKey(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders,
 				allowedTools, deniedTools, allowedResources, deniedResources, allowedPrompts,
-				deniedPrompts, injectionBlock, null);
+				deniedPrompts, injectionBlock, null, null, null);
 	}
 
 	/**
-	 * Creates a new virtual API key with full governance rules including resource,
-	 * prompt, injection, and cache-scope handling.
+	 * Backwards-compatible overload omitting the A2A agent policy sets.
 	 *
 	 * @param ownerId            owner identifier
 	 * @param name               label for the key
@@ -475,6 +480,49 @@ public class KeyManagementService {
 			Boolean injectionBlock,
 			Set<CacheScope> allowedCacheScopes
 	) {
+		return createKey(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders,
+				allowedTools, deniedTools, allowedResources, deniedResources, allowedPrompts,
+				deniedPrompts, injectionBlock, allowedCacheScopes, null, null);
+	}
+
+	/**
+	 * Creates a new virtual API key with full governance rules including resource,
+	 * prompt, injection, cache-scope, and A2A agent handling.
+	 *
+	 * @param ownerId            owner identifier
+	 * @param name               label for the key
+	 * @param rpmLimit           requests per minute limit (0 = unlimited)
+	 * @param tpmLimit           tokens per minute limit (0 = unlimited)
+	 * @param allowedModels      allowed model names (empty = all)
+	 * @param allowedProviders   allowed provider names (empty = all)
+	 * @param allowedTools       allowed tool names or glob patterns (empty = all)
+	 * @param deniedTools        denied tool names or glob patterns (empty = none)
+	 * @param allowedResources   allowed resource URI globs (empty = all visible)
+	 * @param deniedResources    denied resource URI globs (empty = none hidden)
+	 * @param allowedPrompts     allowed prompt name globs (empty = all visible)
+	 * @param deniedPrompts      denied prompt name globs (empty = none hidden)
+	 * @param injectionBlock     whether indirect prompt injection blocks delivery (null = default block)
+	 * @param allowedCacheScopes cache isolation scopes (null or empty = TENANT only)
+	 * @return the created key object containing the plaintext and metadata
+	 */
+	public CreatedKey createKey(
+			String ownerId,
+			String name,
+			int rpmLimit,
+			int tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts,
+			Boolean injectionBlock,
+			Set<CacheScope> allowedCacheScopes,
+			Set<String> allowedAgents,
+			Set<String> deniedAgents
+	) {
 		String plaintext = randomPlaintext();
 		Instant now = Instant.now();
 		SHA256Hash hash = SHA256Hash.fromRawKey(plaintext);
@@ -497,7 +545,9 @@ public class KeyManagementService {
 				injectionBlock == null || injectionBlock,
 				true,
 				now,
-				allowedCacheScopes
+				allowedCacheScopes,
+				allowedAgents,
+				deniedAgents
 		);
 		storeKey(
 				plaintext,
@@ -514,7 +564,9 @@ public class KeyManagementService {
 				allowedPrompts,
 				deniedPrompts,
 				injectionBlock == null || injectionBlock,
-				allowedCacheScopes
+				allowedCacheScopes,
+				allowedAgents,
+				deniedAgents
 		);
 		return new CreatedKey(hash, plaintext, metadata);
 	}
@@ -676,12 +728,54 @@ public class KeyManagementService {
 	) {
 		return updateKey(hash, name, rpmLimit, tpmLimit, allowedModels, allowedProviders,
 				allowedTools, deniedTools, allowedResources, deniedResources, allowedPrompts,
-				deniedPrompts, injectionBlock, null, enabled);
+				deniedPrompts, injectionBlock, null, null, null, enabled);
 	}
 
 	/**
-	 * Updates an existing key's metadata including full governance rules and cache
-	 * scopes, invalidating the local cache.
+	 * Backwards-compatible overload omitting the A2A agent policy sets (null = keep).
+	 *
+	 * @param hash               SHA-256 digest of the key
+	 * @param name               new label (or null to keep)
+	 * @param rpmLimit           new RPM limit (or null to keep)
+	 * @param tpmLimit           new TPM limit (or null to keep)
+	 * @param allowedModels      new allowed models (or null to keep)
+	 * @param allowedProviders   new allowed providers (or null to keep)
+	 * @param allowedTools       new allowed tools (or null to keep)
+	 * @param deniedTools        new denied tools (or null to keep)
+	 * @param allowedResources   new allowed resource URI globs (or null to keep)
+	 * @param deniedResources    new denied resource URI globs (or null to keep)
+	 * @param allowedPrompts     new allowed prompt globs (or null to keep)
+	 * @param deniedPrompts      new denied prompt globs (or null to keep)
+	 * @param injectionBlock     new injection handling (or null to keep)
+	 * @param allowedCacheScopes new cache isolation scopes (or null to keep)
+	 * @param enabled            new enabled state (or null to keep)
+	 * @return the updated key metadata, or empty if key was not found
+	 */
+	public Optional<VirtualApiKey> updateKey(
+			SHA256Hash hash,
+			String name,
+			Integer rpmLimit,
+			Integer tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts,
+			Boolean injectionBlock,
+			Set<CacheScope> allowedCacheScopes,
+			Boolean enabled
+	) {
+		return updateKey(hash, name, rpmLimit, tpmLimit, allowedModels, allowedProviders,
+				allowedTools, deniedTools, allowedResources, deniedResources, allowedPrompts,
+				deniedPrompts, injectionBlock, allowedCacheScopes, null, null, enabled);
+	}
+
+	/**
+	 * Updates an existing key's metadata including full governance rules, cache
+	 * scopes, and A2A agent policies, invalidating the local cache.
 	 *
 	 * @param hash               key hash to update
 	 * @param name               new name (or null to keep)
@@ -715,6 +809,8 @@ public class KeyManagementService {
 			Set<String> deniedPrompts,
 			Boolean injectionBlock,
 			Set<CacheScope> allowedCacheScopes,
+			Set<String> allowedAgents,
+			Set<String> deniedAgents,
 			Boolean enabled
 	) {
 		String key = redisKey(hash);
@@ -760,6 +856,12 @@ public class KeyManagementService {
 		}
 		if (allowedCacheScopes != null) {
 			updates.put("allowedCacheScopes", scopesToCsv(allowedCacheScopes));
+		}
+		if (allowedAgents != null) {
+			updates.put("allowedAgents", toCsv(allowedAgents));
+		}
+		if (deniedAgents != null) {
+			updates.put("deniedAgents", toCsv(deniedAgents));
 		}
 		if (enabled != null) {
 			updates.put("enabled", enabled.toString());
@@ -844,7 +946,9 @@ public class KeyManagementService {
 					bootstrapKey.allowedPrompts(),
 					bootstrapKey.deniedPrompts(),
 					SEED_INJECTION_BLOCK,
-					bootstrapKey.allowedCacheScopes()
+					bootstrapKey.allowedCacheScopes(),
+					Set.of(),
+					Set.of()
 			);
 		}
 	}
@@ -869,7 +973,9 @@ public class KeyManagementService {
 			Set<String> allowedPrompts,
 			Set<String> deniedPrompts,
 			boolean injectionBlock,
-			Set<CacheScope> allowedCacheScopes
+			Set<CacheScope> allowedCacheScopes,
+			Set<String> allowedAgents,
+			Set<String> deniedAgents
 	) {
 		SHA256Hash hash = SHA256Hash.fromRawKey(plaintextKey);
 		Map<String, String> fields = new LinkedHashMap<>();
@@ -880,7 +986,7 @@ public class KeyManagementService {
 		fields.put("enabled", "true");
 		putPolicyFields(fields, allowedModels, allowedProviders, allowedTools, deniedTools,
 				allowedResources, deniedResources, allowedPrompts, deniedPrompts,
-				injectionBlock, allowedCacheScopes);
+				injectionBlock, allowedCacheScopes, allowedAgents, deniedAgents);
 		fields.put("createdAt", Instant.now().toString());
 		fields.put("keyPrefix", prefixOf(plaintextKey));
 		List<Object> args = new ArrayList<>();
@@ -913,7 +1019,9 @@ public class KeyManagementService {
 			Set<String> allowedPrompts,
 			Set<String> deniedPrompts,
 			boolean injectionBlock,
-			Set<CacheScope> allowedCacheScopes
+			Set<CacheScope> allowedCacheScopes,
+			Set<String> allowedAgents,
+			Set<String> deniedAgents
 	) {
 		SHA256Hash hash = SHA256Hash.fromRawKey(plaintextKey);
 		Map<String, String> fields = new LinkedHashMap<>();
@@ -924,7 +1032,7 @@ public class KeyManagementService {
 		fields.put("enabled", "true");
 		putPolicyFields(fields, allowedModels, allowedProviders, allowedTools, deniedTools,
 				allowedResources, deniedResources, allowedPrompts, deniedPrompts,
-				injectionBlock, allowedCacheScopes);
+				injectionBlock, allowedCacheScopes, allowedAgents, deniedAgents);
 		fields.put("createdAt", Instant.now().toString());
 		fields.put("keyPrefix", prefixOf(plaintextKey));
 		redisTemplate.opsForHash().putAll(redisKey(hash), fields);
@@ -960,6 +1068,8 @@ public class KeyManagementService {
 			Set<String> deniedPrompts = parseSetField((String) raw.get("deniedPrompts"));
 			boolean injectionBlock = !"false".equalsIgnoreCase((String) raw.get("injectionBlock"));
 			Set<CacheScope> allowedCacheScopes = parseScopes((String) raw.get("allowedCacheScopes"));
+			Set<String> allowedAgents = parseCsv((String) raw.get("allowedAgents"));
+			Set<String> deniedAgents = parseCsv((String) raw.get("deniedAgents"));
 			Instant createdAt = Instant.parse((String) raw.get("createdAt"));
 			String keyPrefix = (String) raw.getOrDefault("keyPrefix", KEY_PREFIX_RAW);
 			return Optional.of(new VirtualApiKey(
@@ -980,7 +1090,9 @@ public class KeyManagementService {
 					injectionBlock,
 					enabled,
 					createdAt,
-					allowedCacheScopes
+					allowedCacheScopes,
+					allowedAgents,
+					deniedAgents
 			));
 		} catch (RuntimeException ignored) {
 			// Malformed or incomplete stored metadata: treat as absent, never throw.

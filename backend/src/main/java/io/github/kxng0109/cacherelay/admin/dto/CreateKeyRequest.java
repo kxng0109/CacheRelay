@@ -23,6 +23,8 @@ import java.util.Set;
  * @param allowedTools     allowed tool names or glob patterns (null or empty = all allowed)
  * @param deniedTools      denied tool names or glob patterns (null or empty = none)
  * @param allowedCacheScopes cache isolation scopes the key may use (null or empty = TENANT only)
+ * @param allowedAgents    allowed A2A agent names or glob patterns (null or empty = all allowed)
+ * @param deniedAgents     denied A2A agent names or glob patterns (null or empty = none denied)
  */
 @Schema(name = "CreateKeyRequest", description = "Payload for provisioning a new virtual API key with quotas, model, and tool access controls")
 public record CreateKeyRequest(
@@ -86,7 +88,17 @@ public record CreateKeyRequest(
 		Boolean injectionBlock,
 
 		@Schema(description = "Cache isolation scopes the key may use (null or empty = TENANT only)", example = "[\"TENANT\"]")
-		Set<CacheScope> allowedCacheScopes
+		Set<CacheScope> allowedCacheScopes,
+
+		@Schema(description = "Set of permitted A2A agent identifiers or glob patterns (empty = all allowed)", example = "[\"research-*\"]")
+		@Size(max = PolicyBounds.MAX_PATTERNS, message = "at most 64 entries per policy set")
+		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH, message = "pattern too long (max 256)")
+				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> allowedAgents,
+
+		@Schema(description = "Set of denied A2A agent identifiers or glob patterns (empty = none denied)", example = "[\"prod-*\"]")
+		@Size(max = PolicyBounds.MAX_PATTERNS, message = "at most 64 entries per policy set")
+		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH, message = "pattern too long (max 256)")
+				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> deniedAgents
 ) {
 	public CreateKeyRequest {
 		rpmLimit = rpmLimit != null ? rpmLimit : 0;
@@ -100,6 +112,32 @@ public record CreateKeyRequest(
 		allowedPrompts = allowedPrompts != null ? Set.copyOf(allowedPrompts) : Set.of();
 		deniedPrompts = deniedPrompts != null ? Set.copyOf(deniedPrompts) : Set.of();
 		allowedCacheScopes = VirtualApiKey.normalizeCacheScopes(allowedCacheScopes);
+		allowedAgents = allowedAgents != null ? Set.copyOf(allowedAgents) : Set.of();
+		deniedAgents = deniedAgents != null ? Set.copyOf(deniedAgents) : Set.of();
+	}
+
+	/**
+	 * Backwards-compatible constructor omitting the A2A agent policy sets.
+	 */
+	public CreateKeyRequest(
+			String ownerId,
+			String name,
+			Integer rpmLimit,
+			Integer tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts,
+			Boolean injectionBlock,
+			Set<CacheScope> allowedCacheScopes
+	) {
+		this(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
+				deniedTools, allowedResources, deniedResources, allowedPrompts, deniedPrompts,
+				injectionBlock, allowedCacheScopes, Set.of(), Set.of());
 	}
 
 	public CreateKeyRequest(
@@ -111,7 +149,7 @@ public record CreateKeyRequest(
 			Set<String> allowedProviders
 	) {
 		this(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders, Set.of(), Set.of(),
-				Set.of(), Set.of(), Set.of(), Set.of(), null, Set.of(CacheScope.TENANT));
+				Set.of(), Set.of(), Set.of(), Set.of(), null, Set.of(CacheScope.TENANT), Set.of(), Set.of());
 	}
 
 	/**
@@ -128,7 +166,7 @@ public record CreateKeyRequest(
 			Set<String> deniedTools
 	) {
 		this(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
-				deniedTools, Set.of(), Set.of(), Set.of(), Set.of(), null, Set.of(CacheScope.TENANT));
+				deniedTools, Set.of(), Set.of(), Set.of(), Set.of(), null, Set.of(CacheScope.TENANT), Set.of(), Set.of());
 	}
 
 	/**
@@ -151,7 +189,7 @@ public record CreateKeyRequest(
 	) {
 		this(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
 				deniedTools, allowedResources, deniedResources, allowedPrompts, deniedPrompts,
-				injectionBlock, Set.of(CacheScope.TENANT));
+				injectionBlock, Set.of(CacheScope.TENANT), Set.of(), Set.of());
 	}
 
 	/**
@@ -173,6 +211,6 @@ public record CreateKeyRequest(
 	) {
 		this(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
 				deniedTools, allowedResources, deniedResources, allowedPrompts, deniedPrompts,
-				null, Set.of(CacheScope.TENANT));
+				null, Set.of(CacheScope.TENANT), Set.of(), Set.of());
 	}
 }

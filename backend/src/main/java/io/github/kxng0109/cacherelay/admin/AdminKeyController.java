@@ -88,11 +88,12 @@ public class AdminKeyController {
 	@PostMapping
 	public ResponseEntity<CreatedKeyResponse> createKey(@Valid @RequestBody CreateKeyRequest request) {
 		KeyManagementService.CreatedKey created;
+		boolean noAgents = request.allowedAgents().isEmpty() && request.deniedAgents().isEmpty();
 		boolean visibilityEmpty = request.allowedResources().isEmpty() && request.deniedResources().isEmpty()
 				&& request.allowedPrompts().isEmpty() && request.deniedPrompts().isEmpty();
 		boolean scopesDefault = request.allowedCacheScopes().equals(Set.of(CacheScope.TENANT));
 		if (request.allowedTools().isEmpty() && request.deniedTools().isEmpty() && visibilityEmpty
-				&& request.injectionBlock() == null && scopesDefault) {
+				&& request.injectionBlock() == null && scopesDefault && noAgents) {
 			created = keyManagementService.createKey(
 					request.ownerId(),
 					request.name(),
@@ -101,7 +102,7 @@ public class AdminKeyController {
 					request.allowedModels(),
 					request.allowedProviders()
 			);
-		} else if (visibilityEmpty && request.injectionBlock() == null && scopesDefault) {
+		} else if (visibilityEmpty && request.injectionBlock() == null && scopesDefault && noAgents) {
 			created = keyManagementService.createKey(
 					request.ownerId(),
 					request.name(),
@@ -112,7 +113,7 @@ public class AdminKeyController {
 					request.allowedTools(),
 					request.deniedTools()
 			);
-		} else if (request.injectionBlock() == null && scopesDefault) {
+		} else if (request.injectionBlock() == null && scopesDefault && noAgents) {
 			created = keyManagementService.createKey(
 					request.ownerId(),
 					request.name(),
@@ -126,6 +127,23 @@ public class AdminKeyController {
 					request.deniedResources(),
 					request.allowedPrompts(),
 					request.deniedPrompts()
+			);
+		} else if (noAgents) {
+			created = keyManagementService.createKey(
+					request.ownerId(),
+					request.name(),
+					request.rpmLimit(),
+					request.tpmLimit(),
+					request.allowedModels(),
+					request.allowedProviders(),
+					request.allowedTools(),
+					request.deniedTools(),
+					request.allowedResources(),
+					request.deniedResources(),
+					request.allowedPrompts(),
+					request.deniedPrompts(),
+					request.injectionBlock(),
+					request.allowedCacheScopes()
 			);
 		} else {
 			created = keyManagementService.createKey(
@@ -142,7 +160,9 @@ public class AdminKeyController {
 					request.allowedPrompts(),
 					request.deniedPrompts(),
 					request.injectionBlock(),
-					request.allowedCacheScopes()
+					request.allowedCacheScopes(),
+					request.allowedAgents(),
+					request.deniedAgents()
 			);
 		}
 		CreatedKeyResponse response = new CreatedKeyResponse(
@@ -164,7 +184,9 @@ public class AdminKeyController {
 				created.key().injectionBlock(),
 				created.key().enabled(),
 				created.key().createdAt(),
-				created.key().allowedCacheScopes()
+				created.key().allowedCacheScopes(),
+				created.key().allowedAgents(),
+				created.key().deniedAgents()
 		);
 		return ResponseEntity.status(HttpStatus.CREATED).body(response);
 	}
@@ -261,10 +283,11 @@ public class AdminKeyController {
 	) {
 		SHA256Hash hash = parseHash(hashHex);
 		Optional<VirtualApiKey> updated;
+		boolean noAgents = request.allowedAgents() == null && request.deniedAgents() == null;
 		boolean visibilityNull = request.allowedResources() == null && request.deniedResources() == null
 				&& request.allowedPrompts() == null && request.deniedPrompts() == null;
 		if (request.allowedTools() == null && request.deniedTools() == null && visibilityNull
-				&& request.injectionBlock() == null && request.allowedCacheScopes() == null) {
+				&& request.injectionBlock() == null && request.allowedCacheScopes() == null && noAgents) {
 			updated = keyManagementService.updateKey(
 					hash,
 					request.name(),
@@ -275,7 +298,7 @@ public class AdminKeyController {
 					request.enabled()
 			);
 		} else if (visibilityNull && request.injectionBlock() == null
-				&& request.allowedCacheScopes() == null) {
+				&& request.allowedCacheScopes() == null && noAgents) {
 			updated = keyManagementService.updateKey(
 					hash,
 					request.name(),
@@ -287,7 +310,7 @@ public class AdminKeyController {
 					request.deniedTools(),
 					request.enabled()
 			);
-		} else if (request.injectionBlock() == null && request.allowedCacheScopes() == null) {
+		} else if (request.injectionBlock() == null && request.allowedCacheScopes() == null && noAgents) {
 			updated = keyManagementService.updateKey(
 					hash,
 					request.name(),
@@ -301,6 +324,24 @@ public class AdminKeyController {
 					request.deniedResources(),
 					request.allowedPrompts(),
 					request.deniedPrompts(),
+					request.enabled()
+			);
+		} else if (noAgents) {
+			updated = keyManagementService.updateKey(
+					hash,
+					request.name(),
+					request.rpmLimit(),
+					request.tpmLimit(),
+					request.allowedModels(),
+					request.allowedProviders(),
+					request.allowedTools(),
+					request.deniedTools(),
+					request.allowedResources(),
+					request.deniedResources(),
+					request.allowedPrompts(),
+					request.deniedPrompts(),
+					request.injectionBlock(),
+					request.allowedCacheScopes(),
 					request.enabled()
 			);
 		} else {
@@ -319,6 +360,8 @@ public class AdminKeyController {
 					request.deniedPrompts(),
 					request.injectionBlock(),
 					request.allowedCacheScopes(),
+					request.allowedAgents(),
+					request.deniedAgents(),
 					request.enabled()
 			);
 		}
@@ -378,7 +421,9 @@ public class AdminKeyController {
 				key.injectionBlock(),
 				key.enabled(),
 				key.createdAt(),
-				key.allowedCacheScopes()
+				key.allowedCacheScopes(),
+				key.allowedAgents(),
+				key.deniedAgents()
 		);
 	}
 

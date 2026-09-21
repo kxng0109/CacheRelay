@@ -46,7 +46,7 @@ class A2aDiscoveryControllerTest {
 		assertThat(card.get("version").asString()).isEqualTo("9.9.9");
 		assertThat(card.get("skills").isArray()).isTrue();
 		assertThat(card.get("skills").size()).isZero();
-		assertThat(card.get("capabilities").get("streaming").asBoolean()).isFalse();
+		assertThat(card.get("capabilities").get("streaming").asBoolean()).isTrue();
 		assertThat(card.get("capabilities").get("pushNotifications").asBoolean()).isFalse();
 		assertThat(card.get("securitySchemes").get("virtualKeyBearer").get("scheme").asString())
 				.isEqualTo("bearer");

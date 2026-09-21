@@ -25,6 +25,8 @@ import java.util.Set;
  * @param deniedPrompts    new denied prompt globs (or null to preserve)
  * @param allowedCacheScopes new cache isolation scopes (or null to preserve)
  * @param enabled          new enabled state (or null to preserve)
+ * @param allowedAgents    new allowed A2A agents (or null to preserve)
+ * @param deniedAgents     new denied A2A agents (or null to preserve)
  */
 @Schema(name = "UpdateKeyRequest", description = "Patch payload for modifying virtual key quotas, allowlists, or enabled status")
 public record UpdateKeyRequest(
@@ -86,8 +88,42 @@ public record UpdateKeyRequest(
 		Set<CacheScope> allowedCacheScopes,
 
 		@Schema(description = "Enable or disable key (optional)", example = "true")
-		Boolean enabled
+		Boolean enabled,
+
+		@Schema(description = "New allowed A2A agents set (optional, null = keep)", example = "[\"research-*\"]")
+		@Size(max = PolicyBounds.MAX_PATTERNS, message = "at most 64 entries per policy set")
+		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH, message = "pattern too long (max 256)")
+				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> allowedAgents,
+
+		@Schema(description = "New denied A2A agents set (optional, null = keep)", example = "[\"prod-*\"]")
+		@Size(max = PolicyBounds.MAX_PATTERNS, message = "at most 64 entries per policy set")
+		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH, message = "pattern too long (max 256)")
+				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> deniedAgents
 ) {
+	/**
+	 * Backwards-compatible constructor omitting the A2A agent policy sets (null = keep).
+	 */
+	public UpdateKeyRequest(
+			String name,
+			Integer rpmLimit,
+			Integer tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts,
+			Boolean injectionBlock,
+			Set<CacheScope> allowedCacheScopes,
+			Boolean enabled
+	) {
+		this(name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
+				deniedTools, allowedResources, deniedResources, allowedPrompts, deniedPrompts,
+				injectionBlock, allowedCacheScopes, enabled, null, null);
+	}
+
 	public UpdateKeyRequest(
 			String name,
 			Integer rpmLimit,
@@ -97,7 +133,7 @@ public record UpdateKeyRequest(
 			Boolean enabled
 	) {
 		this(name, rpmLimit, tpmLimit, allowedModels, allowedProviders, null, null, null, null,
-				null, null, null, null, enabled);
+				null, null, null, null, enabled, null, null);
 	}
 
 	/**
@@ -114,7 +150,7 @@ public record UpdateKeyRequest(
 			Boolean enabled
 	) {
 		this(name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
-				deniedTools, null, null, null, null, null, null, enabled);
+				deniedTools, null, null, null, null, null, null, enabled, null, null);
 	}
 
 	/**
@@ -137,7 +173,7 @@ public record UpdateKeyRequest(
 	) {
 		this(name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
 				deniedTools, allowedResources, deniedResources, allowedPrompts, deniedPrompts,
-				injectionBlock, null, enabled);
+				injectionBlock, null, enabled, null, null);
 	}
 
 	/**
@@ -159,6 +195,6 @@ public record UpdateKeyRequest(
 	) {
 		this(name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
 				deniedTools, allowedResources, deniedResources, allowedPrompts, deniedPrompts,
-				null, null, enabled);
+				null, null, enabled, null, null);
 	}
 }

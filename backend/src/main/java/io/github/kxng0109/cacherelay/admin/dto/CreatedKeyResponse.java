@@ -22,6 +22,8 @@ import java.util.Set;
  * @param deniedTools      denied tools
  * @param enabled          whether the key is active
  * @param createdAt        creation timestamp
+ * @param allowedAgents    allowed A2A agents
+ * @param deniedAgents     denied A2A agents
  */
 @Schema(name = "CreatedKeyResponse", description = "Single-exposure response containing plaintext virtual key and registered metadata")
 public record CreatedKeyResponse(
@@ -80,7 +82,13 @@ public record CreatedKeyResponse(
 		Instant createdAt,
 
 		@Schema(description = "Cache isolation scopes (TENANT-only when unset)", example = "[\"TENANT\"]")
-		Set<CacheScope> allowedCacheScopes
+		Set<CacheScope> allowedCacheScopes,
+
+		@Schema(description = "Allowed A2A agents", example = "[\"research-*\"]")
+		Set<String> allowedAgents,
+
+		@Schema(description = "Denied A2A agents", example = "[\"prod-*\"]")
+		Set<String> deniedAgents
 ) {
 	public CreatedKeyResponse(
 			String keyId,
@@ -114,7 +122,9 @@ public record CreatedKeyResponse(
 				true,
 				enabled,
 				createdAt,
-				Set.of(CacheScope.TENANT)
+				Set.of(CacheScope.TENANT),
+				Set.of(),
+				Set.of()
 		);
 	}
 
@@ -155,7 +165,9 @@ public record CreatedKeyResponse(
 				true,
 				enabled,
 				createdAt,
-				Set.of(CacheScope.TENANT)
+				Set.of(CacheScope.TENANT),
+				Set.of(),
+				Set.of()
 		);
 	}
 
@@ -200,7 +212,9 @@ public record CreatedKeyResponse(
 				true,
 				enabled,
 				createdAt,
-				Set.of(CacheScope.TENANT)
+				Set.of(CacheScope.TENANT),
+				Set.of(),
+				Set.of()
 		);
 	}
 }

@@ -4,6 +4,13 @@ spring:
   threads:
     virtual:
       enabled: true
+  mvc:
+    # Streaming endpoints (chat SSE, A2A message/stream) hold servlet-async
+    # responses open; Tomcat's 30s container default would kill long agent
+    # streams with a 503. Ten minutes is the ceiling; per-request behaviour is
+    # still bounded by upstream idleness and the client connection.
+    async:
+      request-timeout: ${GATEWAY_ASYNC_REQUEST_TIMEOUT:10m}
   data:
     redis:
       host: ${REDIS_HOST:localhost}

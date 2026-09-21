@@ -68,7 +68,7 @@ public class A2aDiscoveryController {
 		card.put("version", properties.getGatewayVersion());
 
 		ObjectNode capabilities = card.putObject("capabilities");
-		capabilities.put("streaming", false);
+		capabilities.put("streaming", true);
 		capabilities.put("pushNotifications", false);
 
 		card.putArray("defaultInputModes").add("text/plain").add("application/json");
