@@ -93,7 +93,7 @@ function ApprovalsBoard(): React.JSX.Element {
                   onClick={() => {
                     void decide(a.approvalId, true)
                   }}
-                  className="rounded-md bg-success px-3 py-2 text-[13px] text-white disabled:opacity-50"
+                  className="rounded-md bg-success px-3 py-2 text-[13px] text-white disabled:cursor-not-allowed disabled:bg-ink-soft disabled:text-paper dark:disabled:bg-parchment-soft dark:disabled:text-night"
                 >
                   {working ? 'Working…' : 'Approve'}
                 </button>
@@ -104,7 +104,7 @@ function ApprovalsBoard(): React.JSX.Element {
                   onClick={() => {
                     void decide(a.approvalId, false)
                   }}
-                  className="rounded-md border border-danger/40 px-3 py-2 text-[13px] text-danger disabled:opacity-50 dark:text-danger-soft"
+                  className="rounded-md border border-danger/40 px-3 py-2 text-[13px] text-danger disabled:cursor-not-allowed disabled:border-ink-soft disabled:text-ink-soft dark:text-danger-soft dark:disabled:border-parchment-soft dark:disabled:text-parchment-soft"
                 >
                   {working ? 'Working…' : 'Reject'}
                 </button>

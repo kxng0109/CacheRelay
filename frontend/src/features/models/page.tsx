@@ -86,7 +86,7 @@ function ChainEditor({
                 onChange(steps.filter((_, j) => j !== i))
               }}
               aria-label={`Remove step ${String(i + 1)}`}
-              className="rounded-md border border-ink/15 px-3 py-2 text-[13px] disabled:opacity-50 dark:border-parchment/15"
+              className="rounded-md border border-ink/15 px-3 py-2 text-[13px] disabled:cursor-not-allowed disabled:border-ink-soft disabled:text-ink-soft dark:border-parchment/15 dark:disabled:border-parchment-soft dark:disabled:text-parchment-soft"
             >
               Remove
             </button>

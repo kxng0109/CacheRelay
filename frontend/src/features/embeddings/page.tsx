@@ -277,7 +277,7 @@ export function EmbeddingsPage(): React.JSX.Element {
               <button
                 type="submit"
                 disabled={isSubmitting || overLimit}
-                className="shrink-0 rounded-md bg-ink px-4 py-2 text-sm font-medium whitespace-nowrap text-paper disabled:opacity-50 dark:bg-parchment dark:text-night"
+                className="shrink-0 rounded-md bg-ink px-4 py-2 text-sm font-medium whitespace-nowrap text-paper disabled:cursor-not-allowed disabled:bg-ink-soft disabled:text-paper dark:bg-parchment dark:text-night dark:disabled:bg-parchment-soft dark:disabled:text-night"
               >
                 {isSubmitting ? 'Embedding…' : 'Create embeddings'}
               </button>

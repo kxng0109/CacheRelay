@@ -280,7 +280,7 @@ export function SseStreamViewer({
           type="button"
           onClick={copyTranscript}
           disabled={text.length === 0}
-          className="rounded-md border border-ink/15 px-3 py-2 text-[13px] disabled:opacity-50 dark:border-parchment/15"
+          className="rounded-md border border-ink/15 px-3 py-2 text-[13px] disabled:cursor-not-allowed disabled:border-ink-soft disabled:text-ink-soft dark:border-parchment/15 dark:disabled:border-parchment-soft dark:disabled:text-parchment-soft"
         >
           {copied ? `Copied ${String(copiedBytes)}B` : 'Copy'}
         </button>

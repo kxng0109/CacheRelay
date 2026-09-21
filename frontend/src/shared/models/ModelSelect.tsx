@@ -49,7 +49,7 @@ export function ModelSelect({
           {...registration}
           aria-invalid={invalid}
           disabled={token.length === 0 || catalog.isError}
-          className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm disabled:opacity-50 dark:border-parchment/15"
+          className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm disabled:cursor-not-allowed disabled:border-ink-soft disabled:text-ink-soft dark:border-parchment/15 dark:disabled:border-parchment-soft dark:disabled:text-parchment-soft"
         >
           <option value="">
             {token.length === 0

@@ -28,17 +28,18 @@ test('shell loads, guests land on login, public screens render idle', async ({ p
 })
 
 /**
- * Stealth: logged-out admin routes render the missing page, and the sidebar
- * offers no hint they exist.
+ * Stealth: logged-out admin routes bounce to login (preserving the
+ * destination), the sidebar offers no hint they exist, and unknown
+ * routes still render the missing page. Logged-in non-admins see the
+ * missing page instead — covered by unit tests in guards.test.tsx.
  */
-test('admin routes look missing when logged out', async ({ page }) => {
+test('admin routes bounce guests to login when logged out', async ({ page }) => {
   await page.goto('/')
-  for (const label of ['Circuits', 'Keys', 'Ledger', 'Cache & budgets', 'Approvals']) {
+  for (const label of ['Circuits', 'Models', 'Keys', 'Ledger', 'Cache & budgets', 'Approvals']) {
     await expect(page.getByRole('link', { name: label, exact: true })).toHaveCount(0)
   }
   await page.goto('/circuits')
-  await expect(page.getByRole('heading', { name: /page not found/i })).toBeVisible()
-  await expect(page.getByText(/does not exist/i)).toBeVisible()
+  await expect(page.getByRole('heading', { name: /log in/i })).toBeVisible()
   await page.goto('/no-such-route')
   await expect(page.getByRole('heading', { name: /page not found/i })).toBeVisible()
 })

@@ -150,7 +150,7 @@ export function LoginPage(): React.JSX.Element {
         <button
           type="submit"
           disabled={isSubmitting}
-          className="w-full rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper disabled:opacity-50 dark:bg-parchment dark:text-night"
+          className="w-full rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper disabled:cursor-not-allowed disabled:bg-ink-soft disabled:text-paper dark:bg-parchment dark:text-night dark:disabled:bg-parchment-soft dark:disabled:text-night"
         >
           {isSubmitting ? 'Logging in…' : 'Log in'}
         </button>

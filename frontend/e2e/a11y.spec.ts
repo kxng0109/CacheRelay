@@ -29,6 +29,9 @@ for (const route of SCREENS) {
     // variants and the light paper tokens. The app boots dark by default,
     // so the toggle reads "light theme" on first paint.
     await page.getByRole('button', { name: /theme/i }).click()
+    // Let the 180ms theme transition settle so axe measures resting
+    // tokens, never a mid-flight blend.
+    await page.waitForTimeout(350)
     await scanForA11yViolations(page)
   })
 }
