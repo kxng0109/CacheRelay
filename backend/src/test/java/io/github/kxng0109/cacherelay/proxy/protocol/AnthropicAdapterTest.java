@@ -49,6 +49,36 @@ class AnthropicAdapterTest {
 	}
 
 	@Test
+	@DisplayName("requests without messages translate without a messages array")
+	void nullMessagesTranslate() {
+		JsonNode result = objectMapper.readTree(
+				adapter.buildRequestBody("{\"model\":\"m\"}", null));
+
+		assertEquals("m", result.get("model").asString());
+		assertTrue(result.get("stream").asBoolean());
+		assertTrue(result.path("messages").isArray());
+		assertTrue(result.path("messages").isEmpty());
+	}
+
+	@Test
+	@DisplayName("tools without convertible functions are omitted")
+	void unconvertibleToolsOmitted() {
+		String body = "{\"model\":\"m\",\"messages\":[],\"tools\":[{\"type\":\"not-a-function\"},{\"name\":\"no-function-key\"}]}";
+		JsonNode result = objectMapper.readTree(adapter.buildRequestBody(body, null));
+
+		assertTrue(result.path("tools").isMissingNode());
+	}
+
+	@Test
+	@DisplayName("non-object tool choices are omitted")
+	void numericToolChoiceOmitted() {
+		String body = "{\"model\":\"m\",\"messages\":[],\"tool_choice\":42}";
+		JsonNode result = objectMapper.readTree(adapter.buildRequestBody(body, null));
+
+		assertTrue(result.path("tool_choice").isMissingNode());
+	}
+
+	@Test
 	@DisplayName("defaults max tokens when the client sent none")
 	void defaultsMaxTokens() {
 		JsonNode result = objectMapper.readTree(

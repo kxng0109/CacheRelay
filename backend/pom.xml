@@ -247,6 +247,20 @@
                         <GATEWAY_ADMIN_MASTERKEY>test-only-admin-master-key-32b-min!!</GATEWAY_ADMIN_MASTERKEY>
                         <GATEWAY_AUTH_JWT_SECRET>test-only-jwt-secret-32-bytes-minimum!!</GATEWAY_AUTH_JWT_SECRET>
                     </environmentVariables>
+                    <!-- Test-only scheduler fast-shutdown (fork-hang guard): system properties
+                         form a separate Spring property source, so unlike a test
+                         application.yml (which shadows the main document) they merge.
+                         1 thread + 1s await keeps 13 Spring contexts closing inside the
+                         surefire exit timeout. Production defaults (4 / 20s) untouched. -->
+                    <systemPropertyVariables>
+                        <gateway.scheduling.pool-size>1</gateway.scheduling.pool-size>
+                        <gateway.scheduling.await-termination-seconds>1</gateway.scheduling.await-termination-seconds>
+                        <!-- Fork-hang guard: evicted Spring test contexts close mid-run instead of
+                             all ~13 piling into the JVM shutdown hook (each Hikari close awaits
+                             termination). 13 distinct configs, each used once, so no rebuild cost.
+                             Production unaffected: test-JVM-only property source. -->
+                        <spring.test.context.cache.maxSize>2</spring.test.context.cache.maxSize>
+                    </systemPropertyVariables>
                 </configuration>
             </plugin>
             <plugin>
@@ -299,12 +313,10 @@
                                             <value>COVEREDRATIO</value>
                                             <minimum>0.95</minimum>
                                         </limit>
-                                        <!-- TEMPORARY (Order-A session): BRANCH lowered 0.95 -> 0.93 while
-                                             SEC-01/SEC-02/JWT land; restore to 0.95 in the follow-up session. -->
                                         <limit>
                                             <counter>BRANCH</counter>
                                             <value>COVEREDRATIO</value>
-                                            <minimum>0.93</minimum>
+                                            <minimum>0.95</minimum>
                                         </limit>
                                         <limit>
                                             <counter>LINE</counter>

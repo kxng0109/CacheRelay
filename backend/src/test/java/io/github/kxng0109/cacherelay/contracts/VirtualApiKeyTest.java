@@ -1,9 +1,11 @@
 package io.github.kxng0109.cacherelay.contracts;
 
+import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
@@ -63,5 +65,26 @@ class VirtualApiKeyTest {
 				true,
 				Instant.parse("2026-01-01T00:00:00Z")
 		);
+	}
+
+	@Test
+	@DisplayName("normalizeCacheScopes defaults null, empty, and all-null sets to TENANT-only")
+	void normalizeCacheScopesDefaults() {
+		assertEquals(Set.of(CacheScope.TENANT), VirtualApiKey.normalizeCacheScopes(null));
+		assertEquals(Set.of(CacheScope.TENANT), VirtualApiKey.normalizeCacheScopes(Set.of()));
+		Set<CacheScope> allNull = new HashSet<>();
+		allNull.add(null);
+		assertEquals(Set.of(CacheScope.TENANT), VirtualApiKey.normalizeCacheScopes(allNull));
+	}
+
+	@Test
+	@DisplayName("normalizeCacheScopes keeps configured scopes and drops nulls")
+	void normalizeCacheScopesKeeps() {
+		Set<CacheScope> withNull = new HashSet<>();
+		withNull.add(CacheScope.GLOBAL);
+		withNull.add(null);
+		withNull.add(CacheScope.TENANT);
+		assertEquals(Set.of(CacheScope.GLOBAL, CacheScope.TENANT),
+				VirtualApiKey.normalizeCacheScopes(withNull));
 	}
 }

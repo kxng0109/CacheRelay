@@ -75,6 +75,23 @@ class McpGuardrailScannerTest {
 	}
 
 	@Test
+	@DisplayName("envelope escapes every XML metacharacter")
+	void envelopeEscapesAllMetacharacters() {
+		String wrapped = guardrailScanner.wrapToolOutputWithNonce("a&b<c>d\"q", "ok");
+
+		assertThat(wrapped).contains("name=\"a&amp;b&lt;c&gt;d&quot;q\"");
+		assertThat(wrapped).doesNotContain("name=\"a&b");
+	}
+
+	@Test
+	@DisplayName("null tool name degrades to an empty name")
+	void nullToolNameEmpty() {
+		String wrapped = guardrailScanner.wrapToolOutputWithNonce(null, "ok");
+
+		assertThat(wrapped).contains("name=\"\"");
+	}
+
+	@Test
 	@DisplayName("containsIndirectPromptInjection detects prompt injection patterns")
 	void containsIndirectPromptInjectionScenarios() {
 		// Injection attacks

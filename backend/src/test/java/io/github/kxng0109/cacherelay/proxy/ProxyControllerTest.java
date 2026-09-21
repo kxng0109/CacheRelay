@@ -236,6 +236,209 @@ class ProxyControllerTest {
 	}
 
 	@Test
+	@DisplayName("ndjson upstream content type stays on the streaming path")
+	void ndjsonContentTypeStreams() throws Exception {
+		HttpHeaders ndjsonHeaders =
+				HttpHeaders.of(Map.of("Content-Type", List.of("application/x-ndjson")), (n, v) -> true);
+		ProviderResponse response = providerResponse(
+				"openai", 200, ndjsonHeaders,
+				Stream.of("data: {\"content\":\"hello\"}", "data: [DONE]")
+		);
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+
+		assertEquals(200, entity.getStatusCode().value());
+		assertTrue(entity.getHeaders().getContentType().toString().contains("text/event-stream"));
+		assertTrue(body(entity).contains("hello"));
+	}
+
+	@Test
+	@DisplayName("empty upstream headers stay on the streaming path")
+	void emptyHeadersStream() throws Exception {
+		HttpHeaders emptyHeaders = HttpHeaders.of(Map.of(), (n, v) -> true);
+		ProviderResponse response = providerResponse(
+				"openai", 200, emptyHeaders,
+				Stream.of("data: {\"content\":\"hello\"}", "data: [DONE]")
+		);
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+
+		assertEquals(200, entity.getStatusCode().value());
+		assertTrue(body(entity).contains("hello"));
+	}
+
+	@Test
+	@DisplayName("hit entries without payloads fall through to upstream")
+	void hitWithoutEntryFallsThrough() throws Exception {
+		ProtocolAdapterResolver resolver = new ProtocolAdapterResolver(
+				new OpenAiPassthroughAdapter(objectMapper),
+				new AnthropicAdapter(objectMapper),
+				new GeminiAdapter(objectMapper),
+				new DeepSeekAdapter(objectMapper),
+				new OllamaAdapter(objectMapper)
+		);
+		CacheRelayCacheService nullEntryCache = mock(CacheRelayCacheService.class);
+		when(nullEntryCache.evaluateCache(any(), any(), any(), any()))
+				.thenReturn(CacheLookupResult.hit(CacheStatus.HIT_L0, null, 1.0f, 1L));
+		ProxyController nullEntryController = new ProxyController(
+				orchestrator, gatewayProperties, objectMapper,
+				resolver, costCalculator, eventPublisher, flushStrategy, lineGuardFactory,
+				nullEntryCache, new CachedStreamReconstitution(objectMapper)
+		);
+		ProviderResponse response = providerResponse(
+				"openai", 200, sseHeaders(),
+				Stream.of("data: {\"content\":\"fresh\"}", "data: [DONE]")
+		);
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity =
+				nullEntryController.proxyChatCompletions(PATH_BODY, request());
+
+		assertEquals(200, entity.getStatusCode().value());
+		assertTrue(body(entity).contains("fresh"));
+		verify(orchestrator).execute(any(), anyString());
+	}
+
+	@Test
+	@DisplayName("role-only deltas accumulate nothing but keep streaming")
+	void roleOnlyDeltaStreams() throws Exception {
+		ProviderResponse response = providerResponse(
+				"openai", 200, sseHeaders(),
+				Stream.of(
+						"data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}",
+						"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}",
+						"data: [DONE]")
+		);
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+
+		assertEquals(200, entity.getStatusCode().value());
+		assertTrue(body(entity).contains("hi"));
+	}
+
+	@Test
+	@DisplayName("non-array choices in a 200 JSON completion normalize to empty content")
+	void nonArrayChoicesNormalize() throws Exception {
+		String upstream = "{\"id\":\"chatcmpl-x\",\"object\":\"chat.completion\",\"created\":1700000000,"
+				+ "\"model\":\"gpt-5.6-luna\",\"choices\":\"nope\","
+				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
+		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+
+		assertEquals(200, entity.getStatusCode().value());
+		assertTrue(body(entity).contains("\"content\":\"\""));
+	}
+
+	@Test
+	@DisplayName("numeric message content normalizes to empty without failing")
+	void numericContentNormalizes() throws Exception {
+		String upstream = "{\"id\":\"chatcmpl-y\",\"object\":\"chat.completion\",\"created\":1700000000,"
+				+ "\"model\":\"gpt-5.6-luna\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+				+ "\"content\":123},\"finish_reason\":\"stop\"}],"
+				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
+		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+
+		assertEquals(200, entity.getStatusCode().value());
+		assertTrue(body(entity).contains("\"content\":\"\""));
+	}
+
+	@Test
+	@DisplayName("unbindable DTOs proceed without cache or store")
+	void unbindableDtoProceeds() throws Exception {
+		String upstream = "{\"id\":\"chatcmpl-z\",\"object\":\"chat.completion\",\"created\":1700000000,"
+				+ "\"model\":\"gpt-5.6-luna\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+				+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
+				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
+		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(
+				"{\"model\":\"gpt-5.6-luna\",\"messages\":\"nope\"}", request());
+
+		assertEquals(200, entity.getStatusCode().value());
+		assertTrue(body(entity).contains("\"content\":\"hi\""));
+	}
+
+	@Test
+	@DisplayName("flush strategy returning false lets the stream complete")
+	void flushFalseCompletesStream() throws Exception {
+		SseFlushStrategy.FlushHandle handle = mock(SseFlushStrategy.FlushHandle.class);
+		when(flushStrategy.register(any())).thenReturn(handle);
+		when(flushStrategy.onWrite(any(), anyInt())).thenReturn(false);
+
+		ProviderResponse response = providerResponse(
+				"openai", 200, sseHeaders(),
+				Stream.of("data: {\"content\":\"hello\"}", "data: [DONE]")
+		);
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+		RecordingServletOutputStream out = new RecordingServletOutputStream();
+		entity.getBody().writeTo(out);
+
+		assertEquals(200, entity.getStatusCode().value());
+		assertTrue(out.writtenUtf8().contains("hello"));
+		assertTrue(out.writtenUtf8().contains("[DONE]"));
+	}
+
+	@Test
+	@DisplayName("tried providers join into the tried header")
+	void triedProvidersJoinHeader() throws Exception {
+		ProviderResponse response = providerResponse(
+				"openai", 200, sseHeaders(),
+				Stream.of("data: {\"content\":\"hello\"}", "data: [DONE]"),
+				List.of("anthropic", "openai")
+		);
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+
+		assertEquals(200, entity.getStatusCode().value());
+		assertEquals("anthropic,openai", entity.getHeaders().getFirst("X-CacheRelay-Tried"));
+	}
+
+	@Test
+	@DisplayName("relay writes an SSE error and aborts when a line exceeds the byte limit")
+	void relayAbortsOnOversizedLine() throws Exception {
+		DefaultSseLineGuard throwingGuard = mock(DefaultSseLineGuard.class);
+		when(throwingGuard.checkLine(anyString(), any(SseLineGuard.ProviderType.class)))
+				.thenThrow(new LineTooLongException(100, 200, "openai"));
+		when(lineGuardFactory.newGuard(any(SseLineGuard.ProviderType.class), anyString(), any()))
+				.thenReturn(throwingGuard);
+
+		ProviderResponse response = providerResponse(
+				"openai", 200, sseHeaders(),
+				Stream.of("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}", "data: [DONE]")
+		);
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+		RecordingServletOutputStream out = new RecordingServletOutputStream();
+		entity.getBody().writeTo(out);
+
+		assertTrue(out.writtenUtf8().contains("LINE_TOO_LONG"));
+		assertFalse(out.writtenUtf8().contains("[DONE]"));
+	}
+
+	@Test
 	@DisplayName("streams lines whose delta content is not a string without failing")
 	void streamsNonStringDeltaContent() throws Exception {
 		ProviderResponse response = providerResponse(

@@ -105,6 +105,67 @@ class SingleFlightManagerTest {
 	}
 
 	@Test
+	@DisplayName("follower of a failing leader receives the cause through a timeout")
+	void followerSeesLeaderFailureWithTimeout() throws Exception {
+		SingleFlightManager manager = new SingleFlightManager();
+		CountDownLatch leaderStarted = new CountDownLatch(1);
+		CountDownLatch followerJoined = new CountDownLatch(1);
+		CountDownLatch releaseLeader = new CountDownLatch(1);
+		CountDownLatch doneLatch = new CountDownLatch(2);
+
+		try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+			executor.submit(() -> {
+				try {
+					manager.execute(
+							"failingKey",
+							() -> {
+								leaderStarted.countDown();
+								if (!releaseLeader.await(10, TimeUnit.SECONDS)) {
+									throw new IllegalStateException("leader not released");
+								}
+								throw new IllegalArgumentException("leader boom");
+							},
+							Duration.ofMillis(5_000)
+					);
+				} catch (Exception ignored) {
+				} finally {
+					doneLatch.countDown();
+				}
+			});
+			executor.submit(() -> {
+				try {
+					assertThat(leaderStarted.await(10, TimeUnit.SECONDS)).isTrue();
+					followerJoined.countDown();
+					assertThatThrownBy(() -> manager.execute(
+							"failingKey",
+							() -> "follower-result",
+							Duration.ofMillis(5_000)
+					)).isInstanceOf(IllegalArgumentException.class)
+							.hasMessage("leader boom");
+				} catch (InterruptedException e) {
+					Thread.currentThread().interrupt();
+				} finally {
+					doneLatch.countDown();
+				}
+			});
+			assertThat(followerJoined.await(10, TimeUnit.SECONDS)).isTrue();
+			Thread.sleep(500);
+			releaseLeader.countDown();
+			assertThat(doneLatch.await(15, TimeUnit.SECONDS)).isTrue();
+		}
+	}
+
+	@Test
+	@DisplayName("leader errors surface as RuntimeException")
+	void leaderErrorWrapped() {
+		SingleFlightManager manager = new SingleFlightManager();
+
+		assertThatThrownBy(() -> manager.execute("errorKey", () -> {
+			throw new AssertionError("fatal");
+		})).isInstanceOf(RuntimeException.class);
+	}
+
+	@Test
 	@DisplayName("execute propagates exceptions to all joined threads")
 	void executeExceptionHandling() {
 		SingleFlightManager manager = new SingleFlightManager();

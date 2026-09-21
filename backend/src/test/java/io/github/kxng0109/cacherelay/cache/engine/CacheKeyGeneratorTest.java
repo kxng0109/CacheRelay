@@ -52,6 +52,37 @@ class CacheKeyGeneratorTest {
 	}
 
 	@Test
+	@DisplayName("USER scope with a blank user id falls back to the owner namespace")
+	void userScopeBlankUserId() {
+		OpenAiChatRequest request = new OpenAiChatRequest(
+				"gpt-4o",
+				List.of(new OpenAiChatRequest.Message("user", objectMapper.valueToTree("Hi"))),
+				0.0, null, null, null, null, false, null);
+
+		CompoundCacheKey key = generator.generateKey(
+				request, "tenant1", CacheScope.USER, "   ", 4);
+
+		assertThat(key.ownerId()).isEqualTo("tenant1");
+	}
+
+	@Test
+	@DisplayName("all hash dimensions varying together change the digest")
+	void allHashDimensionsVary() {
+		List<OpenAiChatRequest.Message> messages = List.of(
+				new OpenAiChatRequest.Message("user", objectMapper.valueToTree("Hi")));
+		OpenAiChatRequest full = new OpenAiChatRequest(
+				"gpt-4o", messages, 0.5, 100, null, 0.9, null, false, null,
+				objectMapper.createArrayNode(), objectMapper.createObjectNode(),
+				true, objectMapper.createObjectNode(), "medium", null,
+				0.1, 0.2, 7L);
+		OpenAiChatRequest minimal = new OpenAiChatRequest(
+				"gpt-4o", messages, 0.5, 100, null, 0.9, null, false, null);
+
+		assertThat(generator.computeExactHash(full, "tenant1"))
+				.isNotEqualTo(generator.computeExactHash(minimal, "tenant1"));
+	}
+
+	@Test
 	@DisplayName("exact hash distinguishes generation-affecting fields (PERF-14)")
 	void exactHashCoversGenerationFields() {
 		List<OpenAiChatRequest.Message> messages = List.of(

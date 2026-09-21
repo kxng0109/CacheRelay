@@ -25,6 +25,16 @@ class DefaultSseLineGuardFactoryTest {
 	}
 
 	@Test
+	@DisplayName("null action builds a private default meter set")
+	void nullActionBuildsDefault() {
+		SseLineMeters meters = SseLineMeters.create(
+				new SimpleMeterRegistry(), "openai", null);
+
+		assertThat(meters.lineRejectedTooLong().getId().getTag("action"))
+				.isEqualTo(SseLineGuard.Action.REJECT_LINE_AND_CLOSE.name());
+	}
+
+	@Test
 	@DisplayName("different providers or actions get distinct meter sets")
 	void distinctKeysDistinctMeters() {
 		SseLineMeters base =

@@ -15,7 +15,7 @@ class SchedulingConfigTest {
 	void boundedPoolScheduler() {
 		SchedulingConfig config = new SchedulingConfig();
 
-		TaskScheduler scheduler = config.taskScheduler(4);
+		TaskScheduler scheduler = config.taskScheduler(4, 20);
 
 		assertThat(scheduler).isInstanceOf(ThreadPoolTaskScheduler.class);
 		assertThat(((ThreadPoolTaskScheduler) scheduler).getPoolSize()).isEqualTo(4);
@@ -26,8 +26,43 @@ class SchedulingConfigTest {
 	void poolSizeFloor() {
 		SchedulingConfig config = new SchedulingConfig();
 
-		TaskScheduler scheduler = config.taskScheduler(1);
+		TaskScheduler scheduler = config.taskScheduler(1, 20);
 
 		assertThat(((ThreadPoolTaskScheduler) scheduler).getPoolSize()).isEqualTo(2);
+	}
+
+	@Test
+	@DisplayName("delayed tasks never block shutdown (fork-hang guard)")
+	void delayedTasksDoNotBlockShutdown() throws Exception {
+		SchedulingConfig config = new SchedulingConfig();
+
+		ThreadPoolTaskScheduler scheduler = (ThreadPoolTaskScheduler) config.taskScheduler(1, 5);
+		scheduler.initialize();
+		try {
+			java.util.concurrent.CountDownLatch inFlight = new java.util.concurrent.CountDownLatch(1);
+			java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+			scheduler.execute(() -> {
+				inFlight.countDown();
+				try {
+					release.await(5, java.util.concurrent.TimeUnit.SECONDS);
+				} catch (InterruptedException e) {
+					Thread.currentThread().interrupt();
+				}
+			});
+			assertThat(inFlight.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+			scheduler.schedule(
+					() -> {
+					},
+					new java.util.Date(System.currentTimeMillis() + 60_000));
+
+			long startedAt = System.nanoTime();
+			release.countDown();
+			scheduler.shutdown();
+			long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000;
+
+			assertThat(elapsedMs).isLessThan(5_000L);
+		} finally {
+			scheduler.shutdown();
+		}
 	}
 }

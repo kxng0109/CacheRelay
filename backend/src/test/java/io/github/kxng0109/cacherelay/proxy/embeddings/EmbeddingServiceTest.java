@@ -263,6 +263,92 @@ class EmbeddingServiceTest {
 	}
 
 	@Test
+	@DisplayName("blank key hash skips the budget check without an enforcer call")
+	void blankKeyHashSkipsBudget() throws Exception {
+		BudgetEnforcer enforcer = mock(BudgetEnforcer.class);
+		service.setBudgetEnforcer(enforcer);
+		ProviderConfig provider = new ProviderConfig(
+				"openai", ProviderType.OPENAI, URI.create("https://api.openai.com"),
+				new SensitiveString("key"), Duration.ofSeconds(5), Duration.ofSeconds(30)
+		);
+		gatewayProperties.setProviders(Map.of("openai", provider));
+
+		EmbeddingAdapter adapter = mock(EmbeddingAdapter.class);
+		when(adapterResolver.resolve(ProviderType.OPENAI)).thenReturn(adapter);
+		EmbeddingResponse mockResponse = EmbeddingResponse.of(
+				"text-embedding-3-small",
+				List.of(EmbeddingData.of(0, new float[]{0.1f})),
+				10
+		);
+		when(batchOrchestrator.execute(any(), any(), any(), any())).thenReturn(mockResponse);
+
+		EmbeddingRequest request = new EmbeddingRequest(List.of("hello"), "openai", null, null, null);
+		EmbeddingResponse response = service.processEmbedding(request, "tenant-1", "  ", null);
+
+		assertThat(response).isEqualTo(mockResponse);
+		verify(enforcer, never()).checkBudget(any(), any(), any(), any(), anyInt(), any());
+	}
+
+	@Test
+	@DisplayName("error outcome records without a latency sample when metrics are wired")
+	void errorOutcomeMetered() throws Exception {
+		SimpleMeterRegistry registry = new SimpleMeterRegistry();
+		service.setEmbeddingMetrics(new EmbeddingMetrics(registry));
+		ProviderConfig provider = new ProviderConfig(
+				"openai", ProviderType.OPENAI, URI.create("https://api.openai.com"),
+				new SensitiveString("key"), Duration.ofSeconds(5), Duration.ofSeconds(30)
+		);
+		gatewayProperties.setProviders(Map.of("openai", provider));
+
+		EmbeddingAdapter adapter = mock(EmbeddingAdapter.class);
+		when(adapterResolver.resolve(ProviderType.OPENAI)).thenReturn(adapter);
+		when(batchOrchestrator.execute(any(), any(), any(), any()))
+				.thenThrow(new IOException("boom"));
+
+		EmbeddingRequest request = new EmbeddingRequest(List.of("hello"), "openai", null, null, null);
+		assertThatThrownBy(() -> service.processEmbedding(request, "tenant-1"))
+				.isInstanceOf(ResponseStatusException.class);
+
+		assertThat(registry.get("embedding_requests_total")
+				.tag("provider", "openai").tag("model", "openai")
+				.tag("outcome", "error").counter().count()).isEqualTo(1.0);
+		assertThat(registry.find("embedding_upstream_latency")
+				.tag("provider", "openai").timer()).isNull();
+	}
+
+	@Test
+	@DisplayName("empty alias chains and blank overrides fall back predictably")
+	void aliasFallbacks() {
+		gatewayProperties.setProviders(Map.of(
+				"openai", new ProviderConfig(
+						"openai", ProviderType.OPENAI, URI.create("https://api.openai.com"),
+						new SensitiveString("key"), Duration.ofSeconds(5), Duration.ofSeconds(30))));
+		ModelAlias emptyChain = new ModelAlias(List.of(), FailoverStrategy.SEQUENTIAL);
+		ModelAlias blankOverride = new ModelAlias(
+				List.of(new ProviderRef("openai", "  ")), FailoverStrategy.SEQUENTIAL);
+		gatewayProperties.setAliases(Map.of(
+				"empty-alias", emptyChain,
+				"blank-override", blankOverride));
+
+		assertThat(service.resolveProviderName("blank-override")).isEqualTo("openai");
+		assertThat(service.resolveProviderName("empty-alias")).isEqualTo("openai");
+	}
+
+	@Test
+	@DisplayName("endpoint resolution dedupes version prefixes instead of doubling them")
+	void endpointVersionStrips() {
+		assertThat(EmbeddingService.resolveEndpoint(
+				URI.create("https://api.openai.com/v1"), "/v1/embeddings"))
+				.isEqualTo(URI.create("https://api.openai.com/v1/embeddings"));
+		assertThat(EmbeddingService.resolveEndpoint(
+				URI.create("https://o.example.com/v2/"), "/v2/embeddings"))
+				.isEqualTo(URI.create("https://o.example.com/v2/embeddings"));
+		assertThat(EmbeddingService.resolveEndpoint(
+				URI.create("https://api.openai.com"), "/v1/embeddings"))
+				.isEqualTo(URI.create("https://api.openai.com/v1/embeddings"));
+	}
+
+	@Test
 	@DisplayName("upstream failure message is generic with a correlation id (SEC-16)")
 	void upstreamErrorSanitized() throws Exception {
 		ProviderConfig provider = new ProviderConfig(

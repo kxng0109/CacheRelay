@@ -84,6 +84,42 @@ class KeyCacheScopesTest {
 	}
 
 	@Test
+	void createKeyWithNullSetsPersistsEmpty() {
+		KeyManagementService service = newService();
+
+		KeyManagementService.CreatedKey created = service.createKey(
+				"owner", "name", 5, 50, null, null, null, null,
+				null, null, null, null, null, null);
+
+		assertTrue(created.key().allowedModels().isEmpty());
+		assertTrue(created.key().allowedCacheScopes().contains(CacheScope.TENANT));
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
+		verify(hashOps).putAll(eq(redisKey(created.hash())), fieldsCaptor.capture());
+		assertEquals("[]", fieldsCaptor.getValue().get("allowedResources"));
+		assertEquals("", fieldsCaptor.getValue().get("allowedCacheScopes"));
+	}
+
+	@Test
+	void findByHashWithMissingFieldsDefaults() {
+		KeyManagementService service = newService();
+		SHA256Hash hash = SHA256Hash.fromRawKey("gw-ffffffffffffffffffffffffffffffff");
+		Map<String, String> fields = storedFields(null);
+		fields.remove("allowedResources");
+		fields.remove("deniedResources");
+		fields.remove("allowedPrompts");
+		fields.remove("deniedPrompts");
+		when(redisTemplate.hasKey(redisKey(hash))).thenReturn(Boolean.TRUE);
+		when(hashOps.entries(redisKey(hash))).thenReturn(fields);
+
+		Optional<VirtualApiKey> result = service.findByHash(hash);
+
+		assertTrue(result.isPresent());
+		assertTrue(result.get().allowedResources().isEmpty());
+		assertTrue(result.get().deniedPrompts().isEmpty());
+	}
+
+	@Test
 	void updateKeyPersistsCacheScopes() {
 		KeyManagementService service = newService();
 		SHA256Hash hash = SHA256Hash.fromRawKey("gw-cccccccccccccccccccccccccccccccc");

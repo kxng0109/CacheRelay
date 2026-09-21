@@ -59,6 +59,17 @@ class KeyRequestValidationTest {
 	}
 
 	@Test
+	@DisplayName("null sets default to empty without violations")
+	void nullSetsDefault() {
+		CreateKeyRequest request = new CreateKeyRequest(
+				"owner", "name", 60, 1000, null, null, null, null, null, null, null, null, null, null);
+
+		assertThat(validator.validate(request)).isEmpty();
+		assertThat(request.allowedModels()).isEmpty();
+		assertThat(request.deniedPrompts()).isEmpty();
+	}
+
+	@Test
 	@DisplayName("64 valid patterns pass")
 	void boundsAcceptValid() {
 		CreateKeyRequest request = new CreateKeyRequest(

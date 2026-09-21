@@ -201,6 +201,52 @@ class CachePolicyEngineTest {
 	}
 
 	@Test
+	@DisplayName("floorScope honors a non-default configured scope within the allowlist")
+	void floorScopeVariants() {
+		VirtualApiKey tenantKey = keyWithScopes(Set.of(CacheScope.TENANT));
+		VirtualApiKey globalKey =
+				keyWithScopes(Set.of(CacheScope.TENANT, CacheScope.GLOBAL));
+		MockHttpServletRequest noHeader = new MockHttpServletRequest();
+
+		properties.setDefaultScope(CacheScope.USER);
+		try {
+			assertThat(policyEngine.resolveScope(noHeader, tenantKey)).isEqualTo(CacheScope.TENANT);
+		} finally {
+			properties.setDefaultScope(CacheScope.TENANT);
+		}
+
+		properties.setDefaultScope(null);
+		try {
+			assertThat(policyEngine.resolveScope(noHeader, tenantKey)).isEqualTo(CacheScope.TENANT);
+		} finally {
+			properties.setDefaultScope(CacheScope.TENANT);
+		}
+
+		properties.setDefaultScope(CacheScope.GLOBAL);
+		properties.setGlobalScopeEnabled(true);
+		try {
+			assertThat(policyEngine.resolveScope(noHeader, globalKey)).isEqualTo(CacheScope.GLOBAL);
+			assertThat(policyEngine.resolveScope(noHeader, tenantKey)).isEqualTo(CacheScope.TENANT);
+		} finally {
+			properties.setGlobalScopeEnabled(false);
+			properties.setDefaultScope(CacheScope.TENANT);
+		}
+
+		VirtualApiKey globalOnlyKey = keyWithScopes(Set.of(CacheScope.GLOBAL));
+		assertThat(policyEngine.resolveScope(noHeader, globalOnlyKey)).isEqualTo(CacheScope.TENANT);
+	}
+
+	@Test
+	@DisplayName("explicit TENANT header resolves within the allowlist")
+	void explicitTenantHeader() {
+		VirtualApiKey tenantKey = keyWithScopes(Set.of(CacheScope.TENANT));
+		MockHttpServletRequest tenantReq = new MockHttpServletRequest();
+		tenantReq.addHeader("X-CacheRelay-Cache-Scope", "TENANT");
+
+		assertThat(policyEngine.resolveScope(tenantReq, tenantKey)).isEqualTo(CacheScope.TENANT);
+	}
+
+	@Test
 	@DisplayName("resolveSimilarityThreshold parses header overrides and fallbacks")
 	void resolveSimilarityThreshold() {
 		MockHttpServletRequest req = new MockHttpServletRequest();
@@ -216,6 +262,8 @@ class CachePolicyEngineTest {
 		MockHttpServletRequest malformedReq = new MockHttpServletRequest();
 		malformedReq.addHeader("X-CacheRelay-Semantic-Threshold", "abc");
 		assertThat(policyEngine.resolveSimilarityThreshold(malformedReq)).isEqualTo(0.80);
+
+		assertThat(policyEngine.resolveSimilarityThreshold(new MockHttpServletRequest())).isEqualTo(0.80);
 	}
 
 	private static VirtualApiKey keyWithScopes(Set<CacheScope> scopes) {

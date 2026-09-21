@@ -225,6 +225,44 @@ class RedisSemanticVectorCacheTest {
 	}
 
 	@Test
+	@DisplayName("initializeIndex creates at the mapped dimension when the probe is unavailable")
+	void initializeIndexCreatesFromMapWithoutProbe() {
+		properties.getSemantic().setEmbeddingModel("nomic-embed-text");
+		try {
+			when(embeddingService.processEmbedding(any(), any())).thenReturn(null);
+			when(vectorClient.vectorDimensionOf(RedisSemanticVectorCache.INDEX_NAME)).thenReturn(-1);
+			when(vectorClient.indexSchemaFields(RedisSemanticVectorCache.INDEX_NAME)).thenReturn(Set.of());
+
+			cache.initializeIndex();
+
+			verify(vectorClient, never()).dropIndex(anyString(), anyBoolean());
+			verify(vectorClient).createIndexIfNotExists(
+					eq(RedisSemanticVectorCache.INDEX_NAME), eq(RedisSemanticVectorCache.PREFIX), eq(768));
+		} finally {
+			properties.getSemantic().setEmbeddingModel("text-embedding-3-small");
+		}
+	}
+
+	@Test
+	@DisplayName("initializeIndex keeps a present index when the probe is unavailable")
+	void initializeIndexKeepsPresentIndexWithoutProbe() {
+		properties.getSemantic().setEmbeddingModel("totally-unknown-model");
+		try {
+			when(embeddingService.processEmbedding(any(), any())).thenReturn(null);
+			when(vectorClient.vectorDimensionOf(RedisSemanticVectorCache.INDEX_NAME)).thenReturn(768);
+			when(vectorClient.indexSchemaFields(RedisSemanticVectorCache.INDEX_NAME)).thenReturn(
+					Set.of("owner_id", "model", "prefix_hash", "system_prompt_hash", "temperature", "embedding"));
+
+			cache.initializeIndex();
+
+			verify(vectorClient, never()).dropIndex(anyString(), anyBoolean());
+			verify(vectorClient, never()).createIndexIfNotExists(anyString(), anyString(), anyInt());
+		} finally {
+			properties.getSemantic().setEmbeddingModel("text-embedding-3-small");
+		}
+	}
+
+	@Test
 	@DisplayName("null temperature bypasses lookup and store without embedding (PERF-14)")
 	void nullTemperatureBypassesTier() {
 		CompoundCacheKey key = new CompoundCacheKey(

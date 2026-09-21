@@ -62,8 +62,19 @@ public class LedgerStagingDrainer {
 		this.meterRegistry = meterRegistry != null ? meterRegistry : new SimpleMeterRegistry();
 		this.requiresNew = new TransactionTemplate(transactionManager);
 		this.requiresNew.setPropagationBehavior(TransactionTemplate.PROPAGATION_REQUIRES_NEW);
-		String hostname = System.getenv("HOSTNAME");
-		this.podId = hostname != null && !hostname.isBlank()
+		this.podId = resolvePodId(System.getenv("HOSTNAME"));
+	}
+
+	/**
+	 * Resolves the pod identity for claim ownership, preferring the container hostname.
+	 * Extracted as a pure function so the fallback branches are unit-testable without
+	 * environment manipulation.
+	 *
+	 * @param hostname raw {@code HOSTNAME} value, possibly {@code null} or blank
+	 * @return the hostname itself, or a random {@code pod-} id as fallback
+	 */
+	static String resolvePodId(String hostname) {
+		return hostname != null && !hostname.isBlank()
 				? hostname
 				: "pod-" + UUID.randomUUID().toString().substring(0, 8);
 	}

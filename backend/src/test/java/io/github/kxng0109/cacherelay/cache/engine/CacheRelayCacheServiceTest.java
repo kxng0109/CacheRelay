@@ -14,6 +14,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.mock.web.MockHttpServletRequest;
 import tools.jackson.databind.ObjectMapper;
 
@@ -71,6 +72,27 @@ class CacheRelayCacheServiceTest {
 		keyedService.storeResponse(request, httpReq, "tenant1", null, "{\"content\":\"Hi\"}", 5, 10);
 
 		verify(mockedGenerator, times(1)).generateKey(any(), any(), any(), any(), anyInt());
+	}
+
+	@Test
+	@DisplayName("evaluateCache maps blank owners to unknown")
+	void blankOwnerMapsUnknown() {
+		OpenAiChatRequest request = new OpenAiChatRequest(
+				"gpt-4o",
+				List.of(new OpenAiChatRequest.Message("user", objectMapper.valueToTree("Hello"))),
+				0.0, null, null, null, null, true, null
+		);
+		MockHttpServletRequest httpReq = new MockHttpServletRequest();
+		when(l0Cache.get(any())).thenReturn(null);
+		when(l1Cache.get(any())).thenReturn(null);
+		when(l2Cache.findSemanticMatch(any(), any(), any())).thenReturn(null);
+
+		CacheLookupResult result = cacheService.evaluateCache(request, httpReq, "   ", null);
+
+		assertThat(result.status()).isEqualTo(CacheStatus.MISS);
+		ArgumentCaptor<CompoundCacheKey> keys = ArgumentCaptor.forClass(CompoundCacheKey.class);
+		verify(l1Cache).get(keys.capture());
+		assertThat(keys.getValue().ownerId()).isEqualTo("unknown");
 	}
 
 	@Test

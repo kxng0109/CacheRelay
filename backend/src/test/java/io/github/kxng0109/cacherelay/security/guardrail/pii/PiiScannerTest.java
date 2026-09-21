@@ -42,6 +42,44 @@ class PiiScannerTest {
 	}
 
 	@Test
+	@DisplayName("digit plus @ pre-filter exits early with identical verdicts")
+	void digitAndAtPreFilter() {
+		List<PiiEntity> entities = scanner.scan("call 555-1234 or mail me@example.com today");
+		assertThat(entities).extracting(PiiEntity::type)
+				.contains(PiiType.EMAIL);
+		assertThat(scanner.scan("nothing sensitive here at all")).isEmpty();
+	}
+
+	@Test
+	@DisplayName("honorific overlapping an email is skipped once")
+	void honorificOverlapSkipped() {
+		List<PiiEntity> entities = scanner.scan("Dr Alice Smith@x.com");
+		assertThat(entities).extracting(PiiEntity::type).containsExactly(PiiType.EMAIL);
+	}
+
+	@Test
+	@DisplayName("18-digit Verve cards verify by prefix and Luhn")
+	void eighteenDigitVerve() {
+		String prefix17 = "50601234567890123";
+		int sum = 0;
+		boolean alternate = true;
+		for (int i = prefix17.length() - 1; i >= 0; i--) {
+			int digit = prefix17.charAt(i) - '0';
+			if (alternate) {
+				digit *= 2;
+				if (digit > 9) {
+					digit -= 9;
+				}
+			}
+			sum += digit;
+			alternate = !alternate;
+		}
+		String card18 = prefix17 + ((10 - (sum % 10)) % 10);
+		List<PiiEntity> entities = scanner.scan("card " + card18 + " here");
+		assertThat(entities).extracting(PiiEntity::type).contains(PiiType.VERVE_CARD);
+	}
+
+	@Test
 	@DisplayName("scans and extracts US SSN conforming to SSA rules")
 	void scansUsSsn() {
 		String text = "Customer SSN is 123-45-6789 for tax records";

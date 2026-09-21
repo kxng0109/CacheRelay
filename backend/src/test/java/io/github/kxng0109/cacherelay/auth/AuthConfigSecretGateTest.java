@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.core.env.Environment;
 
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -53,5 +54,18 @@ class AuthConfigSecretGateTest {
 		Environment devEnv = mock(Environment.class);
 		when(devEnv.getActiveProfiles()).thenReturn(new String[]{"dev"});
 		assertThat(new AuthConfig(AuthProperties.defaults(), devEnv)).isNotNull();
+	}
+
+	@Test
+	@DisplayName("AuthConfig bean boots without warning on a stable secret in prod")
+	void beanAcceptsStableSecret() {
+		AuthProperties configured = new AuthProperties(
+				null, null, null, null, null, null, null, null, null, null,
+				"test-only-jwt-secret-32-bytes-min!!",
+				180, new HashMap<>(), 5, null, null);
+		Environment prodEnv = mock(Environment.class);
+		when(prodEnv.getActiveProfiles()).thenReturn(new String[]{"prod"});
+
+		assertThat(new AuthConfig(configured, prodEnv)).isNotNull();
 	}
 }

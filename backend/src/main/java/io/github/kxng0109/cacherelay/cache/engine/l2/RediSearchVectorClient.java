@@ -540,7 +540,9 @@ public class RediSearchVectorClient {
 					fields.add(name);
 				}
 			}
-			collectSchemaFields(list.get(i), fields);
+		}
+		for (Object child : list) {
+			collectSchemaFields(child, fields);
 		}
 	}
 

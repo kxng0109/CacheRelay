@@ -21,17 +21,25 @@ public class SchedulingConfig {
 	/**
 	 * Creates the shared task scheduler backing every {@code @Scheduled} job.
 	 *
+	 * <p>Delayed tasks never block shutdown: {@code setExecuteExistingDelayedTasksAfterShutdownPolicy(false)}
+	 * cancels not-yet-started triggers on close, so {@code shutdown()} only waits for in-flight work up to
+	 * {@code awaitTerminationSeconds}. Without this, a queued future fire time blocks container close for the
+	 * full await window (Spring issue #26719) — which hung the surefire fork past its exit timeout in tests.</p>
+	 *
 	 * @param poolSize scheduler threads
+	 * @param awaitTerminationSeconds cap on waiting for in-flight tasks at shutdown
 	 * @return configured scheduler
 	 */
 	@Bean
 	public TaskScheduler taskScheduler(
-			@Value("${gateway.scheduling.pool-size:4}") int poolSize) {
+			@Value("${gateway.scheduling.pool-size:4}") int poolSize,
+			@Value("${gateway.scheduling.await-termination-seconds:20}") int awaitTerminationSeconds) {
 		ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
 		scheduler.setPoolSize(Math.max(2, poolSize));
 		scheduler.setThreadNamePrefix("cacherelay-scheduled-");
-		scheduler.setAwaitTerminationSeconds(20);
+		scheduler.setAwaitTerminationSeconds(Math.max(0, awaitTerminationSeconds));
 		scheduler.setWaitForTasksToCompleteOnShutdown(true);
+		scheduler.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
 		scheduler.setRemoveOnCancelPolicy(true);
 		return scheduler;
 	}

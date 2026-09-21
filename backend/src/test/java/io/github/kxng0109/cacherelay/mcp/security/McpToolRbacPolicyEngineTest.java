@@ -54,6 +54,14 @@ class McpToolRbacPolicyEngineTest {
 	}
 
 	@Test
+	@DisplayName("trailing stars match the empty suffix")
+	void matchesPatternTrailingStars() {
+		assertThat(McpToolRbacPolicyEngine.matchesPattern("tool", "tool*")).isTrue();
+		assertThat(McpToolRbacPolicyEngine.matchesPattern("tool", "tool**")).isTrue();
+		assertThat(McpToolRbacPolicyEngine.matchesPattern("toolbox", "tool*")).isTrue();
+	}
+
+	@Test
 	@SuppressWarnings("DataFlowIssue")
 	@DisplayName("matchesPattern guards null text, folds ASCII case, and finishes adversarial input fast")
 	void matchesPatternLinearAndNullSafe() {

@@ -30,6 +30,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.web.server.ResponseStatusException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import tools.jackson.databind.ObjectMapper;
 
@@ -44,6 +45,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -269,8 +271,7 @@ class McpStreamableHttpControllerTest {
 		);
 		assertThat(resp1.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
 
-		// notifications/tools/list_changed
-		when(catalogAggregator.getAggregatedCatalog()).thenReturn(McpAggregatedCatalog.empty());
+		// notifications/tools/list_changed must trigger catalog invalidation (SEC-07)
 		ResponseEntity<String> resp2 = controller.handleStreamableHttp(
 				"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}",
 				null,
@@ -278,6 +279,7 @@ class McpStreamableHttpControllerTest {
 				request
 		);
 		assertThat(resp2.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+		verify(catalogAggregator).invalidateCatalog();
 	}
 
 	@Test
@@ -717,5 +719,257 @@ class McpStreamableHttpControllerTest {
 				request
 		);
 		assertThat(msgResp.getStatusCode()).isEqualTo(HttpStatus.OK);
+	}
+
+	@Test
+	@DisplayName("modern requests without _meta are rejected with -32602")
+	void modernRequestWithoutMetaRejected() {
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+
+		ResponseEntity<String> noParams = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"m-1\",\"method\":\"tools/list\"}",
+				null,
+				null,
+				request
+		);
+		assertThat(noParams.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+
+		ResponseEntity<String> emptyParams = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"m-2\",\"method\":\"tools/list\",\"params\":{}}",
+				null,
+				null,
+				request
+		);
+		assertThat(emptyParams.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(emptyParams.getBody()).contains("-32602");
+
+		ResponseEntity<String> versionOnly = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"m-3\",\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"}}}",
+				null,
+				null,
+				request
+		);
+		assertThat(versionOnly.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(versionOnly.getBody()).contains("-32602");
+	}
+
+	@Test
+	@DisplayName("unsupported protocol versions are rejected with -32022")
+	void unsupportedVersionRejected() {
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+
+		ResponseEntity<String> response = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"u-1\",\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"1999-01-01\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+				"1999-01-01",
+				null,
+				request
+		);
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(response.getBody()).contains("-32022");
+	}
+
+	@Test
+	@DisplayName("explicit-null client capabilities fail closed with -32021")
+	void explicitNullCapabilitiesRejected() {
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+
+		ResponseEntity<String> response = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"n-1\",\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":null}}}",
+				null,
+				null,
+				request
+		);
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(response.getBody()).contains("-32021");
+	}
+
+	@Test
+	@DisplayName("per-method capability requirements reject mismatched declarations")
+	void perMethodCapabilityMismatch() {
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+
+		ResponseEntity<String> promptsResp = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"p-1\",\"method\":\"prompts/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{\"tools\":{}}}}}",
+				null,
+				null,
+				request
+		);
+		assertThat(promptsResp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(promptsResp.getBody()).contains("-32021");
+
+		ResponseEntity<String> resourcesResp = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"r-1\",\"method\":\"resources/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{\"tools\":{}}}}}",
+				null,
+				null,
+				request
+		);
+		assertThat(resourcesResp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(resourcesResp.getBody()).contains("-32021");
+	}
+
+	@Test
+	@DisplayName("blank and missing methods are rejected as invalid requests")
+	void blankAndMissingMethodRejected() {
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+		String meta =
+				"\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\","
+						+ "\"io.modelcontextprotocol/clientCapabilities\":{}}";
+
+		ResponseEntity<String> blankResp = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"b-1\",\"method\":\"\",\"params\":{" + meta + "}}",
+				null,
+				null,
+				request
+		);
+		assertThat(blankResp.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(blankResp.getBody()).contains("-32600");
+
+		ResponseEntity<String> missingResp = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"b-2\",\"params\":{" + meta + "}}",
+				null,
+				null,
+				request
+		);
+		assertThat(missingResp.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(missingResp.getBody()).contains("-32600");
+	}
+
+	@Test
+	@DisplayName("modern notifications without params bypass meta validation")
+	void modernNotificationWithoutParamsProceeds() {
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+
+		ResponseEntity<String> response = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"method\":\"ping\"}",
+				null,
+				null,
+				request
+		);
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+	}
+
+	@Test
+	@DisplayName("legacy SSE denies disabled keys")
+	void legacySseDeniesDisabledKey() {
+		VirtualApiKey disabledKey = new VirtualApiKey(
+				SHA256Hash.fromRawKey("gw-test-key-disabled-abcdef"),
+				"gw-",
+				"tenant-1",
+				"disabled-key",
+				100,
+				100000,
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				true,
+				false,
+				Instant.now(),
+				Set.of(CacheScope.TENANT)
+		);
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		MockHttpServletResponse response = new MockHttpServletResponse();
+		request.setAttribute("virtualApiKey", disabledKey);
+
+		assertThatThrownBy(() -> controller.handleLegacySse(request, response))
+				.isInstanceOf(ResponseStatusException.class);
+	}
+
+	@Test
+	@DisplayName("tools/call without params fails with params-required")
+	void toolsCallWithoutParamsFails() {
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+
+		ResponseEntity<String> nullParamsResp = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"l-0\",\"method\":\"tools/call\"}",
+				"2024-11-05",
+				null,
+				request
+		);
+		assertThat(nullParamsResp.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(nullParamsResp.getBody()).contains("params object required");
+
+		ResponseEntity<String> legacyResp = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"l-1\",\"method\":\"tools/call\",\"params\":[]}",
+				"2024-11-05",
+				null,
+				request
+		);
+		assertThat(legacyResp.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(legacyResp.getBody()).contains("params object required");
+	}
+
+	@Test
+	@DisplayName("tools/call without arguments skips argument forwarding")
+	void toolsCallWithoutArguments() throws Exception {
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+
+		String rawRpc = "{\"jsonrpc\":\"2.0\",\"id\":\"na-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"postgres__run_query\",\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{\"tools\":{}}}}}";
+		McpResolvedRoute route = new McpResolvedRoute(postgresServer, "run_query", "postgres__run_query");
+		when(router.resolveToolRoute("postgres__run_query")).thenReturn(Optional.of(route));
+		when(rbacPolicyEngine.isToolAllowed("postgres__run_query", validApiKey)).thenReturn(true);
+		when(guardrailScanner.scanArguments(any())).thenReturn(SecretScanResult.clean());
+		when(circuitBreakerManager.tryAcquire("postgres")).thenReturn(true);
+		when(hitlSuspensionEngine.evaluateOrSuspend(any(), any(), any(), any(), any())).thenReturn(Optional.empty());
+		when(catalogAggregator.getAggregatedCatalog()).thenReturn(new McpAggregatedCatalog(
+				List.of(new McpToolDefinition("postgres__run_query", "Query DB",
+						objectMapper.createObjectNode(), null)),
+				List.of(), List.of(), Instant.now()));
+		when(jsonSchemaValidator.validate(any(), any())).thenReturn(McpJsonSchemaValidator.ValidationResult.success());
+		when(mockHttpResponse.statusCode()).thenReturn(200);
+		when(mockHttpResponse.body()).thenReturn(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"na-1\",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}}");
+		when(httpClient.send(
+				any(HttpRequest.class),
+				ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
+		)).thenReturn(mockHttpResponse);
+
+		ResponseEntity<String> response = controller.handleStreamableHttp(rawRpc, null, null, request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody()).contains("result");
+	}
+
+	@Test
+	@DisplayName("tools/call surfaces upstream HTTP errors without executing")
+	void toolsCallUpstreamServerError() throws Exception {
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+
+		String rawRpc = "{\"jsonrpc\":\"2.0\",\"id\":\"e-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"postgres__run_query\",\"arguments\":{\"sql\":\"SELECT 1\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{\"tools\":{}}}}}";
+		McpResolvedRoute route = new McpResolvedRoute(postgresServer, "run_query", "postgres__run_query");
+		when(router.resolveToolRoute("postgres__run_query")).thenReturn(Optional.of(route));
+		when(rbacPolicyEngine.isToolAllowed("postgres__run_query", validApiKey)).thenReturn(true);
+		when(guardrailScanner.scanArguments(any())).thenReturn(SecretScanResult.clean());
+		when(circuitBreakerManager.tryAcquire("postgres")).thenReturn(true);
+		when(hitlSuspensionEngine.evaluateOrSuspend(any(), any(), any(), any(), any())).thenReturn(Optional.empty());
+		when(catalogAggregator.getAggregatedCatalog()).thenReturn(new McpAggregatedCatalog(
+				List.of(new McpToolDefinition("postgres__run_query", "Query DB",
+						objectMapper.createObjectNode(), null)),
+				List.of(), List.of(), Instant.now()));
+		when(jsonSchemaValidator.validate(any(), any())).thenReturn(McpJsonSchemaValidator.ValidationResult.success());
+		when(mockHttpResponse.statusCode()).thenReturn(500);
+		when(httpClient.send(
+				any(HttpRequest.class),
+				ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
+		)).thenReturn(mockHttpResponse);
+
+		ResponseEntity<String> response = controller.handleStreamableHttp(rawRpc, null, null, request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody()).contains("Upstream server returned HTTP 500");
+		verify(circuitBreakerManager).recordFailure("postgres");
 	}
 }

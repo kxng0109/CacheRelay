@@ -137,6 +137,167 @@ class RediSearchVectorClientTest {
 	}
 
 	@Test
+	@DisplayName("searchKnn skips literal nan scores instead of poisoning the reply")
+	void searchKnnSkipsNanScores() {
+		Map<String, String> fields = new HashMap<>();
+		fields.put("prompt_text", "How to reset password");
+		when(connection.execute(eq("FT.SEARCH"), any(NestedMultiOutput.class), any(byte[][].class)))
+				.thenReturn(searchReply(1L, docRow("cacherelay:cache:doc:nan", "nan", fields)));
+
+		assertThat(client.searchKnn("idx", "@tag:{1}", new float[]{0.1f}, 1)).isEmpty();
+	}
+
+	@Test
+	@DisplayName("searchKnn returns empty on non-list replies")
+	void searchKnnRejectsNonListReply() {
+		when(connection.execute(eq("FT.SEARCH"), any(NestedMultiOutput.class), any(byte[][].class)))
+				.thenReturn("garbage");
+
+		assertThat(client.searchKnn("idx", "@tag:{1}", new float[]{0.1f}, 1)).isEmpty();
+	}
+
+	@Test
+	@DisplayName("searchKnn reads null field values as empty strings")
+	void searchKnnReadsNullFieldValues() {
+		List<Object> attrs = new ArrayList<>();
+		attrs.add("prompt_text".getBytes(StandardCharsets.UTF_8));
+		attrs.add(null);
+		List<Object> reply = new ArrayList<>();
+		reply.add(1L);
+		reply.add("cacherelay:cache:doc:nullval".getBytes(StandardCharsets.UTF_8));
+		reply.add("0.05".getBytes(StandardCharsets.UTF_8));
+		reply.add(attrs);
+		when(connection.execute(eq("FT.SEARCH"), any(NestedMultiOutput.class), any(byte[][].class)))
+				.thenReturn(reply);
+
+		List<VectorSearchResult> results =
+				client.searchKnn("idx", "@tag:{1}", new float[]{0.1f}, 1);
+
+		assertThat(results).hasSize(1);
+		assertThat(results.getFirst().fields().get("prompt_text")).isEmpty();
+	}
+
+	@Test
+	@DisplayName("searchKnn does not retry failures without a transient signal")
+	void searchKnnDoesNotRetryPlainFailures() {
+		when(connection.execute(eq("FT.SEARCH"), any(NestedMultiOutput.class), any(byte[][].class)))
+				.thenThrow(new RuntimeException());
+
+		assertThat(client.searchKnn("idx", "@tag:{1}", new float[]{0.1f}, 1)).isEmpty();
+		verify(connection, times(1))
+				.execute(eq("FT.SEARCH"), any(NestedMultiOutput.class), any(byte[][].class));
+	}
+
+	@Test
+	@DisplayName("saveVectorDocument stores field maps without an embedding key")
+	void saveVectorDocumentWithoutEmbeddingKey() {
+		Map<byte[], byte[]> fields = new HashMap<>();
+		fields.put("prompt_text".getBytes(StandardCharsets.UTF_8), "hi".getBytes(StandardCharsets.UTF_8));
+
+		client.saveVectorDocument("cacherelay:cache:doc:noemb", fields, Duration.ofMinutes(10));
+
+		verify(hashCommands).hMSet(eq("cacherelay:cache:doc:noemb".getBytes(StandardCharsets.UTF_8)), eq(fields));
+	}
+
+	@Test
+	@DisplayName("saveVectorDocument rejects misaligned embedding blobs")
+	void saveVectorDocumentRejectsMisalignedBlob() {
+		Map<byte[], byte[]> fields = new HashMap<>();
+		fields.put("embedding".getBytes(StandardCharsets.UTF_8), new byte[]{1, 2, 3});
+
+		client.saveVectorDocument("cacherelay:cache:doc:misaligned", fields, Duration.ofMinutes(10));
+
+		verify(hashCommands, never()).hMSet(any(), any());
+	}
+
+	@Test
+	@DisplayName("saveVectorDocument skips expiry on zero TTL")
+	void saveVectorDocumentSkipsZeroTtl() {
+		Map<byte[], byte[]> fields = new HashMap<>();
+		fields.put("prompt_text".getBytes(StandardCharsets.UTF_8), "hi".getBytes(StandardCharsets.UTF_8));
+
+		client.saveVectorDocument("cacherelay:cache:doc:zerottl", fields, Duration.ZERO);
+
+		verify(hashCommands).hMSet(any(), any());
+		verify(keyCommands, never()).expire(any(), anyLong());
+	}
+
+	@Test
+	@DisplayName("vectorDimensionOf returns negative on non-numeric dim values")
+	void vectorDimensionOfNonNumericDim() {
+		List<Object> attributes = new ArrayList<>();
+		attributes.add("dim".getBytes(StandardCharsets.UTF_8));
+		attributes.add("big".getBytes(StandardCharsets.UTF_8));
+		List<Object> info = new ArrayList<>();
+		info.add("attributes".getBytes(StandardCharsets.UTF_8));
+		info.add(attributes);
+		when(connection.execute(eq("FT.INFO"), any(NestedMultiOutput.class), any(byte[][].class)))
+				.thenReturn(info);
+
+		assertThat(client.vectorDimensionOf("cacherelay:cache:idx")).isEqualTo(-1);
+	}
+
+	@Test
+	@DisplayName("indexSchemaFields reads nested per-field attribute lists")
+	void indexSchemaFieldsNestedLists() {
+		List<Object> ownerField = new ArrayList<>();
+		ownerField.add("identifier".getBytes(StandardCharsets.UTF_8));
+		ownerField.add("owner_id".getBytes(StandardCharsets.UTF_8));
+		List<Object> attributes = new ArrayList<>();
+		attributes.add(ownerField);
+		List<Object> info = new ArrayList<>();
+		info.add("attributes".getBytes(StandardCharsets.UTF_8));
+		info.add(attributes);
+		when(connection.execute(eq("FT.INFO"), any(NestedMultiOutput.class), any(byte[][].class)))
+				.thenReturn(info);
+
+		assertThat(client.indexSchemaFields("cacherelay:cache:idx")).containsExactly("owner_id");
+	}
+
+	@Test
+	@DisplayName("indexSchemaFields reads flat HASH attribute pairs")
+	void indexSchemaFieldsFlatHashAttributes() {
+		List<Object> attributes = new ArrayList<>();
+		for (String token : new String[]{"identifier", "owner_id", "attribute", "owner_id", "type", "TAG",
+				"identifier", "temperature", "attribute", "temperature", "type", "TAG",
+				"identifier", "model", "attribute", "model", "type", "TAG"}) {
+			attributes.add(token.getBytes(StandardCharsets.UTF_8));
+		}
+		List<Object> info = new ArrayList<>();
+		info.add("attributes".getBytes(StandardCharsets.UTF_8));
+		info.add(attributes);
+		when(connection.execute(eq("FT.INFO"), any(NestedMultiOutput.class), any(byte[][].class)))
+				.thenReturn(info);
+
+		assertThat(client.indexSchemaFields("cacherelay:cache:idx"))
+				.containsExactlyInAnyOrder("owner_id", "temperature", "model");
+	}
+
+	@Test
+	@DisplayName("indexSchemaFields finds the last field of multi-field indexes")
+	void indexSchemaFieldsFindsLastField() {
+		List<Object> ownerField = new ArrayList<>();
+		for (String token : new String[]{"identifier", "owner_id", "attribute", "owner_id", "type", "TAG"}) {
+			ownerField.add(token.getBytes(StandardCharsets.UTF_8));
+		}
+		List<Object> temperatureField = new ArrayList<>();
+		for (String token : new String[]{"identifier", "temperature", "attribute", "temperature", "type", "TAG"}) {
+			temperatureField.add(token.getBytes(StandardCharsets.UTF_8));
+		}
+		List<Object> attributes = new ArrayList<>();
+		attributes.add(ownerField);
+		attributes.add(temperatureField);
+		List<Object> info = new ArrayList<>();
+		info.add("attributes".getBytes(StandardCharsets.UTF_8));
+		info.add(attributes);
+		when(connection.execute(eq("FT.INFO"), any(NestedMultiOutput.class), any(byte[][].class)))
+				.thenReturn(info);
+
+		assertThat(client.indexSchemaFields("cacherelay:cache:idx"))
+				.containsExactlyInAnyOrder("owner_id", "temperature");
+	}
+
+	@Test
 	@DisplayName("searchKnn sends TIMEOUT and WITHSCORES bounds with the query")
 	void searchKnnSendsTimeoutAndWithScores() {
 		when(connection.execute(eq("FT.SEARCH"), any(NestedMultiOutput.class), any(byte[][].class)))

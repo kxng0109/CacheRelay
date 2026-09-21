@@ -331,6 +331,186 @@ class AdminKeyControllerTest {
 	}
 
 	@Test
+	@DisplayName("create with only denied tools takes the tools branch")
+	void createDeniedOnly() {
+		SHA256Hash hash = SHA256Hash.fromRawKey("gw-secretDenied1");
+		VirtualApiKey metadata = new VirtualApiKey(
+				hash, "gw-", "owner-1", "denied-key", 60, 1000,
+				Set.of(), Set.of(),
+				Set.of(), Set.of("*:delete_*"),
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				true,
+				true, Instant.now()
+		);
+		when(keyManagementService.createKey(
+				eq("owner-1"), eq("denied-key"), eq(60), eq(1000),
+				eq(Set.of()), eq(Set.of()),
+				eq(Set.of()), eq(Set.of("*:delete_*"))
+		)).thenReturn(new KeyManagementService.CreatedKey(hash, "gw-secretDenied1", metadata));
+
+		CreateKeyRequest request = new CreateKeyRequest(
+				"owner-1", "denied-key", 60, 1000,
+				Set.of(), Set.of(),
+				Set.of(), Set.of("*:delete_*")
+		);
+
+		ResponseEntity<CreatedKeyResponse> response = controller.createKey(request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+		assertThat(response.getBody().deniedTools()).containsExactly("*:delete_*");
+	}
+
+	@Test
+	@DisplayName("create with only prompts takes the visibility branch")
+	void createPromptsOnly() {
+		SHA256Hash hash = SHA256Hash.fromRawKey("gw-secretPrompts1");
+		VirtualApiKey metadata = new VirtualApiKey(
+				hash, "gw-", "owner-1", "prompts-key", 60, 1000,
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of("server__review_*"), Set.of(),
+				true,
+				true, Instant.now()
+		);
+		when(keyManagementService.createKey(
+				eq("owner-1"), eq("prompts-key"), eq(60), eq(1000),
+				eq(Set.of()), eq(Set.of()),
+				eq(Set.of()), eq(Set.of()),
+				eq(Set.of()), eq(Set.of()),
+				eq(Set.of("server__review_*")), eq(Set.of())
+		)).thenReturn(new KeyManagementService.CreatedKey(hash, "gw-secretPrompts1", metadata));
+
+		CreateKeyRequest request = new CreateKeyRequest(
+				"owner-1", "prompts-key", 60, 1000,
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of("server__review_*"), Set.of()
+		);
+
+		ResponseEntity<CreatedKeyResponse> response = controller.createKey(request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+		assertThat(response.getBody().allowedPrompts()).containsExactly("server__review_*");
+	}
+
+	@Test
+	@DisplayName("update with only scopes takes the full path")
+	void updateScopesOnly() {
+		SHA256Hash hash = SHA256Hash.fromRawKey("gw-secretScopes1");
+		VirtualApiKey metadata = new VirtualApiKey(
+				hash, "gw-", "owner-1", "scopes-key", 60, 1000,
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				true,
+				true, Instant.now(),
+				Set.of(CacheScope.TENANT, CacheScope.GLOBAL)
+		);
+		when(keyManagementService.updateKey(
+				eq(hash), eq(null), eq(null), eq(null),
+				eq(null), eq(null),
+				eq(null), eq(null),
+				eq(null), eq(null),
+				eq(null), eq(null),
+				eq(null), eq(Set.of(CacheScope.TENANT, CacheScope.GLOBAL)), eq(null)
+		)).thenReturn(Optional.of(metadata));
+
+		UpdateKeyRequest request = new UpdateKeyRequest(
+				null, null, null,
+				null, null,
+				null, null,
+				null, null,
+				null, null,
+				null, Set.of(CacheScope.TENANT, CacheScope.GLOBAL), null
+		);
+
+		ResponseEntity<KeyResponse> response = controller.updateKey(hash.hex(), request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody().allowedCacheScopes())
+				.isEqualTo(Set.of(CacheScope.TENANT, CacheScope.GLOBAL));
+	}
+
+	@Test
+	@DisplayName("update with tools plus injection flag takes the full path")
+	void updateToolsPlusInjection() {
+		SHA256Hash hash = SHA256Hash.fromRawKey("gw-secretToolsFlag1");
+		VirtualApiKey metadata = new VirtualApiKey(
+				hash, "gw-", "owner-1", "toolsflag-key", 60, 1000,
+				Set.of(), Set.of(),
+				Set.of("postgres__*"), Set.of(),
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				false,
+				true, Instant.now()
+		);
+		when(keyManagementService.updateKey(
+				eq(hash), eq(null), eq(null), eq(null),
+				eq(null), eq(null),
+				eq(Set.of("postgres__*")), eq(Set.of()),
+				eq(null), eq(null),
+				eq(null), eq(null),
+				eq(false), eq(null), eq(null)
+		)).thenReturn(Optional.of(metadata));
+
+		UpdateKeyRequest request = new UpdateKeyRequest(
+				null, null, null,
+				null, null,
+				Set.of("postgres__*"), Set.of(),
+				null, null,
+				null, null,
+				false, null, null
+		);
+
+		ResponseEntity<KeyResponse> response = controller.updateKey(hash.hex(), request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody().injectionBlock()).isFalse();
+	}
+
+	@Test
+	@DisplayName("update with visibility plus scopes takes the full path")
+	void updateVisibilityPlusScopes() {
+		SHA256Hash hash = SHA256Hash.fromRawKey("gw-secretVisScopes1");
+		VirtualApiKey metadata = new VirtualApiKey(
+				hash, "gw-", "owner-1", "visscopes-key", 60, 1000,
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of("postgres://*"), Set.of(),
+				Set.of(), Set.of(),
+				true,
+				true, Instant.now(),
+				Set.of(CacheScope.GLOBAL)
+		);
+		when(keyManagementService.updateKey(
+				eq(hash), eq(null), eq(null), eq(null),
+				eq(null), eq(null),
+				eq(null), eq(null),
+				eq(Set.of("postgres://*")), eq(Set.of()),
+				eq(null), eq(null),
+				eq(null), eq(Set.of(CacheScope.GLOBAL)), eq(null)
+		)).thenReturn(Optional.of(metadata));
+
+		UpdateKeyRequest request = new UpdateKeyRequest(
+				null, null, null,
+				null, null,
+				null, null,
+				Set.of("postgres://*"), Set.of(),
+				null, null,
+				null, Set.of(CacheScope.GLOBAL), null
+		);
+
+		ResponseEntity<KeyResponse> response = controller.updateKey(hash.hex(), request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody().allowedResources()).containsExactly("postgres://*");
+	}
+
+	@Test
 	@DisplayName("listKeys returns list of safe key responses")
 	void listKeysSuccess() {
 		SHA256Hash hash = SHA256Hash.fromRawKey("gw-key1");

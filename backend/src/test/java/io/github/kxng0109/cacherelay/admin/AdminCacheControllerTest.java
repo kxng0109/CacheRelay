@@ -98,6 +98,25 @@ class AdminCacheControllerTest {
 		assertThat(errorRes.getStatusCode()).isEqualTo(HttpStatus.OK);
 	}
 
+	@Test
+	@DisplayName("purge deletes oversized key sets in batches")
+	void purgeDeletesInBatches() {
+		String[] manyKeys = new String[501];
+		Arrays.fill(manyKeys, "key");
+		for (int i = 0; i < manyKeys.length; i++) {
+			manyKeys[i] = "key" + i;
+		}
+		when(redisTemplate.scan(any(ScanOptions.class)))
+				.thenAnswer(invocation -> cursorOf(manyKeys));
+		when(vectorClient.vectorDimensionOf(anyString())).thenReturn(768);
+		when(redisTemplate.delete(anyCollection())).thenReturn(501L);
+
+		ResponseEntity<CachePurgeResponse> response = controller.purgeCache(null);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		verify(redisTemplate, atLeast(2)).delete(anyCollection());
+	}
+
 	@SuppressWarnings("unchecked")
 	private static Cursor<String> cursorOf(String... keys) {
 		Cursor<String> cursor = mock(Cursor.class);
