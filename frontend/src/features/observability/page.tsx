@@ -1,7 +1,7 @@
 import { Suspense, lazy, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useShallow } from 'zustand/react/shallow'
-import { resolveApiBase } from '../../shared/api/client.js'
+import { resolveApiBase, resolveManagementBase } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { PulseStrip } from './PulseStrip.js'
 
@@ -36,9 +36,22 @@ const ENDPOINTS: EndpointInfo[] = [
 ]
 
 /**
+ * Base URL for one inspected endpoint path.
+ *
+ * @remarks SEC-15 serves `/actuator/**` only on the management port; docs
+ * paths stay on the app port.
+ *
+ * @param path - Endpoint path from the list.
+ * @returns The absolute URL to open.
+ */
+function hrefFor(path: string): string {
+  const base = path.startsWith('/actuator/') ? resolveManagementBase() : resolveApiBase()
+  return `${base}${path}`
+}
+/**
  * Probes one actuator endpoint without throwing on empty bodies.
  *
- * @param base - Resolved API base.
+ * @param base - Resolved management base.
  * @param path - Actuator path.
  * @param signal - Abort signal.
  * @returns Up flag plus checked timestamp.
@@ -75,7 +88,7 @@ export function ObservabilityPage(): React.JSX.Element {
   const health = useQuery({
     queryKey: ['health'],
     queryFn: async ({ signal }): Promise<{ status: string }> => {
-      const res = await fetch(`${resolveApiBase()}/actuator/health`, { signal })
+      const res = await fetch(`${resolveManagementBase()}/actuator/health`, { signal })
       if (!res.ok)
         throw new Error(`Health probe failed: HTTP ${String(res.status)}. Retry shortly.`)
       return (await res.json()) as { status: string }
@@ -86,7 +99,7 @@ export function ObservabilityPage(): React.JSX.Element {
   const metrics = useQuery({
     queryKey: ['metrics-probe'],
     enabled: isAdmin,
-    queryFn: ({ signal }) => probeEndpoint(resolveApiBase(), '/actuator/prometheus', signal),
+    queryFn: ({ signal }) => probeEndpoint(resolveManagementBase(), '/actuator/prometheus', signal),
     refetchInterval: 15_000,
   })
 
@@ -332,7 +345,7 @@ export function ObservabilityPage(): React.JSX.Element {
                 </div>
               </dl>
               <a
-                href={`${resolveApiBase()}${inspected.path}`}
+                href={hrefFor(inspected.path)}
                 target="_blank"
                 rel="noreferrer"
                 className="block rounded-md border border-ink/15 px-3 py-2 text-center text-[13px] dark:border-parchment/15"

@@ -29,6 +29,25 @@ beforeEach(() => {
       '*/actuator/prometheus',
       () => new HttpResponse('', { headers: { 'Content-Type': 'text/plain' } }),
     ),
+    http.get('*/v1/admin/ledger/entries', () =>
+      HttpResponse.json({
+        content: [],
+        page: 0,
+        size: 5,
+        totalElements: 0,
+        totalPages: 0,
+        hasNext: false,
+      }),
+    ),
+    http.get('*/v1/admin/cache/stats', () =>
+      HttpResponse.json({
+        l0Size: 0,
+        l0Capacity: 100,
+        redisConfigured: false,
+        exactEntries: 0,
+        semanticVectors: 0,
+      }),
+    ),
   )
 })
 
@@ -100,7 +119,12 @@ describe('OverviewPage', () => {
     expect(screen.getByText('1500')).toBeInTheDocument()
     expect(screen.getByText('gpt-56-luna')).toBeInTheDocument()
     expect(screen.getByText(/across 2 models/i)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /explore ledger/i })).toHaveAttribute('href', '/ledger')
+    // Live strip and stat strip both link out: one Explore ledger each.
+    const ledgerLinks = screen.getAllByRole('link', { name: /explore ledger/i })
+    expect(ledgerLinks).toHaveLength(2)
+    for (const link of ledgerLinks) {
+      expect(link).toHaveAttribute('href', '/ledger')
+    }
     for (const label of ['Playground', 'Circuits', 'Ledger', 'Observability']) {
       expect(screen.getByRole('link', { name: new RegExp(label) })).toBeInTheDocument()
     }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { ECharts } from 'echarts/core'
-import { resolveApiBase } from '../../shared/api/client.js'
+import { resolveManagementBase } from '../../shared/api/client.js'
 import { echarts } from '../../shared/echarts/setup.js'
 import type { EChartsOption } from '../../shared/echarts/setup.js'
 import { useUiStore } from '../../shared/store.js'
@@ -42,7 +42,7 @@ function describePoint(point: LatencyPoint | null): string {
  * Live gateway latency chart (P50/P95 from Prometheus histogram deltas).
  *
  * @remarks
- * Proof-type: live (same-origin `/actuator/prometheus`, no auth). Lazy-loaded
+ * Proof-type: live (management-port `/actuator/prometheus`, no auth). Lazy-loaded
  * by the observability route so ECharts stays out of the initial bundle. The
  * instance is created once, updated via `setOption` on new points, and
  * disposed on unmount; a `ResizeObserver` drives resizes (never `window`
@@ -68,7 +68,7 @@ export default function LatencyChart({
   const metrics = useQuery({
     queryKey: ['prometheus-latency'],
     queryFn: async ({ signal }): Promise<string> => {
-      const res = await fetch(`${resolveApiBase()}/actuator/prometheus`, { signal })
+      const res = await fetch(`${resolveManagementBase()}/actuator/prometheus`, { signal })
       if (!res.ok)
         throw new Error(`Metrics scrape failed: HTTP ${String(res.status)}. Retry shortly.`)
       return res.text()

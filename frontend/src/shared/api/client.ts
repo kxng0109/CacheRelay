@@ -53,6 +53,25 @@ export function resolveApiBase(): string {
 }
 
 /**
+ * Base URL for actuator scrapes (health, prometheus).
+ *
+ * @remarks
+ * SEC-15 isolates actuator endpoints on the dedicated management port
+ * (`VITE_MANAGEMENT_BASE_URL`, dev default `http://localhost:9091`); the
+ * app port answers every `/actuator/**` path with `404` and no CORS grant
+ * (backend truth: `backend/docs/BACKEND_API_REFERENCE.md` SEC-15). Like the
+ * API base, an unset variable falls back to same-origin (`''`).
+ *
+ * @returns The configured management base URL, or `''` for same-origin.
+ */
+export function resolveManagementBase(): string {
+  const raw: unknown = import.meta.env.VITE_MANAGEMENT_BASE_URL
+  if (typeof raw !== 'string') return ''
+  const trimmed = raw.trim()
+  if (trimmed.length > 0) return trimmed.replace(/\/+$/, '')
+  return ''
+}
+/**
  * Whether the console may open SSE streams.
  *
  * @remarks

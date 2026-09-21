@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useShallow } from 'zustand/react/shallow'
-import { resolveApiBase } from '../../shared/api/client.js'
+import { resolveManagementBase } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { histogramQuantile, parseGatewayPulse, parsePrometheusHistogram } from './prometheus.js'
 import type { GatewayPulse } from './prometheus.js'
@@ -61,7 +61,7 @@ export function PulseStrip({ pollMs = POLL_MS }: { pollMs?: number }): React.JSX
     queryKey: ['prometheus-pulse'],
     enabled: isAdmin,
     queryFn: async ({ signal }): Promise<PulseValues> => {
-      const res = await fetch(`${resolveApiBase()}/actuator/prometheus`, { signal })
+      const res = await fetch(`${resolveManagementBase()}/actuator/prometheus`, { signal })
       if (!res.ok) {
         throw new Error(`Metrics scrape failed: HTTP ${String(res.status)}. Retry shortly.`)
       }

@@ -6,6 +6,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { GatewayClient } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { PulseStrip } from '../observability/PulseStrip.js'
+import { LiveStrip } from './LiveStrip.js'
 import { StatStrip } from './StatStrip.js'
 
 const LatencyChart = lazy(() => import('../observability/LatencyChart.js'))
@@ -102,11 +103,14 @@ export function OverviewPage(): React.JSX.Element {
             </button>
           </div>
         ) : summary.data === undefined ? null : (
-          <StatStrip
-            summary={summary.data}
-            liveRps={liveRps}
-            onRetry={() => void summary.refetch()}
-          />
+          <>
+            <LiveStrip summary={summary.data} liveRps={liveRps} />
+            <StatStrip
+              summary={summary.data}
+              liveRps={liveRps}
+              onRetry={() => void summary.refetch()}
+            />
+          </>
         )
       ) : null}
       {isAdmin ? (

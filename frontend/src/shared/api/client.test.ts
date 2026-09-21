@@ -6,6 +6,7 @@ import {
   parseGatewayErrorCode,
   parseRateLimit,
   resolveApiBase,
+  resolveManagementBase,
   safeErrorMessage,
   selectPrimaryDimension,
   setHeadersReporter,
@@ -239,6 +240,22 @@ describe('resolveApiBase', () => {
   })
 })
 
+describe('resolveManagementBase', () => {
+  it('falls back to same-origin when unconfigured', () => {
+    vi.stubEnv('VITE_MANAGEMENT_BASE_URL', '')
+    expect(resolveManagementBase()).toBe('')
+  })
+
+  it('falls back to same-origin when absent', () => {
+    vi.stubEnv('VITE_MANAGEMENT_BASE_URL', undefined)
+    expect(resolveManagementBase()).toBe('')
+  })
+
+  it('trims whitespace and trailing slashes', () => {
+    vi.stubEnv('VITE_MANAGEMENT_BASE_URL', '  http://localhost:9091///  ')
+    expect(resolveManagementBase()).toBe('http://localhost:9091')
+  })
+})
 describe('isStreamingEnabled', () => {
   it('streams by default', () => {
     vi.stubEnv('VITE_FEATURE_STREAMING', undefined)

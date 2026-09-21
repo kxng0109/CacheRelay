@@ -28,6 +28,7 @@ export default defineConfig([
       'playwright-report/**',
       'test-results/**',
       'storybook-static/**',
+      '.tmp-interact/**',
       '*.log',
     ],
   },
