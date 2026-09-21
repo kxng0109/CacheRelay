@@ -4,6 +4,7 @@ import com.redis.testcontainers.RedisContainer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.server.LocalManagementPort;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -72,14 +73,18 @@ class SecurityDenyAllBoundaryTest {
 	@LocalServerPort
 	private int port;
 
+	@LocalManagementPort
+	private int managementPort;
+
 	@Test
-	@DisplayName("public observability routes are permitted")
+	@DisplayName("management-port observability routes are permitted")
 	void publicRoutesPermitted() throws Exception {
+		// SEC-15: health and metrics live on the dedicated management port only.
 		// Aggregate health is a composite of indicators (db, redis, diskSpace, ...):
 		// Redis is explicitly mapped to this class's container above, and a cold
 		// runner can still report transient 503 until Hikari/Lettuce warm up, so
 		// this endpoint alone waits for UP instead of asserting a single shot.
-		awaitPublicRouteUp("/actuator/health", Duration.ofSeconds(30), Duration.ofMillis(500));
+		awaitPublicRouteUp(managementPort, "/actuator/health", Duration.ofSeconds(30), Duration.ofMillis(500));
 		assertThat(status("GET", "/v3/api-docs")).isEqualTo(200);
 	}
 
@@ -169,18 +174,19 @@ class SecurityDenyAllBoundaryTest {
 	 * fails immediately, so a genuine boundary regression can never be masked by the
 	 * wait loop.
 	 *
-	 * @param path public path to poll; must not be {@code null}
-	 * @param timeout maximum time to wait for {@code 200 OK}; must be positive
-	 * @param interval delay between attempts; must be positive
+	 * @param targetPort port to poll (the management port for actuator routes)
+	 * @param path       public path to poll; must not be {@code null}
+	 * @param timeout    maximum time to wait for {@code 200 OK}; must be positive
+	 * @param interval   delay between attempts; must be positive
 	 */
-	private void awaitPublicRouteUp(String path, Duration timeout, Duration interval) throws Exception {
+	private void awaitPublicRouteUp(int targetPort, String path, Duration timeout, Duration interval) throws Exception {
 		HttpClient client = HttpClient.newHttpClient();
 		Instant deadline = Instant.now().plus(timeout);
 		int lastStatus = -1;
 		while (true) {
 			try {
 				HttpRequest request = HttpRequest.newBuilder()
-				                                 .uri(URI.create("http://localhost:" + port + path))
+				                                 .uri(URI.create("http://localhost:" + targetPort + path))
 				                                 .GET()
 				                                 .build();
 				lastStatus = client.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();

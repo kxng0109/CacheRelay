@@ -17,7 +17,7 @@ scrape_configs:
     scrape_interval: 5s
     scrape_timeout: 3s
     static_configs:
-      - targets: [ "cacherelay:8080" ]
+      - targets: [ "cacherelay:9091" ]
         labels:
           application: "CacheRelay"
           environment: "production"

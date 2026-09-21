@@ -1,13 +1,15 @@
 /*
  * 00-smoke: no-key baselines. No provider keys, no bootstrap key, no side effects.
- * Covers: actuator health/prometheus, auth-negative floods (401/404/400/413).
+ * Covers: actuator health/prometheus (management port), auth-negative floods (401/404/400/413).
  * Run: k6 run loadtest/k6/00-smoke.js
  * Env:  BASE_URL (default http://localhost:8080)
+ *       MGMT_URL (default http://localhost:9091; SEC-15 management port)
  */
 import http from 'k6/http';
 import {check} from 'k6';
 
 const BASE = __ENV.BASE_URL || 'http://localhost:8080';
+const MGMT = __ENV.MGMT_URL || 'http://localhost:9091';
 
 export const options = {
     vus: 10,
@@ -21,10 +23,10 @@ export const options = {
 };
 
 export default function () {
-    let res = http.get(BASE + '/actuator/health');
+    let res = http.get(MGMT + '/actuator/health');
     check(res, {'health 200': (r) => r.status === 200});
 
-    res = http.get(BASE + '/actuator/prometheus');
+    res = http.get(MGMT + '/actuator/prometheus');
     check(res, {'prometheus 200': (r) => r.status === 200});
 
     res = http.post(

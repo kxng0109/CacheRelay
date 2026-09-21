@@ -31,10 +31,11 @@ public class DevCorsConfig {
 	/**
 	 * CORS policy for the local Vite dev server.
 	 *
-	 * <p>Covers the versioned API surface ({@code /v1/**}) plus the actuator endpoints the
-	 * operator UI charts and probes read ({@code /actuator/**}): both are same-origin
-	 * (`http://localhost:5173`) in dev only. Production keeps no CORS configuration and
-	 * stays default-deny for cross-origin browser traffic.
+	 * <p>Covers the versioned API surface ({@code /v1/**}), which is same-origin
+	 * ({@code http://localhost:5173}) in dev only. Actuator endpoints are deliberately
+	 * not registered: since SEC-15 they are served exclusively on the loopback-published
+	 * management port, which browsers must not scrape. Production keeps no CORS
+	 * configuration and stays default-deny for cross-origin browser traffic.</p>
 	 *
 	 * @return source mapping dev paths to the dev policy
 	 */
@@ -78,7 +79,6 @@ public class DevCorsConfig {
 				"Idempotent-Replayed"));
 		UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
 		source.registerCorsConfiguration("/v1/**", config);
-		source.registerCorsConfiguration("/actuator/**", config);
 		return source;
 	}
 }

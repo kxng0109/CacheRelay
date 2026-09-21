@@ -37,6 +37,10 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+            # SEC-15: management port (health + prometheus). Never mapped by the
+            # Service; reachable only inside the pod network (probes, scraper).
+            - name: management
+              containerPort: 9091
           env:
             - name: SPRING_PROFILES_ACTIVE
               value: default
@@ -89,7 +93,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /actuator/health/liveness
-              port: http
+              port: management
             initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 3
@@ -97,7 +101,7 @@ spec:
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
-              port: http
+              port: management
             initialDelaySeconds: 20
             periodSeconds: 5
             timeoutSeconds: 3

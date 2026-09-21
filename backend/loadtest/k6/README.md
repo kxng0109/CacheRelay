@@ -10,7 +10,7 @@ staging-scale artifact (sharded generators), not for local runs.
 winget install k6 --source winget
 docker compose --profile monitoring up -d --wait --wait-timeout 120
 # wait for app health (compose start_period is 20s; poll to be sure):
-do { Start-Sleep 5; $h = (curl -fsS http://localhost:8080/actuator/health 2>$null) } until ($h)
+do { Start-Sleep 5; $h = (curl -fsS http://localhost:9091/actuator/health 2>$null) } until ($h)
 $env:BASE_URL = "http://localhost:8080"
 # default compose bootstrap key (valid 32-char suffix):
 $env:API_KEY = "gw-localdevmasterkey0123456789abcde"

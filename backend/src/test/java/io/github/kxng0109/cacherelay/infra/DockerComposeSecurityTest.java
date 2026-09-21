@@ -47,17 +47,38 @@ class DockerComposeSecurityTest {
 	}
 
 	@Test
-	@DisplayName("only the app publishes a non-loopback port")
+	@DisplayName("only the app port publishes a non-loopback mapping; management stays loopback")
 	void onlyAppOnPublicInterface() {
+		List<String> appPorts = portsOf("cacherelay");
+		assertThat(appPorts).as("app port mapping present")
+				.anySatisfy(mapping -> assertThat(mapping)
+						.as("app port stays reachable on the bind host")
+						.doesNotStartWith("127.0.0.1:"));
+		// SEC-15: the actuator management port must never follow GATEWAY_BIND_HOST.
+		assertThat(appPorts).filteredOn(mapping -> mapping.contains("GATEWAY_MANAGEMENT_PORT"))
+				.as("management port mapping present")
+				.singleElement()
+				.satisfies(mapping -> assertThat(mapping)
+						.as("management port binds loopback only")
+						.startsWith("127.0.0.1:"));
 		for (String service : services.keySet()) {
+			if (service.equals("cacherelay")) {
+				continue;
+			}
 			for (String mapping : portsOf(service)) {
-				if (service.equals("cacherelay")) {
-					assertThat(mapping).as("app stays reachable").doesNotStartWith("127.0.0.1:");
-				} else {
-					assertThat(mapping).as(service + " must bind loopback").startsWith("127.0.0.1:");
-				}
+				assertThat(mapping).as(service + " must bind loopback").startsWith("127.0.0.1:");
 			}
 		}
+	}
+
+	@Test
+	@DisplayName("Prometheus scrapes the management port, not the app port")
+	void prometheusScrapesManagementPort() throws IOException {
+		Path scrape = Paths.get(System.getProperty("user.dir"), "monitoring", "prometheus", "prometheus.yml");
+		assertThat(Files.exists(scrape)).as("prometheus.yml resolves").isTrue();
+		String config = Files.readString(scrape);
+		assertThat(config).as("scrape target is the management port").contains("cacherelay:9091");
+		assertThat(config).as("app port is not scraped for metrics").doesNotContain("cacherelay:8080");
 	}
 
 	@Test

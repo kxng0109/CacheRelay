@@ -100,21 +100,23 @@ class DevCorsTest {
 	}
 
 	@Test
-	@DisplayName("actuator preflight from the dev origin succeeds")
-	void actuatorPreflightSucceeds() throws Exception {
+	@DisplayName("actuator is no longer reachable from the app port (SEC-15)")
+	void actuatorIsNotOnTheAppPort() throws Exception {
+		// Since SEC-15 the actuator moved to the loopback-published management port and
+		// the dev CORS allow-list no longer covers /actuator/**: the app port serves no
+		// actuator route, and the Vite origin receives no CORS grant to scrape it.
 		HttpRequest request = HttpRequest.newBuilder()
 				.uri(URI.create("http://localhost:" + port + "/actuator/prometheus"))
 				.header("Origin", DEV_ORIGIN)
-				.header("Access-Control-Request-Method", "GET")
-				.method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+				.GET()
 				.build();
 		HttpResponse<Void> response = HttpClient.newHttpClient().send(request,
 				HttpResponse.BodyHandlers.discarding());
 
-		assertThat(response.statusCode()).as("actuator preflight status").isEqualTo(200);
+		assertThat(response.statusCode()).as("actuator on the app port").isEqualTo(404);
 		assertThat(response.headers().firstValue("Access-Control-Allow-Origin"))
-				.as("echoed origin")
-				.hasValue(DEV_ORIGIN);
+				.as("no CORS grant for actuator on the app port")
+				.isEmpty();
 	}
 
 	@Test

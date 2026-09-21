@@ -86,7 +86,7 @@ public class CacheRelayCacheService {
 			@Nullable VirtualApiKey apiKey
 	) {
 		if (!policyEngine.shouldEvaluateCache(request, httpRequest)) {
-			recordMetric(CacheStatus.BYPASS, request.model(), ownerId);
+			recordMetric(CacheStatus.BYPASS, request.model());
 			return CacheLookupResult.bypass();
 		}
 
@@ -114,7 +114,7 @@ public class CacheRelayCacheService {
 		CacheEntry l0Hit = l0Cache.get(key.exactHash());
 		if (l0Hit != null) {
 			long l0Duration = System.currentTimeMillis() - start;
-			recordMetric(CacheStatus.HIT_L0, key.model(), key.ownerId());
+			recordMetric(CacheStatus.HIT_L0, key.model());
 			recordSavings(l0Hit);
 			return CacheLookupResult.hit(CacheStatus.HIT_L0, l0Hit, 1.0f, l0Duration);
 		}
@@ -127,7 +127,7 @@ public class CacheRelayCacheService {
 		} catch (Exception ex) {
 			log.warn("Cache evaluation failed non-fatally: {}", ex.getMessage());
 			long duration = System.currentTimeMillis() - start;
-			recordMetric(CacheStatus.MISS, key.model(), key.ownerId());
+			recordMetric(CacheStatus.MISS, key.model());
 			return CacheLookupResult.miss(duration);
 		}
 	}
@@ -151,7 +151,7 @@ public class CacheRelayCacheService {
 		if (l1Hit != null) {
 			long duration = System.currentTimeMillis() - start;
 			l0Cache.put(key.exactHash(), l1Hit);
-			recordMetric(CacheStatus.HIT_L1, key.model(), key.ownerId());
+			recordMetric(CacheStatus.HIT_L1, key.model());
 			recordSavings(l1Hit);
 			return CacheLookupResult.hit(CacheStatus.HIT_L1, l1Hit, 1.0f, duration);
 		}
@@ -161,13 +161,13 @@ public class CacheRelayCacheService {
 		if (l2Hit != null) {
 			long duration = System.currentTimeMillis() - start;
 			l0Cache.put(key.exactHash(), l2Hit);
-			recordMetric(CacheStatus.HIT_L2, key.model(), key.ownerId());
+			recordMetric(CacheStatus.HIT_L2, key.model());
 			recordSavings(l2Hit);
 			return CacheLookupResult.hit(CacheStatus.HIT_L2, l2Hit, l2Hit.similarityScore(), duration);
 		}
 
 		long duration = System.currentTimeMillis() - start;
-		recordMetric(CacheStatus.MISS, key.model(), key.ownerId());
+		recordMetric(CacheStatus.MISS, key.model());
 		return CacheLookupResult.miss(duration);
 	}
 
@@ -262,12 +262,11 @@ public class CacheRelayCacheService {
 		l0Cache.invalidateAll();
 	}
 
-	private void recordMetric(CacheStatus status, String model, @Nullable String ownerId) {
+	private void recordMetric(CacheStatus status, String model) {
 		try {
 			Counter.builder("cacherelay.cache.requests")
 			       .tag("status", status.name().toLowerCase())
 			       .tag("model", model != null ? model : "unknown")
-			       .tag("tenant", ownerId != null ? ownerId : "unknown")
 			       .register(meterRegistry)
 			       .increment();
 		} catch (Exception ignored) {
@@ -278,7 +277,6 @@ public class CacheRelayCacheService {
 		try {
 			Counter.builder("cacherelay.cache.tokens.saved")
 			       .tag("model", entry.model())
-			       .tag("tenant", entry.ownerId())
 			       .register(meterRegistry)
 			       .increment(entry.totalTokens());
 		} catch (Exception ignored) {

@@ -111,6 +111,147 @@ gateway:
       api-key: ""
       connect-timeout: ${OLLAMA_CONNECT_TIMEOUT:3s}
       request-timeout: ${OLLAMA_REQUEST_TIMEOUT:120s}
+    # Config-only OpenAI-compatible providers: zero Java, activated by setting
+    # the key and referencing the name in an alias chain (see README). Unset
+    # keys stay inert; nothing calls a provider until a chain references it.
+    together:
+      type: OPENAI
+      base-url: https://api.together.ai/v1
+      api-key: ${TOGETHER_API_KEY:}
+      connect-timeout: ${TOGETHER_CONNECT_TIMEOUT:5s}
+      request-timeout: ${TOGETHER_REQUEST_TIMEOUT:60s}
+    groq:
+      type: OPENAI
+      base-url: https://api.groq.com/openai/v1
+      api-key: ${GROQ_API_KEY:}
+      connect-timeout: ${GROQ_CONNECT_TIMEOUT:5s}
+      request-timeout: ${GROQ_REQUEST_TIMEOUT:60s}
+    mistral:
+      type: OPENAI
+      base-url: https://api.mistral.ai/v1
+      api-key: ${MISTRAL_API_KEY:}
+      connect-timeout: ${MISTRAL_CONNECT_TIMEOUT:5s}
+      request-timeout: ${MISTRAL_REQUEST_TIMEOUT:60s}
+    xai:
+      type: OPENAI
+      base-url: https://api.x.ai/v1
+      api-key: ${XAI_API_KEY:}
+      connect-timeout: ${XAI_CONNECT_TIMEOUT:5s}
+      request-timeout: ${XAI_REQUEST_TIMEOUT:120s}
+    deepinfra:
+      type: OPENAI
+      base-url: https://api.deepinfra.com/v1/openai
+      api-key: ${DEEPINFRA_API_KEY:}
+      connect-timeout: ${DEEPINFRA_CONNECT_TIMEOUT:5s}
+      request-timeout: ${DEEPINFRA_REQUEST_TIMEOUT:60s}
+    fireworks:
+      type: OPENAI
+      base-url: https://api.fireworks.ai/inference/v1
+      api-key: ${FIREWORKS_API_KEY:}
+      connect-timeout: ${FIREWORKS_CONNECT_TIMEOUT:5s}
+      request-timeout: ${FIREWORKS_REQUEST_TIMEOUT:60s}
+    cerebras:
+      type: OPENAI
+      base-url: https://api.cerebras.ai/v1
+      api-key: ${CEREBRAS_API_KEY:}
+      connect-timeout: ${CEREBRAS_CONNECT_TIMEOUT:5s}
+      request-timeout: ${CEREBRAS_REQUEST_TIMEOUT:60s}
+    sambanova:
+      type: OPENAI
+      base-url: https://api.sambanova.ai/v1
+      api-key: ${SAMBANOVA_API_KEY:}
+      connect-timeout: ${SAMBANOVA_CONNECT_TIMEOUT:5s}
+      request-timeout: ${SAMBANOVA_REQUEST_TIMEOUT:60s}
+    nebius:
+      type: OPENAI
+      base-url: https://api.studio.nebius.com/v1
+      api-key: ${NEBIUS_API_KEY:}
+      connect-timeout: ${NEBIUS_CONNECT_TIMEOUT:5s}
+      request-timeout: ${NEBIUS_REQUEST_TIMEOUT:60s}
+    novita:
+      type: OPENAI
+      base-url: https://api.novita.ai/openai
+      api-key: ${NOVITA_API_KEY:}
+      connect-timeout: ${NOVITA_CONNECT_TIMEOUT:5s}
+      request-timeout: ${NOVITA_REQUEST_TIMEOUT:60s}
+    moonshot:
+      type: OPENAI
+      base-url: https://api.moonshot.ai/v1
+      api-key: ${MOONSHOT_API_KEY:}
+      connect-timeout: ${MOONSHOT_CONNECT_TIMEOUT:5s}
+      request-timeout: ${MOONSHOT_REQUEST_TIMEOUT:60s}
+    zhipu:
+      type: OPENAI
+      base-url: https://open.bigmodel.cn/api/paas/v4
+      api-key: ${ZHIPU_API_KEY:}
+      connect-timeout: ${ZHIPU_CONNECT_TIMEOUT:5s}
+      request-timeout: ${ZHIPU_REQUEST_TIMEOUT:60s}
+    minimax:
+      type: OPENAI
+      base-url: https://api.minimax.io/v1
+      api-key: ${MINIMAX_API_KEY:}
+      connect-timeout: ${MINIMAX_CONNECT_TIMEOUT:5s}
+      request-timeout: ${MINIMAX_REQUEST_TIMEOUT:60s}
+    qwen:
+      type: OPENAI
+      base-url: ${QWEN_BASE_URL:}
+      api-key: ${DASHSCOPE_API_KEY:}
+      connect-timeout: ${QWEN_CONNECT_TIMEOUT:5s}
+      request-timeout: ${QWEN_REQUEST_TIMEOUT:60s}
+    stepfun:
+      type: OPENAI
+      base-url: https://api.stepfun.com/v1
+      api-key: ${STEP_API_KEY:}
+      connect-timeout: ${STEP_CONNECT_TIMEOUT:5s}
+      request-timeout: ${STEP_REQUEST_TIMEOUT:60s}
+    cloudflare:
+      type: OPENAI
+      base-url: https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID:}/ai/v1
+      api-key: ${CLOUDFLARE_API_TOKEN:}
+      connect-timeout: ${CLOUDFLARE_CONNECT_TIMEOUT:5s}
+      request-timeout: ${CLOUDFLARE_REQUEST_TIMEOUT:60s}
+    hyperbolic:
+      type: OPENAI
+      base-url: https://api.hyperbolic.xyz/v1
+      api-key: ${HYPERBOLIC_API_KEY:}
+      connect-timeout: ${HYPERBOLIC_CONNECT_TIMEOUT:5s}
+      request-timeout: ${HYPERBOLIC_REQUEST_TIMEOUT:60s}
+    ionet:
+      type: OPENAI
+      base-url: https://api.intelligence.io.solutions/api
+      api-key: ${IO_API_KEY:}
+      connect-timeout: ${IO_CONNECT_TIMEOUT:5s}
+      request-timeout: ${IO_REQUEST_TIMEOUT:60s}
+    friendli:
+      type: OPENAI
+      base-url: https://api.friendli.ai/serverless/v1
+      api-key: ${FRIENDLI_API_KEY:}
+      connect-timeout: ${FRIENDLI_CONNECT_TIMEOUT:5s}
+      request-timeout: ${FRIENDLI_REQUEST_TIMEOUT:60s}
+    bedrock:
+      type: OPENAI
+      base-url: ${AWS_BEDROCK_BASE_URL:}
+      api-key: ${AWS_BEARER_TOKEN_BEDROCK:}
+      connect-timeout: ${BEDROCK_CONNECT_TIMEOUT:5s}
+      request-timeout: ${BEDROCK_REQUEST_TIMEOUT:60s}
+    vllm:
+      type: OPENAI
+      base-url: ${VLLM_BASE_URL:http://localhost:8000/v1}
+      api-key: ${VLLM_API_KEY:}
+      connect-timeout: ${VLLM_CONNECT_TIMEOUT:3s}
+      request-timeout: ${VLLM_REQUEST_TIMEOUT:120s}
+    llamacpp:
+      type: OPENAI
+      base-url: ${LLAMACPP_BASE_URL:http://localhost:8080/v1}
+      api-key: ${LLAMACPP_API_KEY:}
+      connect-timeout: ${LLAMACPP_CONNECT_TIMEOUT:3s}
+      request-timeout: ${LLAMACPP_REQUEST_TIMEOUT:120s}
+    lmstudio:
+      type: OPENAI
+      base-url: ${LMSTUDIO_BASE_URL:http://localhost:1234/v1}
+      api-key: ${LMSTUDIO_API_KEY:}
+      connect-timeout: ${LMSTUDIO_CONNECT_TIMEOUT:3s}
+      request-timeout: ${LMSTUDIO_REQUEST_TIMEOUT:120s}
   aliases:
     gpt-56-luna:
       chain:
@@ -363,6 +504,12 @@ cacherelay:
       watchdog-timeout-ms: ${CACHERELAY_SSE_CAPACITY_WATCHDOG_TIMEOUT_MS:30000}
 
 management:
+  server:
+    # SEC-15: actuator endpoints live on a dedicated management port. Docker Compose
+    # publishes it on host loopback only (never on the app bind host) and Prometheus
+    # scrapes it over the compose network, so the anonymous metrics surface is never
+    # reachable from the network. The app port serves no actuator endpoint at all.
+    port: ${GATEWAY_MANAGEMENT_PORT:9091}
   endpoints:
     web:
       exposure:

@@ -147,7 +147,11 @@ gateway:
       strategy: SEQUENTIAL
 ```
 
-The `type` field selects the protocol dialect. `OPENAI` covers OpenAI itself, OpenRouter, Groq, DeepSeek, Mistral, Together, vLLM, and most local servers. `ANTHROPIC` speaks the Anthropic Messages API, and `OLLAMA` speaks the native Ollama chat API. The full set of shipped providers and aliases lives in `backend/src/main/resources/application.yml`. The `model-override` on a chain step pins the concrete upstream model for that provider, which is how a client facing name maps to a provider specific id.
+The `type` field selects the protocol dialect. `OPENAI` covers OpenAI itself plus every pre-wired
+OpenAI-compatible entry (OpenRouter, Together, Groq, Mistral, xAI, DeepSeek, DeepInfra, Fireworks, Cerebras,
+SambaNova, Nebius, Novita, Moonshot, Zhipu, MiniMax, Qwen, StepFun, Cloudflare, Hyperbolic, io.net, FriendliAI,
+Bedrock Bearer-key, vLLM, llama.cpp, LM Studio). `ANTHROPIC` speaks the Anthropic Messages API, and `OLLAMA`
+speaks the native Ollama chat API. The full set of shipped providers and aliases lives in `backend/src/main/resources/application.yml`. Each entry is inert until its key is set and an alias chain references it. The `model-override` on a chain step pins the concrete upstream model for that provider, which is how a client facing name maps to a provider specific id.
 
 The behavior of a chain is decided by the classification rules in `FailoverOrchestrator`:
 
@@ -165,8 +169,10 @@ When every provider fails, the client sees a clean error: 502 when providers ret
 
 CacheRelay keeps one client contract, the OpenAI chat completions shape, and translates each provider's native protocol behind it. The `type` field on a provider selects the dialect:
 
-- `OPENAI` speaks the OpenAI chat completions protocol directly. This covers OpenAI itself, OpenRouter, Groq, Mistral,
-  Together, vLLM, and most local servers.
+- `OPENAI` speaks the OpenAI chat completions protocol directly. This covers OpenAI itself and all
+  pre-wired compatible entries (see `application.yml`: Together, Groq, Mistral, xAI, DeepInfra, Fireworks,
+  Cerebras, SambaNova, Nebius, Novita, Moonshot, Zhipu, MiniMax, Qwen, StepFun, Cloudflare, Hyperbolic,
+  io.net, FriendliAI, Bedrock Bearer-key, vLLM, llama.cpp, LM Studio, plus OpenRouter).
 - `ANTHROPIC` speaks the Anthropic Messages API (`/v1/messages`). Requests are translated with tool declarations, tool
   choices, and Anthropic streaming events are rewritten into OpenAI shaped chunks.
 - `GEMINI` speaks the Google AI Studio Gemini Developer API (`generativelanguage.googleapis.com`), supporting
@@ -422,7 +428,8 @@ The bootstrap fills every hard-required secret (`POSTGRES_PASSWORD`, `POSTGRES_E
 `GATEWAY_MCP_HITL_SECRET`, `GRAFANA_ADMIN_PASSWORD`) with locally generated random hex values. It refuses to
 overwrite an existing `.env` unless you force it, and `.env` is gitignored — never commit it.
 
-- **CacheRelay Gateway**: `http://localhost:8080` (Actuator & Health: `http://localhost:8080/actuator/health`)
+- **CacheRelay Gateway**: `http://localhost:8080` (Actuator & Health: `http://localhost:9091/actuator/health` — a dedicated
+  management port published on host loopback only; metrics are never reachable from the network)
 - **Grafana Dashboard**: `http://localhost:3000` (Pre-configured `CacheRelay — Production Operations` dashboard, 51 panels across 12 rows: request path, rate limiting, ledger, JVM, pools, Redis, Postgres, client connections)
 - **Prometheus TSDB**: `http://localhost:9090` (Scraping the app plus `redis-exporter:9121` and `postgres-exporter:9187`, with 20 pre-loaded alert rules)
 
@@ -641,6 +648,12 @@ immediately if the old shipped default was ever used; generate fresh with `opens
   `409` file-bound).
 - **`DELETE /v1/admin/models/{name}`**: Permanently deletes a database-managed alias (`204`; `404` unknown,
   `409` file-bound). Every mutation is audit-logged with the admin actor.
+- **`GET /v1/admin/providers`**: Lists every configured upstream provider with dialect, base URL,
+  `keyConfigured` (boolean only, never the key), timeouts, live `circuitState`, and how many alias chain
+  steps reference it — the provider dropdown source for admin UIs.
+- **`GET /v1/admin/model-catalog`**: Searches the pricing catalog snapshot for model suggestions
+  (`provider` filter, case-insensitive `q` substring, `limit` 1–200) with context windows and per-token
+  prices — the model picker source when composing alias chain steps.
 - **`GET /v1/admin/circuits`**: Inspects real-time circuit breaker states (`CLOSED`, `OPEN`, `HALF_OPEN`) across all
   providers.
 - **`POST /v1/admin/circuits/{provider}/reset`**: Force-resets an upstream circuit breaker to `CLOSED`.
@@ -755,7 +768,8 @@ tracking, syntax highlighting, and live Try-It-Out execution:
    (`Authorization: Bearer gw-...`).
 2. **`2. Administrative APIs`**: `/v1/admin/**` (Keys, Circuits, Ledger, Cache) with Master Admin Key authentication
    (`Authorization: Bearer <master-key>` or `X-Admin-Key: <master-key>`).
-3. **`3. Observability & Actuator`**: `/actuator/**` health and Prometheus metrics.
+3. **`3. Observability & Actuator`**: `/actuator/**` health and Prometheus metrics on the dedicated management port
+   (`http://localhost:9091`, host loopback only; SEC-15). The app port serves no actuator route.
 
 ## Security model
 

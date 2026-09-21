@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Actuator exposure closed (SEC-15):** `/actuator/**` (health, probe subpaths, Prometheus metrics) moved to a
+  dedicated management port (`GATEWAY_MANAGEMENT_PORT`, default `9091`) that Docker Compose publishes on host
+  **loopback only** and Prometheus scrapes over the compose network; the app port answers `404` for every
+  `/actuator/**` path and the dev CORS allow-list no longer grants browsers a metrics scrape. Tenant identifiers
+  were dropped from `cacherelay.cache.requests` / `cacherelay.cache.tokens.saved` (bounded labels: status + model
+  only). Kubernetes probes now target the management port. Regression coverage:
+  `ManagementPortIsolationTest` (app-port 404 / management-port health + prometheus + probe subpaths) and
+  `DevCorsTest` (no CORS grant on the app port).
 - **Admin master key fail-fast (SEC-03):** `GATEWAY_ADMIN_MASTERKEY` is mandatory with no shipped default;
   startup fails when it is missing, blank, shorter than 32 bytes, or a published default
   (`cacherelay_admin_secret_key`, `changeme`, ...). The compose fallback was removed — set the variable
@@ -82,6 +90,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   duplicates are `409`, unknown providers and bad payloads `400`, deletes `204`. Startup ordering is explicit
   (`DatabaseMigrator` first), database outages degrade to file-only reads with `503` mutations and scheduled
   retry, and every mutation is audit-logged with the admin actor. Full `verify` 2,026 green, branch ≥ 0.95.
+- **Provider breadth (26 pre-wired entries, config-only):** `gateway.providers` now ships Together, Groq,
+  Mistral, xAI, DeepInfra, Fireworks, Cerebras, SambaNova, Nebius, Novita, Moonshot, Zhipu, MiniMax, Qwen,
+  StepFun, Cloudflare, Hyperbolic, io.net, FriendliAI, Bedrock (Bearer-key chat), vLLM, llama.cpp, and
+  LM Studio alongside the existing OpenAI/OpenRouter/Anthropic/Ollama — all `type: OPENAI`, zero Java.
+  Every entry is inert until its `${*_API_KEY}` is set and an alias chain references it (Qwen/Cloudflare/
+  Bedrock also need their base-URL/account vars; see `.env.docker.example`). Quirks documented from
+  research: Cerebras/Groq reject penalty/logprob fields, Fireworks needs
+  `accounts/fireworks/models/…` IDs, io.net base ends at `/api`. Full `verify` green, branch ≥ 0.95.
+- **Admin provider + model-catalog listings:** `GET /v1/admin/providers` joins the bound provider config with
+  credential presence (boolean only, never the key), live circuit-breaker state, and alias reference counts;
+  `GET /v1/admin/model-catalog` searches the existing pricing snapshot (provider filter, case-insensitive
+  model-id substring, `limit` 1–200) with context windows and per-token prices for the model picker. Both are
+  admin-gated and add no hot-path work. Full `verify` green; branch ≥ 0.95.
 - **Resource/prompt governance (no more unfiltered surfaces):** virtual keys carry `allowedResources` /
   `deniedResources` (URI globs) and `allowedPrompts` / `deniedPrompts` (name globs) with deny-wins,
   empty-means-visible semantics; catalog lists and filters enforce them (null keys fail closed). Redis-stored

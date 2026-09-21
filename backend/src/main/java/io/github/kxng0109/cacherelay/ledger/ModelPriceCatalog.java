@@ -84,6 +84,37 @@ public class ModelPriceCatalog {
 		snapshotCache.invalidateAll();
 	}
 
+	/**
+	 * Searches the cached catalog snapshot for model suggestions (admin model catalog).
+	 *
+	 * <p>Reuses the same in-memory snapshot as {@link #lookup(ProviderType, String)}, so a
+	 * search never touches the database unless the snapshot has expired. Results are
+	 * ordered by model id and then by provider for stable pagination.</p>
+	 *
+	 * @param provider optional catalog provider filter (for example {@code openai},
+	 *                 {@code together_ai}); blank means every provider
+	 * @param query    optional case-insensitive substring of the model id; blank means
+	 *                 every model
+	 * @param limit    maximum entries to return; clamped defensively to 1 through 1000
+	 * @return matching entries, never {@code null}
+	 */
+	public List<ModelPricingEntry> search(String provider, String query, int limit) {
+		Map<String, List<ModelPricingEntry>> byModelId = snapshotCache.get("catalog", key -> load());
+		String providerFilter = provider == null ? "" : provider.trim();
+		String needle = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+		int bounded = Math.max(1, Math.min(limit, 1000));
+		return byModelId.values().stream()
+		                 .flatMap(List::stream)
+		                 .filter(entry -> providerFilter.isEmpty()
+				                 || entry.provider().equalsIgnoreCase(providerFilter))
+		                 .filter(entry -> needle.isEmpty()
+				                 || entry.modelId().toLowerCase(Locale.ROOT).contains(needle))
+		                 .sorted(Comparator.comparing(ModelPricingEntry::modelId)
+				                 .thenComparing(ModelPricingEntry::provider))
+		                 .limit(bounded)
+		                 .toList();
+	}
+
 	private Map<String, List<ModelPricingEntry>> load() {
 		Map<String, List<ModelPricingEntry>> byModelId = new LinkedHashMap<>();
 		for (ModelPricingEntity entity : repository.findAll()) {

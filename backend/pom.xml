@@ -259,6 +259,9 @@
                              all ~13 piling into the JVM shutdown hook (each Hikari close awaits
                              termination). 13 distinct configs, each used once, so no rebuild cost.
                              Production unaffected: test-JVM-only property source. -->
+                        <!-- SEC-15: random management port per test context; the production
+                             default (9091) would collide across cached/parallel test contexts. -->
+                        <management.server.port>0</management.server.port>
                         <spring.test.context.cache.maxSize>2</spring.test.context.cache.maxSize>
                     </systemPropertyVariables>
                 </configuration>

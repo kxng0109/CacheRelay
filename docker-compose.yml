@@ -187,13 +187,17 @@ services:
         hard: 100000
     ports:
       - "${GATEWAY_BIND_HOST:-127.0.0.1}:${GATEWAY_PORT:-8080}:8080"
+      # SEC-15: actuator (health + prometheus) lives on a dedicated management port,
+      # published on loopback ONLY regardless of GATEWAY_BIND_HOST. Prometheus scrapes
+      # cacherelay:9091 over the compose network; the network never reaches it.
+      - "127.0.0.1:${GATEWAY_MANAGEMENT_PORT:-9091}:9091"
     depends_on:
       redis:
         condition: service_healthy
       postgres:
         condition: service_healthy
     healthcheck:
-      test: [ "CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health || exit 1" ]
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:9091/actuator/health || exit 1" ]
       interval: 10s
       timeout: 3s
       retries: 5
