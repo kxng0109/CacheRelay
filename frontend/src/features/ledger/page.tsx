@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
+import { Link } from 'react-router'
 import { GatewayClient } from '../../shared/api/client.js'
 
 const PAGE_SIZE = 25
@@ -29,6 +30,16 @@ function LedgerBoard(): React.JSX.Element {
 
   const entries = logs.data?.content ?? []
   const inspected = entries.find((e) => e.requestId === selected) ?? null
+  const [tableFilter, setTableFilter] = useState('')
+  const filterQuery = tableFilter.trim().toLowerCase()
+  const visible =
+    filterQuery.length === 0
+      ? entries
+      : entries.filter(
+          (e) =>
+            e.requestId.toLowerCase().includes(filterQuery) ||
+            e.model.toLowerCase().includes(filterQuery),
+        )
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
@@ -44,15 +55,17 @@ function LedgerBoard(): React.JSX.Element {
         ) : summary.data === undefined ? null : (
           <dl className="grid grid-cols-3 gap-3">
             <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
-              <dt className="text-xs text-ink-soft dark:text-parchment-soft">Requests</dt>
+              <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Requests</dt>
               <dd className="font-mono text-lg tnum">{summary.data.totalRequests}</dd>
             </div>
             <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
-              <dt className="text-xs text-ink-soft dark:text-parchment-soft">Billed (µ$)</dt>
-              <dd className="font-mono text-lg tnum">{summary.data.totalCostUsdMicros}</dd>
+              <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Billed</dt>
+              <dd className="font-mono text-lg tnum">${summary.data.totalCostUsd}</dd>
             </div>
             <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
-              <dt className="text-xs text-ink-soft dark:text-parchment-soft">Avg duration (ms)</dt>
+              <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">
+                Avg duration (ms)
+              </dt>
               <dd className="font-mono text-lg tnum">
                 {summary.data.averageDurationMs.toFixed(1)}
               </dd>
@@ -68,89 +81,129 @@ function LedgerBoard(): React.JSX.Element {
             {logs.error.message}
           </p>
         ) : logs.data === undefined || entries.length === 0 ? (
-          <p className="text-sm text-ink-soft dark:text-parchment-soft">
-            No ledger entries yet. Send traffic through the gateway to populate the audit log.
-          </p>
+          <div className="rounded-xl border border-dashed border-ink/20 p-6 text-center dark:border-parchment/20">
+            <p className="font-display text-xl font-medium tracking-tight">No entries yet</p>
+            <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-soft dark:text-parchment-soft">
+              Send traffic through the gateway to populate the audit log. Each request lands here
+              with model, cost, and timestamp.
+            </p>
+            <Link
+              to="/playground"
+              className="mt-3 inline-block rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+            >
+              Open playground
+            </Link>
+          </div>
         ) : (
           <>
-            <table className="w-full text-left text-sm">
-              <caption className="sr-only">Audit log entries</caption>
-              <thead>
-                <tr className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
-                  <th scope="col" className="py-2 pr-3 font-medium">
-                    Request
-                  </th>
-                  <th scope="col" className="py-2 pr-3 font-medium">
-                    Model
-                  </th>
-                  <th scope="col" className="py-2 pr-3 text-right font-medium">
-                    Cost (µ$)
-                  </th>
-                  <th scope="col" className="py-2 text-right font-medium">
-                    Created
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {entries.map((e) => (
-                  <tr
-                    key={e.requestId}
-                    aria-selected={e.requestId === selected}
-                    onClick={() => {
-                      setSelected(e.requestId === selected ? null : e.requestId)
-                    }}
-                    className={`cursor-pointer border-t border-ink/10 dark:border-parchment/10 ${
-                      e.requestId === selected ? 'bg-ink/4 dark:bg-parchment/6' : ''
-                    }`}
-                  >
-                    <td className="py-2 pr-3 font-mono text-xs">{e.requestId}</td>
-                    <td className="py-2 pr-3 text-xs">{e.model}</td>
-                    <td className="py-2 pr-3 text-right font-mono text-xs tnum">
-                      {e.costUsdMicros}
-                    </td>
-                    <td className="py-2 text-right text-xs tnum">{e.createdAt}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="flex items-center justify-between gap-2">
-              <button
-                type="button"
-                disabled={page === 0}
-                onClick={() => {
-                  setPage((p) => Math.max(0, p - 1))
+            <div>
+              <label htmlFor="ledger-filter" className="sr-only">
+                Filter audit log by request id or model
+              </label>
+              <input
+                id="ledger-filter"
+                type="search"
+                value={tableFilter}
+                onChange={(e) => {
+                  setTableFilter(e.target.value)
                 }}
-                className="rounded-md border border-ink/15 px-3 py-2 text-xs disabled:opacity-50 dark:border-parchment/15"
-              >
-                Previous [p]
-              </button>
-              <p className="p-2 font-mono text-xs tnum" role="status">
-                Page {page + 1}
-                {logs.data.totalPages > 0 ? ` of ${String(logs.data.totalPages)}` : null}
-              </p>
-              <button
-                type="button"
-                disabled={!logs.data.hasNext}
-                onClick={() => {
-                  setPage((p) => p + 1)
-                }}
-                className="rounded-md border border-ink/15 px-3 py-2 text-xs disabled:opacity-50 dark:border-parchment/15"
-              >
-                Next [n]
-              </button>
+                placeholder="Filter [/]"
+                className="w-60 rounded-md border border-ink/15 bg-transparent px-3 py-2 text-[13px] dark:border-parchment/15"
+              />
             </div>
+            {visible.length === 0 ? (
+              <p className="text-sm text-ink-soft dark:text-parchment-soft">
+                No entries match this filter.
+              </p>
+            ) : (
+              <>
+                <table className="w-full text-left text-sm">
+                  <caption className="sr-only">Audit log entries</caption>
+                  <thead className="sticky top-0 bg-paper dark:bg-night">
+                    <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+                      <th scope="col" className="py-2 pr-3 font-medium">
+                        Request
+                      </th>
+                      <th scope="col" className="py-2 pr-3 font-medium">
+                        Model
+                      </th>
+                      <th scope="col" className="py-2 pr-3 text-right font-medium">
+                        Cost (µ$)
+                      </th>
+                      <th scope="col" className="py-2 text-right font-medium">
+                        Created
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visible.map((e) => (
+                      <tr
+                        key={e.requestId}
+                        aria-selected={e.requestId === selected}
+                        onClick={() => {
+                          setSelected(e.requestId === selected ? null : e.requestId)
+                        }}
+                        className={`cursor-pointer border-t border-ink/10 dark:border-parchment/10 ${
+                          e.requestId === selected ? 'bg-ink/4 dark:bg-parchment/6' : ''
+                        }`}
+                      >
+                        <td
+                          className="max-w-44 truncate py-2 pr-3 font-mono text-[13px]"
+                          title={e.requestId}
+                        >
+                          {e.requestId}
+                        </td>
+                        <td className="max-w-40 truncate py-2 pr-3 text-[13px]" title={e.model}>
+                          {e.model}
+                        </td>
+                        <td className="py-2 pr-3 text-right font-mono text-[13px] tnum">
+                          {e.costUsdMicros}
+                        </td>
+                        <td className="py-2 text-right text-[13px] tnum">{e.createdAt}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    disabled={page === 0}
+                    onClick={() => {
+                      setPage((p) => Math.max(0, p - 1))
+                    }}
+                    className="rounded-md border border-ink/15 px-3 py-2 text-[13px] disabled:opacity-50 dark:border-parchment/15"
+                  >
+                    Previous [p]
+                  </button>
+                  <p className="p-2 font-mono text-[13px] tnum" role="status">
+                    Page {page + 1}
+                    {logs.data.totalPages > 0 ? ` of ${String(logs.data.totalPages)}` : null}
+                  </p>
+                  <button
+                    type="button"
+                    disabled={!logs.data.hasNext}
+                    onClick={() => {
+                      setPage((p) => p + 1)
+                    }}
+                    className="rounded-md border border-ink/15 px-3 py-2 text-[13px] disabled:opacity-50 dark:border-parchment/15"
+                  >
+                    Next [n]
+                  </button>
+                </div>
+              </>
+            )}
           </>
         )}
       </div>
       <aside aria-label="Receipt inspector" className="space-y-3">
         {inspected === null ? (
-          <p className="text-xs text-ink-soft dark:text-parchment-soft">
+          <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
             Select a row to inspect its receipt.
           </p>
         ) : (
           <div className="space-y-3 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
             <h2 className="font-mono text-sm break-all">{inspected.requestId}</h2>
-            <dl className="space-y-2 text-xs">
+            <dl className="space-y-2 text-[13px]">
               <div className="flex justify-between gap-3">
                 <dt className="text-ink-soft dark:text-parchment-soft">Model</dt>
                 <dd>{inspected.model}</dd>
@@ -164,6 +217,20 @@ function LedgerBoard(): React.JSX.Element {
                 <dd className="tnum">{inspected.createdAt}</dd>
               </div>
             </dl>
+            <button
+              type="button"
+              onClick={() => {
+                const clip = navigator.clipboard as Clipboard | undefined
+                if (clip !== undefined) {
+                  void clip.writeText(
+                    `request ${inspected.requestId} · model ${inspected.model} · cost ${String(inspected.costUsdMicros)}µ$ · ${inspected.createdAt}`,
+                  )
+                }
+              }}
+              className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+            >
+              Copy receipt
+            </button>
           </div>
         )}
       </aside>

@@ -6,6 +6,7 @@ import * as z from 'zod/v4'
 import { GatewayClient } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
+import { ModelSelect } from '../../shared/models/ModelSelect.js'
 
 const schema = z.object({
   model: z.string().min(1, 'Model is required'),
@@ -49,6 +50,12 @@ export function EmbeddingsPage(): React.JSX.Element {
   const [filter, setFilter] = useState('')
   const [selected, setSelected] = useState<number | null>(null)
   const [lastModel, setLastModel] = useState<string | null>(null)
+  /**
+   * Password managers key off focusable password fields. The key input
+   * stays readonly until first focus, which keeps managers from claiming
+   * it on sight. Typing always works: focus arms the field first.
+   */
+  const [keyArmed, setKeyArmed] = useState(false)
 
   const {
     register,
@@ -59,9 +66,12 @@ export function EmbeddingsPage(): React.JSX.Element {
   } = useForm<FormData>({
     resolver: zodResolver(schema),
     mode: 'onSubmit',
-    defaultValues: { model: 'text-embedding-3-small', input: '', key: gatewayKey ?? '' },
+    defaultValues: { model: '', input: '', key: gatewayKey ?? '' },
   })
   const inputLength = useWatch({ control, name: 'input' }).length
+  const keyValue = useWatch({ control, name: 'key' })
+  const modelValue = useWatch({ control, name: 'model' })
+  const overLimit = inputLength > 8000
 
   const onSubmit = async (d: FormData): Promise<void> => {
     setGatewayKey(d.key)
@@ -133,17 +143,28 @@ export function EmbeddingsPage(): React.JSX.Element {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <h1 className="font-display text-2xl font-medium tracking-tight">Embeddings</h1>
-        {lastModel === null ? null : (
-          <span className="rounded-full border border-ink/15 px-2 py-0.5 font-mono text-[11px] dark:border-parchment/15">
-            model:{lastModel}
+      <div className="space-y-1">
+        <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+          <span aria-hidden="true" className="mr-1 text-ember">
+            ❯
           </span>
-        )}
-        <span className="flex-1" />
-        <p className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft">
-          vectors:{runs.filter((r) => r.status === 'ok').reduce((n, r) => n + (r.vecs ?? 0), 0)}{' '}
-          runs:{runs.length}
+          run
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="font-display text-3xl font-medium tracking-tight">Embeddings</h1>
+          {lastModel === null ? null : (
+            <span className="rounded-full border border-ink/15 px-2 py-0.5 font-mono text-xs dark:border-parchment/15">
+              model:{lastModel}
+            </span>
+          )}
+          <span className="flex-1" />
+          <p className="font-mono text-[13px] text-ink-soft tnum dark:text-parchment-soft">
+            vectors:{runs.filter((r) => r.status === 'ok').reduce((n, r) => n + (r.vecs ?? 0), 0)}{' '}
+            runs:{runs.length}
+          </p>
+        </div>
+        <p className="text-sm text-ink-soft dark:text-parchment-soft">
+          Turn text into vectors. Usage builds below as runs complete.
         </p>
       </div>
       {error === null ? null : (
@@ -157,7 +178,7 @@ export function EmbeddingsPage(): React.JSX.Element {
           <button
             type="button"
             onClick={retrySubmit}
-            className="mt-2 rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+            className="mt-2 rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
           >
             Retry
           </button>
@@ -174,70 +195,89 @@ export function EmbeddingsPage(): React.JSX.Element {
           >
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <label htmlFor="emb-key" className="mb-1 block text-xs font-medium">
+                <label htmlFor="emb-model" className="mb-1 block text-[13px] font-medium">
+                  Model
+                </label>
+                <ModelSelect
+                  token={keyValue}
+                  id="emb-model"
+                  registration={register('model')}
+                  value={modelValue}
+                  invalid={errors.model !== undefined}
+                />
+                {errors.model === undefined ? null : (
+                  <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                    {errors.model.message}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label htmlFor="emb-key" className="mb-1 block text-[13px] font-medium">
                   API key (memory only, never stored)
                 </label>
                 <input
                   id="emb-key"
                   type="password"
-                  autoComplete="off"
+                  autoComplete="new-password"
+                  data-1p-ignore="true"
+                  data-lpignore="true"
+                  data-bwignore="true"
+                  readOnly={!keyArmed}
+                  onFocus={() => {
+                    setKeyArmed(true)
+                  }}
                   {...register('key')}
                   aria-invalid={errors.key !== undefined}
                   className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
                 />
                 {errors.key === undefined ? null : (
-                  <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
+                  <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
                     {errors.key.message}
-                  </p>
-                )}
-              </div>
-              <div>
-                <label htmlFor="emb-model" className="mb-1 block text-xs font-medium">
-                  Model
-                </label>
-                <input
-                  id="emb-model"
-                  {...register('model')}
-                  aria-invalid={errors.model !== undefined}
-                  className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
-                />
-                {errors.model === undefined ? null : (
-                  <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
-                    {errors.model.message}
                   </p>
                 )}
               </div>
             </div>
             <div>
               <div className="mb-1 flex items-baseline justify-between gap-3">
-                <label htmlFor="emb-input" className="block text-xs font-medium">
+                <label htmlFor="emb-input" className="block text-[13px] font-medium">
                   Input text
                 </label>
-                <p className="font-mono text-[11px] text-ink-soft tnum dark:text-parchment-soft">
-                  {inputLength}/8000
+                <p
+                  className={`font-mono text-xs tnum ${
+                    overLimit
+                      ? 'text-danger dark:text-danger-soft'
+                      : 'text-ink-soft dark:text-parchment-soft'
+                  }`}
+                >
+                  {inputLength}/8000{overLimit ? ' over limit' : null}
                 </p>
               </div>
               <textarea
                 id="emb-input"
                 rows={4}
                 {...register('input')}
-                aria-invalid={errors.input !== undefined}
+                aria-invalid={errors.input !== undefined || overLimit}
                 className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
               />
+              {overLimit ? (
+                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                  Input is over the 8000 character limit. Shorten it to send.
+                </p>
+              ) : null}
               {errors.input === undefined ? null : (
-                <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
+                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
                   {errors.input.message}
                 </p>
               )}
             </div>
             <div className="flex items-center justify-between gap-3">
-              <p className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+              <p className="min-w-0 flex-1 truncate font-mono text-xs text-ink-soft dark:text-parchment-soft">
                 run #{runs.length + 1}
               </p>
               <button
                 type="submit"
-                disabled={isSubmitting}
-                className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper disabled:opacity-50 dark:bg-parchment dark:text-night"
+                disabled={isSubmitting || overLimit}
+                className="shrink-0 rounded-md bg-ink px-4 py-2 text-sm font-medium whitespace-nowrap text-paper disabled:opacity-50 dark:bg-parchment dark:text-night"
               >
                 {isSubmitting ? 'Embedding…' : 'Create embeddings'}
               </button>
@@ -255,18 +295,19 @@ export function EmbeddingsPage(): React.JSX.Element {
               onChange={(e) => {
                 setFilter(e.target.value)
               }}
-              className="w-48 rounded-md border border-ink/15 bg-transparent px-3 py-2 text-xs dark:border-parchment/15"
+              className="w-48 rounded-md border border-ink/15 bg-transparent px-3 py-2 text-[13px] dark:border-parchment/15"
             />
           </div>
           {runs.length === 0 ? (
-            <div>
-              <p className="text-sm text-ink-soft dark:text-parchment-soft">
-                No runs yet. Submit text above to populate the usage table.
+            <div className="rise rounded-xl border border-dashed border-ink/20 p-6 text-center sm:p-8 dark:border-parchment/20">
+              <p className="font-display text-xl font-medium tracking-tight">No runs yet</p>
+              <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-soft dark:text-parchment-soft">
+                Paste a key, pick a model, submit text. Vectors and usage land here.
               </p>
               <button
                 type="button"
                 onClick={fillSample}
-                className="mt-3 rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+                className="mt-3 rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
               >
                 Fill sample text
               </button>
@@ -279,7 +320,7 @@ export function EmbeddingsPage(): React.JSX.Element {
             <table className="w-full text-left text-sm">
               <caption className="sr-only">Session embedding usage</caption>
               <thead className="sticky top-0 bg-paper dark:bg-night">
-                <tr className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+                <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
                   <th scope="col" className="py-2 pr-3 font-medium">
                     Time
                   </th>
@@ -312,12 +353,12 @@ export function EmbeddingsPage(): React.JSX.Element {
                       r.id === selected ? 'bg-ink/4 dark:bg-parchment/6' : ''
                     }`}
                   >
-                    <td className="py-2 pr-3 font-mono text-xs tnum">{r.at}</td>
-                    <td className="max-w-44 truncate py-2 pr-3 font-mono text-xs">{r.model}</td>
-                    <td className="py-2 pr-3 text-right text-xs tnum">{r.chars}</td>
-                    <td className="py-2 pr-3 text-right text-xs tnum">{r.vecs ?? '—'}</td>
-                    <td className="py-2 pr-3 text-right text-xs tnum">{r.dims ?? '—'}</td>
-                    <td className="py-2 text-right text-xs">
+                    <td className="py-2 pr-3 font-mono text-[13px] tnum">{r.at}</td>
+                    <td className="max-w-44 truncate py-2 pr-3 font-mono text-[13px]">{r.model}</td>
+                    <td className="py-2 pr-3 text-right text-[13px] tnum">{r.chars}</td>
+                    <td className="py-2 pr-3 text-right text-[13px] tnum">{r.vecs ?? '—'}</td>
+                    <td className="py-2 pr-3 text-right text-[13px] tnum">{r.dims ?? '—'}</td>
+                    <td className="py-2 text-right text-[13px]">
                       {r.status === 'ok' ? '● ok' : '■ fail'}
                     </td>
                   </tr>
@@ -328,7 +369,7 @@ export function EmbeddingsPage(): React.JSX.Element {
         </div>
         <aside aria-label="Run inspector" className="space-y-3">
           {inspected === null ? (
-            <p className="text-xs text-ink-soft dark:text-parchment-soft">
+            <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
               Select a run to inspect vectors and errors.
             </p>
           ) : (
@@ -336,7 +377,7 @@ export function EmbeddingsPage(): React.JSX.Element {
               <h2 className="font-mono text-sm">
                 run <span className="tnum">{inspected.at}</span>
               </h2>
-              <dl className="space-y-2 text-xs">
+              <dl className="space-y-2 text-[13px]">
                 <div className="flex justify-between gap-3">
                   <dt className="text-ink-soft dark:text-parchment-soft">Status</dt>
                   <dd>{inspected.status === 'ok' ? '● ok' : '■ fail'}</dd>
@@ -359,8 +400,10 @@ export function EmbeddingsPage(): React.JSX.Element {
                 )}
               </dl>
               <div>
-                <p className="mb-1 text-xs text-ink-soft dark:text-parchment-soft">Input excerpt</p>
-                <pre className="max-h-40 overflow-auto rounded-md border border-ink/10 p-2 font-mono text-[11px] whitespace-pre-wrap dark:border-parchment/10">
+                <p className="mb-1 text-[13px] text-ink-soft dark:text-parchment-soft">
+                  Input excerpt
+                </p>
+                <pre className="max-h-40 overflow-auto rounded-md border border-ink/10 p-2 font-mono text-xs whitespace-pre-wrap dark:border-parchment/10">
                   {inspected.input.slice(0, 500)}
                 </pre>
               </div>

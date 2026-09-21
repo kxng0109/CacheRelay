@@ -46,18 +46,18 @@ export function RateLimitHeaders({ snapshot }: RateLimitHeadersProps): React.JSX
       ? '—'
       : `${String(Math.max(0, snapshot.reset - Math.floor(now / 1000)))}s`
   const cell = (label: string, value: number | null): React.JSX.Element => (
-    <span className="text-xs tnum">
+    <span className="text-[13px] tnum">
       {label}: {value ?? '—'}
     </span>
   )
   return (
     <p role="status" aria-label="Rate limit status" className="flex flex-wrap gap-4">
-      <span className="text-xs">
+      <span className="text-[13px]">
         {snapshot.dimension === 'TPM' ? 'Token quota' : 'Request quota'}
       </span>
       {cell('Limit', snapshot.limit)}
       {cell('Remaining', snapshot.remaining)}
-      <span className="text-xs tnum">Resets in: {resetLabel}</span>
+      <span className="text-[13px] tnum">Resets in: {resetLabel}</span>
       {cell('Retry after (s)', snapshot.retryAfter)}
     </p>
   )

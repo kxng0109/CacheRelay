@@ -94,32 +94,44 @@ function CacheBoard(): React.JSX.Element {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <h1 className="font-display text-2xl font-medium tracking-tight">Cache and budgets</h1>
-        {stats.data === undefined ? null : (
-          <span className="rounded-full border border-ink/15 px-2 py-0.5 font-mono text-[11px] tnum dark:border-parchment/15">
-            redis {stats.data.redisConfigured ? '●' : '■'}
+      <div className="space-y-1">
+        <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+          <span aria-hidden="true" className="mr-1 text-ember">
+            ❯
           </span>
-        )}
-        <span className="flex-1" />
-        <button
-          type="button"
-          onClick={() => {
-            void qc.invalidateQueries({ queryKey: ['cache-stats'] })
-          }}
-          className="rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
-        >
-          Refresh [r]
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setConfirmingPurge((c) => !c)
-          }}
-          className="rounded-md border border-danger/40 px-3 py-2 text-xs text-danger dark:text-danger-soft"
-        >
-          Purge…
-        </button>
+          guard
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="font-display text-3xl font-medium tracking-tight">Cache and budgets</h1>
+          {stats.data === undefined ? null : (
+            <span className="rounded-full border border-ink/15 px-2 py-0.5 font-mono text-xs tnum dark:border-parchment/15">
+              redis {stats.data.redisConfigured ? 'on' : 'off'}
+            </span>
+          )}
+          <span className="flex-1" />
+          <button
+            type="button"
+            onClick={() => {
+              void qc.invalidateQueries({ queryKey: ['cache-stats'] })
+            }}
+            className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+          >
+            Refresh [r]
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setConfirmingPurge((c) => !c)
+            }}
+            className="rounded-md border border-danger/40 px-3 py-2 text-[13px] text-danger dark:text-danger-soft"
+          >
+            Purge…
+          </button>
+        </div>
+        <p className="text-sm text-ink-soft dark:text-parchment-soft">
+          Three tiers answer before providers do. Budgets cap spend per key, team, or org and alert
+          through webhooks.
+        </p>
       </div>
       {confirmingPurge ? (
         <div className="space-y-2 rounded-lg border border-danger/40 bg-cream p-4 dark:bg-transparent">
@@ -135,14 +147,14 @@ function CacheBoard(): React.JSX.Element {
               onChange={(e) => {
                 setPurgeScope(e.target.value)
               }}
-              className="w-64 rounded-md border border-ink/15 bg-transparent px-3 py-2 text-xs dark:border-parchment/15"
+              className="w-64 rounded-md border border-ink/15 bg-transparent px-3 py-2 text-[13px] dark:border-parchment/15"
             />
             <button
               type="button"
               onClick={() => {
                 void purge()
               }}
-              className="rounded-md border border-danger/40 px-3 py-2 text-xs text-danger dark:text-danger-soft"
+              className="rounded-md border border-danger/40 px-3 py-2 text-[13px] text-danger dark:text-danger-soft"
             >
               Purge now
             </button>
@@ -151,7 +163,7 @@ function CacheBoard(): React.JSX.Element {
               onClick={() => {
                 setConfirmingPurge(false)
               }}
-              className="rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+              className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
             >
               Cancel
             </button>
@@ -159,7 +171,7 @@ function CacheBoard(): React.JSX.Element {
         </div>
       ) : null}
       {notice === null ? null : (
-        <p role="status" className="text-xs">
+        <p role="status" className="text-[13px]">
           {notice}
         </p>
       )}
@@ -174,22 +186,37 @@ function CacheBoard(): React.JSX.Element {
       ) : stats.data === undefined ? null : (
         <dl className="grid grid-cols-3 gap-3">
           <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
-            <dt className="text-xs text-ink-soft dark:text-parchment-soft">L0 fill</dt>
+            <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">L0 fill</dt>
             <dd className="font-mono text-lg tnum">
               {stats.data.l0Size}/{stats.data.l0Capacity}
             </dd>
+            <dd className="mt-1 text-xs text-ink-soft dark:text-parchment-soft">
+              In memory exact hits.
+            </dd>
           </div>
           <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
-            <dt className="text-xs text-ink-soft dark:text-parchment-soft">Exact entries</dt>
+            <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Exact entries</dt>
             <dd className="font-mono text-lg tnum">{stats.data.exactEntries}</dd>
+            <dd className="mt-1 text-xs text-ink-soft dark:text-parchment-soft">
+              Byte identical prompts.
+            </dd>
           </div>
           <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
-            <dt className="text-xs text-ink-soft dark:text-parchment-soft">Semantic vectors</dt>
+            <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Semantic vectors</dt>
             <dd className="font-mono text-lg tnum">{stats.data.semanticVectors}</dd>
+            <dd className="mt-1 text-xs text-ink-soft dark:text-parchment-soft">
+              Same meaning, new wording.
+            </dd>
           </div>
         </dl>
       )}
-      <h2 className="text-base font-semibold">Budgets</h2>
+      <div className="space-y-1">
+        <h2 className="text-base font-semibold">Budgets</h2>
+        <p className="text-sm text-ink-soft dark:text-parchment-soft">
+          Caps in micro dollars per minute and per month. Zero means no cap. Breaches alert through
+          the webhook.
+        </p>
+      </div>
       {budgets.isPending ? (
         <p role="status" className="text-sm">
           Loading budgets…
@@ -205,8 +232,8 @@ function CacheBoard(): React.JSX.Element {
       ) : (
         <table className="w-full text-left text-sm">
           <caption className="sr-only">Spend budgets</caption>
-          <thead>
-            <tr className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+          <thead className="sticky top-0 bg-paper dark:bg-night">
+            <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
               <th scope="col" className="py-2 pr-3 font-medium">
                 Subject
               </th>
@@ -224,10 +251,10 @@ function CacheBoard(): React.JSX.Element {
           <tbody>
             {budgets.data.budgets.map((b) => (
               <tr key={b.id} className="border-t border-ink/10 dark:border-parchment/10">
-                <td className="py-2 pr-3 font-mono text-xs">{b.subjectId}</td>
-                <td className="py-2 pr-3 text-xs">{b.level}</td>
-                <td className="py-2 pr-3 text-right text-xs tnum">{b.minuteMicros}</td>
-                <td className="py-2 text-right text-xs tnum">{b.monthMicros}</td>
+                <td className="py-2 pr-3 font-mono text-[13px]">{b.subjectId}</td>
+                <td className="py-2 pr-3 text-[13px]">{b.level}</td>
+                <td className="py-2 pr-3 text-right text-[13px] tnum">{b.minuteMicros}</td>
+                <td className="py-2 text-right text-[13px] tnum">{b.monthMicros}</td>
               </tr>
             ))}
           </tbody>
@@ -240,7 +267,7 @@ function CacheBoard(): React.JSX.Element {
         className="grid gap-3 rounded-lg border border-ink/10 bg-cream p-4 sm:grid-cols-2 dark:border-parchment/10 dark:bg-transparent"
       >
         <div>
-          <label htmlFor="budget-level" className="mb-1 block text-xs font-medium">
+          <label htmlFor="budget-level" className="mb-1 block text-[13px] font-medium">
             Level
           </label>
           <input
@@ -250,13 +277,13 @@ function CacheBoard(): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
           />
           {errors.level === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
+            <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
               {errors.level.message}
             </p>
           )}
         </div>
         <div>
-          <label htmlFor="budget-subject" className="mb-1 block text-xs font-medium">
+          <label htmlFor="budget-subject" className="mb-1 block text-[13px] font-medium">
             Subject
           </label>
           <input
@@ -266,13 +293,13 @@ function CacheBoard(): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
           />
           {errors.subjectId === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
+            <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
               {errors.subjectId.message}
             </p>
           )}
         </div>
         <div>
-          <label htmlFor="budget-minute" className="mb-1 block text-xs font-medium">
+          <label htmlFor="budget-minute" className="mb-1 block text-[13px] font-medium">
             Minute cap (µ$, 0 means none)
           </label>
           <input
@@ -282,13 +309,13 @@ function CacheBoard(): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
           />
           {errors.minuteMicros === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
+            <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
               {errors.minuteMicros.message}
             </p>
           )}
         </div>
         <div>
-          <label htmlFor="budget-month" className="mb-1 block text-xs font-medium">
+          <label htmlFor="budget-month" className="mb-1 block text-[13px] font-medium">
             Month cap (µ$, 0 means none)
           </label>
           <input
@@ -298,13 +325,13 @@ function CacheBoard(): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
           />
           {errors.monthMicros === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
+            <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
               {errors.monthMicros.message}
             </p>
           )}
         </div>
         <div>
-          <label htmlFor="budget-webhook" className="mb-1 block text-xs font-medium">
+          <label htmlFor="budget-webhook" className="mb-1 block text-[13px] font-medium">
             Webhook URL (optional)
           </label>
           <input
@@ -315,7 +342,7 @@ function CacheBoard(): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
           />
           {errors.webhookUrl === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
+            <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
               {errors.webhookUrl.message}
             </p>
           )}

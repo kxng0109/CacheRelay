@@ -14,7 +14,9 @@ import type {
   McpSuspended,
   McpTool,
   McpToolAnnotations,
+  ModelAliasRecord,
   PageResponse,
+  ProviderChainStep,
   RateLimitDimension,
   RateLimitSnapshot,
 } from './types.js'
@@ -473,6 +475,89 @@ export class GatewayClient {
    */
   models(opts?: RequestOptions): Promise<{ data: { id: string }[] }> {
     return this.request<{ data: { id: string }[] }>('/v1/models', { headers: this.headers() }, opts)
+  }
+
+  /**
+   * Lists every effective model alias with its origin. Admin only.
+   *
+   * @remarks Backend truth (`AdminModelController`): `GET
+   * /v1/admin/models` returns a `{ models }` envelope, file-bound
+   * first. `source` is `file` (read-only) or `database` (editable).
+   *
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns Effective aliases.
+   */
+  async listModelAliases(opts?: RequestOptions): Promise<{ models: ModelAliasRecord[] }> {
+    const body = await this.request<{ models: ModelAliasRecord[] }>(
+      '/v1/admin/models',
+      { headers: this.headers() },
+      opts,
+    )
+    // A drifted gateway must degrade to an empty board, never throw.
+    return { models: Array.isArray(body.models) ? body.models : [] }
+  }
+
+  /**
+   * Creates a database-managed model alias. Responds 201; 400 on invalid
+   * payload, 409 on duplicate or file-bound name.
+   *
+   * @param body - Alias name, provider chain, and strategy.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The created alias.
+   */
+  createModelAlias(
+    body: { name: string; chain: ProviderChainStep[]; strategy: string },
+    opts?: RequestOptions,
+  ): Promise<ModelAliasRecord> {
+    return this.request<ModelAliasRecord>(
+      '/v1/admin/models',
+      {
+        method: 'POST',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(body),
+      },
+      opts,
+    )
+  }
+
+  /**
+   * Replaces the routing plan of a database-managed alias. File-bound
+   * aliases answer 409 and stay read-only.
+   *
+   * @param name - Client facing model name (path, cannot rename).
+   * @param body - Replacement chain and strategy.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The replaced alias.
+   */
+  updateModelAlias(
+    name: string,
+    body: { chain: ProviderChainStep[]; strategy: string },
+    opts?: RequestOptions,
+  ): Promise<ModelAliasRecord> {
+    return this.request<ModelAliasRecord>(
+      `/v1/admin/models/${encodeURIComponent(name)}`,
+      {
+        method: 'PUT',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(body),
+      },
+      opts,
+    )
+  }
+
+  /**
+   * Deletes a database-managed alias. Answers 204; 404 when unknown, 409
+   * when file-bound.
+   *
+   * @param name - Client facing model name.
+   * @param opts - Optional request options (abort signal, headers listener).
+   */
+  deleteModelAlias(name: string, opts?: RequestOptions): Promise<void> {
+    return this.requestEmpty(
+      `/v1/admin/models/${encodeURIComponent(name)}`,
+      { method: 'DELETE', headers: this.headers() },
+      opts,
+    )
   }
 
   /**

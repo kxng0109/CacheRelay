@@ -122,6 +122,25 @@ describe('Layout', () => {
     expect(screen.getByText('auth: admin')).toBeInTheDocument()
   })
 
+  it('labels a regular session as user, never admin', () => {
+    const { unmount } = renderApp(<Layout />, { nonAdminSession: true })
+    expect(screen.getByText('auth: user')).toBeInTheDocument()
+    unmount()
+    renderApp(<Layout />, { nonAdminSession: true, gatewayKey: 'gw-test' })
+    expect(screen.getByText('auth: gateway + user')).toBeInTheDocument()
+  })
+
+  it('links the wordmark home for sessions and to playground for guests', () => {
+    const { unmount } = renderApp(<Layout />, { adminSession: true })
+    expect(screen.getByRole('link', { name: /cacherelay home/i })).toHaveAttribute('href', '/')
+    unmount()
+    renderApp(<Layout />)
+    expect(screen.getByRole('link', { name: /cacherelay home/i })).toHaveAttribute(
+      'href',
+      '/playground',
+    )
+  })
+
   it('reflects the light theme in the footer', async () => {
     const user = userEvent.setup()
     renderApp(<Layout />)
@@ -294,6 +313,15 @@ describe('Layout', () => {
     })
   })
 
+  it('survives a bare-array approvals payload without crashing', async () => {
+    server.use(http.get('*/v1/admin/mcp/approvals/pending', () => HttpResponse.json([{ id: 'a' }])))
+    renderApp(<Layout />, { adminSession: true })
+    await waitFor(() => {
+      expect(screen.getByLabelText('1 pending approvals')).toBeInTheDocument()
+    })
+    expect(screen.getByRole('navigation')).toBeInTheDocument()
+  })
+
   it('shows no badge without an admin key', () => {
     renderApp(<Layout />)
     expect(screen.queryByLabelText(/pending approvals/i)).not.toBeInTheDocument()
@@ -305,7 +333,7 @@ describe('Layout', () => {
     expect(screen.queryByRole('button', { name: /lock/i })).not.toBeInTheDocument()
   })
 
-  it('locks the console on demand', async () => {
+  it('locks the console on demand and lands on login', async () => {
     const user = userEvent.setup()
     server.use(http.post('*/v1/auth/logout', () => new HttpResponse(null, { status: 204 })))
     renderApp(<Layout />, { adminSession: true })
@@ -314,6 +342,9 @@ describe('Layout', () => {
       expect(screen.getByRole('link', { name: /log in/i })).toBeInTheDocument()
     })
     expect(screen.queryByText('Guard')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByText('route: /login')).toBeInTheDocument()
+    })
   })
 
   it('travels G-chords to visible routes only', () => {

@@ -71,7 +71,7 @@ export function RedeemPage(): React.JSX.Element {
         className="space-y-3 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent"
       >
         <div>
-          <label htmlFor="redeem-token" className="mb-1 block text-xs font-medium">
+          <label htmlFor="redeem-token" className="mb-1 block text-[13px] font-medium">
             Invite token
           </label>
           <input
@@ -82,13 +82,13 @@ export function RedeemPage(): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
           />
           {errors.token === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
+            <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
               {errors.token.message}
             </p>
           )}
         </div>
         <div>
-          <label htmlFor="redeem-username" className="mb-1 block text-xs font-medium">
+          <label htmlFor="redeem-username" className="mb-1 block text-[13px] font-medium">
             Username
           </label>
           <input
@@ -100,13 +100,13 @@ export function RedeemPage(): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
           />
           {errors.username === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
+            <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
               {errors.username.message}
             </p>
           )}
         </div>
         <div>
-          <label htmlFor="redeem-password" className="mb-1 block text-xs font-medium">
+          <label htmlFor="redeem-password" className="mb-1 block text-[13px] font-medium">
             Password (12+ characters)
           </label>
           <input
@@ -118,13 +118,13 @@ export function RedeemPage(): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
           />
           {errors.password === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
+            <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
               {errors.password.message}
             </p>
           )}
         </div>
         <div>
-          <label htmlFor="redeem-confirm" className="mb-1 block text-xs font-medium">
+          <label htmlFor="redeem-confirm" className="mb-1 block text-[13px] font-medium">
             Confirm password
           </label>
           <input
@@ -136,7 +136,7 @@ export function RedeemPage(): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
           />
           {errors.confirm === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
+            <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
               {errors.confirm.message}
             </p>
           )}

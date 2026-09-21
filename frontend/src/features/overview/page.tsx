@@ -1,17 +1,40 @@
 import { Suspense, lazy, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Activity, BookOpen, FlaskConical, Zap } from 'lucide-react'
 import { Link } from 'react-router'
 import { useShallow } from 'zustand/react/shallow'
 import { GatewayClient } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
+import { PulseStrip } from '../observability/PulseStrip.js'
+import { StatStrip } from './StatStrip.js'
 
 const LatencyChart = lazy(() => import('../observability/LatencyChart.js'))
 
 const LINKS = [
-  { to: '/playground', title: 'Playground', body: 'Stream a completion through the gateway.' },
-  { to: '/circuits', title: 'Circuits', body: 'Watch provider breakers and force resets.' },
-  { to: '/ledger', title: 'Ledger', body: 'Audit every billed request.' },
-  { to: '/observability', title: 'Observability', body: 'Health probes and latency evidence.' },
+  {
+    to: '/playground',
+    title: 'Playground',
+    body: 'Stream a completion through the gateway.',
+    icon: FlaskConical,
+  },
+  {
+    to: '/circuits',
+    title: 'Circuits',
+    body: 'Watch provider breakers and force resets.',
+    icon: Zap,
+  },
+  {
+    to: '/ledger',
+    title: 'Ledger',
+    body: 'Audit every billed request.',
+    icon: BookOpen,
+  },
+  {
+    to: '/observability',
+    title: 'Observability',
+    body: 'Health probes and latency evidence.',
+    icon: Activity,
+  },
 ] as const
 
 /**
@@ -44,12 +67,19 @@ export function OverviewPage(): React.JSX.Element {
 
   return (
     <div className="space-y-6">
-      <div>
+      <div className="space-y-1">
+        <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+          <span aria-hidden="true" className="mr-1 text-ember">
+            ❯
+          </span>
+          home
+        </p>
         <h1 className="font-display text-3xl font-medium tracking-tight">Overview</h1>
-        <p className="mt-1 text-sm text-ink-soft dark:text-parchment-soft">
+        <p className="text-sm text-ink-soft dark:text-parchment-soft">
           Gateway health, spend, and latency at a glance.
         </p>
       </div>
+      <PulseStrip />
       {isAdmin ? (
         summary.isPending ? (
           <p role="status" className="text-sm">
@@ -72,52 +102,42 @@ export function OverviewPage(): React.JSX.Element {
             </button>
           </div>
         ) : summary.data === undefined ? null : (
-          <dl className="grid gap-3 sm:grid-cols-4">
-            <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
-              <dt className="text-xs text-ink-soft dark:text-parchment-soft">Requests</dt>
-              <dd className="font-mono text-lg tnum">{summary.data.totalRequests}</dd>
-            </div>
-            <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
-              <dt className="text-xs text-ink-soft dark:text-parchment-soft">Billed (µ$)</dt>
-              <dd className="font-mono text-lg tnum">{summary.data.totalCostUsdMicros}</dd>
-            </div>
-            <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
-              <dt className="text-xs text-ink-soft dark:text-parchment-soft">Avg duration (ms)</dt>
-              <dd className="font-mono text-lg tnum">
-                {summary.data.averageDurationMs.toFixed(1)}
-              </dd>
-            </div>
-            <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
-              <dt className="text-xs text-ink-soft dark:text-parchment-soft">Live RPS</dt>
-              <dd className="font-mono text-lg tnum">
-                {liveRps === null ? '—' : liveRps.toFixed(1)}
-              </dd>
-            </div>
-          </dl>
+          <StatStrip
+            summary={summary.data}
+            liveRps={liveRps}
+            onRetry={() => void summary.refetch()}
+          />
         )
       ) : null}
-      <Suspense
-        fallback={
-          <p role="status" className="text-sm">
-            Loading latency chart…
-          </p>
-        }
-      >
-        <LatencyChart
-          onLatest={(point) => {
-            setLiveRps(point === null ? null : point.rps)
-          }}
-        />
-      </Suspense>
+      {isAdmin ? (
+        <Suspense
+          fallback={
+            <p role="status" className="text-sm">
+              Loading latency chart…
+            </p>
+          }
+        >
+          <LatencyChart
+            onLatest={(point) => {
+              setLiveRps(point === null ? null : point.rps)
+            }}
+          />
+        </Suspense>
+      ) : null}
       <nav aria-label="Console sections" className="grid gap-3 sm:grid-cols-2">
         {LINKS.map((link) => (
           <Link
             key={link.to}
             to={link.to}
-            className="lift rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent"
+            className="lift group rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent"
           >
-            <p className="font-display text-xl font-medium tracking-tight">{link.title}</p>
-            <p className="mt-1 text-xs text-ink-soft dark:text-parchment-soft">{link.body}</p>
+            <span className="flex items-center gap-2 text-ink-soft dark:text-parchment-soft">
+              <link.icon size={16} aria-hidden="true" />
+              <span className="font-display text-xl font-medium tracking-tight text-ink dark:text-parchment">
+                {link.title}
+              </span>
+            </span>
+            <p className="mt-1 text-[13px] text-ink-soft dark:text-parchment-soft">{link.body}</p>
           </Link>
         ))}
       </nav>

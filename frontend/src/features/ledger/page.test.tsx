@@ -6,8 +6,19 @@ import { server } from '../../test/setup.js'
 import { renderApp } from '../../test/utils.js'
 import { LedgerPage } from './page.js'
 
-function summary(body: Record<string, number>) {
-  return http.get('*/v1/admin/ledger/summary', () => HttpResponse.json(body))
+function summary(body: Record<string, unknown>) {
+  return http.get('*/v1/admin/ledger/summary', () =>
+    HttpResponse.json({
+      totalPromptTokens: 0,
+      totalCompletionTokens: 0,
+      totalTokens: 0,
+      totalCostUsd: '0.000000',
+      byOwner: [],
+      byModel: [],
+      byProvider: [],
+      ...body,
+    }),
+  )
 }
 
 function entry(requestId: string) {
@@ -46,7 +57,7 @@ describe('LedgerPage', () => {
       expect(screen.getByText('r1')).toBeInTheDocument()
     })
     expect(screen.getByText('42')).toBeInTheDocument()
-    expect(screen.getByText('9000')).toBeInTheDocument()
+    expect(screen.getByText('$0.000000')).toBeInTheDocument()
     expect(screen.getByText('123.5')).toBeInTheDocument()
   })
 
@@ -57,8 +68,12 @@ describe('LedgerPage', () => {
     )
     renderApp(<LedgerPage />, { adminSession: true })
     await waitFor(() => {
-      expect(screen.getByText(/no ledger entries yet/i)).toBeInTheDocument()
+      expect(screen.getByText(/no entries yet/i)).toBeInTheDocument()
     })
+    expect(screen.getByRole('link', { name: /open playground/i })).toHaveAttribute(
+      'href',
+      '/playground',
+    )
   })
 
   it('pages forward and back on the backend hasNext signal', async () => {
@@ -109,6 +124,54 @@ describe('LedgerPage', () => {
     expect(screen.getByRole('complementary', { name: /receipt inspector/i })).toHaveTextContent(
       /select a row to inspect/i,
     )
+  })
+
+  it('filters rows by request id without refetching', async () => {
+    const user = userEvent.setup()
+    server.use(
+      summary({ totalRequests: 2, totalCostUsdMicros: 2, averageDurationMs: 1 }),
+      http.get('*/v1/admin/ledger/entries', () =>
+        HttpResponse.json(pageOf(['keep-1', 'drop-2'], false)),
+      ),
+    )
+    renderApp(<LedgerPage />, { adminSession: true })
+    await screen.findByRole('table')
+    await user.type(screen.getByLabelText(/filter audit log/i), 'keep')
+    expect(screen.getByText('keep-1')).toBeInTheDocument()
+    expect(screen.queryByText('drop-2')).not.toBeInTheDocument()
+    await user.clear(screen.getByLabelText(/filter audit log/i))
+    await user.type(screen.getByLabelText(/filter audit log/i), 'zzz-no-match')
+    expect(screen.getByText(/no entries match this filter/i)).toBeInTheDocument()
+  })
+
+  it('copies the inspected receipt as one line', async () => {
+    const user = userEvent.setup()
+    const writes: string[] = []
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: (s: string): Promise<void> => {
+          writes.push(s)
+          return Promise.resolve()
+        },
+      },
+    })
+    try {
+      server.use(
+        summary({ totalRequests: 1, totalCostUsdMicros: 12, averageDurationMs: 3 }),
+        http.get('*/v1/admin/ledger/entries', () => HttpResponse.json(pageOf(['r9'], false))),
+      )
+      renderApp(<LedgerPage />, { adminSession: true })
+      const table = await screen.findByRole('table')
+      await user.click(within(table).getByText('r9'))
+      await user.click(screen.getByRole('button', { name: /copy receipt/i }))
+      expect(writes.length).toBe(1)
+      const first = writes.at(0)
+      expect(first).toBeDefined()
+      if (first !== undefined) expect(first).toContain('r9')
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+    }
   })
 
   it('omits the page total when the backend reports none', async () => {

@@ -196,6 +196,25 @@ export function startSessionHeartbeat(): () => void {
 }
 
 /**
+ * Public routes that never need a session on first paint. Restoring here
+ * can wait for the first interaction, which keeps cold loads clean when the
+ * gateway is unreachable. Authed routes restore immediately so deep links
+ * do not bounce to login before the cookie is tried.
+ *
+ * @param pathname - Current location pathname.
+ * @returns True when the restore may wait for first input.
+ */
+export function shouldDeferRestore(pathname: string): boolean {
+  return (
+    pathname === '/' ||
+    pathname === '/login' ||
+    pathname === '/redeem' ||
+    pathname === '/playground' ||
+    pathname === '/embeddings'
+  )
+}
+
+/**
  * Attempts one silent session restore at boot.
  *
  * @remarks Succeeds only when a live refresh cookie exists; a 401 means

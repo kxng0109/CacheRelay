@@ -43,7 +43,7 @@ export function Toasts(): React.JSX.Element | null {
         <div
           key={t.id}
           role={t.kind === 'error' ? 'alert' : 'status'}
-          className={`toast-enter flex items-start gap-3 rounded-lg border px-3 py-2 text-xs shadow-lg ${
+          className={`toast-enter flex items-start gap-3 rounded-lg border px-3 py-2 text-[13px] shadow-lg ${
             t.kind === 'error'
               ? 'border-danger/40 bg-cream text-ink dark:bg-night dark:text-parchment'
               : 'border-ink/10 bg-cream text-ink dark:border-parchment/10 dark:bg-night dark:text-parchment'

@@ -21,14 +21,71 @@ vi.mock('../../shared/echarts/setup.js', () => ({
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Every overview render mounts the pulse strip and the latency chart;
+  // both scrape prometheus. Default-stub it so no test leaks an
+  // unhandled request. Tests may override with richer bodies.
+  server.use(
+    http.get(
+      '*/actuator/prometheus',
+      () => new HttpResponse('', { headers: { 'Content-Type': 'text/plain' } }),
+    ),
+  )
 })
+
+function fullSummary(overrides: Record<string, unknown> = {}) {
+  return HttpResponse.json({
+    totalRequests: 42,
+    totalPromptTokens: 1000,
+    totalCompletionTokens: 500,
+    totalTokens: 1500,
+    totalCostUsdMicros: 9000,
+    totalCostUsd: '0.009000',
+    averageDurationMs: 12.5,
+    byOwner: [],
+    byModel: [
+      {
+        provider: 'openai',
+        model: 'gpt-56-luna',
+        totalRequests: 30,
+        totalPromptTokens: 800,
+        totalCompletionTokens: 400,
+        totalTokens: 1200,
+        totalCostUsdMicros: 7000,
+        totalCostUsd: '0.007000',
+        averageDurationMs: 11.0,
+      },
+      {
+        provider: 'anthropic',
+        model: 'claude-x',
+        totalRequests: 12,
+        totalPromptTokens: 200,
+        totalCompletionTokens: 100,
+        totalTokens: 300,
+        totalCostUsdMicros: 2000,
+        totalCostUsd: '0.002000',
+        averageDurationMs: 14.0,
+      },
+    ],
+    byProvider: [
+      {
+        provider: 'openai',
+        totalRequests: 30,
+        totalPromptTokens: 800,
+        totalCompletionTokens: 400,
+        totalTokens: 1200,
+        totalCostUsdMicros: 7000,
+        totalCostUsd: '0.007000',
+        averageDurationMs: 11.0,
+      },
+    ],
+    ...overrides,
+  })
+}
 
 describe('OverviewPage', () => {
   it('renders tiles, chart fallback, and section links', async () => {
     server.use(
-      http.get('*/v1/admin/ledger/summary', () =>
-        HttpResponse.json({ totalRequests: 42, totalCostUsdMicros: 9000, averageDurationMs: 12.5 }),
-      ),
+      http.get('*/v1/admin/ledger/summary', () => fullSummary()),
       http.get(
         '*/actuator/prometheus',
         () => new HttpResponse('', { headers: { 'Content-Type': 'text/plain' } }),
@@ -39,6 +96,11 @@ describe('OverviewPage', () => {
     await waitFor(() => {
       expect(screen.getByText('42')).toBeInTheDocument()
     })
+    expect(screen.getByText('$0.009000')).toBeInTheDocument()
+    expect(screen.getByText('1500')).toBeInTheDocument()
+    expect(screen.getByText('gpt-56-luna')).toBeInTheDocument()
+    expect(screen.getByText(/across 2 models/i)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /explore ledger/i })).toHaveAttribute('href', '/ledger')
     for (const label of ['Playground', 'Circuits', 'Ledger', 'Observability']) {
       expect(screen.getByRole('link', { name: new RegExp(label) })).toBeInTheDocument()
     }
@@ -55,6 +117,9 @@ describe('OverviewPage', () => {
     renderApp(<OverviewPage />, { nonAdminSession: true })
     expect(screen.queryByText(/unlock the admin key/i)).not.toBeInTheDocument()
     expect(screen.queryByText('42')).not.toBeInTheDocument()
+    // Operator pulse and latency stay admin-only.
+    expect(screen.queryByLabelText(/gateway pulse/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/request latency/i)).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /overview/i })).toBeInTheDocument()
   })
 
@@ -75,7 +140,15 @@ describe('OverviewPage', () => {
   it('shows a waiting live-RPS cell before two scrapes exist', async () => {
     server.use(
       http.get('*/v1/admin/ledger/summary', () =>
-        HttpResponse.json({ totalRequests: 7, totalCostUsdMicros: 100, averageDurationMs: 3.2 }),
+        fullSummary({
+          totalRequests: 7,
+          totalCostUsdMicros: 100,
+          totalCostUsd: '0.000100',
+          averageDurationMs: 3.2,
+          totalTokens: 70,
+          byModel: [],
+          byProvider: [],
+        }),
       ),
       http.get(
         '*/actuator/prometheus',
@@ -87,6 +160,8 @@ describe('OverviewPage', () => {
       expect(screen.getByText('7')).toBeInTheDocument()
     })
     expect(screen.getByText(/live rps/i)).toBeInTheDocument()
-    expect(screen.getByText('—')).toBeInTheDocument()
+    expect(screen.getByText(/top model/i)).toBeInTheDocument()
+    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(2)
+    expect(screen.getByText(/across 0 models/i)).toBeInTheDocument()
   })
 })

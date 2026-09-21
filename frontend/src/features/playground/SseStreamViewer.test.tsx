@@ -172,7 +172,7 @@ describe('SseStreamViewer', () => {
     expect(copy).toBeEnabled()
     await user.click(copy)
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /^copied$/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /copied \d+B/i })).toBeInTheDocument()
     })
     expect(writes).toEqual(['Hello'])
   })

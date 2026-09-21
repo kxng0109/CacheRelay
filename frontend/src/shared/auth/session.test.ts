@@ -8,6 +8,7 @@ import {
   redeemInvite,
   refreshSession,
   restoreSession,
+  shouldDeferRestore,
   startSessionHeartbeat,
 } from './session.js'
 
@@ -175,6 +176,18 @@ describe('refreshSession', () => {
     server.use(http.post('*/v1/auth/refresh', () => HttpResponse.error()))
     expect(await refreshSession()).toBeNull()
     expect(useAuthStore.getState().session).toBeNull()
+  })
+})
+
+describe('shouldDeferRestore', () => {
+  it('defers on public routes and restores immediately on authed routes', () => {
+    expect(shouldDeferRestore('/')).toBe(true)
+    expect(shouldDeferRestore('/login')).toBe(true)
+    expect(shouldDeferRestore('/playground')).toBe(true)
+    expect(shouldDeferRestore('/embeddings')).toBe(true)
+    expect(shouldDeferRestore('/redeem')).toBe(true)
+    expect(shouldDeferRestore('/observability')).toBe(false)
+    expect(shouldDeferRestore('/ledger')).toBe(false)
   })
 })
 

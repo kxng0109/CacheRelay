@@ -17,6 +17,28 @@ afterEach(() => {
 })
 
 describe('PlaygroundPage', () => {
+  /**
+   * Catalog stub: every submitting test picks the model from the live
+   * list, never from a hardcoded default.
+   */
+  function catalog() {
+    return http.get('*/v1/models', () => HttpResponse.json({ data: [{ id: 'gpt-56-luna' }] }))
+  }
+
+  /**
+   * Waits for the catalog then chooses the model, mirroring the operator
+   * flow of paste key, pick model, write prompt.
+   */
+  async function pickModel(
+    user: ReturnType<typeof userEvent.setup>,
+    id = 'gpt-56-luna',
+  ): Promise<void> {
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: id })).toBeInTheDocument()
+    })
+    await user.selectOptions(screen.getByLabelText(/model/i), id)
+  }
+
   it('prefills the key from the memory store', () => {
     renderApp(<PlaygroundPage />, { gatewayKey: 'gw-seeded' })
     expect(screen.getByLabelText(/api key/i)).toHaveValue('gw-seeded')
@@ -34,6 +56,7 @@ describe('PlaygroundPage', () => {
   it('streams a completion into the log region', async () => {
     const user = userEvent.setup()
     server.use(
+      catalog(),
       http.post('*/v1/chat/completions', () => {
         const stream = new ReadableStream<Uint8Array>({
           start(ctrl) {
@@ -46,6 +69,7 @@ describe('PlaygroundPage', () => {
     )
     renderApp(<PlaygroundPage />)
     await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
     await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
     await user.click(screen.getByRole('button', { name: /stream completion/i }))
     await waitFor(
@@ -63,6 +87,7 @@ describe('PlaygroundPage', () => {
     vi.stubEnv('VITE_FEATURE_STREAMING', 'false')
     const user = userEvent.setup()
     server.use(
+      catalog(),
       http.post('*/v1/chat/completions', () =>
         HttpResponse.json({
           choices: [{ message: { role: 'assistant', content: 'static hi' } }],
@@ -72,6 +97,7 @@ describe('PlaygroundPage', () => {
     )
     renderApp(<PlaygroundPage />)
     await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
     await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
     await user.click(screen.getByRole('button', { name: /send completion/i }))
     await waitFor(() => {
@@ -83,9 +109,13 @@ describe('PlaygroundPage', () => {
   it('reports non-streaming failures as alerts', async () => {
     vi.stubEnv('VITE_FEATURE_STREAMING', 'false')
     const user = userEvent.setup()
-    server.use(http.post('*/v1/chat/completions', () => new HttpResponse('x', { status: 503 })))
+    server.use(
+      catalog(),
+      http.post('*/v1/chat/completions', () => new HttpResponse('x', { status: 503 })),
+    )
     renderApp(<PlaygroundPage />)
     await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
     await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
     await user.click(screen.getByRole('button', { name: /send completion/i }))
     await waitFor(() => {
@@ -97,12 +127,14 @@ describe('PlaygroundPage', () => {
     vi.stubEnv('VITE_FEATURE_STREAMING', 'false')
     const user = userEvent.setup()
     server.use(
+      catalog(),
       http.post('*/v1/chat/completions', () =>
         HttpResponse.json({ choices: [], model: 'gpt-4o-mini' }),
       ),
     )
     renderApp(<PlaygroundPage />)
     await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
     await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
     await user.click(screen.getByRole('button', { name: /send completion/i }))
     await waitFor(() => {
@@ -114,7 +146,7 @@ describe('PlaygroundPage', () => {
     vi.stubEnv('VITE_FEATURE_STREAMING', 'false')
     const user = userEvent.setup()
     renderApp(<PlaygroundPage />)
-    await user.clear(screen.getByLabelText(/model/i))
+    fireEvent.change(screen.getByLabelText(/model/i), { target: { value: '' } })
     await user.type(screen.getByLabelText(/api key/i), 'gw-test')
     await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
     await user.click(screen.getByRole('button', { name: /send completion/i }))
@@ -123,16 +155,35 @@ describe('PlaygroundPage', () => {
     })
   })
 
+  it('lists gateway models once a key is pasted', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/models', () =>
+        HttpResponse.json({ data: [{ id: 'gpt-56-luna' }, { id: 'other-model' }] }),
+      ),
+    )
+    renderApp(<PlaygroundPage />)
+    expect(screen.getByRole('option', { name: /paste a key/i })).toBeInTheDocument()
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: 'other-model' })).toBeInTheDocument()
+    })
+    await user.selectOptions(screen.getByLabelText(/model/i), 'other-model')
+    expect(screen.getByLabelText(/model/i)).toHaveValue('other-model')
+  })
+
   it('records runs and reloads them into the prompt', async () => {
     vi.stubEnv('VITE_FEATURE_STREAMING', 'false')
     const user = userEvent.setup()
     server.use(
+      catalog(),
       http.post('*/v1/chat/completions', () =>
         HttpResponse.json({ choices: [{ message: { content: 'hi' } }], model: 'gpt-4o-mini' }),
       ),
     )
     renderApp(<PlaygroundPage />)
     await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
     await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
     await user.click(screen.getByRole('button', { name: /send completion/i }))
     const entry = await screen.findByRole('button', { name: /run #1/i })
@@ -145,6 +196,7 @@ describe('PlaygroundPage', () => {
   it('sends from the keyboard without leaving the prompt', async () => {
     const user = userEvent.setup()
     server.use(
+      catalog(),
       http.post('*/v1/chat/completions', () => {
         const stream = new ReadableStream<Uint8Array>({
           start(ctrl) {
@@ -157,6 +209,7 @@ describe('PlaygroundPage', () => {
     )
     renderApp(<PlaygroundPage />)
     await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
     const prompt = screen.getByLabelText(/prompt/i, { selector: 'textarea' })
     await user.type(prompt, 'Say hello')
     await user.keyboard('{Control>}{Enter}{/Control}')
@@ -200,6 +253,7 @@ describe('PlaygroundPage', () => {
   it('reruns the submitted run as a fresh block and scrolls to it', async () => {
     const user = userEvent.setup()
     server.use(
+      catalog(),
       http.post('*/v1/chat/completions', () => {
         const stream = new ReadableStream<Uint8Array>({
           start(ctrl) {
@@ -213,6 +267,7 @@ describe('PlaygroundPage', () => {
     scrolledIntoView.length = 0
     renderApp(<PlaygroundPage />)
     await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
     await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
     await user.click(screen.getByRole('button', { name: /stream completion/i }))
     await waitFor(

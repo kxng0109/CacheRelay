@@ -9,6 +9,7 @@ import {
   Database,
   FlaskConical,
   KeyRound,
+  Layers,
   LayoutDashboard,
   Lock,
   Menu,
@@ -18,7 +19,7 @@ import {
   Sun,
   Zap,
 } from 'lucide-react'
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router'
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router'
 import { useShallow } from 'zustand/react/shallow'
 import {
   GatewayClient,
@@ -28,6 +29,7 @@ import {
 } from '../shared/api/client.js'
 import { logout, startSessionHeartbeat } from '../shared/auth/session.js'
 import { CommandPalette } from '../shared/components/CommandPalette.js'
+import { CacheRelayMark } from '../shared/components/CacheRelayMark.js'
 import { RateLimitHeaders } from '../shared/components/RateLimitHeaders.js'
 import { ShortcutSheet } from '../shared/components/ShortcutSheet.js'
 import { Toasts } from '../shared/components/Toasts.js'
@@ -131,21 +133,31 @@ export function Layout(): React.JSX.Element {
   const [sheetOpen, setSheetOpen] = useState(false)
   const chordAt = useRef(0)
   const base = resolveApiBase()
+  // The status bar must never upgrade a regular session to "admin".
+  const role = session === null ? null : session.admin ? 'admin' : 'user'
   const authLabel =
-    gatewayKey !== null && session !== null
-      ? 'gateway + admin'
-      : gatewayKey !== null
+    role === null
+      ? gatewayKey !== null
         ? 'gateway'
-        : session !== null
-          ? 'admin'
-          : 'locked'
+        : 'locked'
+      : gatewayKey !== null
+        ? `gateway + ${role}`
+        : role
 
   const pending = useQuery({
     queryKey: ['approvals-badge'],
     queryFn: ({ signal }) => new GatewayClient().hitlPending({ signal }),
     enabled: session?.admin === true,
   })
-  const pendingCount = pending.data?.approvals.length ?? 0
+  /**
+   * Pending approvals tolerant of wire shape drift. The contract promises
+   * `{ approvals: [] }`, but the live gateway answers a bare array — and a
+   * badge must never crash the shell. Unknown shapes resolve to empty.
+   */
+  const pendingList: unknown[] = Array.isArray(pending.data)
+    ? pending.data
+    : (pending.data?.approvals ?? [])
+  const pendingCount = pendingList.length
 
   useEffect(() => {
     setHeadersReporter((headers, code) => {
@@ -160,7 +172,13 @@ export function Layout(): React.JSX.Element {
     useRateLimitStore.getState().clear()
   }, [gatewayKey, session])
 
-  useEffect(() => startSessionHeartbeat(), [])
+  const hasSession = session !== null
+  useEffect(() => {
+    // Heartbeat runs only while a session exists: it starts on login and
+    // stops on lock or logout, so idle signed out tabs never probe.
+    if (!hasSession) return
+    return startSessionHeartbeat()
+  }, [hasSession])
 
   useEffect(() => {
     // Post-login landing: move screen-reader and keyboard focus to the
@@ -198,6 +216,7 @@ export function Layout(): React.JSX.Element {
       label: 'Guard',
       items: [
         { to: '/circuits', label: 'Circuits', icon: Zap, audience: 'admin' },
+        { to: '/models', label: 'Models', icon: Layers, audience: 'admin' },
         {
           to: '/approvals',
           label: 'Approvals',
@@ -208,7 +227,7 @@ export function Layout(): React.JSX.Element {
               ? () => (
                   <span
                     aria-label={`${String(pendingCount)} pending approvals`}
-                    className="rounded-full bg-warn/20 px-2 py-0.5 font-mono text-[11px] text-warn tnum dark:text-warn-soft"
+                    className="rounded-full bg-warn/20 px-2 py-0.5 font-mono text-xs text-warn tnum dark:text-warn-soft"
                   >
                     {pendingCount}
                   </span>
@@ -287,26 +306,46 @@ export function Layout(): React.JSX.Element {
 
   const sidebarBody = (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 p-4">
-        <span aria-hidden="true" className="inline-block size-3 shrink-0 rounded-sm bg-ember" />
-        {collapsed ? null : (
-          <p className="font-display text-lg font-medium tracking-tight">CacheRelay</p>
-        )}
-        <span className="flex-1" />
+      <div
+        className={
+          collapsed ? 'flex flex-col items-center gap-1 p-3' : 'flex items-center gap-2 p-4'
+        }
+      >
+        <Link
+          to={session === null ? '/playground' : '/'}
+          onClick={() => {
+            setDrawer(false)
+          }}
+          aria-label="CacheRelay home"
+          className="flex min-w-0 items-center gap-2 rounded-md"
+        >
+          <span className="inline-flex shrink-0 items-center text-ember">
+            <CacheRelayMark size={collapsed ? 20 : 18} />
+          </span>
+          {collapsed ? null : (
+            <span className="truncate font-display text-lg font-medium tracking-tight">
+              CacheRelay
+            </span>
+          )}
+        </Link>
+        {collapsed ? null : <span className="flex-1" />}
         <button
           type="button"
           onClick={toggleCollapsed}
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          className="hidden rounded-md p-2 text-ink-soft lg:block dark:text-parchment-soft"
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          className={`hidden rounded-md text-ink-soft lg:block dark:text-parchment-soft ${
+            collapsed ? 'p-1' : 'p-2'
+          }`}
         >
-          {collapsed ? <ChevronsRight size={16} /> : <ChevronsLeft size={16} />}
+          {collapsed ? <ChevronsRight size={14} /> : <ChevronsLeft size={16} />}
         </button>
       </div>
       <nav aria-label="Primary" className="flex-1 space-y-4 overflow-y-auto px-2">
         {visibleGroups.map((group) => (
           <div key={group.label ?? 'home'}>
             {group.label === null || collapsed ? null : (
-              <p className="px-2 pb-1 font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+              <p className="px-2 pt-2 pb-1 font-mono text-[11px] tracking-[0.14em] text-ink-soft uppercase dark:text-parchment-soft">
                 {group.label}
               </p>
             )}
@@ -323,17 +362,29 @@ export function Layout(): React.JSX.Element {
                       }}
                       title={collapsed ? item.label : undefined}
                       className={({ isActive }) =>
-                        `flex items-center gap-2 rounded-md px-2 py-2 text-xs whitespace-nowrap ${
+                        `relative flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] whitespace-nowrap ${
+                          collapsed ? 'justify-center' : ''
+                        } ${
                           isActive
                             ? 'bg-ink/[0.06] font-medium text-ink dark:bg-parchment/[0.08] dark:text-parchment'
-                            : 'text-ink-soft hover:text-ink dark:text-parchment-soft dark:hover:text-parchment'
+                            : 'text-ink-soft hover:bg-ink/4 hover:text-ink dark:text-parchment-soft dark:hover:bg-parchment/6 dark:hover:text-parchment'
                         }`
                       }
                     >
-                      <item.icon size={16} aria-hidden="true" className="shrink-0" />
-                      {collapsed ? null : <span>{item.label}</span>}
-                      {showBadge ? <span className="flex-1" /> : null}
-                      {showBadge ? <Badge /> : null}
+                      {({ isActive }) => (
+                        <>
+                          {isActive && !collapsed ? (
+                            <span
+                              aria-hidden="true"
+                              className="absolute top-1/2 left-0 h-3.5 w-0.5 -translate-y-1/2 rounded-full bg-ember"
+                            />
+                          ) : null}
+                          <item.icon size={16} aria-hidden="true" className="shrink-0" />
+                          {collapsed ? null : <span>{item.label}</span>}
+                          {showBadge ? <span className="flex-1" /> : null}
+                          {showBadge ? <Badge /> : null}
+                        </>
+                      )}
                     </NavLink>
                   </li>
                 )
@@ -350,7 +401,7 @@ export function Layout(): React.JSX.Element {
             onClick={() => {
               setDrawer(false)
             }}
-            className="flex w-full items-center gap-2 rounded-md p-2 text-xs"
+            className="flex w-full items-center gap-2 rounded-md p-2 text-[13px]"
           >
             <KeyRound size={16} aria-hidden="true" />
             {collapsed ? null : <span>Log in</span>}
@@ -360,10 +411,14 @@ export function Layout(): React.JSX.Element {
             type="button"
             onClick={() => {
               setDrawer(false)
-              void logout()
+              // Every lock lands on the login screen, whatever route the
+              // session was on when it ended.
+              void logout().then(() => {
+                void navigate('/login', { replace: true })
+              })
             }}
             aria-label={`Lock console (signed in as ${session.username})`}
-            className="flex w-full items-center gap-2 rounded-md p-2 text-xs"
+            className="flex w-full items-center gap-2 rounded-md p-2 text-[13px]"
           >
             <Lock size={16} aria-hidden="true" />
             {collapsed ? null : <span>Lock</span>}
@@ -373,7 +428,7 @@ export function Layout(): React.JSX.Element {
           type="button"
           onClick={toggleDark}
           aria-label={collapsed ? (dark ? 'Light theme' : 'Dark theme') : undefined}
-          className="flex w-full items-center gap-2 rounded-md p-2 text-xs"
+          className="flex w-full items-center gap-2 rounded-md p-2 text-[13px]"
         >
           {dark ? <Sun size={16} aria-hidden="true" /> : <Moon size={16} aria-hidden="true" />}
           {collapsed ? null : <span>{dark ? 'Light theme' : 'Dark theme'}</span>}
@@ -399,9 +454,9 @@ export function Layout(): React.JSX.Element {
       ) : null}
       <aside
         aria-label="Console navigation"
-        className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-ink/10 bg-paper transition-transform dark:border-parchment/10 dark:bg-night ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col overflow-hidden border-r border-ink/10 bg-paper transition-transform dark:border-parchment/10 dark:bg-night ${
           drawer ? 'translate-x-0' : '-translate-x-full'
-        } lg:sticky lg:top-0 lg:z-auto lg:h-screen lg:shrink-0 lg:translate-x-0 ${
+        } motion-reduce:transition-none lg:sticky lg:top-0 lg:z-auto lg:h-screen lg:shrink-0 lg:translate-x-0 lg:transition-[width] lg:duration-200 lg:ease-out ${
           collapsed ? 'lg:w-16' : 'lg:w-64'
         }`}
       >
@@ -411,10 +466,10 @@ export function Layout(): React.JSX.Element {
         <header className="border-b border-ink/10 dark:border-parchment/10">
           <div className="border-b border-ink/10 dark:border-parchment/10">
             <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-1">
-              <p className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+              <p className="min-w-0 flex-1 truncate font-mono text-xs whitespace-nowrap text-ink-soft dark:text-parchment-soft">
                 cacherelay · {base || 'same-origin'}
               </p>
-              <p className="font-mono text-[11px] text-ink-soft tnum dark:text-parchment-soft">
+              <p className="shrink-0 font-mono text-xs whitespace-nowrap text-ink-soft tnum dark:text-parchment-soft">
                 auth: {authLabel}
               </p>
             </div>
@@ -430,7 +485,7 @@ export function Layout(): React.JSX.Element {
             >
               <Menu size={18} aria-hidden="true" />
             </button>
-            <p className="font-mono text-[11px] text-ink-soft lg:hidden dark:text-parchment-soft">
+            <p className="font-mono text-xs text-ink-soft lg:hidden dark:text-parchment-soft">
               {routeLabel}
             </p>
             <span className="flex-1" />
@@ -440,7 +495,7 @@ export function Layout(): React.JSX.Element {
                 setSheetOpen(true)
               }}
               aria-label="Keyboard shortcuts"
-              className="rounded-md border border-ink/15 px-3 py-2 font-mono text-xs dark:border-parchment/15"
+              className="rounded-md border border-ink/15 px-3 py-2 font-mono text-[13px] dark:border-parchment/15"
             >
               ?
             </button>
@@ -465,10 +520,10 @@ export function Layout(): React.JSX.Element {
         <Toasts />
         <footer className="border-t border-ink/10 dark:border-parchment/10">
           <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-1">
-            <p className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+            <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
               route: {routeLabel}
             </p>
-            <p className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+            <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
               theme: {dark ? 'dark' : 'light'}
             </p>
           </div>

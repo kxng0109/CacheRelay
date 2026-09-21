@@ -8,7 +8,10 @@ import { GatewayClient } from '../../shared/api/client.js'
 import { isStreamingEnabled } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
+import { RunDetailPanel } from './RunDetailPanel.js'
+import type { StreamSummary } from './SseStreamViewer.js'
 import { SseStreamViewer } from './SseStreamViewer.js'
+import { ModelSelect } from '../../shared/models/ModelSelect.js'
 
 const schema = z.object({
   model: z.string().min(1, 'Model is required'),
@@ -43,6 +46,16 @@ export function PlaygroundPage(): React.JSX.Element {
   const [submitted, setSubmitted] = useState<FormData | null>(null)
   const [staticText, setStaticText] = useState<string | null>(null)
   const [staticError, setStaticError] = useState<string | null>(null)
+  /**
+   * Static call wall clock. Measured around the request so the detail
+   * panel shows a real number even though the backend reports no usage.
+   */
+  const [staticLatencyMs, setStaticLatencyMs] = useState<number | null>(null)
+  /**
+   * Final stream facts from the viewer. Null while streaming or before the
+   * first run; the detail panel shows em dashes until it lands.
+   */
+  const [streamSummary, setStreamSummary] = useState<StreamSummary | null>(null)
   const [history, setHistory] = useState<RunRecord[]>([])
   const outputRef = useRef<HTMLElement | null>(null)
   /**
@@ -62,13 +75,21 @@ export function PlaygroundPage(): React.JSX.Element {
   } = useForm<FormData>({
     resolver: zodResolver(schema),
     mode: 'onSubmit',
-    defaultValues: { model: 'gpt-56-luna', prompt: '', key: gatewayKey ?? '' },
+    defaultValues: { model: '', prompt: '', key: gatewayKey ?? '' },
   })
   const promptLength = useWatch({ control, name: 'prompt' }).length
   const modelValue = useWatch({ control, name: 'model' })
+  const keyValue = useWatch({ control, name: 'key' })
   const overLimit = promptLength > 8000
   const [exampleCopied, setExampleCopied] = useState(false)
+  const [exampleBytes, setExampleBytes] = useState(0)
   const [exampleError, setExampleError] = useState<string | null>(null)
+  /**
+   * Password managers key off focusable password fields. The key input
+   * stays readonly until first focus, which keeps managers from claiming
+   * it on sight. Typing always works: focus arms the field first.
+   */
+  const [keyArmed, setKeyArmed] = useState(false)
 
   const messages = useMemo(
     () => [{ role: 'user' as const, content: submitted?.prompt ?? '' }],
@@ -84,15 +105,20 @@ export function PlaygroundPage(): React.JSX.Element {
     setHistory((h) => [{ id, model: d.model, prompt: d.prompt }, ...h].slice(0, 8))
     setStaticText(null)
     setStaticError(null)
+    setStaticLatencyMs(null)
+    setStreamSummary(null)
     if (!streaming) {
+      const started = performance.now()
       void new GatewayClient({ token: d.key })
         .chat({ model: d.model, messages: [{ role: 'user', content: d.prompt }] })
         .then((out) => {
           const first = out.choices[0]
           setStaticText(first === undefined ? '(empty completion)' : first.message.content)
+          setStaticLatencyMs(performance.now() - started)
         })
         .catch((e: unknown) => {
           setStaticError(toErrorMessage(e, 'Completion failed.'))
+          setStaticLatencyMs(performance.now() - started)
         })
     }
   }
@@ -133,6 +159,7 @@ export function PlaygroundPage(): React.JSX.Element {
     void clip.writeText(exampleRequest()).then(
       () => {
         setExampleCopied(true)
+        setExampleBytes(new TextEncoder().encode(exampleRequest()).length)
       },
       () => {
         setExampleError('Copy failed. Select the text manually.')
@@ -160,7 +187,22 @@ export function PlaygroundPage(): React.JSX.Element {
 
   return (
     <div className="space-y-4">
-      <h1 className="font-display text-2xl font-medium tracking-tight">Playground</h1>
+      <div className="space-y-1">
+        <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+          <span aria-hidden="true" className="mr-1 text-ember">
+            ❯
+          </span>
+          run
+        </p>
+        <h1 className="font-display text-3xl font-medium tracking-tight">Playground</h1>
+        <p className="text-sm text-ink-soft dark:text-parchment-soft">
+          Send a prompt through the gateway. Tokens, cost, and phase land live below.
+        </p>
+        <p className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft">
+          model {modelValue || 'unset'} · key {keyValue ? 'set' : 'missing'} ·{' '}
+          {streaming ? 'streaming' : 'static'} · {promptLength}/8000
+        </p>
+      </div>
       <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
         <div className="space-y-4">
           <form
@@ -168,63 +210,71 @@ export function PlaygroundPage(): React.JSX.Element {
               void handleSubmit(onSubmit)(e)
             }}
             aria-label="Prompt"
-            className="space-y-3 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent"
+            className="rise space-y-3 rounded-xl border border-ink/10 bg-cream p-4 sm:p-5 dark:border-parchment/10 dark:bg-transparent"
           >
             <div className="flex items-baseline justify-between gap-3">
-              <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+              <p className="font-mono text-[13px] text-ink-soft dark:text-parchment-soft">
                 <span aria-hidden="true" className="mr-1 text-ember">
                   ❯
                 </span>
                 prompt
               </p>
               <p
-                className={`font-mono text-[11px] tnum ${
+                className={`font-mono text-xs tnum ${
                   overLimit
                     ? 'text-danger dark:text-danger-soft'
                     : 'text-ink-soft dark:text-parchment-soft'
                 }`}
               >
-                {promptLength}/8000{overLimit ? ' — over limit' : null}
+                {promptLength}/8000{overLimit ? ' over limit' : null}
               </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <label htmlFor="pg-model" className="mb-1 block text-xs font-medium">
+                <label htmlFor="pg-model" className="mb-1 block text-[13px] font-medium">
                   Model
                 </label>
-                <input
+                <ModelSelect
+                  token={keyValue}
                   id="pg-model"
-                  {...register('model')}
-                  aria-invalid={errors.model !== undefined}
-                  className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
+                  registration={register('model')}
+                  value={modelValue}
+                  invalid={errors.model !== undefined}
                 />
                 {errors.model === undefined ? null : (
-                  <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
+                  <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
                     {errors.model.message}
                   </p>
                 )}
               </div>
               <div>
-                <label htmlFor="pg-key" className="mb-1 block text-xs font-medium">
+                <label htmlFor="pg-key" className="mb-1 block text-[13px] font-medium">
                   API key (memory only, never stored)
                 </label>
                 <input
                   id="pg-key"
                   type="password"
-                  autoComplete="off"
+                  autoComplete="new-password"
+                  data-1p-ignore="true"
+                  data-lpignore="true"
+                  data-bwignore="true"
+                  readOnly={!keyArmed}
+                  onFocus={() => {
+                    setKeyArmed(true)
+                  }}
                   {...register('key')}
                   aria-invalid={errors.key !== undefined}
                   className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
                 />
                 {errors.key === undefined ? null : (
-                  <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
+                  <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
                     {errors.key.message}
                   </p>
                 )}
               </div>
             </div>
             <div>
-              <label htmlFor="pg-prompt" className="mb-1 block text-xs font-medium">
+              <label htmlFor="pg-prompt" className="mb-1 block text-[13px] font-medium">
                 Prompt
               </label>
               <textarea
@@ -237,63 +287,63 @@ export function PlaygroundPage(): React.JSX.Element {
                 className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
               />
               {errors.prompt === undefined ? null : (
-                <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
+                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
                   {errors.prompt.message}
                 </p>
               )}
             </div>
             <div className="flex items-center justify-between gap-3">
-              <p className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+              <p className="min-w-0 flex-1 truncate font-mono text-xs text-ink-soft dark:text-parchment-soft">
                 run #{runId + 1} · {streaming ? 'streaming' : 'static'}
               </p>
               <p
                 id="pg-shortcut-hint"
-                className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft"
+                className="hidden shrink-0 font-mono text-xs whitespace-nowrap text-ink-soft sm:block dark:text-parchment-soft"
               >
                 <kbd>Ctrl</kbd>+<kbd>Enter</kbd> to send
               </p>
               <button
                 type="submit"
                 disabled={isSubmitting || overLimit}
-                className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper disabled:opacity-50 dark:bg-parchment dark:text-night"
+                className="shrink-0 rounded-md bg-ink px-4 py-2 text-sm font-medium whitespace-nowrap text-paper disabled:opacity-50 dark:bg-parchment dark:text-night"
               >
                 {isSubmitting ? 'Starting…' : streaming ? 'Stream completion' : 'Send completion'}
               </button>
             </div>
           </form>
           <details className="rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
-            <summary className="cursor-pointer font-mono text-xs">
+            <summary className="cursor-pointer font-mono text-[13px]">
               Run it from a terminal instead
             </summary>
-            <pre className="mt-2 overflow-auto rounded-md border border-ink/10 p-2 font-mono text-[11px] whitespace-pre-wrap dark:border-parchment/10">
+            <pre className="mt-2 overflow-auto rounded-md border border-ink/10 p-2 font-mono text-xs whitespace-pre-wrap dark:border-parchment/10">
               {exampleRequest()}
             </pre>
             <div className="mt-2 flex items-center gap-3">
               <button
                 type="button"
                 onClick={copyExample}
-                className="rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+                className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
               >
-                {exampleCopied ? 'Copied' : 'Copy'}
+                {exampleCopied ? `Copied ${String(exampleBytes)}B` : 'Copy'}
               </button>
               {exampleError === null ? null : (
-                <p role="alert" className="text-xs text-danger dark:text-danger-soft">
+                <p role="alert" className="text-[13px] text-danger dark:text-danger-soft">
                   {exampleError}
                 </p>
               )}
             </div>
           </details>
           {submitted === null ? (
-            <div className="rounded-xl border border-dashed border-ink/20 p-6 text-center dark:border-parchment/20">
+            <div className="rise rounded-xl border border-dashed border-ink/20 p-6 text-center sm:p-8 dark:border-parchment/20">
               <p className="font-display text-xl font-medium tracking-tight">No output yet</p>
-              <p className="mt-1 text-xs text-ink-soft dark:text-parchment-soft">
-                Fill the prompt, pick a model, then <kbd>Ctrl</kbd>+<kbd>Enter</kbd>. The stream
-                lands here with tokens, cost, and phase.
+              <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-soft dark:text-parchment-soft">
+                Pick a model, paste a key, write a prompt. Then send. Tokens, cost, and phase show
+                here as the stream flows.
               </p>
               <button
                 type="button"
                 onClick={fillSample}
-                className="mt-3 rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+                className="mt-3 rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
               >
                 Try sample prompt
               </button>
@@ -302,10 +352,10 @@ export function PlaygroundPage(): React.JSX.Element {
             <section
               ref={outputRef}
               aria-label={`Run ${String(runId)}: ${submitted.model}`}
-              className="space-y-3 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent"
+              className="rise space-y-3 rounded-xl border border-ink/10 bg-cream p-4 sm:p-5 dark:border-parchment/10 dark:bg-transparent"
             >
               <div className="flex flex-wrap items-center gap-3">
-                <p className="font-mono text-[11px] text-ink-soft tnum dark:text-parchment-soft">
+                <p className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft">
                   run #{runId} · {submitted.model} · {streaming ? 'streaming' : 'static'}
                 </p>
                 <span className="flex-1" />
@@ -316,7 +366,7 @@ export function PlaygroundPage(): React.JSX.Element {
                     setValue('prompt', submitted.prompt)
                     void handleSubmit(onSubmit)()
                   }}
-                  className="rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+                  className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
                 >
                   Rerun
                 </button>
@@ -327,6 +377,7 @@ export function PlaygroundPage(): React.JSX.Element {
                   token={submitted.key}
                   model={submitted.model}
                   messages={messages}
+                  onSummary={setStreamSummary}
                 />
               ) : (
                 <div aria-label="Completion result" className="space-y-2">
@@ -347,20 +398,57 @@ export function PlaygroundPage(): React.JSX.Element {
                   )}
                 </div>
               )}
+              <RunDetailPanel
+                detail={
+                  streaming
+                    ? {
+                        runId,
+                        model: submitted.model,
+                        streaming: true,
+                        status:
+                          streamSummary === null
+                            ? 'running'
+                            : streamSummary.phase === 'done'
+                              ? 'done'
+                              : 'error',
+                        ...(streamSummary === null
+                          ? {}
+                          : {
+                              latencyMs: streamSummary.durationMs,
+                              frames: streamSummary.frames,
+                              cacheTier: streamSummary.cacheTier,
+                              similarity: streamSummary.similarity,
+                              age: streamSummary.age,
+                              ...(streamSummary.error === undefined
+                                ? {}
+                                : { error: streamSummary.error }),
+                            }),
+                      }
+                    : {
+                        runId,
+                        model: submitted.model,
+                        streaming: false,
+                        status:
+                          staticError !== null ? 'error' : staticText !== null ? 'done' : 'running',
+                        ...(staticLatencyMs === null ? {} : { latencyMs: staticLatencyMs }),
+                        ...(staticError === null ? {} : { error: staticError }),
+                      }
+                }
+              />
             </section>
           )}
         </div>
         <aside aria-label="Run history" className="space-y-3">
-          <h2 className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
-            run history
-          </h2>
+          <h2 className="font-mono text-xs text-ink-soft dark:text-parchment-soft">run history</h2>
           {history.length === 0 ? (
-            <ul className="space-y-2 text-xs text-ink-soft dark:text-parchment-soft">
-              <li>Fill the prompt, pick a model, send.</li>
-              <li>Paste a key once — it lives in memory only.</li>
-              <li>Press Ctrl+K to jump anywhere.</li>
-              <li>Past runs land here for one-click reload.</li>
-            </ul>
+            <div className="rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
+              <ul className="space-y-2 text-[13px] text-ink-soft dark:text-parchment-soft">
+                <li>Fill the prompt, pick a model, send.</li>
+                <li>Paste a key once. It lives in memory only.</li>
+                <li>Press Ctrl+K to jump anywhere.</li>
+                <li>Past runs land here for one-click reload.</li>
+              </ul>
+            </div>
           ) : (
             <ol className="space-y-2">
               {history.map((run) => (
@@ -372,10 +460,10 @@ export function PlaygroundPage(): React.JSX.Element {
                     }}
                     className="lift w-full rounded-lg border border-ink/10 bg-cream p-3 text-left dark:border-parchment/10 dark:bg-transparent"
                   >
-                    <p className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+                    <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
                       run #{run.id} · {run.model}
                     </p>
-                    <p className="mt-1 truncate text-xs">{run.prompt}</p>
+                    <p className="mt-1 truncate text-[13px]">{run.prompt}</p>
                   </button>
                 </li>
               ))}

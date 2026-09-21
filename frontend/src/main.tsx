@@ -7,7 +7,7 @@ import '@fontsource-variable/martian-mono/wght.css'
 import './index.css'
 import { Providers } from './app/providers.tsx'
 import { router } from './app/router.tsx'
-import { restoreSession } from './shared/auth/session.js'
+import { restoreSession, shouldDeferRestore } from './shared/auth/session.js'
 
 const root = document.getElementById('root')
 // Boot guard: index.html always provides #root; the throw is unreachable by construction.
@@ -22,5 +22,17 @@ createRoot(root).render(
   </StrictMode>,
 )
 
-// Restores a cookie-backed session without blocking first paint.
-void restoreSession()
+// Restores a cookie-backed session without blocking first paint. Public
+// routes wait for first input so cold loads stay clean when the gateway is
+// unreachable; authed deep links restore immediately to avoid a login bounce.
+if (shouldDeferRestore(window.location.pathname)) {
+  const restoreOnce = (): void => {
+    window.removeEventListener('pointerdown', restoreOnce)
+    window.removeEventListener('keydown', restoreOnce)
+    void restoreSession()
+  }
+  window.addEventListener('pointerdown', restoreOnce, { once: true })
+  window.addEventListener('keydown', restoreOnce, { once: true })
+} else {
+  void restoreSession()
+}

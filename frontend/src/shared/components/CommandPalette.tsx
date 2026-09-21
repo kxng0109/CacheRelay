@@ -74,6 +74,14 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
       },
     },
     {
+      id: 'nav-models',
+      label: 'Go to Models',
+      audience: 'admin',
+      run: () => {
+        go('/models')
+      },
+    },
+    {
       id: 'nav-keys',
       label: 'Go to Keys',
       audience: 'admin',
@@ -149,7 +157,7 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
           setOpen(true)
         }}
         aria-keyshortcuts="Control+k Meta+k"
-        className="rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+        className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
       >
         Commands (Ctrl+K)
       </button>
@@ -167,14 +175,14 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
             >
               {a.label}
               {a.hint === undefined ? null : (
-                <span className="ml-2 text-xs text-ink-soft tnum dark:text-parchment-soft">
+                <span className="ml-2 text-[13px] text-ink-soft tnum dark:text-parchment-soft">
                   {a.hint}
                 </span>
               )}
             </Command.Item>
           ))}
         </Command.List>
-        <p className="border-t border-ink/10 px-3 py-2 font-mono text-[11px] text-ink-soft dark:border-parchment/10 dark:text-parchment-soft">
+        <p className="border-t border-ink/10 px-3 py-2 font-mono text-xs text-ink-soft dark:border-parchment/10 dark:text-parchment-soft">
           {context} · ↑↓ move · Enter run · Esc close
         </p>
       </Command.Dialog>

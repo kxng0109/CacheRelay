@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { appendLatencyPoint, histogramQuantile, parsePrometheusHistogram } from './prometheus.js'
+import {
+  appendLatencyPoint,
+  histogramQuantile,
+  parseGatewayPulse,
+  parsePrometheusHistogram,
+} from './prometheus.js'
 import type { Accumulator, HistogramSnapshot } from './prometheus.js'
 
 const SCRAPE = [
@@ -148,6 +153,7 @@ describe('appendLatencyPoint', () => {
     expect(point).not.toBeNull()
     expect(point?.p50).toBe(500)
     expect(point?.p95).toBe(500)
+    expect(point?.p99).toBe(500)
     expect(point?.rps).toBeCloseTo(100 / 15, 5)
   })
 
@@ -213,6 +219,59 @@ describe('appendLatencyPoint', () => {
     expect(point).not.toBeNull()
     expect(point?.p50).toBeNull()
     expect(point?.p95).toBeNull()
+    expect(point?.p99).toBeNull()
     expect(point?.rps).toBeCloseTo(10 / 15, 5)
+  })
+})
+
+describe('parseGatewayPulse', () => {
+  const PULSE = [
+    'process_uptime_seconds 7200.0',
+    'http_server_requests_seconds_count{method="POST",status="200",uri="/v1/chat/completions"} 100',
+    'http_server_requests_seconds_count{method="POST",status="500",uri="/v1/chat/completions"} 5',
+    'jvm_memory_used_bytes{area="heap"} 536870912',
+    'jvm_memory_max_bytes{area="heap"} 2147483648',
+    'jvm_memory_used_bytes{area="nonheap"} 123456',
+    'sse_connection_active 3',
+  ].join('\n')
+
+  it('extracts aggregate gauges and sums counters', () => {
+    const pulse = parseGatewayPulse(PULSE)
+    expect(pulse.uptimeSeconds).toBe(7200)
+    expect(pulse.requestsTotal).toBe(105)
+    expect(pulse.errorsTotal).toBe(5)
+    expect(pulse.heapUsedBytes).toBe(536870912)
+    expect(pulse.heapMaxBytes).toBe(2147483648)
+    expect(pulse.liveStreams).toBe(3)
+  })
+
+  it('normalizes missing 5xx series to zero once requests exist', () => {
+    const pulse = parseGatewayPulse(
+      'http_server_requests_seconds_count{method="GET",status="200",uri="/v1/models"} 7',
+    )
+    expect(pulse.requestsTotal).toBe(7)
+    expect(pulse.errorsTotal).toBe(0)
+  })
+
+  it('returns nulls for an empty or malformed scrape', () => {
+    expect(parseGatewayPulse('')).toEqual({
+      uptimeSeconds: null,
+      requestsTotal: null,
+      errorsTotal: null,
+      heapUsedBytes: null,
+      heapMaxBytes: null,
+      liveStreams: null,
+    })
+    expect(
+      parseGatewayPulse('garbage\nprocess_uptime_seconds not-a-number').uptimeSeconds,
+    ).toBeNull()
+  })
+
+  it('ignores negative samples and comments', () => {
+    const pulse = parseGatewayPulse(
+      '# HELP jvm_memory_used_bytes heap\njvm_memory_used_bytes{area="heap"} -5\nsse_connection_active -1',
+    )
+    expect(pulse.heapUsedBytes).toBeNull()
+    expect(pulse.liveStreams).toBeNull()
   })
 })

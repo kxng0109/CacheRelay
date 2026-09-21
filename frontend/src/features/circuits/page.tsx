@@ -56,6 +56,20 @@ function stateWord(state: string): string {
 }
 
 /**
+ * One line consequence for a circuit state. Operators should know what
+ * each state does to traffic without opening docs.
+ *
+ * @param state - Raw state string from the gateway.
+ * @returns The consequence sentence.
+ */
+function stateConsequence(state: string): string {
+  if (state === 'CLOSED') return 'Requests flow normally.'
+  if (state === 'OPEN') return 'Requests fail fast until cooldown ends.'
+  if (state === 'HALF_OPEN') return 'One trial request decides the next state.'
+  return 'Unknown state. Treat traffic as suspect until confirmed.'
+}
+
+/**
  * Live provider-state board plus force-reset.
  *
  * @remarks Proof-type: live (polls real `/v1/admin/circuits`). The route
@@ -101,10 +115,17 @@ function CircuitsBoard(): React.JSX.Element {
     return c.provider.toLowerCase().includes(queryText) || c.state.toLowerCase().includes(queryText)
   })
   const inspected = circuits.find((c) => c.provider === selected) ?? null
+  const flowing = circuits.filter((c) => c.state === 'CLOSED').length
+  const tripped = circuits.filter((c) => c.state === 'OPEN').length
+  const probing = circuits.filter((c) => c.state === 'HALF_OPEN').length
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
       <div className="space-y-4">
+        <p className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft">
+          {circuits.length} providers · {flowing} flowing · {tripped} tripped · {probing} probing ·
+          refreshes every 5s
+        </p>
         <div className="flex flex-wrap items-center gap-2">
           <label htmlFor="circuit-filter" className="sr-only">
             Filter circuits
@@ -117,7 +138,7 @@ function CircuitsBoard(): React.JSX.Element {
             onChange={(e) => {
               setFilter(e.target.value)
             }}
-            className="w-48 rounded-md border border-ink/15 bg-transparent px-3 py-2 text-xs dark:border-parchment/15"
+            className="w-48 rounded-md border border-ink/15 bg-transparent px-3 py-2 text-[13px] dark:border-parchment/15"
           />
           <div role="group" aria-label="State filter" className="flex gap-1">
             {(['all', 'CLOSED', 'OPEN', 'HALF_OPEN', 'unknown'] as const).map((s) => (
@@ -128,7 +149,7 @@ function CircuitsBoard(): React.JSX.Element {
                 onClick={() => {
                   setSegment(s)
                 }}
-                className={`rounded-md p-2 font-mono text-[11px] ${
+                className={`rounded-md p-2 font-mono text-xs ${
                   segment === s
                     ? 'bg-ink text-paper dark:bg-parchment dark:text-night'
                     : 'text-ink-soft dark:text-parchment-soft'
@@ -150,13 +171,13 @@ function CircuitsBoard(): React.JSX.Element {
             onClick={() => {
               void qc.invalidateQueries({ queryKey: ['circuits'] })
             }}
-            className="rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+            className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
           >
             Refresh [r]
           </button>
         </div>
         {notice === null ? null : (
-          <p role="status" className="text-xs">
+          <p role="status" className="text-[13px]">
             {notice}
           </p>
         )}
@@ -180,8 +201,8 @@ function CircuitsBoard(): React.JSX.Element {
         {visible.length === 0 ? null : (
           <table className="w-full text-left text-sm">
             <caption className="sr-only">Provider circuit states</caption>
-            <thead>
-              <tr className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+            <thead className="sticky top-0 bg-paper dark:bg-night">
+              <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
                 <th scope="col" className="py-2 pr-3 font-medium">
                   Provider
                 </th>
@@ -217,15 +238,24 @@ function CircuitsBoard(): React.JSX.Element {
                       active ? 'bg-ink/4 dark:bg-parchment/6' : ''
                     }`}
                   >
-                    <td className="py-2 pr-3 font-mono text-xs">{c.provider}</td>
+                    <td
+                      className="max-w-44 truncate py-2 pr-3 font-mono text-[13px]"
+                      title={c.provider}
+                    >
+                      {c.provider}
+                    </td>
                     <td className="py-2 pr-3">
-                      <span className={`rounded px-2 py-1 text-xs tnum ${meta.badge} ${meta.dark}`}>
+                      <span
+                        className={`rounded px-2 py-1 text-[13px] tnum ${meta.badge} ${meta.dark}`}
+                      >
                         {meta.label}
                       </span>
                     </td>
                     <td className="py-2 pr-3 font-display text-lg tnum">{stateWord(c.state)}</td>
-                    <td className="py-2 pr-3 text-right text-xs tnum">{c.failures}</td>
-                    <td className="py-2 pr-3 text-right text-xs tnum">{c.cooldownMsRemaining}</td>
+                    <td className="py-2 pr-3 text-right text-[13px] tnum">{c.failures}</td>
+                    <td className="py-2 pr-3 text-right text-[13px] tnum">
+                      {c.cooldownMsRemaining}
+                    </td>
                     <td className="py-2 text-right">
                       <button
                         type="button"
@@ -233,7 +263,7 @@ function CircuitsBoard(): React.JSX.Element {
                           e.stopPropagation()
                           void reset(c.provider)
                         }}
-                        className="rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+                        className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
                       >
                         Reset circuit
                       </button>
@@ -244,13 +274,13 @@ function CircuitsBoard(): React.JSX.Element {
             </tbody>
           </table>
         )}
-        <p className="text-xs text-ink-soft dark:text-parchment-soft">
+        <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
           Base: {resolveApiBase() === '' ? 'same-origin' : resolveApiBase()}
         </p>
       </div>
       <aside aria-label="Circuit inspector" className="space-y-3">
         {inspected === null ? (
-          <p className="text-xs text-ink-soft dark:text-parchment-soft">
+          <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
             Select a row to inspect a circuit.
           </p>
         ) : (
@@ -261,7 +291,10 @@ function CircuitsBoard(): React.JSX.Element {
             <p className="font-display text-3xl font-medium tracking-tight tnum">
               {stateWord(inspected.state)}
             </p>
-            <dl className="space-y-2 text-xs">
+            <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
+              {stateConsequence(inspected.state)}
+            </p>
+            <dl className="space-y-2 text-[13px]">
               <div className="flex justify-between gap-3">
                 <dt className="text-ink-soft dark:text-parchment-soft">State</dt>
                 <dd className="tnum">{stateMeta(inspected.state).label}</dd>
@@ -284,7 +317,7 @@ function CircuitsBoard(): React.JSX.Element {
               onClick={() => {
                 void reset(inspected.provider)
               }}
-              className="w-full rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+              className="w-full rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
             >
               Reset circuit
             </button>
@@ -306,7 +339,18 @@ function CircuitsBoard(): React.JSX.Element {
 export function CircuitsPage(): React.JSX.Element {
   return (
     <div className="space-y-4">
-      <h1 className="font-display text-2xl font-medium tracking-tight">Circuits</h1>
+      <div className="space-y-1">
+        <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+          <span aria-hidden="true" className="mr-1 text-ember">
+            ❯
+          </span>
+          guard
+        </p>
+        <h1 className="font-display text-3xl font-medium tracking-tight">Circuits</h1>
+        <p className="text-sm text-ink-soft dark:text-parchment-soft">
+          Breakers per provider. Tripped circuits fail fast until cooldown ends.
+        </p>
+      </div>
       <CircuitsBoard />
     </div>
   )

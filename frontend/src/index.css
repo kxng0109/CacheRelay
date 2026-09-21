@@ -150,14 +150,162 @@ textarea {
   }
 }
 
-/* Lift: the one permitted hover flourish — 1px rise on cards and history
-   rows. Killed by the reduced-motion switch below. */
+/* Table rows answer hover with a quiet wash so dense boards feel alive.
+   Selected rows keep their stronger tint; hover never overrides it. */
+tbody tr {
+  transition: background-color var(--dur-ui) ease;
+}
+tbody tr:hover {
+  background-color: color-mix(in srgb, var(--color-ink) 7%, transparent);
+}
+.dark tbody tr:hover {
+  background-color: color-mix(in srgb, var(--color-parchment) 11%, transparent);
+}
+summary:hover {
+  color: var(--color-ink);
+}
+.dark summary:hover {
+  color: var(--color-parchment);
+}
+
+/* Command palette: centered modal over a scrim, never inline. cmdk
+   renders its own portal nodes; these attribute selectors position them.
+   The reduced-motion kill switch below covers their transitions too. */
+[cmdk-overlay] {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.5);
+  z-index: 40;
+}
+[cmdk-dialog] {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(640px, calc(100vw - 32px));
+  max-height: 65vh;
+  overflow: auto;
+  z-index: 50;
+  background: var(--color-paper);
+  border: 1px solid var(--color-sand);
+  border-radius: 16px;
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.25);
+}
+.dark [cmdk-dialog] {
+  background: var(--color-night);
+  border-color: var(--color-ink-soft);
+}
+[cmdk-input] {
+  width: 100%;
+  height: 48px;
+  padding: 0 18px;
+  font-size: 15px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--color-sand);
+  outline: none;
+}
+.dark [cmdk-input] {
+  border-bottom-color: var(--color-ink-soft);
+  color: var(--color-parchment);
+}
+[cmdk-item] {
+  display: flex;
+  align-items: center;
+  min-height: 46px;
+  padding: 0 18px;
+  font-size: 14px;
+  cursor: pointer;
+}
+[cmdk-item][data-selected='true'] {
+  background: color-mix(in srgb, var(--color-ember) 12%, transparent);
+}
+/* The entrance keeps the centering transform inside every keyframe. The
+   generic rise-in replaces the transform outright, which dropped the
+   -50% X shift and made the dialog jump off center for a frame. */
+@media (prefers-reduced-motion: no-preference) {
+  [cmdk-dialog] {
+    animation: palette-in var(--dur-panel) var(--ease-enter);
+  }
+}
+@keyframes palette-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 8px));
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+}
+/* Interactive affordances: every control answers hover and press within
+   the 150 to 200ms budget externals converge on. Color only, never layout,
+   and press never survives reduced motion. */
+button:not(:disabled),
+a,
+summary {
+  transition:
+    background-color var(--dur-ui) ease,
+    border-color var(--dur-ui) ease,
+    color var(--dur-ui) ease;
+  cursor: pointer;
+}
+@media (prefers-reduced-motion: no-preference) {
+  button:not(:disabled) {
+    transition:
+      background-color var(--dur-ui) ease,
+      border-color var(--dur-ui) ease,
+      color var(--dur-ui) ease,
+      transform var(--dur-ui) var(--ease-enter);
+  }
+  button:not(:disabled):active {
+    transform: translateY(1px);
+  }
+  details[open] > *:not(summary) {
+    animation: disclosure-in var(--dur-ui) var(--ease-enter);
+  }
+}
+button:not(:disabled):hover {
+  border-color: color-mix(in srgb, var(--color-ember) 45%, transparent);
+}
+/* Filled primaries answer hover with a one step shade shift, not a border
+   they do not have. */
+button[class*='bg-ink']:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--color-ink) 88%, var(--color-paper));
+}
+.dark button[class*='bg-parchment']:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--color-parchment) 88%, var(--color-night));
+}
+@keyframes disclosure-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 @media (prefers-reduced-motion: no-preference) {
   .lift {
     transition: transform var(--dur-micro) var(--ease-enter);
   }
   .lift:hover {
     transform: translateY(-1px);
+  }
+  /* Entrance: cards settle once on mount. State changes never replay it. */
+  .rise {
+    animation: rise-in var(--dur-panel) var(--ease-enter);
+  }
+}
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 

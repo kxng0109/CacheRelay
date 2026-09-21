@@ -57,11 +57,11 @@ export function McpPage(): React.JSX.Element {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="font-display text-2xl font-medium tracking-tight">MCP tools</h1>
-        <span className="rounded-full border border-ink/15 px-2 py-0.5 font-mono text-[11px] tnum dark:border-parchment/15">
+        <span className="rounded-full border border-ink/15 px-2 py-0.5 font-mono text-xs tnum dark:border-parchment/15">
           tools:{tools.length}
         </span>
         <span
-          className={`rounded-full border px-2 py-0.5 font-mono text-[11px] ${
+          className={`rounded-full border px-2 py-0.5 font-mono text-xs ${
             suspended
               ? 'border-warn/40 text-warn dark:text-warn-soft'
               : 'border-ink/15 dark:border-parchment/15'
@@ -75,7 +75,7 @@ export function McpPage(): React.JSX.Element {
           onClick={() => {
             void qc.invalidateQueries({ queryKey: ['mcp-tools'] })
           }}
-          className="rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+          className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
         >
           Retry [r]
         </button>
@@ -116,7 +116,7 @@ export function McpPage(): React.JSX.Element {
                 onChange={(e) => {
                   setFilter(e.target.value)
                 }}
-                className="w-48 rounded-md border border-ink/15 bg-transparent px-3 py-2 text-xs dark:border-parchment/15"
+                className="w-48 rounded-md border border-ink/15 bg-transparent px-3 py-2 text-[13px] dark:border-parchment/15"
               />
             </div>
             {visible.length === 0 ? (
@@ -129,7 +129,7 @@ export function McpPage(): React.JSX.Element {
               <table className="w-full text-left text-sm">
                 <caption className="sr-only">MCP tool catalog</caption>
                 <thead>
-                  <tr className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+                  <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
                     <th scope="col" className="py-2 pr-3 font-medium">
                       Tool
                     </th>
@@ -153,11 +153,13 @@ export function McpPage(): React.JSX.Element {
                         t.name === selected ? 'bg-ink/4 dark:bg-parchment/6' : ''
                       }`}
                     >
-                      <td className="max-w-48 truncate py-2 pr-3 font-mono text-xs">{t.name}</td>
-                      <td className="max-w-96 truncate py-2 pr-3 text-xs">
+                      <td className="max-w-48 truncate py-2 pr-3 font-mono text-[13px]">
+                        {t.name}
+                      </td>
+                      <td className="max-w-96 truncate py-2 pr-3 text-[13px]">
                         {t.description ?? '—'}
                       </td>
-                      <td className="py-2 text-right text-xs">
+                      <td className="py-2 text-right text-[13px]">
                         {permissionBadges(t.annotations).join(' · ') || '—'}
                       </td>
                     </tr>
@@ -168,23 +170,23 @@ export function McpPage(): React.JSX.Element {
           </div>
           <aside aria-label="Tool inspector" className="space-y-3">
             {inspected === null ? (
-              <p className="text-xs text-ink-soft dark:text-parchment-soft">
+              <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
                 Select a tool to inspect its schema.
               </p>
             ) : (
               <div className="space-y-3 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
                 <h2 className="font-mono text-sm break-all">{inspected.name}</h2>
-                <p className="text-xs text-ink-soft dark:text-parchment-soft">
+                <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
                   {inspected.description ?? 'No description.'}
                 </p>
-                <p className="text-xs">
+                <p className="text-[13px]">
                   Permissions: {permissionBadges(inspected.annotations).join(' · ') || '—'}
                 </p>
                 <div>
-                  <p className="mb-1 text-xs text-ink-soft dark:text-parchment-soft">
+                  <p className="mb-1 text-[13px] text-ink-soft dark:text-parchment-soft">
                     Input schema
                   </p>
-                  <pre className="max-h-64 overflow-auto rounded-md border border-ink/10 p-2 font-mono text-[11px] whitespace-pre-wrap dark:border-parchment/10">
+                  <pre className="max-h-64 overflow-auto rounded-md border border-ink/10 p-2 font-mono text-xs whitespace-pre-wrap dark:border-parchment/10">
                     {JSON.stringify(inspected.inputSchema, null, 2)}
                   </pre>
                 </div>

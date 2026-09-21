@@ -37,6 +37,8 @@ export interface LatencyPoint {
   p50: number | null
   /** P95 latency in milliseconds, or null when unbounded. */
   p95: number | null
+  /** P99 latency in milliseconds, or null when unbounded. */
+  p99: number | null
   /** Requests per second over the interval. */
   rps: number
 }
@@ -170,8 +172,118 @@ export function appendLatencyPoint(
       at: atMs,
       p50: toMs(histogramQuantile(deltas, deltaCount, 0.5)),
       p95: toMs(histogramQuantile(deltas, deltaCount, 0.95)),
+      p99: toMs(histogramQuantile(deltas, deltaCount, 0.99)),
       rps: deltaCount / elapsedSec,
     },
     acc,
   }
+}
+
+/**
+ * Aggregate gauge snapshot for the gateway pulse strip.
+ *
+ * @remarks Every field is nullable: a missing series renders an em dash,
+ * never a fabricated zero. Chosen sources are aggregate and
+ * non-sensitive: process uptime, HTTP request and 5xx counters, heap
+ * usage (process health, not business data), and active SSE streams.
+ * Provider names, spend, keys, and per-tenant data never appear here.
+ */
+export interface GatewayPulse {
+  /** Process uptime in seconds (`process_uptime_seconds`). */
+  uptimeSeconds: number | null
+  /** Total HTTP requests served since start (all statuses). */
+  requestsTotal: number | null
+  /** HTTP 5xx responses since start. */
+  errorsTotal: number | null
+  /** JVM heap used in bytes (`area="heap"`). */
+  heapUsedBytes: number | null
+  /** JVM heap max in bytes, or null when the runtime reports none. */
+  heapMaxBytes: number | null
+  /** Currently open SSE connections (`sse_connection_active`). */
+  liveStreams: number | null
+}
+
+/**
+ * Reads the trailing numeric sample from one exposition line.
+ *
+ * @param line - Raw exposition line.
+ * @returns The sample value, or null for malformed or negative samples.
+ */
+function sampleValue(line: string): number | null {
+  const braceClose = line.lastIndexOf('}')
+  const space = braceClose >= 0 ? line.indexOf(' ', braceClose) : line.indexOf(' ')
+  if (space < 0) return null
+  const value = Number(
+    line
+      .slice(space + 1)
+      .trim()
+      .split(' ')[0],
+  )
+  return Number.isFinite(value) && value >= 0 ? value : null
+}
+
+/**
+ * Extracts the metric name from an exposition line.
+ *
+ * @param line - Raw exposition line.
+ * @returns The name before `{` or the first space.
+ */
+function metricName(line: string): string {
+  const brace = line.indexOf('{')
+  const space = line.indexOf(' ')
+  if (brace < 0) return space < 0 ? line : line.slice(0, space)
+  return space >= 0 && space < brace ? line.slice(0, space) : line.slice(0, brace)
+}
+
+/**
+ * Parses the gateway pulse snapshot from exposition text.
+ *
+ * @remarks
+ * Bounded like the histogram parser so a hostile or bloated scrape cannot
+ * stall the UI thread. `errorsTotal` normalizes to `0` when request
+ * counters exist but no 5xx series does, matching Prometheus semantics.
+ *
+ * @param text - Raw `/actuator/prometheus` body.
+ * @returns The pulse snapshot; unknown fields stay null.
+ */
+export function parseGatewayPulse(text: string): GatewayPulse {
+  let uptimeSeconds: number | null = null
+  let requestsTotal: number | null = null
+  let errorsTotal: number | null = null
+  let heapUsedBytes: number | null = null
+  let heapMaxBytes: number | null = null
+  let liveStreams: number | null = null
+  const lines = text.split('\n')
+  for (const line of lines.slice(0, MAX_LINES)) {
+    if (line.length === 0 || line.startsWith('#') || line.length > MAX_LINE_LENGTH) continue
+    const name = metricName(line)
+    if (name === 'process_uptime_seconds') {
+      const value = sampleValue(line)
+      if (value !== null && uptimeSeconds === null) uptimeSeconds = value
+      continue
+    }
+    if (name === METRIC_COUNT) {
+      const value = sampleValue(line)
+      if (value === null) continue
+      requestsTotal = (requestsTotal ?? 0) + value
+      if (/status="5\d\d"/.test(line)) errorsTotal = (errorsTotal ?? 0) + value
+      continue
+    }
+    if (name === 'jvm_memory_used_bytes' && line.includes('area="heap"')) {
+      const value = sampleValue(line)
+      if (value !== null) heapUsedBytes = (heapUsedBytes ?? 0) + value
+      continue
+    }
+    if (name === 'jvm_memory_max_bytes' && line.includes('area="heap"')) {
+      const value = sampleValue(line)
+      if (value !== null) heapMaxBytes = (heapMaxBytes ?? 0) + value
+      continue
+    }
+    if (name === 'sse_connection_active') {
+      const value = sampleValue(line)
+      if (value !== null) liveStreams = value
+    }
+  }
+  if (requestsTotal !== null && errorsTotal === null) errorsTotal = 0
+  return { uptimeSeconds, requestsTotal, errorsTotal, heapUsedBytes, heapMaxBytes, liveStreams }
 }

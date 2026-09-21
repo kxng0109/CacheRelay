@@ -62,8 +62,17 @@ export function LoginPage(): React.JSX.Element {
 
   return (
     <div className="mx-auto w-full max-w-sm space-y-4">
-      <div>
-        <h1 className="font-display text-2xl font-medium tracking-tight">Log in</h1>
+      <div className="space-y-1">
+        <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+          <span aria-hidden="true" className="mr-1 text-ember">
+            ❯
+          </span>
+          access
+        </p>
+        <h1 className="font-display text-3xl font-medium tracking-tight">Log in</h1>
+        <p className="text-sm text-ink-soft dark:text-parchment-soft">
+          Sign in to reach the console. Gateway keys stay on the Run screens.
+        </p>
       </div>
       <form
         onSubmit={(e) => {
@@ -72,7 +81,7 @@ export function LoginPage(): React.JSX.Element {
         className="space-y-3 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent"
       >
         <div>
-          <label htmlFor="login-username" className="mb-1 block text-xs font-medium">
+          <label htmlFor="login-username" className="mb-1 block text-[13px] font-medium">
             Username
           </label>
           <input
@@ -84,13 +93,13 @@ export function LoginPage(): React.JSX.Element {
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
           />
           {errors.username === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
+            <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
               {errors.username.message}
             </p>
           )}
         </div>
         <div>
-          <label htmlFor="login-password" className="mb-1 block text-xs font-medium">
+          <label htmlFor="login-password" className="mb-1 block text-[13px] font-medium">
             Password
           </label>
           <div className="flex gap-2">
@@ -111,18 +120,18 @@ export function LoginPage(): React.JSX.Element {
               }}
               aria-label={showPassword ? 'Hide password' : 'Show password'}
               aria-pressed={showPassword}
-              className="shrink-0 rounded-md border border-ink/15 px-3 text-xs dark:border-parchment/15"
+              className="shrink-0 rounded-md border border-ink/15 px-3 text-[13px] dark:border-parchment/15"
             >
               {showPassword ? 'Hide' : 'Show'}
             </button>
           </div>
           {errors.password === undefined ? null : (
-            <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
+            <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
               {errors.password.message}
             </p>
           )}
           {capsLock ? (
-            <p role="status" className="mt-1 text-xs text-ink-soft dark:text-parchment-soft">
+            <p role="status" className="mt-1 text-[13px] text-ink-soft dark:text-parchment-soft">
               Caps Lock is on. Passwords are case sensitive.
             </p>
           ) : null}
@@ -133,7 +142,7 @@ export function LoginPage(): React.JSX.Element {
             className="rounded-md border border-ink/10 bg-transparent p-3 dark:border-parchment/10"
           >
             <p className="text-sm text-danger dark:text-danger-soft">{error}</p>
-            <p className="mt-1 text-xs text-ink-soft dark:text-parchment-soft">
+            <p className="mt-1 text-[13px] text-ink-soft dark:text-parchment-soft">
               Check Caps Lock and try again. The form kept your entries.
             </p>
           </div>
@@ -146,15 +155,15 @@ export function LoginPage(): React.JSX.Element {
           {isSubmitting ? 'Logging in…' : 'Log in'}
         </button>
       </form>
-      <p className="text-xs text-ink-soft dark:text-parchment-soft">First account?</p>
+      <p className="text-[13px] text-ink-soft dark:text-parchment-soft">First account?</p>
       <Link
         to="/redeem"
         className="block w-full rounded-md border border-ink/15 px-4 py-2 text-center text-sm dark:border-parchment/15"
       >
         Redeem an invite instead
       </Link>
-      <p className="text-center font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
-        human accounts · session in memory only
+      <p className="text-center font-mono text-xs text-ink-soft dark:text-parchment-soft">
+        session in memory only
       </p>
     </div>
   )

@@ -21,7 +21,9 @@ interface LatencyChartProps {
    * before two scrapes exist) so parents can surface one live number —
    * e.g. the Overview RPS cell — without duplicating the scrape.
    */
-  onLatest?: (point: { p50: number | null; p95: number | null; rps: number } | null) => void
+  onLatest?: (
+    point: { p50: number | null; p95: number | null; p99: number | null; rps: number } | null,
+  ) => void
 }
 
 /**
@@ -33,7 +35,7 @@ interface LatencyChartProps {
 function describePoint(point: LatencyPoint | null): string {
   if (point === null) return 'Collecting latency samples. The chart needs two scrapes.'
   const ms = (v: number | null): string => (v === null ? 'unknown' : `${v.toFixed(0)} ms`)
-  return `P50 ${ms(point.p50)}, P95 ${ms(point.p95)}, ${point.rps.toFixed(1)} requests per second.`
+  return `P50 ${ms(point.p50)}, P95 ${ms(point.p95)}, P99 ${ms(point.p99)}, ${point.rps.toFixed(1)} requests per second.`
 }
 
 /**
@@ -113,14 +115,18 @@ export default function LatencyChart({
     chart.setTheme(dark ? 'dark' : 'default')
     const option: EChartsOption = {
       tooltip: { trigger: 'axis', valueFormatter: (v) => `${String(v)} ms` },
-      legend: { data: ['P50', 'P95'] },
-      grid: { left: 48, right: 16, top: 32, bottom: 48 },
+      // Legend rides top right: bottom placement collided with the time
+      // axis tick labels in screenshots.
+      legend: { data: ['P50', 'P95', 'P99'], top: 0, right: 0 },
+      grid: { left: 48, right: 16, top: 40, bottom: 48 },
       // Stable container label: the chart repaints every poll, so templated
       // per-point announcements would spam screen readers. The throttled
       // `role="status"` summary below stays the live announcer.
       aria: {
         enabled: true,
-        label: { description: 'Gateway request latency, P50 and P95 in milliseconds over time.' },
+        label: {
+          description: 'Gateway request latency, P50, P95 and P99 in milliseconds over time.',
+        },
       },
       xAxis: {
         type: 'time',
@@ -141,6 +147,12 @@ export default function LatencyChart({
           showSymbol: false,
           data: points.map((p) => [p.at, p.p95]),
         },
+        {
+          name: 'P99',
+          type: 'line',
+          showSymbol: false,
+          data: points.map((p) => [p.at, p.p99]),
+        },
       ],
     }
     chart.setOption(option, { notMerge: true })
@@ -156,7 +168,7 @@ export default function LatencyChart({
 
   return (
     <section aria-label="Gateway latency">
-      <h2 className="text-sm font-semibold tracking-tight">Request latency (P50/P95)</h2>
+      <h2 className="text-sm font-semibold tracking-tight">Request latency (P50/P95/P99)</h2>
       {metrics.error instanceof Error ? (
         <p role="alert" className="text-sm text-danger dark:text-danger-soft">
           {metrics.error.message}
@@ -166,9 +178,9 @@ export default function LatencyChart({
         ref={containerRef}
         role="img"
         aria-label={`Latency chart. ${describePoint(latest)}`}
-        className="h-64 w-full"
+        className={latest === null ? 'h-24 w-full' : 'h-64 w-full'}
       />
-      <p role="status" className="text-xs tnum">
+      <p role="status" className="text-[13px] tnum">
         {describePoint(latest)}
       </p>
     </section>

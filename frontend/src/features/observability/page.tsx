@@ -1,6 +1,9 @@
 import { Suspense, lazy, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useShallow } from 'zustand/react/shallow'
 import { resolveApiBase } from '../../shared/api/client.js'
+import { useAuthStore } from '../../shared/auth/store.js'
+import { PulseStrip } from './PulseStrip.js'
 
 const LatencyChart = lazy(() => import('./LatencyChart.js'))
 
@@ -52,19 +55,21 @@ async function probeEndpoint(
 }
 
 /**
- * Observability page: liveness plus metrics scrape plus endpoint drill-down.
+ * Observability page: liveness for every session, operator depth for admins.
  *
  * @remarks
  * Proof-type: live (real `/actuator/health` + `/actuator/prometheus`
- * probes, no auth required). Readiness is intentionally absent: the
- * actuator only exposes health and prometheus, so only those two cards
- * ship. Endpoints list promotes docs to inspectable rows; selection is
- * local UI state.
+ * probes, no auth required). Regular sessions get a status page: gateway
+ * liveness plus reference docs. The metrics scrape card, pulse strip, and
+ * latency chart are operator intelligence and render for admin sessions
+ * only; the scrape query stays disabled for everyone else. Endpoints list
+ * promotes docs to inspectable rows; selection is local UI state.
  *
  * @returns The observability screen.
  */
 export function ObservabilityPage(): React.JSX.Element {
   const qc = useQueryClient()
+  const isAdmin = useAuthStore(useShallow((s) => s.session?.admin === true))
   const [selected, setSelected] = useState<string | null>(null)
 
   const health = useQuery({
@@ -80,12 +85,16 @@ export function ObservabilityPage(): React.JSX.Element {
 
   const metrics = useQuery({
     queryKey: ['metrics-probe'],
+    enabled: isAdmin,
     queryFn: ({ signal }) => probeEndpoint(resolveApiBase(), '/actuator/prometheus', signal),
     refetchInterval: 15_000,
   })
 
   const gateway = health.isPending ? 'probing' : health.data?.status === 'UP' ? 'up' : 'down'
-  const inspected = ENDPOINTS.find((e) => e.path === selected) ?? null
+  // The metrics endpoint row is operator tooling: regular sessions do not
+  // need its path advertised, admins keep the full list.
+  const visibleEndpoints = ENDPOINTS.filter((e) => e.path !== '/actuator/prometheus' || isAdmin)
+  const inspected = visibleEndpoints.find((e) => e.path === selected) ?? null
 
   const retryAll = (): void => {
     void qc.invalidateQueries({ queryKey: ['health'] })
@@ -103,32 +112,53 @@ export function ObservabilityPage(): React.JSX.Element {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <h1 className="font-display text-2xl font-medium tracking-tight">Observability</h1>
-        <span className="rounded-full border border-ink/15 px-2 py-0.5 font-mono text-[11px] dark:border-parchment/15">
-          gateway:{gateway}
-        </span>
-        <span className="flex-1" />
-        <span className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
-          probe:15s
-        </span>
-        <button
-          type="button"
-          onClick={retryAll}
-          className="rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
-        >
-          Retry [r]
-        </button>
+      <div className="space-y-1">
+        <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+          <span aria-hidden="true" className="mr-1 text-ember">
+            ❯
+          </span>
+          inspect
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="font-display text-3xl font-medium tracking-tight">Observability</h1>
+          <span className="rounded-full border border-ink/15 px-2 py-0.5 font-mono text-xs dark:border-parchment/15">
+            gateway:{gateway}
+          </span>
+          <span className="flex-1" />
+          <span className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+            probe:15s
+          </span>
+          <button
+            type="button"
+            onClick={retryAll}
+            className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+          >
+            Retry [r]
+          </button>
+        </div>
+        <p className="text-sm text-ink-soft dark:text-parchment-soft">
+          Liveness, aggregate pulse, and latency evidence for the gateway.
+        </p>
       </div>
+      <PulseStrip />
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-2 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
           <p className="flex items-center gap-2 text-sm font-medium">
-            <span aria-hidden="true">
+            <span
+              aria-hidden="true"
+              className={
+                gateway === 'up'
+                  ? 'text-success dark:text-success-soft'
+                  : gateway === 'down'
+                    ? 'text-danger dark:text-danger-soft'
+                    : ''
+              }
+            >
               {gateway === 'up' ? '●' : gateway === 'down' ? '■' : '○'}
             </span>
             Liveness {health.data?.status === 'UP' ? 'UP' : health.data ? 'DOWN' : ''}
           </p>
-          <p className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+          <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
             /actuator/health
           </p>
           {health.isPending ? (
@@ -141,7 +171,7 @@ export function ObservabilityPage(): React.JSX.Element {
               className="rounded-md border border-ink/10 p-3 dark:border-parchment/10"
             >
               <p className="text-sm text-danger dark:text-danger-soft">{health.error.message}</p>
-              <p className="mt-1 font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+              <p className="mt-1 font-mono text-xs text-ink-soft dark:text-parchment-soft">
                 GET /actuator/health · auto-retries every 15s
               </p>
               <button
@@ -149,7 +179,7 @@ export function ObservabilityPage(): React.JSX.Element {
                 onClick={() => {
                   retryProbe('health')
                 }}
-                className="mt-2 rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+                className="mt-2 rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
               >
                 Retry probe
               </button>
@@ -166,61 +196,77 @@ export function ObservabilityPage(): React.JSX.Element {
             </p>
           )}
         </div>
-        <div className="space-y-2 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
-          <p className="flex items-center gap-2 text-sm font-medium">
-            <span aria-hidden="true">{metrics.data ? '●' : '○'}</span> Metrics scrape
-          </p>
-          <p className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
-            /actuator/prometheus
-          </p>
-          {metrics.isPending ? (
-            <p role="status" className="text-sm">
-              Probing metrics…
-            </p>
-          ) : metrics.error instanceof Error ? (
-            <div
-              role="alert"
-              className="rounded-md border border-ink/10 p-3 dark:border-parchment/10"
-            >
-              <p className="text-sm text-danger dark:text-danger-soft">{metrics.error.message}</p>
-              <p className="mt-1 font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
-                GET /actuator/prometheus · auto-retries every 15s
-              </p>
-              <button
-                type="button"
-                onClick={() => {
-                  retryProbe('metrics-probe')
-                }}
-                className="mt-2 rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+        {isAdmin ? (
+          <div className="space-y-2 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
+            <p className="flex items-center gap-2 text-sm font-medium">
+              <span
+                aria-hidden="true"
+                className={
+                  metrics.error instanceof Error
+                    ? 'text-danger dark:text-danger-soft'
+                    : metrics.data
+                      ? 'text-success dark:text-success-soft'
+                      : ''
+                }
               >
-                Retry probe
-              </button>
-            </div>
-          ) : metrics.data === undefined ? (
-            <p role="status" className="text-sm">
-              No metrics data. Retry the probe.
+                {metrics.error instanceof Error ? '■' : metrics.data ? '●' : '○'}
+              </span>{' '}
+              Metrics scrape
             </p>
-          ) : (
-            <p role="status" className="text-xs text-ink-soft tnum dark:text-parchment-soft">
-              scrape ok · {metrics.data.at}
+            <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+              /actuator/prometheus
             </p>
-          )}
-        </div>
+            {metrics.isPending ? (
+              <p role="status" className="text-sm">
+                Probing metrics…
+              </p>
+            ) : metrics.error instanceof Error ? (
+              <div
+                role="alert"
+                className="rounded-md border border-ink/10 p-3 dark:border-parchment/10"
+              >
+                <p className="text-sm text-danger dark:text-danger-soft">{metrics.error.message}</p>
+                <p className="mt-1 font-mono text-xs text-ink-soft dark:text-parchment-soft">
+                  GET /actuator/prometheus · auto-retries every 15s
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    retryProbe('metrics-probe')
+                  }}
+                  className="mt-2 rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+                >
+                  Retry probe
+                </button>
+              </div>
+            ) : metrics.data === undefined ? (
+              <p role="status" className="text-sm">
+                No metrics data. Retry the probe.
+              </p>
+            ) : (
+              <p role="status" className="text-[13px] text-ink-soft tnum dark:text-parchment-soft">
+                scrape ok · {new Date(metrics.data.at).toLocaleTimeString()}
+              </p>
+            )}
+          </div>
+        ) : null}
       </div>
-      <Suspense
-        fallback={
-          <p role="status" className="text-sm">
-            Loading latency chart…
-          </p>
-        }
-      >
-        <LatencyChart />
-      </Suspense>
+      {isAdmin ? (
+        <Suspense
+          fallback={
+            <p role="status" className="text-sm">
+              Loading latency chart…
+            </p>
+          }
+        >
+          <LatencyChart />
+        </Suspense>
+      ) : null}
       <details className="rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
-        <summary className="cursor-pointer font-mono text-xs">
+        <summary className="cursor-pointer font-mono text-[13px]">
           Reading cache headers on a stream
         </summary>
-        <dl className="mt-2 space-y-2 text-xs">
+        <dl className="mt-2 space-y-2 text-[13px]">
           <div className="flex justify-between gap-3">
             <dt className="font-mono">X-Cache</dt>
             <dd className="text-right text-ink-soft dark:text-parchment-soft">
@@ -241,13 +287,13 @@ export function ObservabilityPage(): React.JSX.Element {
             </dd>
           </div>
         </dl>
-        <p className="mt-2 text-xs text-ink-soft dark:text-parchment-soft">
+        <p className="mt-2 text-[13px] text-ink-soft dark:text-parchment-soft">
           The Playground stream header prints all three live on every run.
         </p>
       </details>
       <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
         <ul className="space-y-2 text-sm">
-          {ENDPOINTS.map((e) => (
+          {visibleEndpoints.map((e) => (
             <li key={e.path}>
               <button
                 type="button"
@@ -260,7 +306,7 @@ export function ObservabilityPage(): React.JSX.Element {
                 }`}
               >
                 <span className="font-medium">{e.name}</span>
-                <span className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+                <span className="font-mono text-[13px] text-ink-soft dark:text-parchment-soft">
                   {e.path}
                 </span>
               </button>
@@ -269,13 +315,13 @@ export function ObservabilityPage(): React.JSX.Element {
         </ul>
         <aside aria-label="Endpoint inspector" className="space-y-3">
           {inspected === null ? (
-            <p className="text-xs text-ink-soft dark:text-parchment-soft">
+            <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
               Select an endpoint to inspect purpose and auth.
             </p>
           ) : (
             <div className="space-y-3 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
               <h2 className="font-mono text-sm break-all">{inspected.path}</h2>
-              <dl className="space-y-2 text-xs">
+              <dl className="space-y-2 text-[13px]">
                 <div className="flex justify-between gap-3">
                   <dt className="text-ink-soft dark:text-parchment-soft">Purpose</dt>
                   <dd className="text-right">{inspected.purpose}</dd>
@@ -289,7 +335,7 @@ export function ObservabilityPage(): React.JSX.Element {
                 href={`${resolveApiBase()}${inspected.path}`}
                 target="_blank"
                 rel="noreferrer"
-                className="block rounded-md border border-ink/15 px-3 py-2 text-center text-xs dark:border-parchment/15"
+                className="block rounded-md border border-ink/15 px-3 py-2 text-center text-[13px] dark:border-parchment/15"
               >
                 Open in new tab
               </a>

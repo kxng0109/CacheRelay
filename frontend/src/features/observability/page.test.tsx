@@ -55,9 +55,9 @@ describe('ObservabilityPage', () => {
     })
   })
 
-  it('shows metrics scrape state and gateway chip', async () => {
+  it('shows metrics scrape state and gateway chip for admins', async () => {
     server.use(http.get('*/actuator/health', () => HttpResponse.json({ status: 'UP' })))
-    renderApp(<ObservabilityPage />)
+    renderApp(<ObservabilityPage />, { adminSession: true })
     await waitFor(() => {
       expect(screen.getByText(/gateway:up/i)).toBeInTheDocument()
     })
@@ -67,10 +67,36 @@ describe('ObservabilityPage', () => {
     })
   })
 
+  it('keeps operator metrics behind the admin session', async () => {
+    let scraped = false
+    server.use(
+      http.get('*/actuator/health', () => HttpResponse.json({ status: 'UP' })),
+      http.get('*/actuator/prometheus', () => {
+        scraped = true
+        return new HttpResponse('')
+      }),
+    )
+    renderApp(<ObservabilityPage />, { nonAdminSession: true })
+    await waitFor(() => {
+      expect(screen.getByText(/gateway is up/i)).toBeInTheDocument()
+    })
+    expect(screen.queryByLabelText(/gateway pulse/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/request latency/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/metrics scrape/i)).not.toBeInTheDocument()
+    // The metrics endpoint row is operator tooling too; docs rows stay.
+    expect(screen.queryByRole('button', { name: /metrics.*prometheus/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /api reference/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /api docs/i })).toBeInTheDocument()
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    expect(scraped).toBe(false)
+  })
+
   it('inspects an endpoint without leaving the list', async () => {
     const user = userEvent.setup()
     server.use(http.get('*/actuator/health', () => HttpResponse.json({ status: 'UP' })))
-    renderApp(<ObservabilityPage />)
+    renderApp(<ObservabilityPage />, { adminSession: true })
     await user.click(await screen.findByRole('button', { name: /metrics.*prometheus/i }))
     const inspector = screen.getByRole('complementary', { name: /endpoint inspector/i })
     expect(inspector).toHaveTextContent(/do not render secrets/i)
@@ -97,12 +123,12 @@ describe('ObservabilityPage', () => {
     })
   })
 
-  it('reports metrics failures honestly', async () => {
+  it('reports metrics failures honestly for admins', async () => {
     server.use(
       http.get('*/actuator/health', () => HttpResponse.json({ status: 'UP' })),
       http.get('*/actuator/prometheus', () => new HttpResponse('x', { status: 500 })),
     )
-    renderApp(<ObservabilityPage />)
+    renderApp(<ObservabilityPage />, { adminSession: true })
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/HTTP 500/)
     })
@@ -147,7 +173,7 @@ describe('ObservabilityPage', () => {
         return new HttpResponse(stream)
       }),
     )
-    renderApp(<ObservabilityPage />)
+    renderApp(<ObservabilityPage />, { adminSession: true })
     await waitFor(() => {
       expect(screen.getByText(/scrape ok/i)).toBeInTheDocument()
     })
@@ -156,7 +182,7 @@ describe('ObservabilityPage', () => {
   it('deselects an endpoint on second click', async () => {
     const user = userEvent.setup()
     server.use(http.get('*/actuator/health', () => HttpResponse.json({ status: 'UP' })))
-    renderApp(<ObservabilityPage />)
+    renderApp(<ObservabilityPage />, { adminSession: true })
     const trigger = await screen.findByRole('button', { name: /metrics.*prometheus/i })
     await user.click(trigger)
     expect(screen.getByRole('complementary', { name: /endpoint inspector/i })).toHaveTextContent(

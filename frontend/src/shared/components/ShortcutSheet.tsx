@@ -50,14 +50,14 @@ export function ShortcutSheet({ open, onClose }: ShortcutSheetProps): React.JSX.
             autoFocus
             onClick={onClose}
             aria-label="Close shortcuts"
-            className="rounded-md border border-ink/15 px-3 py-1 text-xs dark:border-parchment/15"
+            className="rounded-md border border-ink/15 px-3 py-1 text-[13px] dark:border-parchment/15"
           >
             Close
           </button>
         </div>
         <dl className="space-y-2">
           {ROWS.map(([keys, what]) => (
-            <div key={keys} className="flex items-baseline justify-between gap-4 text-xs">
+            <div key={keys} className="flex items-baseline justify-between gap-4 text-[13px]">
               <dt className="shrink-0 font-mono">{keys}</dt>
               <dd className="text-right text-ink-soft dark:text-parchment-soft">{what}</dd>
             </div>

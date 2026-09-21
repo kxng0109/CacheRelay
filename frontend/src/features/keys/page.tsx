@@ -114,17 +114,29 @@ function KeysBoard(): React.JSX.Element {
       k.name.toLowerCase().includes(query) ||
       k.allowedModels.some((m) => m.toLowerCase().includes(query)),
   )
+  const enabledCount = rows.filter((k) => k.enabled).length
   const drawerOpen = drawerChoice ?? (keys.data !== undefined && rows.length === 0)
   const inspected = rows.find((k) => k.keyId === selected) ?? null
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
       <div className="space-y-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="font-display text-2xl font-medium tracking-tight">Keys</h1>
-          <p className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft">
-            {rows.length} total
+        <div className="space-y-1">
+          <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+            <span aria-hidden="true" className="mr-1 text-ember">
+              ❯
+            </span>
+            guard
           </p>
+          <h1 className="font-display text-3xl font-medium tracking-tight">Keys</h1>
+          <p className="text-sm text-ink-soft dark:text-parchment-soft">
+            One key per team or service. Limits and models scope what each key can spend.
+          </p>
+          <p className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft">
+            {rows.length} keys · {enabledCount} enabled · plaintext shows once at creation
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           <span className="flex-1" />
           <label htmlFor="key-filter" className="sr-only">
             Filter keys
@@ -137,7 +149,7 @@ function KeysBoard(): React.JSX.Element {
             onChange={(e) => {
               setFilter(e.target.value)
             }}
-            className="w-48 rounded-md border border-ink/15 bg-transparent px-3 py-2 text-xs dark:border-parchment/15"
+            className="w-48 rounded-md border border-ink/15 bg-transparent px-3 py-2 text-[13px] dark:border-parchment/15"
           />
           <button
             type="button"
@@ -169,7 +181,7 @@ function KeysBoard(): React.JSX.Element {
                 onClick={() => {
                   onCopy('reveal', created.key)
                 }}
-                className="rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+                className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
               >
                 {copied === 'reveal' ? 'Copied' : 'Copy'}
               </button>
@@ -179,7 +191,7 @@ function KeysBoard(): React.JSX.Element {
                   setCreated(null)
                   setCopied(null)
                 }}
-                className="rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+                className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
               >
                 Dismiss
               </button>
@@ -195,37 +207,39 @@ function KeysBoard(): React.JSX.Element {
             className="grid gap-3 rounded-lg border border-ink/10 bg-cream p-4 sm:grid-cols-2 dark:border-parchment/10 dark:bg-transparent"
           >
             <div>
-              <label htmlFor="key-owner" className="mb-1 block text-xs font-medium">
+              <label htmlFor="key-owner" className="mb-1 block text-[13px] font-medium">
                 Owner
               </label>
               <input
                 id="key-owner"
                 {...register('ownerId')}
+                autoComplete="off"
                 className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
               />
               {errors.ownerId === undefined ? null : (
-                <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
+                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
                   {errors.ownerId.message}
                 </p>
               )}
             </div>
             <div>
-              <label htmlFor="key-name" className="mb-1 block text-xs font-medium">
+              <label htmlFor="key-name" className="mb-1 block text-[13px] font-medium">
                 Name
               </label>
               <input
                 id="key-name"
                 {...register('name')}
+                autoComplete="off"
                 className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
               />
               {errors.name === undefined ? null : (
-                <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
+                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
                   {errors.name.message}
                 </p>
               )}
             </div>
             <div>
-              <label htmlFor="key-models" className="mb-1 block text-xs font-medium">
+              <label htmlFor="key-models" className="mb-1 block text-[13px] font-medium">
                 Models (comma-separated, empty means all)
               </label>
               <input
@@ -235,7 +249,7 @@ function KeysBoard(): React.JSX.Element {
               />
             </div>
             <div>
-              <label htmlFor="key-rpm" className="mb-1 block text-xs font-medium">
+              <label htmlFor="key-rpm" className="mb-1 block text-[13px] font-medium">
                 Requests per minute (0 means unlimited)
               </label>
               <input
@@ -245,13 +259,13 @@ function KeysBoard(): React.JSX.Element {
                 className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
               />
               {errors.rpmLimit === undefined ? null : (
-                <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
+                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
                   {errors.rpmLimit.message}
                 </p>
               )}
             </div>
             <div>
-              <label htmlFor="key-tpm" className="mb-1 block text-xs font-medium">
+              <label htmlFor="key-tpm" className="mb-1 block text-[13px] font-medium">
                 Tokens per minute (0 means unlimited)
               </label>
               <input
@@ -261,7 +275,7 @@ function KeysBoard(): React.JSX.Element {
                 className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
               />
               {errors.tpmLimit === undefined ? null : (
-                <p role="alert" className="mt-1 text-xs text-danger dark:text-danger-soft">
+                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
                   {errors.tpmLimit.message}
                 </p>
               )}
@@ -303,8 +317,8 @@ function KeysBoard(): React.JSX.Element {
         ) : (
           <table className="w-full text-left text-sm">
             <caption className="sr-only">Virtual API keys</caption>
-            <thead className="sticky top-0">
-              <tr className="font-mono text-[11px] text-ink-soft dark:text-parchment-soft">
+            <thead className="sticky top-0 bg-paper dark:bg-night">
+              <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
                 <th scope="col" className="py-2 pr-3 font-medium">
                   Name
                 </th>
@@ -337,20 +351,30 @@ function KeysBoard(): React.JSX.Element {
                     k.keyId === selected ? 'bg-ink/4 dark:bg-parchment/6' : ''
                   }`}
                 >
-                  <td className="py-2 pr-3 font-mono text-xs">{k.name}</td>
-                  <td className="py-2 pr-3 text-right text-xs tnum">
+                  <td className="py-2 pr-3 font-mono text-[13px]">{k.name}</td>
+                  <td className="py-2 pr-3 text-right text-[13px] tnum">
                     {k.rpmLimit === 0 ? 'unlimited' : k.rpmLimit}
                   </td>
-                  <td className="py-2 pr-3 text-right text-xs tnum">
+                  <td className="py-2 pr-3 text-right text-[13px] tnum">
                     {k.tpmLimit === 0 ? 'unlimited' : k.tpmLimit}
                   </td>
-                  <td className="max-w-48 truncate py-2 pr-3 text-xs">
+                  <td className="max-w-48 truncate py-2 pr-3 text-[13px]">
                     {k.allowedModels.length === 0 ? 'all' : k.allowedModels.join(', ')}
                   </td>
-                  <td className="py-2 pr-3 text-xs">{k.enabled ? 'enabled' : 'disabled'}</td>
+                  <td className="py-2 pr-3">
+                    <span
+                      className={`rounded px-2 py-1 text-[13px] ${
+                        k.enabled
+                          ? 'bg-success/15 text-success dark:text-success-soft'
+                          : 'bg-warn/15 text-warn dark:text-warn-soft'
+                      }`}
+                    >
+                      ● {k.enabled ? 'enabled' : 'disabled'}
+                    </span>
+                  </td>
                   <td className="py-2 text-right">
                     {confirming === k.keyId ? (
-                      <span className="inline-flex items-center gap-2 text-xs">
+                      <span className="inline-flex items-center gap-2 text-[13px]">
                         Delete “{k.name}”?
                         <button
                           type="button"
@@ -380,7 +404,7 @@ function KeysBoard(): React.JSX.Element {
                           e.stopPropagation()
                           setConfirming(k.keyId)
                         }}
-                        className="rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+                        className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
                       >
                         Delete
                       </button>
@@ -392,17 +416,17 @@ function KeysBoard(): React.JSX.Element {
           </table>
         )}
         {inspected === null ? (
-          <p className="text-xs text-ink-soft dark:text-parchment-soft">
+          <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
             Select a row to inspect a key.
           </p>
         ) : (
           <aside aria-label="Key inspector" className="space-y-3">
             <div className="space-y-3 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
               <h2 className="font-mono text-sm">{inspected.name}</h2>
-              <dl className="space-y-2 text-xs">
+              <dl className="space-y-2 text-[13px]">
                 <div className="flex justify-between gap-3">
                   <dt className="text-ink-soft dark:text-parchment-soft">Key ID</dt>
-                  <dd className="font-mono text-[11px] break-all">{inspected.keyId}</dd>
+                  <dd className="font-mono text-xs break-all">{inspected.keyId}</dd>
                 </div>
                 <div className="flex justify-between gap-3">
                   <dt className="text-ink-soft dark:text-parchment-soft">Owner</dt>
@@ -432,7 +456,7 @@ function KeysBoard(): React.JSX.Element {
                 onClick={() => {
                   onCopy(inspected.keyId, inspected.keyId)
                 }}
-                className="w-full rounded-md border border-ink/15 px-3 py-2 text-xs dark:border-parchment/15"
+                className="w-full rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
               >
                 {copied === inspected.keyId ? 'Copied' : 'Copy key ID'}
               </button>

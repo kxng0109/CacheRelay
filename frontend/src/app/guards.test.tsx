@@ -18,15 +18,35 @@ describe('RequireAdmin stealth', () => {
     expect(screen.getByText('secret board')).toBeInTheDocument()
   })
 
-  it('renders the missing page for logged-out visitors', () => {
-    const { unmount } = renderApp(
+  it('bounces logged-out visitors to login preserving the destination', () => {
+    renderApp(
+      <Routes>
+        <Route path="/login" element={<p>login screen</p>} />
+        <Route
+          path="*"
+          element={
+            <RequireAdmin>
+              <p>secret board</p>
+            </RequireAdmin>
+          }
+        />
+      </Routes>,
+      { route: '/circuits' },
+    )
+    expect(screen.getByText('login screen')).toBeInTheDocument()
+    expect(screen.queryByText('secret board')).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /page not found/i })).not.toBeInTheDocument()
+  })
+
+  it('shows the missing page to logged-in non-admins', () => {
+    renderApp(
       <RequireAdmin>
         <p>secret board</p>
       </RequireAdmin>,
+      { nonAdminSession: true },
     )
     expect(screen.getByRole('heading', { name: /page not found/i })).toBeInTheDocument()
     expect(screen.queryByText('secret board')).not.toBeInTheDocument()
-    unmount()
   })
 
   it('renders the same missing page as unknown routes', () => {
@@ -34,14 +54,29 @@ describe('RequireAdmin stealth', () => {
       <RequireAdmin>
         <p>secret board</p>
       </RequireAdmin>,
+      { nonAdminSession: true },
     )
     const guardedHtml = document.body.innerHTML
     unmountGuarded()
     renderApp(<NotFound />)
-    // Same heading, same copy, same home link — no distinguishing signal.
-    expect(document.body.innerHTML).toContain('This page does not exist.')
-    expect(guardedHtml).toContain('This page does not exist.')
+    // Same heading, same copy, same actions — no distinguishing signal.
+    expect(document.body.innerHTML).toContain(
+      'That address does not lead anywhere in this console.',
+    )
+    expect(guardedHtml).toContain('That address does not lead anywhere in this console.')
     expect(screen.getByRole('link', { name: /back to overview/i })).toBeInTheDocument()
+  })
+
+  it('keeps the illustration and recovery actions on the missing page', () => {
+    renderApp(<NotFound />)
+    expect(
+      screen.getByRole('img', { name: /drifted away from the relay node/i }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /back to overview/i })).toHaveAttribute('href', '/')
+    expect(screen.getByRole('link', { name: /open playground/i })).toHaveAttribute(
+      'href',
+      '/playground',
+    )
   })
 })
 

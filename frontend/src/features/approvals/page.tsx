@@ -81,8 +81,8 @@ function ApprovalsBoard(): React.JSX.Element {
                 className="flex flex-wrap items-center gap-3 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="font-mono text-xs">{a.toolName}</p>
-                  <p className="text-xs text-ink-soft tnum dark:text-parchment-soft">
+                  <p className="font-mono text-[13px]">{a.toolName}</p>
+                  <p className="text-[13px] text-ink-soft tnum dark:text-parchment-soft">
                     {a.approvalId} · {a.requestedAt}
                   </p>
                 </div>
@@ -93,7 +93,7 @@ function ApprovalsBoard(): React.JSX.Element {
                   onClick={() => {
                     void decide(a.approvalId, true)
                   }}
-                  className="rounded-md bg-success px-3 py-2 text-xs text-white disabled:opacity-50"
+                  className="rounded-md bg-success px-3 py-2 text-[13px] text-white disabled:opacity-50"
                 >
                   {working ? 'Working…' : 'Approve'}
                 </button>
@@ -104,7 +104,7 @@ function ApprovalsBoard(): React.JSX.Element {
                   onClick={() => {
                     void decide(a.approvalId, false)
                   }}
-                  className="rounded-md border border-danger/40 px-3 py-2 text-xs text-danger disabled:opacity-50 dark:text-danger-soft"
+                  className="rounded-md border border-danger/40 px-3 py-2 text-[13px] text-danger disabled:opacity-50 dark:text-danger-soft"
                 >
                   {working ? 'Working…' : 'Reject'}
                 </button>

@@ -31,6 +31,16 @@ describe('CircuitsPage', () => {
       expect(screen.getByText('openai')).toBeInTheDocument()
     })
     expect(screen.getByText('● Closed')).toBeInTheDocument()
+    expect(screen.getByText(/1 providers · 1 flowing/i)).toBeInTheDocument()
+  })
+
+  it('states the traffic consequence in the inspector', async () => {
+    const user = userEvent.setup()
+    server.use(http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)))
+    renderBoard()
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByText('openai'))
+    expect(screen.getByText(/requests flow normally/i)).toBeInTheDocument()
   })
 
   it('resets a circuit and announces the outcome', async () => {

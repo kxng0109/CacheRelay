@@ -252,7 +252,7 @@ describe('CachePage', () => {
     )
     renderApp(<CachePage />, { adminSession: true })
     await waitFor(() => {
-      expect(screen.getByText(/redis ■/i)).toBeInTheDocument()
+      expect(screen.getByText(/redis off/i)).toBeInTheDocument()
     })
     expect(screen.getByText('uncapped')).toBeInTheDocument()
   })

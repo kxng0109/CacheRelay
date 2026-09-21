@@ -145,7 +145,7 @@ describe('LatencyChart', () => {
       aria?: { enabled?: boolean; label?: { description?: string } }
     }
     expect(option.aria?.enabled).toBe(true)
-    expect(option.aria?.label?.description).toContain('P50 and P95')
+    expect(option.aria?.label?.description).toContain('P50, P95 and P99')
   })
 
   it('follows the app theme without re-initializing', async () => {

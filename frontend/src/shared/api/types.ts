@@ -135,10 +135,90 @@ export interface BudgetRecord {
   updatedAt: string
 }
 
+/**
+ * Usage and cost aggregated for one tenant owner. Mirrors the backend
+ * `OwnerUsageSummary` record field for field; the frontend never invents
+ * envelope fields.
+ */
+export interface OwnerUsageSummary {
+  ownerId: string
+  totalRequests: number
+  totalPromptTokens: number
+  totalCompletionTokens: number
+  totalTokens: number
+  totalCostUsdMicros: number
+  /** Exact decimal string (`"1.500000"`); displayed verbatim, never divided. */
+  totalCostUsd: string
+  averageDurationMs: number
+}
+
+/**
+ * Usage and cost aggregated for one provider and model. Mirrors the
+ * backend `ModelUsageSummary` record.
+ */
+export interface ModelUsageSummary {
+  provider: string
+  model: string
+  totalRequests: number
+  totalPromptTokens: number
+  totalCompletionTokens: number
+  totalTokens: number
+  totalCostUsdMicros: number
+  /** Exact decimal string; displayed verbatim, never divided. */
+  totalCostUsd: string
+  averageDurationMs: number
+}
+
+/**
+ * Usage and cost aggregated for one upstream provider. Mirrors the
+ * backend `ProviderUsageSummary` record.
+ */
+export interface ProviderUsageSummary {
+  provider: string
+  totalRequests: number
+  totalPromptTokens: number
+  totalCompletionTokens: number
+  totalTokens: number
+  totalCostUsdMicros: number
+  /** Exact decimal string; displayed verbatim, never divided. */
+  totalCostUsd: string
+  averageDurationMs: number
+}
+
+/**
+ * One provider step inside a model alias chain. Mirrors the backend
+ * `ProviderRef` record: provider name plus an optional per step model
+ * override (null sends the requested model as is).
+ */
+export interface ProviderChainStep {
+  providerName: string
+  modelOverride: string | null
+}
+
+/**
+ * One effective model alias with its origin. Mirrors the backend
+ * `ModelDefinitionResponse`: `source` is `file` for configuration-bound
+ * aliases (read-only) or `database` for admin-managed ones.
+ */
+export interface ModelAliasRecord {
+  name: string
+  chain: ProviderChainStep[]
+  strategy: string
+  source: string
+}
+
 export interface LedgerSummary {
   totalRequests: number
+  totalPromptTokens: number
+  totalCompletionTokens: number
+  totalTokens: number
   totalCostUsdMicros: number
+  /** Exact decimal string (`"1.500000"`); displayed verbatim, never divided. */
+  totalCostUsd: string
   averageDurationMs: number
+  byOwner: OwnerUsageSummary[]
+  byModel: ModelUsageSummary[]
+  byProvider: ProviderUsageSummary[]
 }
 
 export interface LedgerLogEntry {

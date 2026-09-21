@@ -18,6 +18,9 @@ const CircuitsPage = lazy(() =>
 const KeysPage = lazy(() =>
   import('../features/keys/page.js').then((m) => ({ default: m.KeysPage })),
 )
+const ModelsPage = lazy(() =>
+  import('../features/models/page.js').then((m) => ({ default: m.ModelsPage })),
+)
 const LedgerPage = lazy(() =>
   import('../features/ledger/page.js').then((m) => ({ default: m.LedgerPage })),
 )
@@ -96,6 +99,7 @@ export const router = createBrowserRouter([
       { path: 'login', element: guest(<LoginPage />) },
       { path: 'redeem', element: guest(<RedeemPage />) },
       { path: 'circuits', element: guard(<CircuitsPage />) },
+      { path: 'models', element: guard(<ModelsPage />) },
       { path: 'keys', element: guard(<KeysPage />) },
       { path: 'ledger', element: guard(<LedgerPage />) },
       { path: 'cache', element: guard(<CachePage />) },
