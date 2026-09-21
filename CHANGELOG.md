@@ -70,6 +70,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dimension-aware, and clears replay keys. L2 serves temperature-bearing traffic only.
 - **2 vCPU JVM profile (PERF-15/SUP-05):** GC threads pinned 2/1, direct memory 256m, dead flags dropped
   (Xmx1152m kept deliberately for 2G headroom); `JvmDirectMemoryHigh` / `JvmHeapPressureHigh` alerts added.
+- **Frontend contract drift fixes:** approvals pending returns the `{approvals: []}` envelope; ledger summary
+  serializes breakdowns under the contract keys (`byOwner`/`byModel`/`byProvider`); dev CORS covers
+  `/actuator/**`, allows `X-CacheRelay-Refresh`, and exposes the audit/replay headers.
 
 ### Added
 

@@ -8,8 +8,10 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
-
 import static org.assertj.core.api.Assertions.assertThat;
+
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 @DisplayName("Admin Ledger DTOs")
 @SuppressWarnings("DataFlowIssue")
@@ -136,6 +138,24 @@ class AdminLedgerDtoTest {
 		assertThat(response.breakdownByOwner()).containsExactly(owner);
 		assertThat(response.breakdownByModel()).containsExactly(model);
 		assertThat(response.breakdownByProvider()).containsExactly(provider);
+	}
+
+	@Test
+	@DisplayName("LedgerSummaryResponse serializes breakdowns under the contract keys")
+	void ledgerSummarySerializesContractKeys() throws Exception {
+		LedgerSummaryResponse response = new LedgerSummaryResponse(
+				1L, 100L, 50L, 150L, 1400L, BigDecimal.valueOf(0.0014), 80.0,
+				List.of(), List.of(), List.of()
+		);
+
+		JsonNode json = new ObjectMapper().valueToTree(response);
+
+		assertThat(json.has("byOwner")).isTrue();
+		assertThat(json.has("byModel")).isTrue();
+		assertThat(json.has("byProvider")).isTrue();
+		assertThat(json.has("breakdownByOwner")).isFalse();
+		assertThat(json.has("breakdownByModel")).isFalse();
+		assertThat(json.has("breakdownByProvider")).isFalse();
 	}
 
 	@Test

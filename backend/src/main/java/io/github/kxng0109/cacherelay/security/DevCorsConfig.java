@@ -31,10 +31,12 @@ public class DevCorsConfig {
 	/**
 	 * CORS policy for the local Vite dev server.
 	 *
-	 * <p>Covers the versioned API surface only ({@code /v1/**}); observability and docs endpoints gain no
-	 * cross-origin surface.
+	 * <p>Covers the versioned API surface ({@code /v1/**}) plus the actuator endpoints the
+	 * operator UI charts and probes read ({@code /actuator/**}): both are same-origin
+	 * (`http://localhost:5173`) in dev only. Production keeps no CORS configuration and
+	 * stays default-deny for cross-origin browser traffic.
 	 *
-	 * @return source mapping {@code /v1/**} to the dev policy
+	 * @return source mapping dev paths to the dev policy
 	 */
 	@Bean
 	CorsConfigurationSource corsConfigurationSource() {
@@ -46,6 +48,7 @@ public class DevCorsConfig {
 				"Authorization",
 				"Content-Type",
 				"X-Admin-Key",
+				"X-CacheRelay-Refresh",
 				"Idempotency-Key",
 				"Mcp-Name",
 				"Mcp-Session-Id",
@@ -69,9 +72,13 @@ public class DevCorsConfig {
 				"X-Budget-Held-Micros",
 				"X-Budget-Subject",
 				"X-CacheRelay-Provider",
-				"X-CacheRelay-Tried"));
+				"X-CacheRelay-Tried",
+				"X-CacheRelay-Audit-Receipt",
+				"X-No-Storage",
+				"Idempotent-Replayed"));
 		UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
 		source.registerCorsConfiguration("/v1/**", config);
+		source.registerCorsConfiguration("/actuator/**", config);
 		return source;
 	}
 }

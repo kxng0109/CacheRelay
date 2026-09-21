@@ -1,6 +1,7 @@
 package io.github.kxng0109.cacherelay.admin.dto;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.math.BigDecimal;
@@ -44,12 +45,15 @@ public record LedgerSummaryResponse(
 		double averageDurationMs,
 
 		@Schema(description = "Breakdown aggregated by tenant owner ID")
+		@JsonProperty("byOwner")
 		List<OwnerUsageSummary> breakdownByOwner,
 
 		@Schema(description = "Breakdown aggregated by model identifier")
+		@JsonProperty("byModel")
 		List<ModelUsageSummary> breakdownByModel,
 
 		@Schema(description = "Breakdown aggregated by upstream provider")
+		@JsonProperty("byProvider")
 		List<ProviderUsageSummary> breakdownByProvider
 ) {
 }

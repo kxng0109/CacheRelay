@@ -64,11 +64,11 @@ public class AdminMcpApprovalController {
 			}
 	)
 	@ApiResponses({
-			@ApiResponse(responseCode = "200", description = "Pending invocation summaries"),
+			@ApiResponse(responseCode = "200", description = "Pending invocation summaries envelope"),
 			@ApiResponse(responseCode = "401", description = "Unauthorized: Master Admin key required")
 	})
 	@GetMapping(value = "/pending", produces = MediaType.APPLICATION_JSON_VALUE)
-	public ResponseEntity<List<PendingApprovalSummary>> listPendingApprovals() {
+	public ResponseEntity<PendingApprovalsResponse> listPendingApprovals() {
 		List<PendingApprovalSummary> summaries = new ArrayList<>();
 		ScanOptions options = ScanOptions.scanOptions()
 				.count(PENDING_SCAN_COUNT)
@@ -85,7 +85,21 @@ public class AdminMcpApprovalController {
 			}
 		}
 		summaries.sort(Comparator.comparing(PendingApprovalSummary::createdAt).reversed());
-		return ResponseEntity.ok(summaries);
+		return ResponseEntity.ok(new PendingApprovalsResponse(summaries));
+	}
+
+	/**
+	 * Envelope for the pending-approval list (the contract promises an object, never a bare array).
+	 *
+	 * @param approvals pending invocation summaries, newest first
+	 */
+	public record PendingApprovalsResponse(List<PendingApprovalSummary> approvals) {
+		/**
+		 * Compact constructor defensively copying the list.
+		 */
+		public PendingApprovalsResponse {
+			approvals = approvals == null ? List.of() : List.copyOf(approvals);
+		}
 	}
 
 	private @Nullable PendingApprovalSummary toSummary(String raw) {

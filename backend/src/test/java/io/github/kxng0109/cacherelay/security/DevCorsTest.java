@@ -74,7 +74,47 @@ class DevCorsTest {
 						.contains("X-Budget-Remaining")
 						.contains("X-Budget-Held-Micros")
 						.contains("X-CacheRelay-Provider")
-						.contains("X-CacheRelay-Tried"));
+						.contains("X-CacheRelay-Tried")
+						.contains("X-CacheRelay-Audit-Receipt")
+						.contains("X-No-Storage")
+						.contains("Idempotent-Replayed"));
+	}
+
+	@Test
+	@DisplayName("refresh CSRF header passes preflight")
+	void refreshHeaderPassesPreflight() throws Exception {
+		HttpRequest request = HttpRequest.newBuilder()
+				.uri(URI.create("http://localhost:" + port + "/v1/auth/refresh"))
+				.header("Origin", DEV_ORIGIN)
+				.header("Access-Control-Request-Method", "POST")
+				.header("Access-Control-Request-Headers", "X-CacheRelay-Refresh")
+				.method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+				.build();
+		HttpResponse<Void> response = HttpClient.newHttpClient().send(request,
+				HttpResponse.BodyHandlers.discarding());
+
+		assertThat(response.statusCode()).as("refresh preflight status").isEqualTo(200);
+		assertThat(response.headers().firstValue("Access-Control-Allow-Origin"))
+				.as("echoed origin")
+				.hasValue(DEV_ORIGIN);
+	}
+
+	@Test
+	@DisplayName("actuator preflight from the dev origin succeeds")
+	void actuatorPreflightSucceeds() throws Exception {
+		HttpRequest request = HttpRequest.newBuilder()
+				.uri(URI.create("http://localhost:" + port + "/actuator/prometheus"))
+				.header("Origin", DEV_ORIGIN)
+				.header("Access-Control-Request-Method", "GET")
+				.method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+				.build();
+		HttpResponse<Void> response = HttpClient.newHttpClient().send(request,
+				HttpResponse.BodyHandlers.discarding());
+
+		assertThat(response.statusCode()).as("actuator preflight status").isEqualTo(200);
+		assertThat(response.headers().firstValue("Access-Control-Allow-Origin"))
+				.as("echoed origin")
+				.hasValue(DEV_ORIGIN);
 	}
 
 	@Test

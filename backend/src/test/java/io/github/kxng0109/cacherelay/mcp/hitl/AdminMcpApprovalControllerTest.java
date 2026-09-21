@@ -109,14 +109,15 @@ class AdminMcpApprovalControllerTest {
 		when(valueOperations.get("mcp:hitl:pending:incomplete"))
 				.thenReturn("{\"tokenId\":\"incomplete\"}");
 
-		ResponseEntity<List<PendingApprovalSummary>> response = controller.listPendingApprovals();
+		ResponseEntity<AdminMcpApprovalController.PendingApprovalsResponse> response =
+				controller.listPendingApprovals();
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-		assertThat(response.getBody()).hasSize(2);
-		assertThat(response.getBody().get(0).tokenId()).isEqualTo("new");
-		assertThat(response.getBody().get(0).toolName()).isEqualTo("postgres__run_query");
-		assertThat(response.getBody().get(0).serverName()).isEqualTo("postgres");
-		assertThat(response.getBody().get(1).tokenId()).isEqualTo("old");
+		assertThat(response.getBody().approvals()).hasSize(2);
+		assertThat(response.getBody().approvals().get(0).tokenId()).isEqualTo("new");
+		assertThat(response.getBody().approvals().get(0).toolName()).isEqualTo("postgres__run_query");
+		assertThat(response.getBody().approvals().get(0).serverName()).isEqualTo("postgres");
+		assertThat(response.getBody().approvals().get(1).tokenId()).isEqualTo("old");
 		verify(cursor).close();
 	}
 
@@ -128,10 +129,11 @@ class AdminMcpApprovalControllerTest {
 		when(cursor.hasNext()).thenReturn(false);
 		when(redisTemplate.scan(any(ScanOptions.class))).thenReturn(cursor);
 
-		ResponseEntity<List<PendingApprovalSummary>> response = controller.listPendingApprovals();
+		ResponseEntity<AdminMcpApprovalController.PendingApprovalsResponse> response =
+				controller.listPendingApprovals();
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-		assertThat(response.getBody()).isEmpty();
+		assertThat(response.getBody().approvals()).isEmpty();
 		verify(cursor).close();
 	}
 
