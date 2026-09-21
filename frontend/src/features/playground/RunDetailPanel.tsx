@@ -38,6 +38,7 @@ export interface RunDetail {
  */
 export function RunDetailPanel({ detail }: { detail: RunDetail }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
+  const [markdownCopied, setMarkdownCopied] = useState(false)
   const [copyError, setCopyError] = useState<string | null>(null)
 
   const latency = detail.latencyMs?.toFixed(0) ?? '—'
@@ -70,15 +71,35 @@ export function RunDetailPanel({ detail }: { detail: RunDetail }): React.JSX.Ele
    * Copies the detail payload. Byte count confirms what left the page.
    */
   const copyPayload = (): void => {
+    writeCopy(payload, setCopied)
+  }
+
+  /**
+   * Copies the receipt as markdown: heading plus fenced payload, ready to
+   * paste into a ticket, report, or model prompt. Facts only — the panel
+   * holds no keys, tokens, or secrets.
+   */
+  const copyMarkdown = (): void => {
+    const doc = `# Run ${String(detail.runId)} · ${detail.model} (${detail.status})\n\n\`\`\`json\n${payload}\n\`\`\``
+    writeCopy(doc, setMarkdownCopied)
+  }
+
+  /**
+   * Writes text to the clipboard. Absence surfaces inline, never throws.
+   *
+   * @param text - Text to copy.
+   * @param mark - State setter flipped on success.
+   */
+  const writeCopy = (text: string, mark: (v: boolean) => void): void => {
     setCopyError(null)
     const clip = navigator.clipboard as Clipboard | undefined
     if (clip === undefined) {
       setCopyError('Copy unavailable in this browser.')
       return
     }
-    void clip.writeText(payload).then(
+    void clip.writeText(text).then(
       () => {
-        setCopied(true)
+        mark(true)
       },
       () => {
         setCopyError('Copy failed. Select the text manually.')
@@ -145,6 +166,13 @@ export function RunDetailPanel({ detail }: { detail: RunDetail }): React.JSX.Ele
             className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
           >
             {copied ? 'Copied' : 'Copy'}
+          </button>
+          <button
+            type="button"
+            onClick={copyMarkdown}
+            className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+          >
+            {markdownCopied ? 'Copied' : 'Copy markdown'}
           </button>
           {copyError === null ? null : (
             <p role="alert" className="text-[13px] text-danger dark:text-danger-soft">

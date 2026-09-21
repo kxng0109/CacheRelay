@@ -81,4 +81,38 @@ describe('RunDetailPanel', () => {
       })
     }
   })
+
+  it('copies the receipt as markdown with a heading and fenced payload', async () => {
+    const user = userEvent.setup()
+    const writes: string[] = []
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: (s: string): Promise<void> => {
+          writes.push(s)
+          return Promise.resolve()
+        },
+      },
+    })
+    try {
+      renderApp(
+        <RunDetailPanel
+          detail={{ runId: 5, model: 'gpt-56-luna', streaming: false, status: 'done' }}
+        />,
+      )
+      await user.click(screen.getByRole('button', { name: /copy markdown/i }))
+      expect(writes.length).toBe(1)
+      const first = writes.at(0)
+      expect(first).toBeDefined()
+      if (first !== undefined) {
+        expect(first.startsWith('# Run 5 · gpt-56-luna (done)')).toBe(true)
+        expect(first).toContain('```json')
+      }
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: undefined,
+      })
+    }
+  })
 })

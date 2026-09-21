@@ -9,6 +9,7 @@ import { isStreamingEnabled } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { RunDetailPanel } from './RunDetailPanel.js'
+import { RequestCard } from './RequestCard.js'
 import type { StreamSummary } from './SseStreamViewer.js'
 import { SseStreamViewer } from './SseStreamViewer.js'
 import { ModelSelect } from '../../shared/models/ModelSelect.js'
@@ -19,8 +20,21 @@ const schema = z.object({
   key: z.string().min(1, 'API key is required'),
 })
 
-/** Sanctioned sample: fills the prompt box only, never fabricates output. */
-const SAMPLE_PROMPT = 'Summarize the three cache outcomes (HIT, MISS, STALE) in one sentence each.'
+/** Sanctioned samples: each fills the prompt box only, never fabricates output. */
+const SAMPLES = [
+  {
+    label: 'Cache outcomes',
+    prompt: 'Summarize the three cache outcomes (HIT, MISS, STALE) in one sentence each.',
+  },
+  {
+    label: 'JSON only',
+    prompt: 'Reply with JSON only: {"hit": "...", "miss": "...", "stale": "..."}',
+  },
+  {
+    label: 'Stale vs miss',
+    prompt: 'Explain when a gateway should serve STALE instead of MISS.',
+  },
+] as const
 
 type FormData = z.infer<typeof schema>
 
@@ -81,9 +95,6 @@ export function PlaygroundPage(): React.JSX.Element {
   const modelValue = useWatch({ control, name: 'model' })
   const keyValue = useWatch({ control, name: 'key' })
   const overLimit = promptLength > 8000
-  const [exampleCopied, setExampleCopied] = useState(false)
-  const [exampleBytes, setExampleBytes] = useState(0)
-  const [exampleError, setExampleError] = useState<string | null>(null)
   /**
    * Password managers key off focusable password fields. The key input
    * stays readonly until first focus, which keeps managers from claiming
@@ -129,42 +140,13 @@ export function PlaygroundPage(): React.JSX.Element {
   }
 
   /**
-   * Fills the prompt box with the sanctioned sample. Output still requires
-   * a real send — the sample never fabricates a completion.
-   */
-  const fillSample = (): void => {
-    setValue('prompt', SAMPLE_PROMPT, { shouldValidate: true })
-  }
-
-  /**
-   * Example request for the current model: the exact curl an operator can
-   * paste into a terminal. The key stays a placeholder — memory-only keys
-   * never leave the page.
+   * Fills the prompt box with one sanctioned sample. Output still requires
+   * a real send — samples never fabricate a completion.
    *
-   * @returns The curl snippet text.
+   * @param prompt - Sample text to load into the prompt box.
    */
-  const exampleRequest = (): string =>
-    `curl -s http://localhost:8080/v1/chat/completions -H "Authorization: Bearer YOUR_KEY" -H "Content-Type: application/json" -d '{"model":"${modelValue}","messages":[{"role":"user","content":"Hello"}]}'`
-
-  /**
-   * Copies the example request. Clipboard absence surfaces inline, never throws.
-   */
-  const copyExample = (): void => {
-    setExampleError(null)
-    const clip = navigator.clipboard as Clipboard | undefined
-    if (clip === undefined) {
-      setExampleError('Copy unavailable in this browser.')
-      return
-    }
-    void clip.writeText(exampleRequest()).then(
-      () => {
-        setExampleCopied(true)
-        setExampleBytes(new TextEncoder().encode(exampleRequest()).length)
-      },
-      () => {
-        setExampleError('Copy failed. Select the text manually.')
-      },
-    )
+  const fillRecipe = (prompt: string): void => {
+    setValue('prompt', prompt, { shouldValidate: true })
   }
 
   // New runs pull the output block into view (instant jump, never smooth:
@@ -313,25 +295,25 @@ export function PlaygroundPage(): React.JSX.Element {
           </form>
           <details className="rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
             <summary className="cursor-pointer font-mono text-[13px]">
-              Run it from a terminal instead
+              Start from a recipe instead
             </summary>
-            <pre className="mt-2 overflow-auto rounded-md border border-ink/10 p-2 font-mono text-xs whitespace-pre-wrap dark:border-parchment/10">
-              {exampleRequest()}
-            </pre>
-            <div className="mt-2 flex items-center gap-3">
-              <button
-                type="button"
-                onClick={copyExample}
-                className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
-              >
-                {exampleCopied ? `Copied ${String(exampleBytes)}B` : 'Copy'}
-              </button>
-              {exampleError === null ? null : (
-                <p role="alert" className="text-[13px] text-danger dark:text-danger-soft">
-                  {exampleError}
-                </p>
-              )}
+            <div className="mt-2 flex flex-wrap gap-2">
+              {SAMPLES.map((sample) => (
+                <button
+                  key={sample.label}
+                  type="button"
+                  onClick={() => {
+                    fillRecipe(sample.prompt)
+                  }}
+                  className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+                >
+                  {sample.label}
+                </button>
+              ))}
             </div>
+            <p className="mt-2 text-[13px] text-ink-soft dark:text-parchment-soft">
+              Recipes fill the prompt box only. Output still requires a real send.
+            </p>
           </details>
           {submitted === null ? (
             <div className="rise rounded-xl border border-dashed border-ink/20 p-6 text-center sm:p-8 dark:border-parchment/20">
@@ -340,13 +322,20 @@ export function PlaygroundPage(): React.JSX.Element {
                 Pick a model, paste a key, write a prompt. Then send. Tokens, cost, and phase show
                 here as the stream flows.
               </p>
-              <button
-                type="button"
-                onClick={fillSample}
-                className="mt-3 rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
-              >
-                Try sample prompt
-              </button>
+              <div className="mt-3 flex flex-wrap justify-center gap-2">
+                {SAMPLES.map((sample) => (
+                  <button
+                    key={sample.label}
+                    type="button"
+                    onClick={() => {
+                      fillRecipe(sample.prompt)
+                    }}
+                    className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+                  >
+                    Try {sample.label.toLowerCase()}
+                  </button>
+                ))}
+              </div>
             </div>
           ) : (
             <section
@@ -398,43 +387,50 @@ export function PlaygroundPage(): React.JSX.Element {
                   )}
                 </div>
               )}
-              <RunDetailPanel
-                detail={
-                  streaming
-                    ? {
-                        runId,
-                        model: submitted.model,
-                        streaming: true,
-                        status:
-                          streamSummary === null
-                            ? 'running'
-                            : streamSummary.phase === 'done'
-                              ? 'done'
-                              : 'error',
-                        ...(streamSummary === null
-                          ? {}
-                          : {
-                              latencyMs: streamSummary.durationMs,
-                              frames: streamSummary.frames,
-                              cacheTier: streamSummary.cacheTier,
-                              similarity: streamSummary.similarity,
-                              age: streamSummary.age,
-                              ...(streamSummary.error === undefined
-                                ? {}
-                                : { error: streamSummary.error }),
-                            }),
-                      }
-                    : {
-                        runId,
-                        model: submitted.model,
-                        streaming: false,
-                        status:
-                          staticError !== null ? 'error' : staticText !== null ? 'done' : 'running',
-                        ...(staticLatencyMs === null ? {} : { latencyMs: staticLatencyMs }),
-                        ...(staticError === null ? {} : { error: staticError }),
-                      }
-                }
-              />
+              <div className="grid gap-4 lg:grid-cols-2">
+                <RequestCard model={submitted.model} />
+                <RunDetailPanel
+                  detail={
+                    streaming
+                      ? {
+                          runId,
+                          model: submitted.model,
+                          streaming: true,
+                          status:
+                            streamSummary === null
+                              ? 'running'
+                              : streamSummary.phase === 'done'
+                                ? 'done'
+                                : 'error',
+                          ...(streamSummary === null
+                            ? {}
+                            : {
+                                latencyMs: streamSummary.durationMs,
+                                frames: streamSummary.frames,
+                                cacheTier: streamSummary.cacheTier,
+                                similarity: streamSummary.similarity,
+                                age: streamSummary.age,
+                                ...(streamSummary.error === undefined
+                                  ? {}
+                                  : { error: streamSummary.error }),
+                              }),
+                        }
+                      : {
+                          runId,
+                          model: submitted.model,
+                          streaming: false,
+                          status:
+                            staticError !== null
+                              ? 'error'
+                              : staticText !== null
+                                ? 'done'
+                                : 'running',
+                          ...(staticLatencyMs === null ? {} : { latencyMs: staticLatencyMs }),
+                          ...(staticError === null ? {} : { error: staticError }),
+                        }
+                  }
+                />
+              </div>
             </section>
           )}
         </div>

@@ -222,10 +222,10 @@ describe('PlaygroundPage', () => {
     expect(screen.getByRole('region', { name: /run 1: gpt-56-luna/i })).toBeInTheDocument()
   })
 
-  it('fills the sanctioned sample without sending', async () => {
+  it('fills a sanctioned recipe without sending', async () => {
     const user = userEvent.setup()
     renderApp(<PlaygroundPage />)
-    await user.click(screen.getByRole('button', { name: /try sample prompt/i }))
+    await user.click(screen.getByRole('button', { name: /try cache outcomes/i }))
     expect(screen.getByLabelText(/prompt/i, { selector: 'textarea' })).toHaveValue(
       'Summarize the three cache outcomes (HIT, MISS, STALE) in one sentence each.',
     )
@@ -243,11 +243,34 @@ describe('PlaygroundPage', () => {
     expect(screen.getByRole('button', { name: /stream completion/i })).toBeDisabled()
   })
 
-  it('offers a copyable terminal example', async () => {
+  it('shows a copyable request card beside the run detail', async () => {
     const user = userEvent.setup()
+    server.use(
+      catalog(),
+      http.post('*/v1/chat/completions', () => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            ctrl.enqueue(new TextEncoder().encode(STREAM))
+            ctrl.close()
+          },
+        })
+        return new HttpResponse(stream, { headers: { 'content-type': 'text/event-stream' } })
+      }),
+    )
     renderApp(<PlaygroundPage />)
-    await user.click(screen.getByText(/run it from a terminal instead/i))
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
+    await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
+    await user.click(screen.getByRole('button', { name: /stream completion/i }))
+    await waitFor(
+      () => {
+        expect(screen.getByRole('log')).toHaveTextContent('Hello')
+      },
+      { timeout: 5000 },
+    )
+    expect(screen.getByRole('region', { name: /run request/i })).toBeInTheDocument()
     expect(screen.getByText(/chat\/completions/i)).toBeInTheDocument()
+    expect(screen.getByText(/YOUR_KEY/i)).toBeInTheDocument()
   })
 
   it('reruns the submitted run as a fresh block and scrolls to it', async () => {
