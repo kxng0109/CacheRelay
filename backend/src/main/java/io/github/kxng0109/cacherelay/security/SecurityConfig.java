@@ -52,13 +52,16 @@ import io.github.kxng0109.cacherelay.web.SpaFallbackController;
  *       these matchers simply let the internal scraper and probes through.</li>
  *   <li><b>Public docs:</b> {@code /v3/api-docs}, {@code /swagger-ui.html}
  *       (no secrets).</li>
-  *   <li><b>Delegated auth:</b> {@code /v1/chat/completions} and
-  *       {@code /v1/embeddings} (authenticated, rate-limited, and budget-gated by
-  *       {@code KeyAuthFilter}); {@code /v1/models} (virtual-key authenticated inside
-  *       {@code ModelController}, unmetered metadata); {@code /v1/admin/**} (master-key or admin-JWT
-  *       authenticated by {@code AdminAuthFilter}, stealth-404 on denial);
-  *       {@code /v1/mcp/**} (virtual-key authenticated inside
-  *       {@code McpStreamableHttpController} with per-tool RBAC).</li>
+ *   <li><b>Delegated auth:</b> {@code /v1/chat/completions} and
+ *       {@code /v1/embeddings} (authenticated, rate-limited, and budget-gated by
+ *       {@code KeyAuthFilter}); {@code /v1/models} (virtual-key authenticated inside
+ *       {@code ModelController}, unmetered metadata); {@code /v1/admin/**} (master-key or admin-JWT
+ *       authenticated by {@code AdminAuthFilter}, stealth-404 on denial);
+ *       {@code /v1/mcp/**} (virtual-key authenticated inside
+ *       {@code McpStreamableHttpController} with per-tool RBAC); {@code /v1/a2a/**}
+ *       (virtual-key authenticated inside {@code A2aProxyController} with per-key agent RBAC).</li>
+ *   <li><b>Public discovery:</b> {@code /.well-known/agent-card.json} (the A2A gateway card;
+ *       deliberately discloses no agent inventory).</li>
   *   <li><b>Human authentication:</b> {@code /v1/auth/**} (login, redeem, identity;
   *       refresh rotation lives in its own filter) and Spring's OAuth2 login/code
   *       endpoints (SSO entry points).</li>
@@ -128,6 +131,7 @@ public class SecurityConfig {
 								"/actuator/health",
 								"/actuator/health/**",
 								"/actuator/prometheus",
+								"/.well-known/agent-card.json",
 								"/v3/api-docs",
 								"/swagger-ui.html"
 						).permitAll()
@@ -136,7 +140,8 @@ public class SecurityConfig {
 								"/v1/embeddings",
 								"/v1/models",
 								"/v1/admin/**",
-								"/v1/mcp/**"
+								"/v1/mcp/**",
+								"/v1/a2a/**"
 						).permitAll()
 						.requestMatchers(
 								"/v1/auth/**",

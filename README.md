@@ -294,6 +294,45 @@ gateway:
         base-url: "http://mcp-github:8080"
 ```
 
+## A2A agent proxy
+
+CacheRelay also fronts upstream A2A (Agent-to-Agent) agents with the same governance posture as MCP tools: a
+virtual-key authenticated JSON-RPC relay with per-key agent allow/deny lists, per-agent circuit breaking, bounded
+request/response bodies, and redirect-disabled upstream calls. Slice 1 relays the non-streaming interoperable core
+verbatim — `message/send`, `tasks/get`, `tasks/cancel`; unknown methods answer JSON-RPC `-32601`, notifications are
+accepted with `202`. Streaming (`message/stream`), push-notification configuration, task resubscription, gRPC, and
+HTTP+JSON transports are explicit non-goals of this slice.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /.well-known/agent-card.json` | Public gateway discovery card (A2A v0.3). Deliberately discloses **no** agent inventory. |
+| `POST /v1/a2a/{agent}` | JSON-RPC relay to a registered agent, authenticated by a virtual key (`Authorization: Bearer gw-...`), exactly like `/v1/mcp/**`. |
+| `GET /v1/a2a/{agent}/card` | The upstream agent card with its `url` (and `additionalInterfaces[].url`) rewritten to the gateway address. Unknown and denied agents are indistinguishable (`404`). |
+
+Local policy decisions follow the MCP convention so clients never branch on codes: JSON-RPC errors are
+standardized on `-32603` (access denied, breaker open, agent unavailable), `-32700` for malformed JSON, `-32600`
+for batches and oversized bodies, `-32601` for unsupported methods.
+
+```yaml
+gateway:
+  a2a:
+    enabled: true
+    public-base-url: ${GATEWAY_PUBLIC_BASE_URL:http://localhost:8080}
+    max-request-bytes: 1048576
+    max-result-bytes: 1048576
+    circuit-breaker-failure-threshold: 3
+    circuit-breaker-cooldown: 30s
+    client-connect-timeout: 5s
+    client-request-timeout: 60s
+    agents:
+      research-agent:
+        base-url: "https://agents.internal/a2a"
+        api-key: ${A2A_RESEARCH_AGENT_KEY:}       # optional upstream Bearer credential
+        protocol-version: "0.3"                    # optional pin for this agent
+        card-path: "/.well-known/agent-card.json"  # optional upstream card path
+        enabled: true
+```
+
 ## Usage and cost ledger
 
 Every completed stream that carries token usage is written to a PostgreSQL ledger through an asynchronous, lock-free, zero-loss ingestion pipeline:
@@ -346,6 +385,12 @@ The code is organized by responsibility under `backend/src/main/java/io/github/k
   (AES-256-GCM), `McpResumptionClaims`, and `AdminMcpApprovalController` (`/v1/admin/mcp/approvals/**`).
 - `mcp/resilience` contains `McpServerCircuitBreakerManager` with per-server atomic CAS circuit breaking and catalog
   auto-pruning.
+- `a2a/config` contains the A2A gateway configuration (`A2aGatewayProperties`, prefix `gateway.a2a`), the agent
+  registry model (`A2aAgentConfig`), and the dedicated redirect-disabled HTTP client.
+- `a2a/protocol` contains the A2A surfaces: `A2aProxyController` (JSON-RPC relay + rewritten agent cards) and
+  `A2aDiscoveryController` (public well-known gateway card).
+- `a2a/registry`, `a2a/security`, and `a2a/resilience` contain the agent registry, the agent RBAC policy engine
+  (`allowedAgents`/`deniedAgents` glob semantics, deny-first), and per-agent circuit breakers.
 - `ledger` contains the FinOps ledger engine: `FinOpsPromptCacheCalculator`, `SpillwayJournalManager`, `UsageLedgerListener`, `UsageLedgerRepository`, `UsageLedgerRepositoryImpl`, `UsageLedgerService`, `CostCalculator`, `ModelPriceCatalog`, `ModelPricingRepository`, and `PricingSyncService`.
 - `budget` contains the spend-gate engine plus settlement and watchdog internals: `BudgetEnforcer`,
   `BudgetSettlement`, `BudgetHoldSweeper`, `AdvisoryLock`, `BudgetDetector`, `AlertEvent`/`AlertDispatcher`/

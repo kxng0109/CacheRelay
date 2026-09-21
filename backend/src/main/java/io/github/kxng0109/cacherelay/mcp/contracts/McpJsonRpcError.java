@@ -102,6 +102,17 @@ public record McpJsonRpcError(
 				+ "markers detected in '" + toolName + "'");
 	}
 
+	/**
+	 * Replay of an already-consumed HITL approval. Surfaced as {@code INTERNAL_ERROR}
+	 * (-32603): the single-use claim already executed this exact call, and replaying it must
+	 * never re-enter the suspension cycle (a second administrator approval would otherwise
+	 * execute the tool twice). Clients re-initiate the tool call if they still need it.
+	 */
+	public static McpJsonRpcError resumptionConsumed() {
+		return internalError("Resumption already consumed: this approval executed its call; "
+				+ "re-initiate the tool call to request a new approval");
+	}
+
 	public static McpJsonRpcError headerMismatch(String detail) {
 		return new McpJsonRpcError(HEADER_MISMATCH, "Header mismatch: " + detail, null);
 	}

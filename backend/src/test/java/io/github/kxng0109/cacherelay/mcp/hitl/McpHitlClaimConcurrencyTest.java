@@ -108,7 +108,7 @@ class McpHitlClaimConcurrencyTest {
 	}
 
 	@Test
-	@DisplayName("32 concurrent resumptions of one approval yield exactly one execution")
+	@DisplayName("32 concurrent resumptions of one approval yield one execution and 31 consumed denials")
 	@Timeout(value = 30, unit = TimeUnit.SECONDS)
 	void concurrentResumptionsYieldSingleExecution() throws Exception {
 		String argsSha = McpAeadResumptionTokenService.computeArgsSha256("{\"sql\":\"DROP TABLE users\"}");
@@ -133,6 +133,7 @@ class McpHitlClaimConcurrencyTest {
 		CountDownLatch doneGate = new CountDownLatch(racers);
 		AtomicInteger executions = new AtomicInteger();
 		AtomicInteger suspensions = new AtomicInteger();
+		AtomicInteger denials = new AtomicInteger();
 
 		try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
 			for (int i = 0; i < racers; i++) {
@@ -148,6 +149,8 @@ class McpHitlClaimConcurrencyTest {
 						);
 						if (outcome.isEmpty()) {
 							executions.incrementAndGet();
+						} else if (!outcome.get().isSuccess()) {
+							denials.incrementAndGet();
 						} else {
 							suspensions.incrementAndGet();
 						}
@@ -163,8 +166,46 @@ class McpHitlClaimConcurrencyTest {
 		}
 
 		assertThat(executions.get()).as("exactly one winner executes").isEqualTo(1);
-		assertThat(suspensions.get()).as("losers re-suspend").isEqualTo(racers - 1);
+		assertThat(suspensions.get()).as("no loser re-enters the suspension cycle").isZero();
+		assertThat(denials.get()).as("losers observe the consumed approval").isEqualTo(racers - 1);
 		assertThat(redisTemplate.hasKey("mcp:hitl:approved:tok-race-1")).isFalse();
+		assertThat(redisTemplate.hasKey("mcp:hitl:pending:tok-race-1")).isFalse();
+		assertThat(redisTemplate.hasKey("mcp:hitl:consumed:tok-race-1")).isTrue();
+	}
+
+	@Test
+	@DisplayName("Replay after execution is denied even when the approval key is re-armed")
+	void replayAfterExecutionDenied() {
+		String argsSha = McpAeadResumptionTokenService.computeArgsSha256("{\"sql\":\"DROP TABLE users\"}");
+		Instant now = Instant.now();
+		McpResumptionClaims claims = new McpResumptionClaims(
+				"tok-replay-1",
+				"tenant-corp",
+				"postgres__execute_sql",
+				argsSha,
+				now,
+				now.plusSeconds(300)
+		);
+		McpGatewayProperties properties = new McpGatewayProperties();
+		properties.setHitlSecret(new SensitiveString("test-hitl-secret-32-bytes-minimum!!"));
+		String token = new McpAeadResumptionTokenService(properties, objectMapper).mintToken(claims);
+
+		redisTemplate.opsForValue().set("mcp:hitl:approved:tok-replay-1", "APPROVED", 300, TimeUnit.SECONDS);
+		redisTemplate.opsForValue().set("mcp:hitl:pending:tok-replay-1", "{}", 300, TimeUnit.SECONDS);
+
+		assertThat(suspensionEngine.evaluateOrSuspend(
+				resumptionRequest(token), hitlServer, "execute_sql", "postgres__execute_sql", apiKey))
+				.as("first resumption executes")
+				.isEmpty();
+
+		// Defense in depth: even if an approved key is written again (key tampering or a
+		// hold-over), the terminal consumed marker must deny the replay.
+		redisTemplate.opsForValue().set("mcp:hitl:approved:tok-replay-1", "APPROVED", 300, TimeUnit.SECONDS);
+		Optional<McpJsonRpcResponse> replay = suspensionEngine.evaluateOrSuspend(
+				resumptionRequest(token), hitlServer, "execute_sql", "postgres__execute_sql", apiKey);
+
+		assertThat(replay).isPresent();
+		assertThat(replay.get().isSuccess()).as("replay is denied, never executed").isFalse();
 	}
 
 	@Test

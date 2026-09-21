@@ -31,6 +31,8 @@ import java.util.Set;
  * @param createdAt        creation timestamp
  * @param allowedCacheScopes cache isolation scopes the key may use (SEC-01: the request header can only
  *                           select within this server-side allowlist; null or empty means TENANT only)
+ * @param allowedAgents    empty set means "all A2A agents allowed"
+ * @param deniedAgents     empty set means "no A2A agents denied"
  */
 public record VirtualApiKey(
 		SHA256Hash keyHash,
@@ -50,7 +52,9 @@ public record VirtualApiKey(
 		boolean injectionBlock,
 		boolean enabled,
 		Instant createdAt,
-		Set<CacheScope> allowedCacheScopes
+		Set<CacheScope> allowedCacheScopes,
+		Set<String> allowedAgents,
+		Set<String> deniedAgents
 ) {
 	/**
 	 * Stores immutable copies of the allow and deny lists so callers cannot mutate the
@@ -66,6 +70,8 @@ public record VirtualApiKey(
 		allowedPrompts = allowedPrompts == null ? Set.of() : Set.copyOf(allowedPrompts);
 		deniedPrompts = deniedPrompts == null ? Set.of() : Set.copyOf(deniedPrompts);
 		allowedCacheScopes = normalizeCacheScopes(allowedCacheScopes);
+		allowedAgents = allowedAgents == null ? Set.of() : Set.copyOf(allowedAgents);
+		deniedAgents = deniedAgents == null ? Set.of() : Set.copyOf(deniedAgents);
 	}
 
 	/**
@@ -86,6 +92,53 @@ public record VirtualApiKey(
 			}
 		}
 		return copy.isEmpty() ? Set.of(CacheScope.TENANT) : Set.copyOf(copy);
+	}
+
+	/**
+	 * Backwards-compatible constructor omitting the A2A agent policy sets.
+	 */
+	public VirtualApiKey(
+			SHA256Hash keyHash,
+			String keyPrefix,
+			String ownerId,
+			String name,
+			int rpmLimit,
+			int tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts,
+			boolean injectionBlock,
+			boolean enabled,
+			Instant createdAt,
+			Set<CacheScope> allowedCacheScopes
+	) {
+		this(
+				keyHash,
+				keyPrefix,
+				ownerId,
+				name,
+				rpmLimit,
+				tpmLimit,
+				allowedModels,
+				allowedProviders,
+				allowedTools,
+				deniedTools,
+				allowedResources,
+				deniedResources,
+				allowedPrompts,
+				deniedPrompts,
+				injectionBlock,
+				enabled,
+				createdAt,
+				allowedCacheScopes,
+				Set.of(),
+				Set.of()
+		);
 	}
 
 	/**
@@ -121,7 +174,9 @@ public record VirtualApiKey(
 				true,
 				enabled,
 				createdAt,
-				Set.of(CacheScope.TENANT)
+				Set.of(CacheScope.TENANT),
+				Set.of(),
+				Set.of()
 		);
 	}
 
@@ -165,7 +220,9 @@ public record VirtualApiKey(
 				injectionBlock,
 				enabled,
 				createdAt,
-				Set.of(CacheScope.TENANT)
+				Set.of(CacheScope.TENANT),
+				Set.of(),
+				Set.of()
 		);
 	}
 
@@ -204,7 +261,9 @@ public record VirtualApiKey(
 				true,
 				enabled,
 				createdAt,
-				Set.of(CacheScope.TENANT)
+				Set.of(CacheScope.TENANT),
+				Set.of(),
+				Set.of()
 		);
 	}
 }

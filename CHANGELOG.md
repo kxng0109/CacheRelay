@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **A2A agent proxy (slice 1):** governed JSON-RPC relay for operator-registered upstream A2A agents under
+  `/v1/a2a/{agent}` — `message/send`, `tasks/get`, and `tasks/cancel` relayed verbatim after virtual-key
+  authentication, per-key agent RBAC (`allowedAgents`/`deniedAgents` fields on the key contract, deny-first glob
+  semantics), per-agent circuit breakers, bounded bodies, and MCP-style JSON-RPC error codes. Discovery:
+  public `/.well-known/agent-card.json` (no agent inventory disclosed) and `GET /v1/a2a/{agent}/card` with
+  upstream URLs rewritten to the gateway. Streaming, push notifications, and resubscription are explicit slice
+  non-goals; the admin surface for agent allowlists and `message/stream` relay land in the next increment.
+  Full `verify` green, branch ≥ 0.95.
+- **HITL single-use hardening:** the approval claim script now records a terminal `consumed` marker (checked
+  first), so a replay of an already-executed approval is denied with `-32603` instead of re-entering the
+  suspension cycle — a re-armed approval key can never execute the same call twice. Unapproved retries
+  re-suspend under the same call id, keeping exactly one pending entry (no Redis litter, approvals never
+  orphaned). Covered by the 32-racer concurrency test plus a replay-denial test against real Redis.
+- **Kubernetes manifests:** the management port (SEC-15) is admitted by the allow policy from the monitoring
+  namespace only; probes target it by name; regression-locked in `K8sManifestSecurityTest`.
 - **Actuator exposure closed (SEC-15):** `/actuator/**` (health, probe subpaths, Prometheus metrics) moved to a
   dedicated management port (`GATEWAY_MANAGEMENT_PORT`, default `9091`) that Docker Compose publishes on host
   **loopback only** and Prometheus scrapes over the compose network; the app port answers `404` for every

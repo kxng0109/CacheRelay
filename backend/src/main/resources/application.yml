@@ -470,6 +470,19 @@ gateway:
     # Cap on one tools/call result body (PERF-11): larger upstream results fail with 502
     # instead of OOMing the heap. Override: GATEWAY_MCP_MAX_RESULT_BYTES.
     max-result-bytes: ${GATEWAY_MCP_MAX_RESULT_BYTES:1048576}
+  a2a:
+    # A2A agent proxy (slice 1): non-streaming JSON-RPC relay for operator-registered
+    # upstream agents, with virtual-key auth + per-agent circuit breaking. The proxy is
+    # inert until agents are registered below (or via external config).
+    enabled: ${GATEWAY_A2A_ENABLED:true}
+    # Public gateway base URL used to rewrite agent cards to the proxy address.
+    public-base-url: ${GATEWAY_PUBLIC_BASE_URL:http://localhost:8080}
+    max-request-bytes: ${GATEWAY_A2A_MAX_REQUEST_BYTES:1048576}
+    max-result-bytes: ${GATEWAY_A2A_MAX_RESULT_BYTES:1048576}
+    # agents:
+    #   research-agent:
+    #     base-url: "https://agents.internal/a2a"
+    #     api-key: ${A2A_RESEARCH_AGENT_KEY:}
 
 cacherelay:
   sse:

@@ -21,6 +21,17 @@ spec:
           # ingress-nginx MUST be >= 1.15.1 (CVE-2026-4342 annotation RCE).
       ports:
         - port: 8080
+    # SEC-15: the actuator management port (aggregate health for probes, Prometheus
+    # scrape) is cluster-internal. It is never mapped by the Service and never reachable
+    # from the ingress. Restrict it to the monitoring namespace; adjust the selector to
+    # your scraper's labels. Probes originate from the node, so if your CNI subjects
+    # node traffic to policies, also allow the node CIDR or probe the app port instead.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/name: monitoring
+      ports:
+        - port: 9091
   egress:
     - to:
         - namespaceSelector: {}

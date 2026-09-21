@@ -2,6 +2,7 @@ package io.github.kxng0109.cacherelay.mcp.hitl;
 
 import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
 import io.github.kxng0109.cacherelay.mcp.config.McpGatewayProperties;
+import io.github.kxng0109.cacherelay.mcp.contracts.McpJsonRpcError;
 import io.github.kxng0109.cacherelay.mcp.contracts.McpJsonRpcRequest;
 import io.github.kxng0109.cacherelay.mcp.contracts.McpJsonRpcResponse;
 import io.github.kxng0109.cacherelay.mcp.contracts.McpServerConfig;
@@ -33,17 +34,29 @@ public class McpHitlSuspensionEngine {
 
 	private static final String REDIS_PENDING_PREFIX = "mcp:hitl:pending:";
 	private static final String REDIS_APPROVED_PREFIX = "mcp:hitl:approved:";
+	private static final String REDIS_CONSUMED_PREFIX = "mcp:hitl:consumed:";
 
 	/**
-	 * Atomically claims a single-use HITL approval (SEC-02): returns {@code 1} only to the
-	 * caller that observes {@code APPROVED} and deletes both the approval and the pending
-	 * keys in the same script. Concurrent resumptions converge on exactly one winner; a
-	 * missing or non-approved value returns {@code 0} (denial, never an execution).
+	 * Atomically claims a single-use HITL approval (SEC-02) and records a consumption
+	 * marker in the same script. The consumed marker is checked FIRST and is terminal for
+	 * its TTL, so even a re-armed approval key can never execute the same call twice:
+	 * <ul>
+	 *   <li>{@code -1} — the approval was already consumed: the call executed earlier, so a
+	 *       replay is denied (never re-suspended) regardless of the approved/pending keys.</li>
+	 *   <li>{@code 1} — the caller observed {@code APPROVED}; the approval and pending keys
+	 *       are deleted and the consumed marker is set with the suspension TTL. Exactly one
+	 *       concurrent resumption can win.</li>
+	 *   <li>{@code 0} — not approved (never approved, rejected, or the approval window
+	 *       elapsed); the call is re-suspended under its stable token id.</li>
+	 * </ul>
 	 */
 	private static final DefaultRedisScript<Long> CLAIM_APPROVAL_SCRIPT = new DefaultRedisScript<>(
-			"if redis.call('GET', KEYS[1]) == ARGV[1] then "
+			"if redis.call('EXISTS', KEYS[3]) == 1 then return -1 "
+					+ "elseif redis.call('GET', KEYS[1]) == ARGV[1] then "
 					+ "redis.call('DEL', KEYS[1], KEYS[2]) "
-					+ "return 1 else return 0 end",
+					+ "redis.call('SET', KEYS[3], '1', 'EX', ARGV[2]) "
+					+ "return 1 "
+					+ "else return 0 end",
 			Long.class);
 
 	private final McpGatewayProperties properties;
@@ -114,9 +127,11 @@ public class McpHitlSuspensionEngine {
 						CLAIM_APPROVAL_SCRIPT,
 						List.of(
 								REDIS_APPROVED_PREFIX + claims.tokenId(),
-								REDIS_PENDING_PREFIX + claims.tokenId()
+								REDIS_PENDING_PREFIX + claims.tokenId(),
+								REDIS_CONSUMED_PREFIX + claims.tokenId()
 						),
-						"APPROVED"
+						"APPROVED",
+						Long.toString(properties.getHitlSuspensionTtl().toSeconds())
 				);
 
 				if (Long.valueOf(1L).equals(claimed)) {
@@ -127,11 +142,67 @@ public class McpHitlSuspensionEngine {
 					);
 					return Optional.empty(); // Cleared to execute!
 				}
+
+				if (Long.valueOf(-1L).equals(claimed)) {
+					// The approval was already consumed: this exact call executed once.
+					// Replaying it must never re-enter the suspension cycle (that would let
+					// a second administrator approval execute the tool twice).
+					log.warn(
+							"HITL replay denied for consumed token '{}' on tool '{}'",
+							claims.tokenId(),
+							namespacedToolName
+					);
+					return Optional.of(McpJsonRpcResponse.failure(
+							request.id(), McpJsonRpcError.resumptionConsumed()));
+				}
+
+				// Authentic but not approved yet (or rejected): re-suspend under the SAME
+				// token id so the invocation keeps exactly one pending entry, approvals stay
+				// bound to the id the client holds, and retries cannot litter Redis.
+				return Optional.of(suspend(
+						request,
+						serverConfig,
+						namespacedToolName,
+						apiKey,
+						serializedArgs,
+						currentArgsSha256,
+						claims.tokenId(),
+						claims.issuedAt()
+				));
 			}
 		}
 
-		// Tool requires HITL and is not yet approved -> Suspend execution!
-		String tokenId = UUID.randomUUID().toString().replace("-", "");
+		// First suspension of this call (or an unverifiable/expired token): mint a
+		// fresh identity.
+		return Optional.of(suspend(
+				request,
+				serverConfig,
+				namespacedToolName,
+				apiKey,
+				serializedArgs,
+				currentArgsSha256,
+				UUID.randomUUID().toString().replace("-", ""),
+				Instant.now()
+		));
+	}
+
+	/**
+	 * Suspends a privileged call under the given token id.
+	 *
+	 * <p>The token id is stable across retries of the same verified call; the minted AEAD
+	 * token always gets a fresh ciphertext and refreshed expiry. The pending metadata keeps
+	 * the original {@code createdAt} so the admin queue reflects the true wait time.</p>
+	 */
+	private McpJsonRpcResponse suspend(
+			McpJsonRpcRequest request,
+			McpServerConfig serverConfig,
+			String namespacedToolName,
+			VirtualApiKey apiKey,
+			String serializedArgs,
+			String currentArgsSha256,
+			String tokenId,
+			Instant createdAt
+	) {
 		Instant now = Instant.now();
 		Instant expiresAt = now.plus(properties.getHitlSuspensionTtl());
 
@@ -155,7 +226,7 @@ public class McpHitlSuspensionEngine {
 			pendingMeta.put("toolName", namespacedToolName);
 			pendingMeta.put("serverName", serverConfig.name());
 			pendingMeta.put("args", serializedArgs);
-			pendingMeta.put("createdAt", now.toString());
+			pendingMeta.put("createdAt", createdAt.toString());
 			pendingMeta.put("expiresAt", expiresAt.toString());
 
 			long ttlSeconds = properties.getHitlSuspensionTtl().toSeconds();
@@ -186,7 +257,7 @@ public class McpHitlSuspensionEngine {
 				"Execution of privileged tool '" + namespacedToolName + "' requires administrator approval."
 		);
 
-		return Optional.of(McpJsonRpcResponse.success(request.id(), resultNode));
+		return McpJsonRpcResponse.success(request.id(), resultNode);
 	}
 
 	private @Nullable String extractResumptionToken(McpJsonRpcRequest request) {

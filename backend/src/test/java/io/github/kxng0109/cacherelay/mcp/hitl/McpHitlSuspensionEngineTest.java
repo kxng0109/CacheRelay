@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -172,12 +173,13 @@ class McpHitlSuspensionEngineTest {
 		assertThat(cleared).isEmpty(); // Cleared to execute!
 		verify(redisTemplate).execute(any(), eq(List.of(
 				"mcp:hitl:approved:tok-approved-1",
-				"mcp:hitl:pending:tok-approved-1"
-		)), eq("APPROVED"));
+				"mcp:hitl:pending:tok-approved-1",
+				"mcp:hitl:consumed:tok-approved-1"
+		)), eq("APPROVED"), eq("300"));
 	}
 
 	@Test
-	@DisplayName("Extracts resumption token from _meta.requestState and re-suspends if not approved")
+	@DisplayName("Unapproved resumption re-suspends under the same call id without littering")
 	void extractsTokenFromMetaAndResuspendsIfNotApproved() {
 		String argsJson = "{\"sql\":\"DROP TABLE users\"}";
 		String argsSha = McpAeadResumptionTokenService.computeArgsSha256(argsJson);
@@ -217,6 +219,72 @@ class McpHitlSuspensionEngineTest {
 		);
 
 		assertThat(suspendedOpt).isPresent();
-		assertThat(suspendedOpt.get().isSuccess()).isTrue();
+		McpJsonRpcResponse response = suspendedOpt.get();
+		assertThat(response.isSuccess()).isTrue();
+		ObjectNode resultNode = (ObjectNode) response.result();
+		assertThat(resultNode.get("resultType").asString()).isEqualTo("input_required");
+
+		// The re-suspension keeps the SAME call id so approvals stay bound to the id the
+		// client holds and no stale pending entry is orphaned in Redis.
+		String returnedToken = resultNode.get("requestState").asString();
+		Optional<McpResumptionClaims> reClaims = tokenService.verifyAndExtract(
+				returnedToken, argsSha, "tenant-corp");
+		assertThat(reClaims).isPresent();
+		assertThat(reClaims.get().tokenId()).isEqualTo("tok-pending-1");
+
+		// Exactly one pending write, under the reused id, preserving the original wait time.
+		ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
+		ArgumentCaptor<String> valueCaptor = ArgumentCaptor.forClass(String.class);
+		verify(valueOperations, times(1)).set(
+				keyCaptor.capture(), valueCaptor.capture(), anyLong(), any());
+		assertThat(keyCaptor.getValue()).isEqualTo("mcp:hitl:pending:tok-pending-1");
+		ObjectNode pendingMeta = (ObjectNode) objectMapper.readTree(valueCaptor.getValue());
+		assertThat(pendingMeta.get("createdAt").asString()).isEqualTo(now.toString());
+	}
+
+	@Test
+	@DisplayName("Replay of a consumed approval is denied and never re-suspends")
+	void consumedReplayIsDenied() {
+		String argsJson = "{\"sql\":\"DROP TABLE users\"}";
+		String argsSha = McpAeadResumptionTokenService.computeArgsSha256(argsJson);
+		Instant now = Instant.now();
+
+		McpResumptionClaims claims = new McpResumptionClaims(
+				"tok-consumed-1",
+				"tenant-corp",
+				"postgres__execute_sql",
+				argsSha,
+				now,
+				now.plusSeconds(300)
+		);
+		String token = tokenService.mintToken(claims);
+
+		ObjectNode params = objectMapper.createObjectNode();
+		params.put("name", "postgres__execute_sql");
+		params.put("requestState", token);
+		params.putObject("arguments").put("sql", "DROP TABLE users");
+
+		McpJsonRpcRequest request = new McpJsonRpcRequest(
+				"2.0",
+				objectMapper.getNodeFactory().numberNode(4),
+				"tools/call",
+				params
+		);
+
+		when(redisTemplate.execute(any(), anyList(), any(Object[].class))).thenReturn(-1L); // Consumed
+
+		Optional<McpJsonRpcResponse> outcome = suspensionEngine.evaluateOrSuspend(
+				request,
+				hitlServer,
+				"execute_sql",
+				"postgres__execute_sql",
+				apiKey
+		);
+
+		assertThat(outcome).isPresent();
+		assertThat(outcome.get().isSuccess()).isFalse();
+		assertThat(outcome.get().error()).isNotNull();
+		assertThat(outcome.get().error().code()).isEqualTo(-32603);
+		verify(valueOperations, never()).set(anyString(), anyString(), anyLong(), any());
 	}
 }
