@@ -76,6 +76,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Admin-managed model aliases (`/v1/admin/models`):** admins create, replace, and delete routable models at
+  runtime without editing `application.yml` (Flyway V16 `model_alias` table; `GET` lists every effective alias
+  with a `file`/`database` source flag). File-bound aliases always win on conflict and stay read-only (`409`);
+  duplicates are `409`, unknown providers and bad payloads `400`, deletes `204`. Startup ordering is explicit
+  (`DatabaseMigrator` first), database outages degrade to file-only reads with `503` mutations and scheduled
+  retry, and every mutation is audit-logged with the admin actor. Full `verify` 2,026 green, branch ≥ 0.95.
 - **Resource/prompt governance (no more unfiltered surfaces):** virtual keys carry `allowedResources` /
   `deniedResources` (URI globs) and `allowedPrompts` / `deniedPrompts` (name globs) with deny-wins,
   empty-means-visible semantics; catalog lists and filters enforce them (null keys fail closed). Redis-stored

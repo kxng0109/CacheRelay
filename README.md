@@ -633,6 +633,14 @@ immediately if the old shipped default was ever used; generate fresh with `opens
   (the resumption `APPROVED` literal is never disturbed).
 - **`PATCH /v1/admin/keys/{keyId}`**: Dynamically updates name, RPM/TPM quotas, allowlists, or enabled status.
 - **`DELETE /v1/admin/keys/{keyId}`**: Permanently deletes a virtual API key and purges caches.
+- **`GET /v1/admin/models`**: Lists every effective model alias with a `source` flag (`file` = configuration-bound
+  and read-only, `database` = admin-managed and editable).
+- **`POST /v1/admin/models`**: Creates a database-managed model alias (`name`, provider `chain`, `strategy`).
+  Duplicate or file-shadowed names are `409`; unknown providers and bad payloads are `400`.
+- **`PUT /v1/admin/models/{name}`**: Replaces a database-managed alias routing plan (`404` unknown,
+  `409` file-bound).
+- **`DELETE /v1/admin/models/{name}`**: Permanently deletes a database-managed alias (`204`; `404` unknown,
+  `409` file-bound). Every mutation is audit-logged with the admin actor.
 - **`GET /v1/admin/circuits`**: Inspects real-time circuit breaker states (`CLOSED`, `OPEN`, `HALF_OPEN`) across all
   providers.
 - **`POST /v1/admin/circuits/{provider}/reset`**: Force-resets an upstream circuit breaker to `CLOSED`.

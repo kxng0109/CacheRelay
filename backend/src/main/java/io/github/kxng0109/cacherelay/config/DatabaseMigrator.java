@@ -5,6 +5,8 @@ import org.flywaydb.core.Flyway;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -48,7 +50,12 @@ public class DatabaseMigrator {
 
 	/**
 	 * Attempts the migration once after the context is ready.
+	 *
+	 * <p>Runs before any other {@code ApplicationReadyEvent} listener that
+	 * reads migrated tables (see {@code ModelAliasRegistry}): schema creation
+	 * must be attempted before schema reads.</p>
 	 */
+	@Order(Ordered.HIGHEST_PRECEDENCE)
 	@EventListener(ApplicationReadyEvent.class)
 	public void migrateOnReady() {
 		migrate();
