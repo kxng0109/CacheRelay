@@ -123,11 +123,11 @@ describe('OverviewPage', () => {
     })
     expect(screen.getByText('$0.009')).toBeInTheDocument()
     expect(screen.getByText('1.5K')).toBeInTheDocument()
-    expect(screen.getByText('gpt-56-luna')).toBeInTheDocument()
+    expect(screen.getAllByText('gpt-56-luna').length).toBeGreaterThanOrEqual(2)
     expect(screen.getByText(/across 2 models/i)).toBeInTheDocument()
-    // Live strip and stat strip both link out: one Explore ledger each.
+    // Live strip, stat strip, and top models each link out: one Explore ledger each.
     const ledgerLinks = screen.getAllByRole('link', { name: /explore ledger/i })
-    expect(ledgerLinks).toHaveLength(2)
+    expect(ledgerLinks).toHaveLength(3)
     for (const link of ledgerLinks) {
       expect(link).toHaveAttribute('href', '/ledger')
     }

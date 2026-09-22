@@ -103,7 +103,7 @@ export function McpPage(): React.JSX.Element {
           {catalog.error.message}
         </p>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
+        <div className="space-y-6">
           <div className="space-y-4">
             <div>
               <label htmlFor="mcp-filter" className="sr-only">
@@ -176,35 +176,34 @@ export function McpPage(): React.JSX.Element {
               </table>
             )}
           </div>
-          <aside aria-label="Tool inspector" className="space-y-3">
-            {inspected === null ? (
+          {inspected === null ? (
+            <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
+              Select a tool to inspect its schema.
+            </p>
+          ) : (
+            <InspectorShell
+              label="Tool inspector"
+              title={inspected.name}
+              onClose={() => {
+                setSelected(null)
+              }}
+            >
               <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
-                Select a tool to inspect its schema.
+                {inspected.description ?? 'No description.'}
               </p>
-            ) : (
-              <InspectorShell
-                title={inspected.name}
-                onClose={() => {
-                  setSelected(null)
-                }}
-              >
-                <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
-                  {inspected.description ?? 'No description.'}
+              <p className="text-[13px]">
+                Permissions: {permissionBadges(inspected.annotations).join(' · ') || '—'}
+              </p>
+              <div>
+                <p className="mb-1 text-[13px] text-ink-soft dark:text-parchment-soft">
+                  Input schema
                 </p>
-                <p className="text-[13px]">
-                  Permissions: {permissionBadges(inspected.annotations).join(' · ') || '—'}
-                </p>
-                <div>
-                  <p className="mb-1 text-[13px] text-ink-soft dark:text-parchment-soft">
-                    Input schema
-                  </p>
-                  <pre className="max-h-64 overflow-auto rounded-md border border-ink/10 p-2 font-mono text-xs whitespace-pre-wrap dark:border-parchment/10">
-                    {JSON.stringify(inspected.inputSchema, null, 2)}
-                  </pre>
-                </div>
-              </InspectorShell>
-            )}
-          </aside>
+                <pre className="max-h-64 overflow-auto rounded-md border border-ink/10 p-2 font-mono text-xs whitespace-pre-wrap dark:border-parchment/10">
+                  {JSON.stringify(inspected.inputSchema, null, 2)}
+                </pre>
+              </div>
+            </InspectorShell>
+          )}
         </div>
       )}
     </div>

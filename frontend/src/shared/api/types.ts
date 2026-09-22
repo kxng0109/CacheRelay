@@ -124,6 +124,10 @@ export interface ApiKeyRecord {
   allowedProviders: string[]
   enabled: boolean
   createdAt: string
+  /** Owning account id; null for legacy rows predating user linkage. */
+  ownerUserId: string | null
+  /** Owning account login name; null when unresolvable. */
+  ownerUsername: string | null
 }
 
 export interface ApiKeyCreated {
@@ -133,6 +137,29 @@ export interface ApiKeyCreated {
   keyPrefix: string
   ownerId: string
   name: string
+}
+
+/** Upstream provider validation depth. Unknown strings degrade to grey. */
+export type ProviderValidationStatus =
+  'CONTRACT_CHECKED' | 'AUTH_REACHABLE' | 'LIVE_VERIFIED' | 'UNVERIFIED'
+
+/**
+ * One configured upstream provider with live routing health.
+ *
+ * @remarks Mirrors `ProviderStatusResponse`. `baseUrl` is null when unset;
+ * the key value is never exposed, only the boolean.
+ */
+export interface ProviderStatus {
+  name: string
+  type: string
+  baseUrl: string | null
+  keyConfigured: boolean
+  connectTimeoutSeconds: number
+  requestTimeoutSeconds: number
+  embeddingSingleAsString: boolean
+  circuitState: string
+  aliasReferences: number
+  validationStatus: string
 }
 
 export interface BudgetRecord {

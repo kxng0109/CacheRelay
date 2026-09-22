@@ -63,6 +63,12 @@ async function probeEndpoint(
 ): Promise<{ up: boolean; at: string }> {
   const res = await fetch(`${base}${path}`, { signal })
   if (!res.ok) throw new Error(`Health probe failed: HTTP ${String(res.status)}. Retry shortly.`)
+  const contentType = res.headers.get('content-type') ?? ''
+  if (!contentType.includes('text/plain')) {
+    throw new Error(
+      `Metrics endpoint answered ${contentType === '' ? 'without a content type' : contentType}, not Prometheus text. Check the management base URL.`,
+    )
+  }
   await res.text().catch(() => '')
   return { up: true, at: new Date().toISOString() }
 }
@@ -91,6 +97,12 @@ export function ObservabilityPage(): React.JSX.Element {
       const res = await fetch(`${resolveManagementBase()}/actuator/health`, { signal })
       if (!res.ok)
         throw new Error(`Health probe failed: HTTP ${String(res.status)}. Retry shortly.`)
+      const contentType = res.headers.get('content-type') ?? ''
+      if (!contentType.includes('application/json')) {
+        throw new Error(
+          `Health endpoint answered ${contentType === '' ? 'without a content type' : contentType}, not JSON. Check the management base URL.`,
+        )
+      }
       return (await res.json()) as { status: string }
     },
     refetchInterval: 15_000,
@@ -346,7 +358,7 @@ export function ObservabilityPage(): React.JSX.Element {
           The Playground stream header prints all three live on every run.
         </p>
       </details>
-      <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
+      <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
         <ul className="space-y-2 text-sm">
           {visibleEndpoints.map((e) => (
             <li key={e.path}>

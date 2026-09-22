@@ -219,6 +219,17 @@ describe('safeErrorMessage', () => {
     expect(safeErrorMessage(400, body)).toBe('Model xyz is unknown.')
   })
 
+  it('surfaces Spring Boot top-level messages (admin 400s name the reason)', () => {
+    const body = JSON.stringify({
+      timestamp: '2026-09-22T00:00:00Z',
+      status: 400,
+      error: 'Bad Request',
+      message: 'unknown owner account',
+      path: '/v1/admin/keys',
+    })
+    expect(safeErrorMessage(400, body)).toBe('unknown owner account')
+  })
+
   it('maps plain-text 403 bodies without parsing', () => {
     expect(safeErrorMessage(403, 'Forbidden')).toContain('gateway policy')
   })
@@ -241,14 +252,14 @@ describe('resolveApiBase', () => {
 })
 
 describe('resolveManagementBase', () => {
-  it('falls back to same-origin when unconfigured', () => {
+  it('defaults loopback pages to the management port when unconfigured', () => {
     vi.stubEnv('VITE_MANAGEMENT_BASE_URL', '')
-    expect(resolveManagementBase()).toBe('')
+    expect(resolveManagementBase()).toBe('http://localhost:9091')
   })
 
-  it('falls back to same-origin when absent', () => {
+  it('defaults loopback pages to the management port when absent', () => {
     vi.stubEnv('VITE_MANAGEMENT_BASE_URL', undefined)
-    expect(resolveManagementBase()).toBe('')
+    expect(resolveManagementBase()).toBe('http://localhost:9091')
   })
 
   it('trims whitespace and trailing slashes', () => {

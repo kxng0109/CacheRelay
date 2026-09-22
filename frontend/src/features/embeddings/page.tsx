@@ -8,6 +8,7 @@ import { toErrorMessage } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { ModelSelect } from '../../shared/models/ModelSelect.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
+import { formatShortDate } from '../../shared/utils/format.js'
 
 const schema = z.object({
   model: z.string().min(1, 'Model is required'),
@@ -185,7 +186,7 @@ export function EmbeddingsPage(): React.JSX.Element {
           </button>
         </div>
       )}
-      <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
+      <div className="space-y-6">
         <div className="space-y-4">
           <form
             onSubmit={(e) => {
@@ -361,7 +362,9 @@ export function EmbeddingsPage(): React.JSX.Element {
                       r.id === selected ? 'bg-ink/4 dark:bg-parchment/6' : ''
                     }`}
                   >
-                    <td className="py-2 pr-3 font-mono text-[13px] tnum">{r.at}</td>
+                    <td className="py-2 pr-3 font-mono text-[13px] tnum" title={r.at}>
+                      {formatShortDate(r.at)}
+                    </td>
                     <td className="max-w-44 truncate py-2 pr-3 font-mono text-[13px]">{r.model}</td>
                     <td className="py-2 pr-3 text-right text-[13px] tnum">{r.chars}</td>
                     <td className="py-2 pr-3 text-right text-[13px] tnum">{r.vecs ?? '—'}</td>
@@ -375,51 +378,50 @@ export function EmbeddingsPage(): React.JSX.Element {
             </table>
           )}
         </div>
-        <aside aria-label="Run inspector" className="space-y-3">
-          {inspected === null ? (
-            <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
-              Select a run to inspect vectors and errors.
-            </p>
-          ) : (
-            <InspectorShell
-              title={`run ${inspected.at}`}
-              onClose={() => {
-                setSelected(null)
-              }}
-            >
-              <dl className="space-y-2 text-[13px]">
-                <div className="flex justify-between gap-3">
-                  <dt className="text-ink-soft dark:text-parchment-soft">Status</dt>
-                  <dd>{inspected.status === 'ok' ? '● ok' : '■ fail'}</dd>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <dt className="text-ink-soft dark:text-parchment-soft">Model</dt>
-                  <dd className="font-mono">{inspected.model}</dd>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <dt className="text-ink-soft dark:text-parchment-soft">Chars / vectors / dims</dt>
-                  <dd className="tnum">
-                    {inspected.chars} / {inspected.vecs ?? '—'} / {inspected.dims ?? '—'}
-                  </dd>
-                </div>
-                {inspected.error === null ? null : (
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-ink-soft dark:text-parchment-soft">Error</dt>
-                    <dd className="text-danger dark:text-danger-soft">{inspected.error}</dd>
-                  </div>
-                )}
-              </dl>
-              <div>
-                <p className="mb-1 text-[13px] text-ink-soft dark:text-parchment-soft">
-                  Input excerpt
-                </p>
-                <pre className="max-h-40 overflow-auto rounded-md border border-ink/10 p-2 font-mono text-xs whitespace-pre-wrap dark:border-parchment/10">
-                  {inspected.input.slice(0, 500)}
-                </pre>
+        {inspected === null ? (
+          <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
+            Select a run to inspect vectors and errors.
+          </p>
+        ) : (
+          <InspectorShell
+            label="Run inspector"
+            title={`run ${formatShortDate(inspected.at)}`}
+            onClose={() => {
+              setSelected(null)
+            }}
+          >
+            <dl className="space-y-2 text-[13px]">
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink-soft dark:text-parchment-soft">Status</dt>
+                <dd>{inspected.status === 'ok' ? '● ok' : '■ fail'}</dd>
               </div>
-            </InspectorShell>
-          )}
-        </aside>
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink-soft dark:text-parchment-soft">Model</dt>
+                <dd className="font-mono">{inspected.model}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink-soft dark:text-parchment-soft">Chars / vectors / dims</dt>
+                <dd className="tnum">
+                  {inspected.chars} / {inspected.vecs ?? '—'} / {inspected.dims ?? '—'}
+                </dd>
+              </div>
+              {inspected.error === null ? null : (
+                <div className="flex justify-between gap-3">
+                  <dt className="text-ink-soft dark:text-parchment-soft">Error</dt>
+                  <dd className="text-danger dark:text-danger-soft">{inspected.error}</dd>
+                </div>
+              )}
+            </dl>
+            <div>
+              <p className="mb-1 text-[13px] text-ink-soft dark:text-parchment-soft">
+                Input excerpt
+              </p>
+              <pre className="max-h-40 overflow-auto rounded-md border border-ink/10 p-2 font-mono text-xs whitespace-pre-wrap dark:border-parchment/10">
+                {inspected.input.slice(0, 500)}
+              </pre>
+            </div>
+          </InspectorShell>
+        )}
       </div>
     </div>
   )

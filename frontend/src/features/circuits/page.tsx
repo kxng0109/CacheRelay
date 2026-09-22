@@ -117,7 +117,7 @@ function CircuitsBoard(): React.JSX.Element {
   const probing = circuits.filter((c) => c.state === 'HALF_OPEN').length
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
+    <div className="space-y-6">
       <div className="space-y-4">
         <p className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft">
           {circuits.length} providers · {flowing} flowing · {tripped} tripped · {probing} probing ·
@@ -215,8 +215,8 @@ function CircuitsBoard(): React.JSX.Element {
                 <th scope="col" className="py-2 pr-3 text-right font-medium">
                   Cooldown (ms)
                 </th>
-                <th scope="col" className="py-2 text-right font-medium">
-                  <span className="sr-only">Actions</span>
+                <th scope="col" className="py-2 pl-1 font-medium">
+                  <span className="sr-only">Open circuit</span>
                 </th>
               </tr>
             </thead>
@@ -260,17 +260,11 @@ function CircuitsBoard(): React.JSX.Element {
                     <td className="py-2 pr-3 text-right text-[13px] tnum">
                       {c.cooldownMsRemaining}
                     </td>
-                    <td className="py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          void reset(c.provider)
-                        }}
-                        className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
-                      >
-                        Reset circuit
-                      </button>
+                    <td
+                      aria-hidden="true"
+                      className="py-2 pl-1 text-ink-soft dark:text-parchment-soft"
+                    >
+                      ›
                     </td>
                   </tr>
                 )
@@ -282,54 +276,53 @@ function CircuitsBoard(): React.JSX.Element {
           Base: {resolveApiBase() === '' ? 'same-origin' : resolveApiBase()}
         </p>
       </div>
-      <aside aria-label="Circuit inspector" className="space-y-3">
-        {inspected === null ? (
-          <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
-            Select a row to inspect a circuit.
+      {inspected === null ? (
+        <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
+          Select a row to inspect a circuit.
+        </p>
+      ) : (
+        <InspectorShell
+          label="Circuit inspector"
+          title={inspected.provider}
+          onClose={() => {
+            setSelected(null)
+          }}
+        >
+          <p className="font-display text-3xl font-medium tracking-tight tnum">
+            {stateWord(inspected.state)}
           </p>
-        ) : (
-          <InspectorShell
-            title={inspected.provider}
-            onClose={() => {
-              setSelected(null)
+          <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
+            {stateConsequence(inspected.state)}
+          </p>
+          <dl className="space-y-2 text-[13px]">
+            <div className="flex justify-between gap-3">
+              <dt className="text-ink-soft dark:text-parchment-soft">State</dt>
+              <dd className="tnum">{stateMeta(inspected.state).label}</dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-ink-soft dark:text-parchment-soft">Failures</dt>
+              <dd className="tnum">{inspected.failures}</dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-ink-soft dark:text-parchment-soft">Cooldown (ms)</dt>
+              <dd className="tnum">{inspected.cooldownMsRemaining}</dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-ink-soft dark:text-parchment-soft">Half-open probe</dt>
+              <dd className="tnum">{inspected.halfOpenProbe ? 'in flight' : '—'}</dd>
+            </div>
+          </dl>
+          <button
+            type="button"
+            onClick={() => {
+              void reset(inspected.provider)
             }}
+            className="w-full rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
           >
-            <p className="font-display text-3xl font-medium tracking-tight tnum">
-              {stateWord(inspected.state)}
-            </p>
-            <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
-              {stateConsequence(inspected.state)}
-            </p>
-            <dl className="space-y-2 text-[13px]">
-              <div className="flex justify-between gap-3">
-                <dt className="text-ink-soft dark:text-parchment-soft">State</dt>
-                <dd className="tnum">{stateMeta(inspected.state).label}</dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-ink-soft dark:text-parchment-soft">Failures</dt>
-                <dd className="tnum">{inspected.failures}</dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-ink-soft dark:text-parchment-soft">Cooldown (ms)</dt>
-                <dd className="tnum">{inspected.cooldownMsRemaining}</dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-ink-soft dark:text-parchment-soft">Half-open probe</dt>
-                <dd className="tnum">{inspected.halfOpenProbe ? 'in flight' : '—'}</dd>
-              </div>
-            </dl>
-            <button
-              type="button"
-              onClick={() => {
-                void reset(inspected.provider)
-              }}
-              className="w-full rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
-            >
-              Reset circuit
-            </button>
-          </InspectorShell>
-        )}
-      </aside>
+            Reset circuit
+          </button>
+        </InspectorShell>
+      )}
     </div>
   )
 }

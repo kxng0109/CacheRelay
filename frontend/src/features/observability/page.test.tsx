@@ -56,6 +56,62 @@ describe('ObservabilityPage', () => {
     })
   })
 
+  it('names a missing health content type instead of guessing', async () => {
+    server.use(
+      http.get('*/actuator/health', () => {
+        const res = HttpResponse.json({ status: 'UP' })
+        res.headers.delete('content-type')
+        return res
+      }),
+    )
+    renderApp(<ObservabilityPage />)
+    await waitFor(() => {
+      expect(screen.getByText(/without a content type/i)).toBeInTheDocument()
+    })
+  })
+
+  it('names a missing metrics content type instead of claiming a clean scrape', async () => {
+    server.use(
+      http.get('*/actuator/health', () => HttpResponse.json({ status: 'UP' })),
+      http.get('*/actuator/prometheus', () => {
+        const res = new HttpResponse('process_uptime_seconds 10')
+        res.headers.delete('content-type')
+        return res
+      }),
+    )
+    renderApp(<ObservabilityPage />, { adminSession: true })
+    await waitFor(() => {
+      expect(screen.getByText(/without a content type/i)).toBeInTheDocument()
+    })
+  })
+
+  it('names a non-JSON health answer instead of leaking parser text', async () => {
+    server.use(
+      http.get(
+        '*/actuator/health',
+        () => new HttpResponse('<html></html>', { headers: { 'Content-Type': 'text/html' } }),
+      ),
+    )
+    renderApp(<ObservabilityPage />)
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/not JSON/i)
+    })
+  })
+
+  it('names a non-text metrics answer instead of claiming a clean scrape', async () => {
+    server.use(
+      http.get('*/actuator/health', () => HttpResponse.json({ status: 'UP' })),
+      http.get(
+        '*/actuator/prometheus',
+        () => new HttpResponse('<html></html>', { headers: { 'Content-Type': 'text/html' } }),
+      ),
+    )
+    renderApp(<ObservabilityPage />, { adminSession: true })
+    await waitFor(() => {
+      expect(screen.getByText(/not Prometheus text/i)).toBeInTheDocument()
+    })
+  })
+
   it('shows metrics scrape state and gateway chip for admins', async () => {
     server.use(http.get('*/actuator/health', () => HttpResponse.json({ status: 'UP' })))
     renderApp(<ObservabilityPage />, { adminSession: true })
@@ -198,7 +254,7 @@ describe('ObservabilityPage', () => {
             ctrl.error(new Error('truncated'))
           },
         })
-        return new HttpResponse(stream)
+        return new HttpResponse(stream, { headers: { 'Content-Type': 'text/plain' } })
       }),
     )
     renderApp(<ObservabilityPage />, { adminSession: true })

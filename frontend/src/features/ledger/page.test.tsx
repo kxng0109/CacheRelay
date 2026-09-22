@@ -78,6 +78,71 @@ describe('LedgerPage', () => {
     expect(screen.getByText('123.5ms')).toBeInTheDocument()
   })
 
+  it('counts filter matches and clears the filter', async () => {
+    const user = userEvent.setup()
+    server.use(
+      summary({ totalRequests: 2, totalCostUsdMicros: 2, averageDurationMs: 1 }),
+      http.get('*/v1/admin/ledger/entries', () => HttpResponse.json(pageOf(['r1', 'r2'], false))),
+    )
+    renderApp(<LedgerPage />, { adminSession: true })
+    await screen.findByRole('table')
+    expect(screen.getByText('2 on this page')).toBeInTheDocument()
+    await user.type(screen.getByLabelText(/filter audit log/i), 'r1')
+    expect(screen.getByText('1 of 2 match')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /^clear$/i }))
+    expect(screen.getByLabelText(/filter audit log/i)).toHaveValue('')
+    expect(screen.getByText('2 on this page')).toBeInTheDocument()
+  })
+
+  it('jumps to a page number within range', async () => {
+    const user = userEvent.setup()
+    server.use(
+      summary({ totalRequests: 50, totalCostUsdMicros: 1, averageDurationMs: 1 }),
+      http.get('*/v1/admin/ledger/entries', ({ request }) => {
+        const url = new URL(request.url)
+        const p = Number.parseInt(url.searchParams.get('page') ?? '0', 10)
+        return HttpResponse.json(pageOf([`r${String(p + 1)}`], p === 0, p))
+      }),
+    )
+    renderApp(<LedgerPage />, { adminSession: true })
+    await screen.findByRole('table')
+    await user.type(screen.getByLabelText(/jump to page/i), '2')
+    await user.click(screen.getByRole('button', { name: /^go$/i }))
+    await waitFor(() => {
+      expect(screen.getByText('r2')).toBeInTheDocument()
+    })
+  })
+
+  it('selects a row with the Enter key', async () => {
+    const user = userEvent.setup()
+    server.use(
+      summary({ totalRequests: 1, totalCostUsdMicros: 12, averageDurationMs: 3 }),
+      http.get('*/v1/admin/ledger/entries', () => HttpResponse.json(pageOf(['r9'], false))),
+      http.get('*/v1/admin/ledger/entries/:id', () => HttpResponse.json(receiptOf('r9'))),
+    )
+    renderApp(<LedgerPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    within(table).getByText('gpt-4o-mini').closest('tr')?.focus()
+    await user.keyboard('{Enter}')
+    expect(await screen.findByRole('complementary')).toHaveTextContent(/r9|gpt-4o-mini/)
+  })
+
+  it('ignores an empty jump instead of paging', async () => {
+    const user = userEvent.setup()
+    server.use(
+      summary({ totalRequests: 50, totalCostUsdMicros: 1, averageDurationMs: 1 }),
+      http.get('*/v1/admin/ledger/entries', ({ request }) => {
+        const url = new URL(request.url)
+        const p = Number.parseInt(url.searchParams.get('page') ?? '0', 10)
+        return HttpResponse.json(pageOf([`r${String(p + 1)}`], p === 0, p))
+      }),
+    )
+    renderApp(<LedgerPage />, { adminSession: true })
+    await screen.findByRole('table')
+    await user.click(screen.getByRole('button', { name: /^go$/i }))
+    expect(screen.getByText('r1')).toBeInTheDocument()
+  })
+
   it('selects a row with the Space key', async () => {
     const user = userEvent.setup()
     server.use(
@@ -161,8 +226,9 @@ describe('LedgerPage', () => {
       await user.click(rowAgain)
     }
     await waitFor(() => {
-      expect(screen.getByRole('complementary')).toHaveTextContent(/select a row to inspect/i)
+      expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
     })
+    expect(screen.getByText(/select a row to inspect/i)).toBeInTheDocument()
   })
 
   it('filters rows by request id without refetching', async () => {

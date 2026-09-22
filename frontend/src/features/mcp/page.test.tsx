@@ -77,9 +77,12 @@ describe('McpPage', () => {
     await user.click(within(table).getByText('postgres__run_query'))
     const inspector = await screen.findByRole('complementary', { name: /tool inspector/i })
     await user.click(within(inspector).getByRole('button', { name: /close inspector/i }))
-    expect(screen.getByRole('complementary', { name: /tool inspector/i })).toHaveTextContent(
-      /select a tool to inspect/i,
-    )
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('complementary', { name: /tool inspector/i }),
+      ).not.toBeInTheDocument()
+    })
+    expect(screen.getByText(/select a tool to inspect/i)).toBeInTheDocument()
   })
 
   it('filters tools and inspects schemas', async () => {
@@ -155,9 +158,12 @@ describe('McpPage', () => {
     await user.click(within(table).getByText('postgres__run_query'))
     expect(screen.getByRole('complementary', { name: /tool inspector/i })).toHaveTextContent('sql')
     await user.click(within(table).getByText('postgres__run_query'))
-    expect(screen.getByRole('complementary', { name: /tool inspector/i })).toHaveTextContent(
-      /select a tool/i,
-    )
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('complementary', { name: /tool inspector/i }),
+      ).not.toBeInTheDocument()
+    })
+    expect(screen.getByText(/select a tool to inspect/i)).toBeInTheDocument()
   })
 
   it('inspects the malformed tool honestly', async () => {

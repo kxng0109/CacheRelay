@@ -11,6 +11,7 @@ import { formatCount, formatShortDate } from '../../shared/utils/format.js'
 
 const schema = z.object({
   ownerId: z.string().min(1, 'Owner is required'),
+  ownerUserId: z.uuid('Owner account must be a valid UUID from the invite flow'),
   name: z.string().min(1, 'Name is required'),
   rpmLimit: z.number().min(0).max(100_000),
   tpmLimit: z.number().min(0).max(10_000_000),
@@ -54,7 +55,11 @@ function KeysBoard(): React.JSX.Element {
   const [drawerChoice, setDrawerChoice] = useState<boolean | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [confirming, setConfirming] = useState<string | null>(null)
+  const [confirmingRevoke, setConfirmingRevoke] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
+  /** Key ids tombstoned in this session. The list endpoint exposes no
+   * revoked flag, so a successful revoke marks the row terminal locally. */
+  const [revokedIds, setRevokedIds] = useState<ReadonlySet<string>>(new Set())
 
   const keys = useQuery({
     queryKey: ['keys'],
@@ -74,6 +79,7 @@ function KeysBoard(): React.JSX.Element {
     try {
       const out = await new GatewayClient().createKey({
         ownerId: d.ownerId,
+        ownerUserId: d.ownerUserId,
         name: d.name,
         rpmLimit: d.rpmLimit,
         tpmLimit: d.tpmLimit,
@@ -87,6 +93,28 @@ function KeysBoard(): React.JSX.Element {
       await qc.invalidateQueries({ queryKey: ['keys'] })
     } catch (e) {
       setError(toErrorMessage(e, 'Key creation failed.'))
+    }
+  }
+
+  const onToggleEnabled = async (keyId: string, enabled: boolean): Promise<void> => {
+    setError(null)
+    try {
+      await new GatewayClient().setKeyEnabled(keyId, enabled)
+      await qc.invalidateQueries({ queryKey: ['keys'] })
+    } catch (e) {
+      setError(toErrorMessage(e, 'Key update failed.'))
+    }
+  }
+
+  const onRevoke = async (keyId: string): Promise<void> => {
+    setError(null)
+    try {
+      await new GatewayClient().revokeKey(keyId)
+      setRevokedIds((prev) => new Set(prev).add(keyId))
+      setConfirmingRevoke(null)
+      await qc.invalidateQueries({ queryKey: ['keys'] })
+    } catch (e) {
+      setError(toErrorMessage(e, 'Key revocation failed.'))
     }
   }
 
@@ -121,7 +149,7 @@ function KeysBoard(): React.JSX.Element {
   const inspected = rows.find((k) => k.keyId === selected) ?? null
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
+    <div className="space-y-6">
       <div className="space-y-4">
         <div className="space-y-1">
           <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
@@ -223,6 +251,29 @@ function KeysBoard(): React.JSX.Element {
                   {errors.ownerId.message}
                 </p>
               )}
+            </div>
+            <div>
+              <label htmlFor="key-owner-user" className="mb-1 block text-[13px] font-medium">
+                Owner account UUID (from the invite flow)
+              </label>
+              <input
+                id="key-owner-user"
+                {...register('ownerUserId')}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="123e4567-e89b-12d3-a456-426614174000"
+                className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
+              />
+              {errors.ownerUserId === undefined ? null : (
+                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                  {errors.ownerUserId.message}
+                </p>
+              )}
+              {error !== null && /owner/i.test(error) ? (
+                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                  {error}
+                </p>
+              ) : null}
             </div>
             <div>
               <label htmlFor="key-name" className="mb-1 block text-[13px] font-medium">
@@ -429,70 +480,128 @@ function KeysBoard(): React.JSX.Element {
             Select a row to inspect a key.
           </p>
         ) : (
-          <aside aria-label="Key inspector" className="space-y-3">
-            <InspectorShell
-              title={inspected.name}
-              onClose={() => {
-                setSelected(null)
-              }}
-            >
-              <dl className="space-y-2 text-[13px]">
-                <div className="flex justify-between gap-3">
-                  <dt className="text-ink-soft dark:text-parchment-soft">Key ID</dt>
-                  <dd className="font-mono text-xs break-all">{inspected.keyId}</dd>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <dt className="text-ink-soft dark:text-parchment-soft">Owner</dt>
-                  <dd>{inspected.ownerId}</dd>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <dt className="text-ink-soft dark:text-parchment-soft">RPM / TPM</dt>
-                  <dd className="tnum">
-                    {inspected.rpmLimit === 0 ? 'unlimited' : formatCount(inspected.rpmLimit)} /{' '}
-                    {inspected.tpmLimit === 0 ? 'unlimited' : formatCount(inspected.tpmLimit)}
-                  </dd>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <dt className="text-ink-soft dark:text-parchment-soft">Models</dt>
-                  <dd>
-                    {inspected.allowedModels.length === 0
-                      ? 'all'
-                      : inspected.allowedModels.join(', ')}
-                  </dd>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <dt className="text-ink-soft dark:text-parchment-soft">Providers</dt>
-                  <dd>
-                    {inspected.allowedProviders.length === 0
-                      ? 'all'
-                      : inspected.allowedProviders.join(', ')}
-                  </dd>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <dt className="text-ink-soft dark:text-parchment-soft">State</dt>
-                  <dd>● {inspected.enabled ? 'enabled' : 'disabled'}</dd>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <dt className="text-ink-soft dark:text-parchment-soft">Created</dt>
-                  <dd className="tnum" title={inspected.createdAt}>
-                    {formatShortDate(inspected.createdAt)}
-                  </dd>
-                </div>
-              </dl>
-              <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
-                Plaintext shows once at creation only. Key IDs are safe to copy.
+          <InspectorShell
+            label="Key inspector"
+            title={inspected.name}
+            onClose={() => {
+              setSelected(null)
+            }}
+          >
+            <dl className="space-y-2 text-[13px]">
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink-soft dark:text-parchment-soft">Key ID</dt>
+                <dd className="font-mono text-xs break-all">{inspected.keyId}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink-soft dark:text-parchment-soft">Owner</dt>
+                <dd>{inspected.ownerId}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink-soft dark:text-parchment-soft">Account</dt>
+                <dd className="font-mono text-xs break-all">{inspected.ownerUsername ?? '—'}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink-soft dark:text-parchment-soft">RPM / TPM</dt>
+                <dd className="tnum">
+                  {inspected.rpmLimit === 0 ? 'unlimited' : formatCount(inspected.rpmLimit)} /{' '}
+                  {inspected.tpmLimit === 0 ? 'unlimited' : formatCount(inspected.tpmLimit)}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink-soft dark:text-parchment-soft">Models</dt>
+                <dd>
+                  {inspected.allowedModels.length === 0
+                    ? 'all'
+                    : inspected.allowedModels.join(', ')}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink-soft dark:text-parchment-soft">Providers</dt>
+                <dd>
+                  {inspected.allowedProviders.length === 0
+                    ? 'all'
+                    : inspected.allowedProviders.join(', ')}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink-soft dark:text-parchment-soft">State</dt>
+                <dd>
+                  ●{' '}
+                  {revokedIds.has(inspected.keyId)
+                    ? 'revoked · terminal'
+                    : inspected.enabled
+                      ? 'enabled'
+                      : 'disabled'}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink-soft dark:text-parchment-soft">Created</dt>
+                <dd className="tnum" title={inspected.createdAt}>
+                  {formatShortDate(inspected.createdAt)}
+                </dd>
+              </div>
+            </dl>
+            <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
+              Plaintext shows once at creation only. Key IDs are safe to copy.
+            </p>
+            {revokedIds.has(inspected.keyId) ? (
+              <p className="text-[13px] text-danger dark:text-danger-soft">
+                Revoked this session — terminal. There is no un-revoke.
               </p>
+            ) : (
               <button
                 type="button"
                 onClick={() => {
-                  onCopy(inspected.keyId, inspected.keyId)
+                  void onToggleEnabled(inspected.keyId, !inspected.enabled)
                 }}
                 className="w-full rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
               >
-                {copied === inspected.keyId ? 'Copied' : 'Copy key ID'}
+                {inspected.enabled ? 'Disable key' : 'Enable key'}
               </button>
-            </InspectorShell>
-          </aside>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                onCopy(inspected.keyId, inspected.keyId)
+              }}
+              className="w-full rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+            >
+              {copied === inspected.keyId ? 'Copied' : 'Copy key ID'}
+            </button>
+            {revokedIds.has(inspected.keyId) ? null : confirmingRevoke === inspected.keyId ? (
+              <span className="flex items-center gap-2 text-[13px]">
+                Revoke “{inspected.name}” forever?
+                <button
+                  type="button"
+                  onClick={() => {
+                    void onRevoke(inspected.keyId)
+                  }}
+                  className="rounded-md border border-danger/40 px-2 py-1 text-danger dark:text-danger-soft"
+                >
+                  Yes, revoke
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmingRevoke(null)
+                  }}
+                  className="rounded-md border border-ink/15 px-2 py-1 dark:border-parchment/15"
+                >
+                  No
+                </button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmingRevoke(inspected.keyId)
+                }}
+                className="w-full rounded-md border border-danger/40 px-3 py-2 text-[13px] text-danger dark:text-danger-soft"
+              >
+                Revoke key…
+              </button>
+            )}
+          </InspectorShell>
         )}
       </div>
     </div>

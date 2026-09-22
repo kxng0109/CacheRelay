@@ -49,6 +49,7 @@ function LedgerBoard(): React.JSX.Element {
     setSelected(requestId === selected ? null : requestId)
   }
   const [tableFilter, setTableFilter] = useState('')
+  const [jump, setJump] = useState('')
   const filterQuery = tableFilter.trim().toLowerCase()
   const visible =
     filterQuery.length === 0
@@ -60,7 +61,7 @@ function LedgerBoard(): React.JSX.Element {
         )
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
+    <div className="space-y-6">
       <div className="space-y-4">
         {summary.isPending ? (
           <p role="status" className="text-sm">
@@ -116,7 +117,7 @@ function LedgerBoard(): React.JSX.Element {
           </div>
         ) : (
           <>
-            <div>
+            <div className="flex flex-wrap items-center gap-2">
               <label htmlFor="ledger-filter" className="sr-only">
                 Filter audit log by request id or model
               </label>
@@ -130,6 +131,26 @@ function LedgerBoard(): React.JSX.Element {
                 placeholder="Filter"
                 className="w-60 rounded-md border border-ink/15 bg-transparent px-3 py-2 text-[13px] dark:border-parchment/15"
               />
+              <p
+                role="status"
+                className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft"
+              >
+                {filterQuery.length === 0
+                  ? `${String(entries.length)} on this page`
+                  : `${String(visible.length)} of ${String(entries.length)} match`}
+              </p>
+              <span className="flex-1" />
+              {filterQuery.length === 0 ? null : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTableFilter('')
+                  }}
+                  className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+                >
+                  Clear
+                </button>
+              )}
             </div>
             {visible.length === 0 ? (
               <p className="text-sm text-ink-soft dark:text-parchment-soft">
@@ -153,6 +174,9 @@ function LedgerBoard(): React.JSX.Element {
                       <th scope="col" className="py-2 text-right font-medium">
                         Created
                       </th>
+                      <th scope="col" className="py-2 pl-1 font-medium">
+                        <span className="sr-only">Open receipt</span>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -170,7 +194,7 @@ function LedgerBoard(): React.JSX.Element {
                             selectRow(e.requestId)
                           }
                         }}
-                        className={`cursor-pointer border-t border-ink/10 dark:border-parchment/10 ${
+                        className={`cursor-pointer border-t border-ink/10 hover:bg-ink/3 dark:border-parchment/10 dark:hover:bg-parchment/4 ${
                           e.requestId === selected ? 'bg-ink/4 dark:bg-parchment/6' : ''
                         }`}
                       >
@@ -193,11 +217,17 @@ function LedgerBoard(): React.JSX.Element {
                         <td className="py-2 text-right text-[13px] tnum" title={e.createdAt}>
                           {formatShortDate(e.createdAt)}
                         </td>
+                        <td
+                          aria-hidden="true"
+                          className="py-2 pl-1 text-ink-soft dark:text-parchment-soft"
+                        >
+                          ›
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <button
                     type="button"
                     disabled={page === 0}
@@ -222,28 +252,60 @@ function LedgerBoard(): React.JSX.Element {
                   >
                     Next
                   </button>
+                  <span className="flex-1" />
+                  {logs.data.totalPages > 1 ? (
+                    <form
+                      className="flex items-center gap-2"
+                      onSubmit={(e) => {
+                        e.preventDefault()
+                        const n = Number.parseInt(jump, 10)
+                        if (Number.isInteger(n)) {
+                          setPage(Math.min(Math.max(n - 1, 0), logs.data.totalPages - 1))
+                          setJump('')
+                        }
+                      }}
+                    >
+                      <label htmlFor="ledger-jump" className="sr-only">
+                        Jump to page
+                      </label>
+                      <input
+                        id="ledger-jump"
+                        inputMode="numeric"
+                        value={jump}
+                        onChange={(e) => {
+                          setJump(e.target.value.replace(/[^0-9]/g, ''))
+                        }}
+                        placeholder={`1–${String(logs.data.totalPages)}`}
+                        className="w-20 rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-[13px] tnum dark:border-parchment/15"
+                      />
+                      <button
+                        type="submit"
+                        className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+                      >
+                        Go
+                      </button>
+                    </form>
+                  ) : null}
                 </div>
               </>
             )}
           </>
         )}
       </div>
-      <aside aria-label="Receipt inspector" className="space-y-3">
-        {inspected === null ? (
-          <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
-            Select a row to inspect its receipt.
-          </p>
-        ) : (
-          <RunInspector
-            rows={visible}
-            selected={inspected.requestId}
-            onSelect={setSelected}
-            onClose={() => {
-              setSelected(null)
-            }}
-          />
-        )}
-      </aside>
+      {inspected === null ? (
+        <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
+          Select a row to inspect its receipt.
+        </p>
+      ) : (
+        <RunInspector
+          rows={visible}
+          selected={inspected.requestId}
+          onSelect={setSelected}
+          onClose={() => {
+            setSelected(null)
+          }}
+        />
+      )}
     </div>
   )
 }

@@ -3,7 +3,22 @@ import { useState } from 'react'
 import { GatewayClient } from '../../shared/api/client.js'
 import type { LedgerLogEntry, LedgerReceipt } from '../../shared/api/types.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
-import { formatDurationMs } from '../../shared/utils/format.js'
+import { formatCount, formatDurationMs } from '../../shared/utils/format.js'
+
+/**
+ * Derives tokens-per-second from receipt facts.
+ *
+ * @remarks Arithmetic, never instrumentation: total tokens over wall
+ * seconds. Zero or negative durations read as unknown, never infinity.
+ *
+ * @param totalTokens - Billed total tokens.
+ * @param durationMs - Wall duration in milliseconds.
+ * @returns Compact rate (`"16.7K tok/s"`) or null when underivable.
+ */
+export function derivedThroughput(totalTokens: number, durationMs: number): string | null {
+  if (durationMs <= 0) return null
+  return `${formatCount(Math.round((1000 * totalTokens) / durationMs))} tok/s`
+}
 
 /**
  * Formats an ISO instant as a short local date-time.
@@ -24,16 +39,19 @@ function shortDate(iso: string): string {
 }
 
 /**
- * Ledger run inspector: stat cards, request facts, receipt copies, raw
- * JSON, and prev/next walk across the visible page rows.
+ * Ledger run inspector: chip header, stat grid, sectioned facts, receipt
+ * copies, raw JSON, and prev/next walk across the visible page rows.
  *
  * @remarks Proof-type: recorded. List rows render instantly from the page
  * payload; the twelve-field receipt hydrates on demand and an empty-body
- * `404` reads as a gone receipt. No payload bodies exist on receipts, so
- * the panel states that instead of inventing a transcript.
+ * `404` reads as a gone receipt. Throughput is derived arithmetic on
+ * receipt facts (labeled as such), never a measured series. No payload
+ * bodies exist on receipts, so the panel states that instead of inventing
+ * a transcript. Single-provider gateways have no fallback path, so no
+ * fallback card exists.
  *
  * @param props - Visible page rows, selected id, selection and close handlers.
- * @returns The ledger inspector dock.
+ * @returns The ledger inspector drawer.
  */
 export function RunInspector({
   rows,
@@ -93,7 +111,7 @@ export function RunInspector({
 
   if (row === null) {
     return (
-      <InspectorShell title={selected} onClose={onClose}>
+      <InspectorShell label="Receipt inspector" title={selected} onClose={onClose}>
         <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
           This receipt left the visible page. Step through the rows to return to it.
         </p>
@@ -102,15 +120,27 @@ export function RunInspector({
   }
 
   const detail: LedgerReceipt | null = receipt.data ?? null
-  const tokens =
-    detail === null ? null : (detail.promptTokens ?? 0) + (detail.completionTokens ?? 0)
+  const prompt = detail?.promptTokens ?? null
+  const completion = detail?.completionTokens ?? null
+  const throughput =
+    detail === null ? null : derivedThroughput(detail.totalTokens, detail.durationMs)
 
   return (
-    <InspectorShell title={row.requestId} onClose={onClose}>
+    <InspectorShell label="Receipt inspector" title={row.requestId} onClose={onClose}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="rounded-full border border-ink/15 px-2 py-0.5 font-mono text-xs dark:border-parchment/15">
           {row.model}
         </span>
+        {detail === null ? null : (
+          <span className="rounded-full border border-ink/15 px-2 py-0.5 font-mono text-xs dark:border-parchment/15">
+            {detail.provider}
+          </span>
+        )}
+        {detail?.cached === true ? (
+          <span className="rounded-full border border-ink/15 px-2 py-0.5 font-mono text-xs dark:border-parchment/15">
+            Cached{detail.cacheTier === null ? '' : ` · ${detail.cacheTier}`}
+          </span>
+        ) : null}
         <span className="flex-1" />
         <button
           type="button"
@@ -133,7 +163,7 @@ export function RunInspector({
           →
         </button>
       </div>
-      <dl className="grid grid-cols-3 gap-2">
+      <dl className="grid grid-cols-2 gap-2">
         <div className="rounded-lg border border-ink/10 p-2 dark:border-parchment/10">
           <dt className="font-mono text-xs text-ink-soft dark:text-parchment-soft">Cost</dt>
           <dd className="font-mono text-sm tnum">
@@ -141,14 +171,24 @@ export function RunInspector({
           </dd>
         </div>
         <div className="rounded-lg border border-ink/10 p-2 dark:border-parchment/10">
-          <dt className="font-mono text-xs text-ink-soft dark:text-parchment-soft">Tokens</dt>
-          <dd className="font-mono text-sm tnum">{tokens ?? '…'}</dd>
-        </div>
-        <div className="rounded-lg border border-ink/10 p-2 dark:border-parchment/10">
           <dt className="font-mono text-xs text-ink-soft dark:text-parchment-soft">Duration</dt>
           <dd className="font-mono text-sm tnum">
             {detail === null ? '…' : formatDurationMs(detail.durationMs)}
           </dd>
+        </div>
+        <div className="rounded-lg border border-ink/10 p-2 dark:border-parchment/10">
+          <dt className="font-mono text-xs text-ink-soft dark:text-parchment-soft">Tokens</dt>
+          <dd className="font-mono text-sm tnum">
+            {prompt === null || completion === null
+              ? '…'
+              : `${String(prompt)} → ${String(completion)}`}
+          </dd>
+        </div>
+        <div className="rounded-lg border border-ink/10 p-2 dark:border-parchment/10">
+          <dt className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+            Throughput · derived
+          </dt>
+          <dd className="font-mono text-sm tnum">{throughput ?? '…'}</dd>
         </div>
       </dl>
       {receipt.isPending ? (
@@ -160,33 +200,36 @@ export function RunInspector({
           Receipt unavailable: {receipt.error.message}
         </p>
       ) : detail === null ? null : (
-        <dl className="space-y-2 text-[13px]">
-          <div className="flex justify-between gap-3">
-            <dt className="text-ink-soft dark:text-parchment-soft">Owner</dt>
-            <dd className="font-mono text-xs break-all">{detail.ownerId}</dd>
-          </div>
-          <div className="flex justify-between gap-3">
-            <dt className="text-ink-soft dark:text-parchment-soft">Provider</dt>
-            <dd>{detail.provider}</dd>
-          </div>
-          <div className="flex justify-between gap-3">
-            <dt className="text-ink-soft dark:text-parchment-soft">Cached</dt>
-            <dd className="tnum">
-              {detail.cached
-                ? `yes${detail.cacheTier === null ? '' : ` · ${detail.cacheTier}`}`
-                : 'no'}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-3">
-            <dt className="text-ink-soft dark:text-parchment-soft">Created</dt>
-            <dd className="tnum" title={detail.createdAt}>
-              {shortDate(detail.createdAt)}
-            </dd>
-          </div>
-        </dl>
+        <section aria-label="Receipt overview" className="space-y-2">
+          <h3 className="font-mono text-xs text-ink-soft dark:text-parchment-soft">Overview</h3>
+          <dl className="space-y-2 text-[13px]">
+            <div className="flex justify-between gap-3">
+              <dt className="text-ink-soft dark:text-parchment-soft">Owner</dt>
+              <dd className="font-mono text-xs break-all">{detail.ownerId}</dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-ink-soft dark:text-parchment-soft">Provider</dt>
+              <dd>{detail.provider}</dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-ink-soft dark:text-parchment-soft">Cached</dt>
+              <dd className="tnum">
+                {detail.cached
+                  ? `yes${detail.cacheTier === null ? '' : ` · ${detail.cacheTier}`}`
+                  : 'no'}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-ink-soft dark:text-parchment-soft">Created</dt>
+              <dd className="tnum" title={detail.createdAt}>
+                {shortDate(detail.createdAt)}
+              </dd>
+            </div>
+          </dl>
+        </section>
       )}
       <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
-        Payload bodies are never logged — receipts carry facts, not transcripts.
+        Payload bodies are never logged. Receipts carry facts, not transcripts.
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <button

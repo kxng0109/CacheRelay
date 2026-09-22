@@ -50,6 +50,95 @@ describe('KeysPage', () => {
     expect(screen.getByText('all')).toBeInTheDocument()
   })
 
+  it('rejects a non-UUID owner account before submitting', async () => {
+    const user = userEvent.setup()
+    let posts = 0
+    server.use(
+      http.get('*/v1/admin/keys', () => HttpResponse.json([])),
+      http.post('*/v1/admin/keys', () => {
+        posts += 1
+        return HttpResponse.json({}, { status: 201 })
+      }),
+    )
+    renderApp(<KeysPage />, { adminSession: true })
+    await user.click(screen.getByRole('button', { name: /new key/i }))
+    await user.type(screen.getByLabelText(/^owner$/i), 'tenant-corp')
+    await user.type(screen.getByLabelText(/owner account uuid/i), 'not-a-uuid')
+    await user.type(screen.getByLabelText(/^name$/i), 'bad-owner')
+    await user.click(screen.getByRole('button', { name: /^create key$/i }))
+    expect(await screen.findByText(/valid uuid/i)).toBeInTheDocument()
+    expect(posts).toBe(0)
+  })
+
+  it('surfaces an unknown-owner 400 at the owner field', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/keys', () => HttpResponse.json([])),
+      http.post(
+        '*/v1/admin/keys',
+        () =>
+          new HttpResponse(
+            JSON.stringify({ status: 400, error: 'Bad Request', message: 'unknown owner account' }),
+            { status: 400 },
+          ),
+      ),
+    )
+    renderApp(<KeysPage />, { adminSession: true })
+    await user.click(screen.getByRole('button', { name: /new key/i }))
+    await user.type(screen.getByLabelText(/^owner$/i), 'tenant-corp')
+    await user.type(
+      screen.getByLabelText(/owner account uuid/i),
+      '123e4567-e89b-12d3-a456-426614174000',
+    )
+    await user.type(screen.getByLabelText(/^name$/i), 'orphan')
+    await user.type(screen.getByLabelText(/requests per minute/i), '60')
+    await user.type(screen.getByLabelText(/tokens per minute/i), '100000')
+    await user.click(screen.getByRole('button', { name: /^create key$/i }))
+    await waitFor(() => {
+      expect(screen.getAllByText(/unknown owner account/i).length).toBeGreaterThanOrEqual(2)
+    })
+  })
+
+  it('revokes terminally and never offers un-revoke', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/keys', () => HttpResponse.json(KEYS)),
+      http.post('*/v1/admin/keys/:id/revoke', () =>
+        HttpResponse.json({ ...KEYS[0], enabled: false }),
+      ),
+    )
+    renderApp(<KeysPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByText('ci-key'))
+    const inspector = await screen.findByRole('complementary', { name: /key inspector/i })
+    await user.click(within(inspector).getByRole('button', { name: /revoke key/i }))
+    await user.click(within(inspector).getByRole('button', { name: /yes, revoke/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/terminal\. there is no un-revoke/i)).toBeInTheDocument()
+    })
+    expect(screen.queryByRole('button', { name: /enable key/i })).not.toBeInTheDocument()
+  })
+
+  it('toggles enabled state reversibly', async () => {
+    const user = userEvent.setup()
+    let enabled = true
+    server.use(
+      http.get('*/v1/admin/keys', () => HttpResponse.json([{ ...KEYS[0], enabled }])),
+      http.patch('*/v1/admin/keys/:id', () => {
+        enabled = false
+        return HttpResponse.json({ ...KEYS[0], enabled: false })
+      }),
+    )
+    renderApp(<KeysPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByText('ci-key'))
+    const inspector = await screen.findByRole('complementary', { name: /key inspector/i })
+    await user.click(within(inspector).getByRole('button', { name: /disable key/i }))
+    await waitFor(() => {
+      expect(screen.getAllByText(/disabled/i).length).toBeGreaterThanOrEqual(2)
+    })
+  })
+
   it('selects a disabled key row from the keyboard', async () => {
     const user = userEvent.setup()
     Object.defineProperty(navigator, 'clipboard', {
@@ -100,6 +189,10 @@ describe('KeysPage', () => {
     renderApp(<KeysPage />, { adminSession: true })
     expect(await screen.findByLabelText(/^owner$/i)).toBeInTheDocument()
     await user.type(screen.getByLabelText(/^owner$/i), 'tenant-corp')
+    await user.type(
+      screen.getByLabelText(/owner account uuid/i),
+      '123e4567-e89b-12d3-a456-426614174000',
+    )
     await user.type(screen.getByLabelText(/^name$/i), 'ci-key')
     await user.type(screen.getByLabelText(/models/i), 'gpt-4o-mini')
     await user.type(screen.getByLabelText(/requests per minute/i), '60')
@@ -120,6 +213,7 @@ describe('KeysPage', () => {
       expect(screen.getByText(/name is required/i)).toBeInTheDocument()
     })
     expect(screen.getByText(/owner is required/i)).toBeInTheDocument()
+    expect(screen.getByText(/must be a valid uuid/i)).toBeInTheDocument()
   })
 
   it('deletes a key and refreshes the list', async () => {
@@ -181,6 +275,10 @@ describe('KeysPage', () => {
     )
     renderApp(<KeysPage />, { adminSession: true })
     await user.type(await screen.findByLabelText(/^owner$/i), 'tenant-corp')
+    await user.type(
+      screen.getByLabelText(/owner account uuid/i),
+      '123e4567-e89b-12d3-a456-426614174000',
+    )
     await user.type(screen.getByLabelText(/^name$/i), 'bad')
     await user.type(screen.getByLabelText(/requests per minute/i), '1')
     await user.type(screen.getByLabelText(/tokens per minute/i), '1')
@@ -308,6 +406,10 @@ describe('KeysPage', () => {
     )
     renderApp(<KeysPage />, { adminSession: true })
     await user.type(await screen.findByLabelText(/^owner$/i), 'tenant-corp')
+    await user.type(
+      screen.getByLabelText(/owner account uuid/i),
+      '123e4567-e89b-12d3-a456-426614174000',
+    )
     await user.type(screen.getByLabelText(/^name$/i), 'ci-key')
     await user.type(screen.getByLabelText(/requests per minute/i), '60')
     await user.type(screen.getByLabelText(/tokens per minute/i), '60')

@@ -5,6 +5,19 @@ import { describe, expect, it } from 'vitest'
 import { server } from '../../test/setup.js'
 import { renderApp } from '../../test/utils.js'
 import { LedgerPage } from './page.js'
+import { derivedThroughput } from './RunInspector.js'
+
+describe('derivedThroughput', () => {
+  it('divides tokens by wall seconds without measuring anything', () => {
+    expect(derivedThroughput(1540, 92)).toBe('16.7K tok/s')
+    expect(derivedThroughput(59, 2000)).toBe('30 tok/s')
+  })
+
+  it('reads degenerate durations as unknown, never infinity', () => {
+    expect(derivedThroughput(100, 0)).toBeNull()
+    expect(derivedThroughput(100, -5)).toBeNull()
+  })
+})
 
 function summary() {
   return http.get('*/v1/admin/ledger/summary', () =>
@@ -81,7 +94,7 @@ describe('RunInspector', () => {
     }
     const inspector = await screen.findByRole('complementary')
     expect(within(inspector).getByText('tenant-corp')).toBeInTheDocument()
-    expect(within(inspector).getByText('openai')).toBeInTheDocument()
+    expect(within(inspector).getAllByText('openai').length).toBeGreaterThanOrEqual(2)
     await waitFor(() => {
       expect(within(inspector).getByText(/41ms/)).toBeInTheDocument()
     })
@@ -99,7 +112,10 @@ describe('RunInspector', () => {
     }
     await screen.findByRole('complementary')
     await user.keyboard('{Escape}')
-    expect(screen.getByRole('complementary')).toHaveTextContent(/select a row to inspect/i)
+    await waitFor(() => {
+      expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+    })
+    expect(screen.getByText(/select a row to inspect/i)).toBeInTheDocument()
   })
 
   it('closes from the inspector close button', async () => {
@@ -113,8 +129,47 @@ describe('RunInspector', () => {
       await user.click(cell)
     }
     await screen.findByRole('complementary')
-    await user.click(screen.getByRole('button', { name: /close inspector/i }))
-    expect(screen.getByRole('complementary')).toHaveTextContent(/select a row to inspect/i)
+    const inspector = screen.getByRole('complementary')
+    await user.click(within(inspector).getByRole('button', { name: /close inspector/i }))
+    await waitFor(() => {
+      expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+    })
+    expect(screen.getByText(/select a row to inspect/i)).toBeInTheDocument()
+  })
+
+  it('dismisses from the backdrop without touching the table', async () => {
+    const user = userEvent.setup()
+    server.use(summary(), entries(), receipt())
+    renderApp(<LedgerPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    const cell = within(table).getAllByText('gpt-4o-mini')[0]
+    expect(cell).toBeDefined()
+    if (cell !== undefined) {
+      await user.click(cell)
+    }
+    await screen.findByRole('complementary')
+    await user.click(screen.getByRole('button', { name: /dismiss inspector/i }))
+    await waitFor(() => {
+      expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+    })
+    expect(screen.getByText(/select a row to inspect/i)).toBeInTheDocument()
+  })
+
+  it('states the selection when it leaves the visible page', async () => {
+    const user = userEvent.setup()
+    server.use(summary(), entries(), receipt())
+    renderApp(<LedgerPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    const cell = within(table).getAllByText('gpt-4o-mini')[0]
+    expect(cell).toBeDefined()
+    if (cell !== undefined) {
+      await user.click(cell)
+    }
+    await screen.findByRole('complementary')
+    await user.type(screen.getByLabelText(/filter audit log/i), 'zzz-no-match')
+    await waitFor(() => {
+      expect(screen.getByText(/left the visible page/i)).toBeInTheDocument()
+    })
   })
 
   it('walks rows with prev and next', async () => {

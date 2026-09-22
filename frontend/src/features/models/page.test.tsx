@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, beforeEach } from 'vitest'
 import { server } from '../../test/setup.js'
 import { renderApp } from '../../test/utils.js'
 import { ModelsPage } from './page.js'
@@ -30,6 +30,12 @@ function listOk() {
   return http.get('*/v1/admin/models', () => HttpResponse.json(ALIASES))
 }
 
+// ProviderBoard fires on every ModelsPage render; the empty default keeps
+// alias-focused tests isolated (scenario tests override with data).
+beforeEach(() => {
+  server.use(http.get('*/v1/admin/providers', () => HttpResponse.json([])))
+})
+
 describe('ModelsPage', () => {
   it('lists aliases with source pills and file rows read-only', async () => {
     server.use(listOk())
@@ -37,10 +43,15 @@ describe('ModelsPage', () => {
     const table = await screen.findByRole('table')
     expect(table).toHaveTextContent('file-gpt')
     expect(table).toHaveTextContent('db-fast')
-    expect(screen.getByText(/2 aliases · 1 file-bound · 1 database-managed/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/2 aliases · 1 file-bound \(read-only\) · 1 database-managed/i),
+    ).toBeInTheDocument()
     const fileRow = within(table).getByText('file-gpt').closest('tr')
     expect(fileRow).not.toBeNull()
-    if (fileRow !== null) expect(fileRow).toHaveTextContent(/read-only/i)
+    if (fileRow !== null) {
+      expect(fileRow).toHaveTextContent('—')
+      expect(within(fileRow).getByTitle(/file-bound aliases are read-only/i)).toBeInTheDocument()
+    }
   })
 
   it('creates an alias and announces the outcome', async () => {
@@ -191,9 +202,12 @@ describe('ModelsPage', () => {
         name: /close inspector/i,
       }),
     )
-    expect(screen.getByRole('complementary', { name: /alias inspector/i })).toHaveTextContent(
-      /select a row to inspect/i,
-    )
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('complementary', { name: /alias inspector/i }),
+      ).not.toBeInTheDocument()
+    })
+    expect(screen.getByText(/select a row to inspect an alias/i)).toBeInTheDocument()
   })
 
   it('selects an alias with the Space key', async () => {
@@ -223,10 +237,11 @@ describe('ModelsPage', () => {
     await user.click(within(table).getByRole('button', { name: /^delete$/i }))
     await user.click(screen.getByRole('button', { name: /^yes$/i }))
     await waitFor(() => {
-      expect(screen.getByRole('complementary', { name: /alias inspector/i })).toHaveTextContent(
-        /select a row to inspect/i,
-      )
+      expect(
+        screen.queryByRole('complementary', { name: /alias inspector/i }),
+      ).not.toBeInTheDocument()
     })
+    expect(screen.getByText(/select a row to inspect an alias/i)).toBeInTheDocument()
   })
 
   it('cancels creation without calling the gateway', async () => {

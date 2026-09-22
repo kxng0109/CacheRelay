@@ -222,6 +222,11 @@ describe('PlaygroundPage', () => {
     expect(screen.getByRole('region', { name: /run 1: gpt-56-luna/i })).toBeInTheDocument()
   })
 
+  it('labels an untouched run as ready, never streaming', () => {
+    renderApp(<PlaygroundPage />)
+    expect(screen.getByText(/run #1 · ready/i)).toBeInTheDocument()
+  })
+
   it('fills a sanctioned recipe without sending', async () => {
     const user = userEvent.setup()
     renderApp(<PlaygroundPage />)

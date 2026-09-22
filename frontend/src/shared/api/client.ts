@@ -16,6 +16,7 @@ import type {
   McpTool,
   McpToolAnnotations,
   ModelAliasRecord,
+  ProviderStatus,
   PageResponse,
   ProviderChainStep,
   RateLimitDimension,
@@ -60,16 +61,26 @@ export function resolveApiBase(): string {
  * SEC-15 isolates actuator endpoints on the dedicated management port
  * (`VITE_MANAGEMENT_BASE_URL`, dev default `http://localhost:9091`); the
  * app port answers every `/actuator/**` path with `404` and no CORS grant
- * (backend truth: `backend/docs/BACKEND_API_REFERENCE.md` SEC-15). Like the
- * API base, an unset variable falls back to same-origin (`''`).
+ * (backend truth: `backend/docs/BACKEND_API_REFERENCE.md` SEC-15). An
+ * explicitly configured variable always wins. When unset, loopback pages
+ * (local dev) default to the management port on the same host; any other
+ * host falls back to same-origin (`''`), preserving deployed behavior.
  *
- * @returns The configured management base URL, or `''` for same-origin.
+ * @returns The management base URL, or `''` for same-origin.
  */
 export function resolveManagementBase(): string {
   const raw: unknown = import.meta.env.VITE_MANAGEMENT_BASE_URL
-  if (typeof raw !== 'string') return ''
-  const trimmed = raw.trim()
-  if (trimmed.length > 0) return trimmed.replace(/\/+$/, '')
+  if (typeof raw === 'string' && raw.trim().length > 0) {
+    return raw.trim().replace(/\/+$/, '')
+  }
+  try {
+    const host = window.location.hostname
+    if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]') {
+      return `http://${host}:9091`
+    }
+  } catch {
+    // Non-browser runtimes keep the same-origin fallback below.
+  }
   return ''
 }
 /**
@@ -265,6 +276,10 @@ export function safeErrorMessage(status: number, body: string): string {
             if (status === 503) return 'Gateway is temporarily unavailable. Retry shortly.'
             return message
           }
+        }
+        const topMessage = record.message
+        if (typeof topMessage === 'string' && topMessage.length > 0) {
+          return topMessage
         }
       }
     } catch {
@@ -581,6 +596,26 @@ export class GatewayClient {
   }
 
   /**
+   * Reads configured upstream providers with live routing health.
+   *
+   * @remarks Backend truth (DTO-verified): `GET /v1/admin/providers`
+   * returns a bare array of `ProviderStatusResponse`. Key material never
+   * crosses; only the `keyConfigured` boolean. Unknown validation strings
+   * degrade to grey at the call site.
+   *
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns One status row per provider.
+   */
+  async listProviders(opts?: RequestOptions): Promise<{ providers: ProviderStatus[] }> {
+    const rows = await this.request<ProviderStatus[]>(
+      '/v1/admin/providers',
+      { headers: this.headers() },
+      opts,
+    )
+    return { providers: Array.isArray(rows) ? rows : [] }
+  }
+
+  /**
    * Reads aggregated circuit state for every known provider.
    *
    * @remarks Backend truth (live-verified): `GET /v1/admin/circuits`
@@ -640,9 +675,10 @@ export class GatewayClient {
   /**
    * Creates a virtual key. Plaintext is exposed exactly once.
    *
-   * @remarks Backend truth (live-verified): `ownerId` and `name` are
-   * required; `0` means unlimited for both limits; empty model sets mean
-   * all allowed. There is no daily quota — TPM is the token dimension.
+   * @remarks Backend truth (live-verified): `ownerId`, `ownerUserId`, and
+   * `name` are required; `0` means unlimited for both limits; empty model
+   * sets mean all allowed. Unknown or disabled owners answer `400`. There
+   * is no daily quota — TPM is the token dimension.
    *
    * @param body - Key parameters.
    * @param opts - Optional request options (abort signal, headers listener).
@@ -651,6 +687,7 @@ export class GatewayClient {
   createKey(
     body: {
       ownerId: string
+      ownerUserId: string
       name: string
       rpmLimit: number
       tpmLimit: number
@@ -665,6 +702,44 @@ export class GatewayClient {
         headers: this.headers({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(body),
       },
+      opts,
+    )
+  }
+
+  /**
+   * Toggles a key between enabled and disabled. Reversible.
+   *
+   * @remarks Re-enabling a terminally revoked key answers `400`; the
+   * message names the reason and surfaces inline.
+   *
+   * @param id - Key identifier.
+   * @param enabled - Desired state.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns Updated metadata.
+   */
+  setKeyEnabled(id: string, enabled: boolean, opts?: RequestOptions): Promise<ApiKeyRecord> {
+    return this.request<ApiKeyRecord>(
+      `/v1/admin/keys/${encodeURIComponent(id)}`,
+      {
+        method: 'PATCH',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ enabled }),
+      },
+      opts,
+    )
+  }
+
+  /**
+   * Terminally revokes a key. There is no inverse.
+   *
+   * @param id - Key identifier.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns Tombstoned metadata.
+   */
+  revokeKey(id: string, opts?: RequestOptions): Promise<ApiKeyRecord> {
+    return this.request<ApiKeyRecord>(
+      `/v1/admin/keys/${encodeURIComponent(id)}/revoke`,
+      { method: 'POST', headers: this.headers() },
       opts,
     )
   }

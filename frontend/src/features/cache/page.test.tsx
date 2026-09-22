@@ -51,7 +51,7 @@ describe('CachePage', () => {
     expect(screen.getByText('1 MB')).toBeInTheDocument()
     expect(screen.getByText(/l1 on · l2 on/)).toBeInTheDocument()
     expect(screen.getByText('TEAM')).toBeInTheDocument()
-    expect(screen.getByText('5000')).toBeInTheDocument()
+    expect(screen.getByText('5,000µ$')).toBeInTheDocument()
   })
 
   it('shows the empty budget state', async () => {
@@ -285,6 +285,7 @@ describe('CachePage', () => {
       expect(screen.getByText(/redis off/i)).toBeInTheDocument()
     })
     expect(screen.getByText('uncapped')).toBeInTheDocument()
+    expect(screen.getAllByText('no cap').length).toBeGreaterThanOrEqual(2)
   })
 
   it('validates the budget form before submitting', async () => {

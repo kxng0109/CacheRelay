@@ -199,9 +199,12 @@ describe('EmbeddingsPage', () => {
     await user.click(within(table).getByText('m'))
     const inspector = await screen.findByRole('complementary', { name: /run inspector/i })
     await user.click(within(inspector).getByRole('button', { name: /close inspector/i }))
-    expect(screen.getByRole('complementary', { name: /run inspector/i })).toHaveTextContent(
-      /select a run to inspect/i,
-    )
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('complementary', { name: /run inspector/i }),
+      ).not.toBeInTheDocument()
+    })
+    expect(screen.getByText(/select a run to inspect/i)).toBeInTheDocument()
   })
 
   it('surfaces gateway errors without leaking internals', async () => {
@@ -282,9 +285,12 @@ describe('EmbeddingsPage', () => {
     await user.click(row as HTMLElement)
     expect(screen.getByRole('complementary', { name: /run inspector/i })).toHaveTextContent('m')
     await user.click(row as HTMLElement)
-    expect(screen.getByRole('complementary', { name: /run inspector/i })).toHaveTextContent(
-      /select a run/i,
-    )
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('complementary', { name: /run inspector/i }),
+      ).not.toBeInTheDocument()
+    })
+    expect(screen.getByText(/select a run to inspect/i)).toBeInTheDocument()
   })
 
   it('selects a run with the Space key', async () => {

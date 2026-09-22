@@ -4,6 +4,7 @@ import { GatewayClient } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 import type { ModelAliasRecord, ProviderChainStep } from '../../shared/api/types.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
+import { ProviderBoard } from './ProviderBoard.js'
 
 const STRATEGIES = ['SEQUENTIAL', 'RACE'] as const
 const MAX_STEPS = 8
@@ -190,6 +191,7 @@ function ModelsBoard(): React.JSX.Element {
    */
   const startReplace = (alias: ModelAliasRecord): void => {
     setError(null)
+    setSelected(null)
     setReplacing(alias.name)
     setEditStrategy(alias.strategy)
     setEditChain(alias.chain.length === 0 ? [blankStep()] : alias.chain.map((s) => ({ ...s })))
@@ -243,11 +245,11 @@ function ModelsBoard(): React.JSX.Element {
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
+    <div className="space-y-6">
       <div className="space-y-4">
         <p className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft">
-          {aliases.length} aliases · {fileCount} file-bound · {aliases.length - fileCount}{' '}
-          database-managed
+          {aliases.length} aliases · {fileCount} file-bound (read-only) ·{' '}
+          {aliases.length - fileCount} database-managed
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <label htmlFor="model-filter" className="sr-only">
@@ -460,8 +462,11 @@ function ModelsBoard(): React.JSX.Element {
                           </button>
                         )
                       ) : (
-                        <span className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
-                          read-only
+                        <span
+                          className="font-mono text-xs text-ink-soft dark:text-parchment-soft"
+                          title="File-bound aliases are read-only"
+                        >
+                          —
                         </span>
                       )}
                     </td>
@@ -517,55 +522,54 @@ function ModelsBoard(): React.JSX.Element {
           </div>
         )}
       </div>
-      <aside aria-label="Alias inspector" className="space-y-3">
-        {inspected === null ? (
-          <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
-            Select a row to inspect an alias.
-          </p>
-        ) : (
-          <InspectorShell
-            title={inspected.name}
-            onClose={() => {
-              setSelected(null)
-            }}
-          >
-            <dl className="space-y-2 text-[13px]">
-              <div className="flex justify-between gap-3">
-                <dt className="text-ink-soft dark:text-parchment-soft">Source</dt>
-                <dd>{inspected.source}</dd>
+      {inspected === null ? (
+        <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
+          Select a row to inspect an alias.
+        </p>
+      ) : (
+        <InspectorShell
+          label="Alias inspector"
+          title={inspected.name}
+          onClose={() => {
+            setSelected(null)
+          }}
+        >
+          <dl className="space-y-2 text-[13px]">
+            <div className="flex justify-between gap-3">
+              <dt className="text-ink-soft dark:text-parchment-soft">Source</dt>
+              <dd>{inspected.source}</dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-ink-soft dark:text-parchment-soft">Strategy</dt>
+              <dd className="font-mono">{inspected.strategy}</dd>
+            </div>
+            {inspected.chain.map((s, i) => (
+              <div key={i} className="flex justify-between gap-3">
+                <dt className="text-ink-soft dark:text-parchment-soft">Step {i + 1}</dt>
+                <dd className="font-mono">
+                  {s.providerName}
+                  {s.modelOverride === null ? null : ` → ${s.modelOverride}`}
+                </dd>
               </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-ink-soft dark:text-parchment-soft">Strategy</dt>
-                <dd className="font-mono">{inspected.strategy}</dd>
-              </div>
-              {inspected.chain.map((s, i) => (
-                <div key={i} className="flex justify-between gap-3">
-                  <dt className="text-ink-soft dark:text-parchment-soft">Step {i + 1}</dt>
-                  <dd className="font-mono">
-                    {s.providerName}
-                    {s.modelOverride === null ? null : ` → ${s.modelOverride}`}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-            {inspectedEditable ? (
-              <button
-                type="button"
-                onClick={() => {
-                  startReplace(inspected)
-                }}
-                className="w-full rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
-              >
-                Replace plan
-              </button>
-            ) : (
-              <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
-                File-bound aliases are read-only.
-              </p>
-            )}
-          </InspectorShell>
-        )}
-      </aside>
+            ))}
+          </dl>
+          {inspectedEditable ? (
+            <button
+              type="button"
+              onClick={() => {
+                startReplace(inspected)
+              }}
+              className="w-full rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+            >
+              Replace plan
+            </button>
+          ) : (
+            <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+              File-bound aliases are read-only.
+            </p>
+          )}
+        </InspectorShell>
+      )}
     </div>
   )
 }
@@ -595,6 +599,7 @@ export function ModelsPage(): React.JSX.Element {
         </p>
       </div>
       <ModelsBoard />
+      <ProviderBoard />
     </div>
   )
 }

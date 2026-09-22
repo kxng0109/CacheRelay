@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import * as z from 'zod/v4'
 import { GatewayClient } from '../../shared/api/client.js'
-import { formatBytes } from '../../shared/utils/format.js'
+import { formatBytes, formatMicros } from '../../shared/utils/format.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 
 const schema = z.object({
@@ -301,8 +301,20 @@ function CacheBoard(): React.JSX.Element {
               <tr key={b.id} className="border-t border-ink/10 dark:border-parchment/10">
                 <td className="py-2 pr-3 font-mono text-[13px]">{b.subjectId}</td>
                 <td className="py-2 pr-3 text-[13px]">{b.level}</td>
-                <td className="py-2 pr-3 text-right text-[13px] tnum">{b.minuteMicros}</td>
-                <td className="py-2 text-right text-[13px] tnum">{b.monthMicros}</td>
+                <td className="py-2 pr-3 text-right text-[13px] tnum">
+                  {b.minuteMicros === 0 ? (
+                    <span className="text-ink-soft dark:text-parchment-soft">no cap</span>
+                  ) : (
+                    formatMicros(b.minuteMicros)
+                  )}
+                </td>
+                <td className="py-2 text-right text-[13px] tnum">
+                  {b.monthMicros === 0 ? (
+                    <span className="text-ink-soft dark:text-parchment-soft">no cap</span>
+                  ) : (
+                    formatMicros(b.monthMicros)
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

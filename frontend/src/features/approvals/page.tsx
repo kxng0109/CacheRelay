@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { GatewayClient } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 import { useToastStore } from '../../shared/toast/store.js'
+import { formatShortDate } from '../../shared/utils/format.js'
 
 /**
  * Human-in-the-loop approval queue for gated MCP tool calls.
@@ -82,8 +83,11 @@ function ApprovalsBoard(): React.JSX.Element {
               >
                 <div className="min-w-0 flex-1">
                   <p className="font-mono text-[13px]">{a.toolName}</p>
-                  <p className="text-[13px] text-ink-soft tnum dark:text-parchment-soft">
-                    {a.approvalId} · {a.requestedAt}
+                  <p
+                    className="text-[13px] text-ink-soft tnum dark:text-parchment-soft"
+                    title={a.requestedAt}
+                  >
+                    {a.approvalId} · {formatShortDate(a.requestedAt)}
                   </p>
                 </div>
                 <button
