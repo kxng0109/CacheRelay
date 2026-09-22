@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 import io.github.kxng0109.cacherelay.contracts.BootstrapKey;
 import io.github.kxng0109.cacherelay.contracts.GatewayProperties;
@@ -84,7 +85,7 @@ class KeyAgentScopesTest {
 		KeyManagementService.CreatedKey created = service.createKey(
 				"owner", "name", 5, 50, Set.of(), Set.of(), Set.of(), Set.of(),
 				Set.of(), Set.of(), Set.of(), Set.of(), null, null,
-				Set.of("research-*", "support"), Set.of("prod-*"));
+				Set.of("research-*", "support"), Set.of("prod-*"), UUID.randomUUID());
 
 		assertEquals(Set.of("research-*", "support"), created.key().allowedAgents());
 		assertEquals(Set.of("prod-*"), created.key().deniedAgents());
@@ -165,7 +166,7 @@ class KeyAgentScopesTest {
 		BootstrapKey template = new BootstrapKey(
 				"owner", "name", "gw-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", 1, 1,
 				Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(),
-				Set.of());
+				Set.of(), null);
 		when(redisTemplate.execute(any(), anyList(), any(Object[].class))).thenReturn(1L);
 
 		GatewayProperties properties = new GatewayProperties();

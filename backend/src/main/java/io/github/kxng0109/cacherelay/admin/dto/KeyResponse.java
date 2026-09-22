@@ -5,6 +5,9 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.time.Instant;
 import java.util.Set;
+import java.util.UUID;
+
+import org.jspecify.annotations.Nullable;
 
 /**
  * Safe public representation of a virtual API key without plaintext secret.
@@ -28,6 +31,8 @@ import java.util.Set;
  * @param allowedCacheScopes cache isolation scopes (SEC-01; TENANT-only when unset)
  * @param allowedAgents    allowed A2A agents
  * @param deniedAgents     denied A2A agents
+ * @param ownerUserId      owning account id, may be {@code null} for legacy rows
+ * @param ownerUsername    owning account login name, may be {@code null} when unresolvable
  */
 @Schema(name = "KeyResponse", description = "Safe public metadata representation of a registered virtual API key")
 public record KeyResponse(
@@ -89,7 +94,13 @@ public record KeyResponse(
 		Set<String> allowedAgents,
 
 		@Schema(description = "Denied A2A agents", example = "[\"prod-*\"]")
-		Set<String> deniedAgents
+		Set<String> deniedAgents,
+
+		@Schema(description = "Owning account id, null for legacy rows")
+		@Nullable UUID ownerUserId,
+
+		@Schema(description = "Owning account login name, null when unresolvable")
+		@Nullable String ownerUsername
 ) {
 	public KeyResponse(
 			String keyId,
@@ -123,7 +134,9 @@ public record KeyResponse(
 				createdAt,
 				Set.of(CacheScope.TENANT),
 				Set.of(),
-				Set.of()
+				Set.of(),
+				null,
+				null
 		);
 	}
 
@@ -164,7 +177,9 @@ public record KeyResponse(
 				createdAt,
 				Set.of(CacheScope.TENANT),
 				Set.of(),
-				Set.of()
+				Set.of(),
+				null,
+				null
 		);
 	}
 
@@ -209,7 +224,9 @@ public record KeyResponse(
 				createdAt,
 				Set.of(CacheScope.TENANT),
 				Set.of(),
-				Set.of()
+				Set.of(),
+				null,
+				null
 		);
 	}
 }

@@ -117,6 +117,7 @@ class McpRateLimitGateTest {
 
 	private void keyResolves() {
 		when(keyManagementService.findByHash(any())).thenReturn(Optional.of(apiKey));
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 	}
 
 	@Test
@@ -179,6 +180,7 @@ class McpRateLimitGateTest {
 		when(router.resolveToolRoute(any())).thenReturn(Optional.empty());
 		MockHttpServletRequest request = new MockHttpServletRequest("POST", "/v1/mcp");
 		request.setAttribute("virtualApiKey", apiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		ResponseEntity<String> response = controller.handleStreamableHttp(CALL_BODY,
 				"2024-11-05", null, request);
@@ -194,6 +196,7 @@ class McpRateLimitGateTest {
 		MockHttpServletRequest request = new MockHttpServletRequest("POST", "/v1/mcp");
 		request.addHeader("Authorization", "Basic dXNlcjpwYXNz");
 		request.setAttribute("virtualApiKey", apiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		ResponseEntity<String> response = controller.handleStreamableHttp(CALL_BODY,
 				"2024-11-05", null, request);
@@ -209,6 +212,7 @@ class McpRateLimitGateTest {
 		MockHttpServletRequest request = new MockHttpServletRequest("POST", "/v1/mcp");
 		request.addHeader("Authorization", "Bearer    ");
 		request.setAttribute("virtualApiKey", apiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		ResponseEntity<String> response = controller.handleStreamableHttp(CALL_BODY,
 				"2024-11-05", null, request);

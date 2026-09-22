@@ -211,6 +211,7 @@ class McpStreamableHttpControllerTest {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.addHeader("Authorization", "Bearer gw-header-key-1234567890abcdef");
 		when(keyManagementService.findByHash(any())).thenReturn(Optional.of(validApiKey));
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		ResponseEntity<String> response = controller.handleStreamableHttp(
 				"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
@@ -227,6 +228,7 @@ class McpStreamableHttpControllerTest {
 	void returnsUnsupportedProtocolVersion() {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		ResponseEntity<String> response = controller.handleStreamableHttp(
 				"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
@@ -244,6 +246,7 @@ class McpStreamableHttpControllerTest {
 	void returnsParseErrorOnMalformedJson() {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		ResponseEntity<String> response = controller.handleStreamableHttp(
 				"{\"jsonrpc\":\"2.0\", malformed...",
@@ -261,6 +264,7 @@ class McpStreamableHttpControllerTest {
 	void handlesNotificationsGracefully() {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		// notifications/initialized
 		ResponseEntity<String> resp1 = controller.handleStreamableHttp(
@@ -289,6 +293,7 @@ class McpStreamableHttpControllerTest {
 	void handlesPingAndInitialize() {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		// ping
 		ResponseEntity<String> pingResp = controller.handleStreamableHttp(
@@ -329,6 +334,7 @@ class McpStreamableHttpControllerTest {
 	void handlesToolsListWithCircuitPruning() {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		McpToolDefinition tool1 = new McpToolDefinition("postgres__query", "Query DB", null, null);
 		McpToolDefinition tool2 = new McpToolDefinition("offline__search", "Search DB", null, null);
@@ -400,6 +406,7 @@ class McpStreamableHttpControllerTest {
 		);
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", restrictedKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		McpResourceDefinition visibleRes = new McpResourceDefinition(
 				"postgres://table",
@@ -458,6 +465,7 @@ class McpStreamableHttpControllerTest {
 	void resourcesListEmptyAllowSeesAll() {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		McpResourceDefinition res = new McpResourceDefinition(
 				"postgres://table",
@@ -492,6 +500,7 @@ class McpStreamableHttpControllerTest {
 	void handlesToolsCallFullPipeline() throws Exception {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		String rawRpc = """
 				{
@@ -585,6 +594,7 @@ class McpStreamableHttpControllerTest {
 	void handlesToolsCallRbacDenial() {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		String rawRpc = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"postgres__drop_db\",\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{\"tools\":{}}}}}";
 		McpResolvedRoute route = new McpResolvedRoute(postgresServer, "drop_db", "postgres__drop_db");
@@ -602,6 +612,7 @@ class McpStreamableHttpControllerTest {
 	void toolsCallBlocksInjectionWithMetrics() throws Exception {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		String rawRpc = "{\"jsonrpc\":\"2.0\",\"id\":\"blk-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"postgres__run_query\",\"arguments\":{\"sql\":\"SELECT 1\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{\"tools\":{}}}}}";
 		McpResolvedRoute route = new McpResolvedRoute(postgresServer, "run_query", "postgres__run_query");
@@ -660,6 +671,7 @@ class McpStreamableHttpControllerTest {
 		);
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", warnKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		String rawRpc = "{\"jsonrpc\":\"2.0\",\"id\":\"wrn-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"postgres__run_query\",\"arguments\":{\"sql\":\"SELECT 1\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{\"tools\":{}}}}}";
 		McpResolvedRoute route = new McpResolvedRoute(postgresServer, "run_query", "postgres__run_query");
@@ -709,6 +721,7 @@ class McpStreamableHttpControllerTest {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		MockHttpServletResponse response = new MockHttpServletResponse();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		// GET /v1/mcp/sse
 		controller.handleLegacySse(request, response);
@@ -728,6 +741,7 @@ class McpStreamableHttpControllerTest {
 	void modernRequestWithoutMetaRejected() {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		ResponseEntity<String> noParams = controller.handleStreamableHttp(
 				"{\"jsonrpc\":\"2.0\",\"id\":\"m-1\",\"method\":\"tools/list\"}",
@@ -761,6 +775,7 @@ class McpStreamableHttpControllerTest {
 	void unsupportedVersionRejected() {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		ResponseEntity<String> response = controller.handleStreamableHttp(
 				"{\"jsonrpc\":\"2.0\",\"id\":\"u-1\",\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"1999-01-01\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
@@ -777,6 +792,7 @@ class McpStreamableHttpControllerTest {
 	void explicitNullCapabilitiesRejected() {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		ResponseEntity<String> response = controller.handleStreamableHttp(
 				"{\"jsonrpc\":\"2.0\",\"id\":\"n-1\",\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":null}}}",
@@ -793,6 +809,7 @@ class McpStreamableHttpControllerTest {
 	void perMethodCapabilityMismatch() {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		ResponseEntity<String> promptsResp = controller.handleStreamableHttp(
 				"{\"jsonrpc\":\"2.0\",\"id\":\"p-1\",\"method\":\"prompts/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{\"tools\":{}}}}}",
@@ -818,6 +835,7 @@ class McpStreamableHttpControllerTest {
 	void blankAndMissingMethodRejected() {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 		String meta =
 				"\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\","
 						+ "\"io.modelcontextprotocol/clientCapabilities\":{}}";
@@ -846,6 +864,7 @@ class McpStreamableHttpControllerTest {
 	void modernNotificationWithoutParamsProceeds() {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		ResponseEntity<String> response = controller.handleStreamableHttp(
 				"{\"jsonrpc\":\"2.0\",\"method\":\"ping\"}",
@@ -892,6 +911,7 @@ class McpStreamableHttpControllerTest {
 	void toolsCallWithoutParamsFails() {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		ResponseEntity<String> nullParamsResp = controller.handleStreamableHttp(
 				"{\"jsonrpc\":\"2.0\",\"id\":\"l-0\",\"method\":\"tools/call\"}",
@@ -917,6 +937,7 @@ class McpStreamableHttpControllerTest {
 	void toolsCallWithoutArguments() throws Exception {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		String rawRpc = "{\"jsonrpc\":\"2.0\",\"id\":\"na-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"postgres__run_query\",\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{\"tools\":{}}}}}";
 		McpResolvedRoute route = new McpResolvedRoute(postgresServer, "run_query", "postgres__run_query");
@@ -949,6 +970,7 @@ class McpStreamableHttpControllerTest {
 	void toolsCallUpstreamServerError() throws Exception {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		String rawRpc = "{\"jsonrpc\":\"2.0\",\"id\":\"e-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"postgres__run_query\",\"arguments\":{\"sql\":\"SELECT 1\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{\"tools\":{}}}}}";
 		McpResolvedRoute route = new McpResolvedRoute(postgresServer, "run_query", "postgres__run_query");

@@ -146,6 +146,7 @@ class McpAdversarialCoverageTest {
 	void toolsCallValidationBranches() {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		// 1. Missing tool name
 		ResponseEntity<String> resp1 = controller.handleStreamableHttp(
@@ -200,6 +201,7 @@ class McpAdversarialCoverageTest {
 	void toolsCallGuardrailAndCircuitBranches() {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		McpResolvedRoute route = new McpResolvedRoute(serverConfig, "query", "test_server__query");
 		when(router.resolveToolRoute("test_server__query")).thenReturn(Optional.of(route));
@@ -253,6 +255,7 @@ class McpAdversarialCoverageTest {
 	void toolsCallUpstreamFailureBranches() throws Exception {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		McpResolvedRoute route = new McpResolvedRoute(serverConfig, "query", "test_server__query");
 		when(router.resolveToolRoute("test_server__query")).thenReturn(Optional.of(route));
@@ -320,6 +323,7 @@ class McpAdversarialCoverageTest {
 	void toolsCallAdditionalEdgeCases() throws Exception {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		// 1. Non-object params (rejected at _meta validation: no params object means no _meta)
 		ResponseEntity<String> resp1 = controller.handleStreamableHttp(

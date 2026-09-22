@@ -48,6 +48,7 @@ class ModelControllerTest {
 		keys = mock(KeyManagementService.class);
 		controller = new ModelController(gatewayProperties, keys);
 		when(keys.findByHash(any())).thenReturn(Optional.of(key(true)));
+		when(keys.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 	}
 
 	@Test
@@ -79,6 +80,7 @@ class ModelControllerTest {
 				.isEqualTo(HttpStatus.UNAUTHORIZED);
 
 		when(keys.findByHash(any())).thenReturn(Optional.of(key(false)));
+		when(keys.isUsable(any(VirtualApiKey.class))).thenReturn(false);
 		assertThat(controller.listModels(bearerRequest("gw-off")).getStatusCode())
 				.isEqualTo(HttpStatus.UNAUTHORIZED);
 	}

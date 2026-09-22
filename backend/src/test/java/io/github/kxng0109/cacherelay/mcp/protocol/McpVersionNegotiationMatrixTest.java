@@ -44,6 +44,7 @@ import java.util.stream.Stream;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("MCP version-negotiation matrix and batch rejection")
@@ -144,6 +145,7 @@ class McpVersionNegotiationMatrixTest {
 	private MockHttpServletRequest keyedRequest() {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 		return request;
 	}
 

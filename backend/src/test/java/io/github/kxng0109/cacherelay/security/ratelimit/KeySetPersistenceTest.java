@@ -14,6 +14,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -72,7 +73,7 @@ class KeySetPersistenceTest {
 
 		KeyManagementService.CreatedKey created = service.createKey(
 				"owner", "name", 5, 50, Set.of(), Set.of(), Set.of(), Set.of(),
-				nasty, Set.of(), Set.of(), Set.of(), null, null);
+				nasty, Set.of(), Set.of(), Set.of(), null, null, Set.of(), Set.of(), UUID.randomUUID());
 
 		@SuppressWarnings("unchecked")
 		ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
@@ -147,7 +148,7 @@ class KeySetPersistenceTest {
 		when(template.<String, String>opsForSet()).thenReturn(mock(SetOperations.class));
 		KeyManagementService.CreatedKey created = new KeyManagementService(template).createKey(
 				"owner", "name", 5, 50, Set.of(), Set.of(), Set.of(), Set.of(),
-				resources, Set.of(), Set.of(), Set.of(), null, null);
+				resources, Set.of(), Set.of(), Set.of(), null, null, Set.of(), Set.of(), UUID.randomUUID());
 		@SuppressWarnings("unchecked")
 		ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
 		org.mockito.Mockito.verify(hashes).putAll(

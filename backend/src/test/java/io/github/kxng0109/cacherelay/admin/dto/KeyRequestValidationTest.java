@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.HashSet;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -62,7 +63,8 @@ class KeyRequestValidationTest {
 	@DisplayName("null sets default to empty without violations")
 	void nullSetsDefault() {
 		CreateKeyRequest request = new CreateKeyRequest(
-				"owner", "name", 60, 1000, null, null, null, null, null, null, null, null, null, null);
+				"owner", "name", 60, 1000, null, null, null, null, null, null, null, null, null, null,
+				Set.of(), Set.of(), UUID.randomUUID());
 
 		assertThat(validator.validate(request)).isEmpty();
 		assertThat(request.allowedModels()).isEmpty();
@@ -75,7 +77,8 @@ class KeyRequestValidationTest {
 		CreateKeyRequest request = new CreateKeyRequest(
 				"owner", "name", 60, 1000, patterns(64, "model-"), Set.of("openai"),
 				Set.of("postgres__*"), Set.of(), Set.of("postgres://*"), Set.of(),
-				Set.of("server__review_*"), Set.of(), null, null);
+				Set.of("server__review_*"), Set.of(), null, null,
+				Set.of(), Set.of(), UUID.randomUUID());
 
 		Set<ConstraintViolation<CreateKeyRequest>> violations = validator.validate(request);
 		assertThat(violations).isEmpty();
@@ -90,7 +93,7 @@ class KeyRequestValidationTest {
 				new BootstrapKey(
 						"owner", "name", "gw-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 5, 50,
 						oversized, Set.of(), Set.of(), Set.of(), Set.of(), Set.of(),
-						Set.of(), Set.of(), null);
+						Set.of(), Set.of(), null, null);
 
 		assertThat(validator.validate(key)).isNotEmpty();
 	}

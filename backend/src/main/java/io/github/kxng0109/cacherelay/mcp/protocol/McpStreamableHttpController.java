@@ -136,7 +136,7 @@ public class McpStreamableHttpController {
 		}
 
 		VirtualApiKey apiKey = resolveApiKey(httpRequest);
-		if (apiKey == null || !apiKey.enabled()) {
+		if (!keyManagementService.isUsable(apiKey)) {
 			return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
 			                     .body("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32603,\"message\":\"Unauthorized: Invalid or disabled API key\"}}");
 		}
@@ -273,7 +273,7 @@ public class McpStreamableHttpController {
 		// The chain passes MCP through (delegated auth): every stream must still prove a key, otherwise an
 		// unauthenticated caller could hold emitters and sender threads open.
 		VirtualApiKey streamKey = resolveApiKey(httpRequest);
-		if (streamKey == null || !streamKey.enabled()) {
+		if (!keyManagementService.isUsable(streamKey)) {
 			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid or disabled API key");
 		}
 

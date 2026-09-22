@@ -5,6 +5,9 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.time.Instant;
 import java.util.Set;
+import java.util.UUID;
+
+import org.jspecify.annotations.Nullable;
 
 /**
  * Single-exposure response containing the generated plaintext key along with its public metadata.
@@ -24,6 +27,8 @@ import java.util.Set;
  * @param createdAt        creation timestamp
  * @param allowedAgents    allowed A2A agents
  * @param deniedAgents     denied A2A agents
+ * @param ownerUserId      owning account id, may be {@code null} for legacy rows
+ * @param ownerUsername    owning account login name, may be {@code null} when unresolvable
  */
 @Schema(name = "CreatedKeyResponse", description = "Single-exposure response containing plaintext virtual key and registered metadata")
 public record CreatedKeyResponse(
@@ -88,7 +93,13 @@ public record CreatedKeyResponse(
 		Set<String> allowedAgents,
 
 		@Schema(description = "Denied A2A agents", example = "[\"prod-*\"]")
-		Set<String> deniedAgents
+		Set<String> deniedAgents,
+
+		@Schema(description = "Owning account id, null for legacy rows")
+		@Nullable UUID ownerUserId,
+
+		@Schema(description = "Owning account login name, null when unresolvable")
+		@Nullable String ownerUsername
 ) {
 	public CreatedKeyResponse(
 			String keyId,
@@ -124,7 +135,9 @@ public record CreatedKeyResponse(
 				createdAt,
 				Set.of(CacheScope.TENANT),
 				Set.of(),
-				Set.of()
+				Set.of(),
+				null,
+				null
 		);
 	}
 
@@ -167,7 +180,9 @@ public record CreatedKeyResponse(
 				createdAt,
 				Set.of(CacheScope.TENANT),
 				Set.of(),
-				Set.of()
+				Set.of(),
+				null,
+				null
 		);
 	}
 
@@ -214,7 +229,9 @@ public record CreatedKeyResponse(
 				createdAt,
 				Set.of(CacheScope.TENANT),
 				Set.of(),
-				Set.of()
+				Set.of(),
+				null,
+				null
 		);
 	}
 }

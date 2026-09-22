@@ -196,6 +196,7 @@ class McpFullCoverageBranchTest {
 				Instant.now()
 		);
 		req.setAttribute("virtualApiKey", apiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 		assertThat(controller.handleStreamableHttp("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"\"}", null, null, req)
 		                     .getBody())
 				.contains("-32602").contains("Missing required _meta");
@@ -484,6 +485,7 @@ class McpFullCoverageBranchTest {
 		);
 		MockHttpServletRequest req = new MockHttpServletRequest();
 		req.setAttribute("virtualApiKey", apiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		McpResolvedRoute route = new McpResolvedRoute(srv, "tool", "srv__tool");
 		when(router.resolveToolRoute("srv__tool")).thenReturn(Optional.of(route));

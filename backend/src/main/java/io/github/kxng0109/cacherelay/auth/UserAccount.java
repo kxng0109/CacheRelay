@@ -53,6 +53,23 @@ public class UserAccount {
 	}
 
 	/**
+	 * Marks the account disabled. Key tombstones created while disabled stay
+	 * terminal: re-enabling never resurrects keys.
+	 */
+	public void disable() {
+		this.disabled = true;
+		this.updatedAt = Instant.now();
+	}
+
+	/**
+	 * Marks the account enabled. Previously tombstoned keys stay revoked.
+	 */
+	public void enable() {
+		this.disabled = false;
+		this.updatedAt = Instant.now();
+	}
+
+	/**
 	 * Creates an account with a fresh identifier.
 	 *
 	 * @param username     login name, unique case-insensitively

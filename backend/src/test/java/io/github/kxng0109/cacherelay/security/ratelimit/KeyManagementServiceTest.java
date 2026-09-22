@@ -447,7 +447,9 @@ class KeyManagementServiceTest {
 		KeyManagementService service = newService();
 
 		KeyManagementService.CreatedKey created = service.createKey(
-				"owner-test", "key-name", 60, 5000, Set.of("m1"), Set.of("p1")
+				"owner-test", "key-name", 60, 5000, Set.of("m1"), Set.of("p1"),
+				Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(),
+				null, null, Set.of(), Set.of(), UUID.randomUUID()
 		);
 
 		assertNotNull(created);
@@ -521,7 +523,8 @@ class KeyManagementServiceTest {
 
 		// Create key with tools
 		KeyManagementService.CreatedKey createdTools = service.createKey(
-				"owner", "name", 10, 100, Set.of("m1"), Set.of("p1"), Set.of("postgres__*"), Set.of("*:delete_*")
+				"owner", "name", 10, 100, Set.of("m1"), Set.of("p1"), Set.of("postgres__*"), Set.of("*:delete_*"),
+				Set.of(), Set.of(), Set.of(), Set.of(), null, null, Set.of(), Set.of(), UUID.randomUUID()
 		);
 		assertNotNull(createdTools);
 		assertEquals(Set.of("postgres__*"), createdTools.key().allowedTools());
@@ -569,7 +572,7 @@ class KeyManagementServiceTest {
 		KeyManagementService.CreatedKey created = service.createKey(
 				"owner", "name", 5, 50, Set.of(), Set.of(), Set.of(), Set.of(),
 				Set.of("postgres://*"), Set.of("postgres://secret/*"),
-				Set.of(), Set.of("admin_*"));
+				Set.of(), Set.of("admin_*"), null, null, Set.of(), Set.of(), UUID.randomUUID());
 
 		assertEquals(Set.of("postgres://*"), created.key().allowedResources());
 		assertEquals(Set.of("postgres://secret/*"), created.key().deniedResources());
@@ -607,7 +610,8 @@ class KeyManagementServiceTest {
 
 		KeyManagementService.CreatedKey created = service.createKey(
 				"owner", "name", 5, 50, Set.of(), Set.of(), Set.of(), Set.of(),
-				Set.of(), Set.of(), Set.of(), Set.of(), Boolean.FALSE);
+				Set.of(), Set.of(), Set.of(), Set.of(), Boolean.FALSE, null,
+				Set.of(), Set.of(), UUID.randomUUID());
 
 		assertFalse(created.key().injectionBlock());
 		@SuppressWarnings("unchecked")
@@ -651,7 +655,8 @@ class KeyManagementServiceTest {
 
 		KeyManagementService.CreatedKey created = service.createKey(
 				"owner", "name", 5, 50, Set.of(), Set.of(), Set.of(), Set.of(),
-				Set.of(), Set.of(), Set.of(), Set.of(), Boolean.TRUE);
+				Set.of(), Set.of(), Set.of(), Set.of(), Boolean.TRUE, null,
+				Set.of(), Set.of(), UUID.randomUUID());
 
 		assertTrue(created.key().injectionBlock());
 		@SuppressWarnings("unchecked")

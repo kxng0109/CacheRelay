@@ -1,6 +1,8 @@
 package io.github.kxng0109.cacherelay.mcp.protocol;
 
 import com.redis.testcontainers.RedisContainer;
+import io.github.kxng0109.cacherelay.auth.UserAccount;
+import io.github.kxng0109.cacherelay.auth.UserAccountRepository;
 import io.github.kxng0109.cacherelay.security.ratelimit.KeyManagementService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -62,6 +64,9 @@ class McpChainTest {
 	@Autowired
 	private KeyManagementService keyManagementService;
 
+	@Autowired
+	private UserAccountRepository userAccounts;
+
 	@Test
 	@DisplayName("tools/list without a key is rejected by the controller, not the chain")
 	void toolsListWithoutKeyRejected() throws Exception {
@@ -81,8 +86,11 @@ class McpChainTest {
 	@Test
 	@DisplayName("tools/list with a valid key reaches the catalog")
 	void toolsListWithValidKeyReachesCatalog() throws Exception {
+		UserAccount owner = userAccounts.save(new UserAccount("mcp-chain-owner", null, null, false));
 		String plaintext = keyManagementService
-				.createKey("mcp-chain-owner", "mcp-chain", 0, 0, Set.of(), Set.of())
+				.createKey("mcp-chain-owner", "mcp-chain", 0, 0, Set.of(), Set.of(), Set.of(), Set.of(),
+						Set.of(), Set.of(), Set.of(), Set.of(), null, null,
+						Set.of(), Set.of(), owner.getId())
 				.plaintextKey();
 		HttpResponse<String> response = post("/v1/mcp", TOOLS_LIST, "Bearer " + plaintext);
 		assertThat(response.statusCode()).as("valid-key status").isEqualTo(200);

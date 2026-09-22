@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -44,7 +45,10 @@ class AdminKeyControllerTest {
 
 		when(keyManagementService.createKey(
 				eq("owner-1"), eq("test-key"), eq(60), eq(1000),
-				eq(Set.of("gpt-4o")), eq(Set.of("openai"))
+				eq(Set.of("gpt-4o")), eq(Set.of("openai")),
+				eq(Set.of()), eq(Set.of()), eq(Set.of()), eq(Set.of()),
+				eq(Set.of()), eq(Set.of()), eq(null), eq(Set.of(CacheScope.TENANT)),
+				eq(Set.of()), eq(Set.of()), eq(null)
 		)).thenReturn(created);
 
 		CreateKeyRequest request = new CreateKeyRequest(
@@ -74,9 +78,11 @@ class AdminKeyControllerTest {
 				true, Instant.now()
 		);
 		when(keyManagementService.createKey(
-				"owner-1", "test-key-tools", 60, 1000,
-				Set.of("gpt-4o"), Set.of("openai"),
-				Set.of("postgres__*"), Set.of("*:delete_*")
+				eq("owner-1"), eq("test-key-tools"), eq(60), eq(1000),
+				eq(Set.of("gpt-4o")), eq(Set.of("openai")),
+				eq(Set.of("postgres__*")), eq(Set.of("*:delete_*")),
+				eq(Set.of()), eq(Set.of()), eq(Set.of()), eq(Set.of()),
+				eq(null), eq(Set.of(CacheScope.TENANT)), eq(Set.of()), eq(Set.of()), eq(null)
 		)).thenReturn(new KeyManagementService.CreatedKey(hash, "gw-secretTools", keyWithTools));
 
 		ResponseEntity<CreatedKeyResponse> responseTools = controller.createKey(requestWithTools);
@@ -99,11 +105,12 @@ class AdminKeyControllerTest {
 				true, Instant.now()
 		);
 		when(keyManagementService.createKey(
-				"owner-1", "vis-key", 60, 1000,
-				Set.of(), Set.of(),
-				Set.of(), Set.of(),
-				Set.of("postgres://*"), Set.of(),
-				Set.of(), Set.of("admin_*")
+				eq("owner-1"), eq("vis-key"), eq(60), eq(1000),
+				eq(Set.of()), eq(Set.of()),
+				eq(Set.of()), eq(Set.of()),
+				eq(Set.of("postgres://*")), eq(Set.of()),
+				eq(Set.of()), eq(Set.of("admin_*")),
+				eq(null), eq(Set.of(CacheScope.TENANT)), eq(Set.of()), eq(Set.of()), eq(null)
 		)).thenReturn(new KeyManagementService.CreatedKey(hash, "gw-secretVis1", metadata));
 
 		CreateKeyRequest request = new CreateKeyRequest(
@@ -140,7 +147,7 @@ class AdminKeyControllerTest {
 				eq(Set.of()), eq(Set.of()),
 				eq(Set.of()), eq(Set.of()),
 				eq(Set.of()), eq(Set.of()),
-				eq(false), eq(Set.of(CacheScope.TENANT))
+				eq(false), eq(Set.of(CacheScope.TENANT)), eq(Set.of()), eq(Set.of()), eq(null)
 		)).thenReturn(new KeyManagementService.CreatedKey(hash, "gw-secretFlag1", metadata));
 
 		CreateKeyRequest request = new CreateKeyRequest(
@@ -178,7 +185,8 @@ class AdminKeyControllerTest {
 				eq(null), eq(null),
 				eq(null), eq(null),
 				eq(null), eq(null),
-				eq(false), eq(null), eq(null)
+				eq(false), eq(null), eq(null),
+				eq(null), eq(null)
 		)).thenReturn(Optional.of(metadata));
 
 		UpdateKeyRequest request = new UpdateKeyRequest(
@@ -214,7 +222,8 @@ class AdminKeyControllerTest {
 				eq(Set.of()), eq(Set.of()),
 				eq(Set.of("postgres__*")), eq(Set.of()),
 				eq(Set.of()), eq(Set.of("postgres://secret/*")),
-				eq(Set.of("review_*")), eq(Set.of())
+				eq(Set.of("review_*")), eq(Set.of()),
+				eq(null), eq(Set.of(CacheScope.TENANT)), eq(Set.of()), eq(Set.of()), eq(null)
 		)).thenReturn(new KeyManagementService.CreatedKey(hash, "gw-secretCombo1", metadata));
 
 		CreateKeyRequest create = new CreateKeyRequest(
@@ -237,7 +246,8 @@ class AdminKeyControllerTest {
 				eq(null), eq(null),
 				eq(Set.of("postgres://*")), eq(Set.of()),
 				eq(null), eq(null),
-				eq(null)
+				eq(null), eq(null), eq(null),
+				eq(null), eq(null)
 		)).thenReturn(Optional.of(metadata));
 
 		UpdateKeyRequest update = new UpdateKeyRequest(
@@ -273,7 +283,7 @@ class AdminKeyControllerTest {
 				eq(Set.of("postgres__*")), eq(Set.of()),
 				eq(Set.of()), eq(Set.of()),
 				eq(Set.of()), eq(Set.of()),
-				eq(true), eq(Set.of(CacheScope.TENANT))
+				eq(true), eq(Set.of(CacheScope.TENANT)), eq(Set.of()), eq(Set.of()), eq(null)
 		)).thenReturn(new KeyManagementService.CreatedKey(hash, "gw-secretCombo2", metadata));
 
 		CreateKeyRequest request = new CreateKeyRequest(
@@ -311,7 +321,8 @@ class AdminKeyControllerTest {
 				eq(Set.of()), eq(Set.of()),
 				eq(Set.of()), eq(Set.of()),
 				eq(Set.of()), eq(Set.of()),
-				eq(null), eq(Set.of(CacheScope.TENANT, CacheScope.GLOBAL))
+				eq(null), eq(Set.of(CacheScope.TENANT, CacheScope.GLOBAL)),
+				eq(Set.of()), eq(Set.of()), eq(null)
 		)).thenReturn(new KeyManagementService.CreatedKey(hash, "gw-secretScope1", metadata));
 
 		CreateKeyRequest request = new CreateKeyRequest(
@@ -346,7 +357,9 @@ class AdminKeyControllerTest {
 		when(keyManagementService.createKey(
 				eq("owner-1"), eq("denied-key"), eq(60), eq(1000),
 				eq(Set.of()), eq(Set.of()),
-				eq(Set.of()), eq(Set.of("*:delete_*"))
+				eq(Set.of()), eq(Set.of("*:delete_*")),
+				eq(Set.of()), eq(Set.of()), eq(Set.of()), eq(Set.of()),
+				eq(null), eq(Set.of(CacheScope.TENANT)), eq(Set.of()), eq(Set.of()), eq(null)
 		)).thenReturn(new KeyManagementService.CreatedKey(hash, "gw-secretDenied1", metadata));
 
 		CreateKeyRequest request = new CreateKeyRequest(
@@ -379,7 +392,8 @@ class AdminKeyControllerTest {
 				eq(Set.of()), eq(Set.of()),
 				eq(Set.of()), eq(Set.of()),
 				eq(Set.of()), eq(Set.of()),
-				eq(Set.of("server__review_*")), eq(Set.of())
+				eq(Set.of("server__review_*")), eq(Set.of()),
+				eq(null), eq(Set.of(CacheScope.TENANT)), eq(Set.of()), eq(Set.of()), eq(null)
 		)).thenReturn(new KeyManagementService.CreatedKey(hash, "gw-secretPrompts1", metadata));
 
 		CreateKeyRequest request = new CreateKeyRequest(
@@ -416,7 +430,8 @@ class AdminKeyControllerTest {
 				eq(null), eq(null),
 				eq(null), eq(null),
 				eq(null), eq(null),
-				eq(null), eq(Set.of(CacheScope.TENANT, CacheScope.GLOBAL)), eq(null)
+				eq(null), eq(Set.of(CacheScope.TENANT, CacheScope.GLOBAL)), eq(null),
+				eq(null), eq(null)
 		)).thenReturn(Optional.of(metadata));
 
 		UpdateKeyRequest request = new UpdateKeyRequest(
@@ -454,7 +469,8 @@ class AdminKeyControllerTest {
 				eq(Set.of("postgres__*")), eq(Set.of()),
 				eq(null), eq(null),
 				eq(null), eq(null),
-				eq(false), eq(null), eq(null)
+				eq(false), eq(null), eq(null),
+				eq(null), eq(null)
 		)).thenReturn(Optional.of(metadata));
 
 		UpdateKeyRequest request = new UpdateKeyRequest(
@@ -492,7 +508,8 @@ class AdminKeyControllerTest {
 				eq(null), eq(null),
 				eq(Set.of("postgres://*")), eq(Set.of()),
 				eq(null), eq(null),
-				eq(null), eq(Set.of(CacheScope.GLOBAL)), eq(null)
+				eq(null), eq(Set.of(CacheScope.GLOBAL)), eq(null),
+				eq(null), eq(null)
 		)).thenReturn(Optional.of(metadata));
 
 		UpdateKeyRequest request = new UpdateKeyRequest(
@@ -582,7 +599,9 @@ class AdminKeyControllerTest {
 
 		when(keyManagementService.updateKey(
 				eq(hash), eq("renamed-key"), eq(120), eq(2000),
-				eq(Set.of("claude-3-5")), eq(Set.of("anthropic")), eq(true)
+				eq(Set.of("claude-3-5")), eq(Set.of("anthropic")),
+				eq(null), eq(null), eq(null), eq(null), eq(null), eq(null),
+				eq(null), eq(null), eq(null), eq(null), eq(true)
 		)).thenReturn(Optional.of(updated));
 
 		UpdateKeyRequest request = new UpdateKeyRequest(
@@ -612,7 +631,8 @@ class AdminKeyControllerTest {
 				eq(hash), eq("renamed-key-tools"), eq(120), eq(2000),
 				eq(Set.of()), eq(Set.of()),
 				eq(Set.of("postgres__*")), eq(Set.of("*:delete_*")),
-				eq(true)
+				eq(null), eq(null), eq(null), eq(null), eq(null), eq(null),
+				eq(null), eq(null), eq(true)
 		)).thenReturn(Optional.of(updatedWithTools));
 
 		ResponseEntity<KeyResponse> responseTools = controller.updateKey(hash.hex(), requestTools);
@@ -639,5 +659,21 @@ class AdminKeyControllerTest {
 
 		ResponseEntity<Void> notFound = controller.deleteKey(missingHash.hex());
 		assertThat(notFound.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+	}
+
+	@Test
+	@DisplayName("reassignment to an unknown owner answers 404")
+	void reassignUnknownOwnerAnswers404() {
+		SHA256Hash hash = SHA256Hash.fromRawKey("gw-reassign1");
+		UUID ghost = UUID.randomUUID();
+		when(keyManagementService.assignOwner(eq(hash), eq(ghost))).thenReturn(Optional.empty());
+
+		UpdateKeyRequest request = new UpdateKeyRequest(
+				null, null, null, null, null, null, null, null, null, null,
+				null, null, null, null, null, null, ghost);
+
+		ResponseEntity<KeyResponse> response = controller.updateKey(hash.hex(), request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
 	}
 }

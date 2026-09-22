@@ -624,11 +624,16 @@ curl -N http://localhost:8080/v1/chat/completions \
   -d '{"model":"gpt-56-luna","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
+Session owners may act as themselves without handling key material: send the session JWT as the
+Bearer token with `X-Act-As-Key: default` (or an owned key hash hex) to execute with an owned key.
+Quotas burn on the key and ledger attributes to the account. Every failure answers the same 401 as
+an unknown key.
+
 Status codes:
 
 - `200` the stream started and is being relayed.
 - `400` the request body is empty, malformed, or missing its model.
-- `401` the key is missing, malformed, or unknown.
+- `401` the key is missing, malformed, or unknown. Revoked, unowned, or orphaned keys answer byte-identical 401s (no existence oracle); reversibly disabled keys answer `403`.
 - `403` the key is disabled or the requested model is not allowed for it.
 - `404` the requested model has no configured alias.
 - `413` the request body exceeds the configured limit.
@@ -701,6 +706,15 @@ immediately if the old shipped default was ever used; generate fresh with `opens
   (the resumption `APPROVED` literal is never disturbed).
 - **`PATCH /v1/admin/keys/{keyId}`**: Dynamically updates name, RPM/TPM quotas, allowlists, or enabled status.
 - **`DELETE /v1/admin/keys/{keyId}`**: Permanently deletes a virtual API key and purges caches.
+- **`POST /v1/admin/keys/{keyId}/revoke`**: Sets the irreversible revocation tombstone (`200`;
+  `404` unknown). Nothing - not even an admin - can un-revoke a key.
+- Every key requires an active owning account (`ownerUserId` on create, reassignable via `PATCH`;
+  unknown/disabled owners are `400`). User deactivation suspends access; user deletion terminally
+  revokes every attached key first.
+- **`PUT /v1/admin/users/{id}/disabled`**, **`DELETE /v1/admin/users/{id}`**: Account lifecycle
+  (`204`; `404` unknown). Deletion cascades terminal revocation before removing the row.
+- **`/v1/me/keys`**: Session-authenticated self-service - list owned key metadata (never secrets),
+  select the act-as-self default, and terminally revoke owned keys. Foreign keys read as absent.
 - **`GET /v1/admin/models`**: Lists every effective model alias with a `source` flag (`file` = configuration-bound
   and read-only, `database` = admin-managed and editable).
 - **`POST /v1/admin/models`**: Creates a database-managed model alias (`name`, provider `chain`, `strategy`).

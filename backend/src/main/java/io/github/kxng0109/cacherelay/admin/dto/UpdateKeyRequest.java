@@ -8,6 +8,7 @@ import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Optional fields for updating a virtual API key.
@@ -27,6 +28,7 @@ import java.util.Set;
  * @param enabled          new enabled state (or null to preserve)
  * @param allowedAgents    new allowed A2A agents (or null to preserve)
  * @param deniedAgents     new denied A2A agents (or null to preserve)
+ * @param ownerUserId      new owning account (or null to preserve; reassignment validates activity)
  */
 @Schema(name = "UpdateKeyRequest", description = "Patch payload for modifying virtual key quotas, allowlists, or enabled status")
 public record UpdateKeyRequest(
@@ -98,7 +100,10 @@ public record UpdateKeyRequest(
 		@Schema(description = "New denied A2A agents set (optional, null = keep)", example = "[\"prod-*\"]")
 		@Size(max = PolicyBounds.MAX_PATTERNS, message = "at most 64 entries per policy set")
 		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH, message = "pattern too long (max 256)")
-				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> deniedAgents
+				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN, message = "pattern must not be blank") String> deniedAgents,
+
+		@Schema(description = "New owning account id (optional, null = keep)", example = "3fa85f64-5717-4562-b3fc-2c963f66afa6")
+		UUID ownerUserId
 ) {
 	/**
 	 * Backwards-compatible constructor omitting the A2A agent policy sets (null = keep).
@@ -121,7 +126,7 @@ public record UpdateKeyRequest(
 	) {
 		this(name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
 				deniedTools, allowedResources, deniedResources, allowedPrompts, deniedPrompts,
-				injectionBlock, allowedCacheScopes, enabled, null, null);
+				injectionBlock, allowedCacheScopes, enabled, null, null, null);
 	}
 
 	public UpdateKeyRequest(
@@ -133,7 +138,7 @@ public record UpdateKeyRequest(
 			Boolean enabled
 	) {
 		this(name, rpmLimit, tpmLimit, allowedModels, allowedProviders, null, null, null, null,
-				null, null, null, null, enabled, null, null);
+				null, null, null, null, enabled, null, null, null);
 	}
 
 	/**
@@ -150,7 +155,7 @@ public record UpdateKeyRequest(
 			Boolean enabled
 	) {
 		this(name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
-				deniedTools, null, null, null, null, null, null, enabled, null, null);
+				deniedTools, null, null, null, null, null, null, enabled, null, null, null);
 	}
 
 	/**
@@ -173,7 +178,7 @@ public record UpdateKeyRequest(
 	) {
 		this(name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
 				deniedTools, allowedResources, deniedResources, allowedPrompts, deniedPrompts,
-				injectionBlock, null, enabled, null, null);
+				injectionBlock, null, enabled, null, null, null);
 	}
 
 	/**
@@ -195,6 +200,6 @@ public record UpdateKeyRequest(
 	) {
 		this(name, rpmLimit, tpmLimit, allowedModels, allowedProviders, allowedTools,
 				deniedTools, allowedResources, deniedResources, allowedPrompts, deniedPrompts,
-				null, null, enabled, null, null);
+				null, null, enabled, null, null, null);
 	}
 }

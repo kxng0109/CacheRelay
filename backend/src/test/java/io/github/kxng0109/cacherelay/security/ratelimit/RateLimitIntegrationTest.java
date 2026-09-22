@@ -1,6 +1,9 @@
 package io.github.kxng0109.cacherelay.security.ratelimit;
 
 import com.redis.testcontainers.RedisContainer;
+import io.github.kxng0109.cacherelay.auth.UserAccount;
+import io.github.kxng0109.cacherelay.auth.UserAccountRepository;
+import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
 import io.github.kxng0109.cacherelay.contracts.BootstrapKey;
 import io.github.kxng0109.cacherelay.contracts.GatewayProperties;
 import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
@@ -97,6 +100,15 @@ class RateLimitIntegrationTest {
 	private KeyManagementService keyManagementService;
 
 	@Autowired
+	private UserAccountRepository userAccounts;
+
+	private void ensureUser(String username) {
+		if (userAccounts.findByUsernameIgnoreCase(username).isEmpty()) {
+			userAccounts.save(new UserAccount(username, null, null, false));
+		}
+	}
+
+	@Autowired
 	private StringRedisTemplate redisTemplate;
 
 	@Autowired
@@ -165,13 +177,13 @@ class RateLimitIntegrationTest {
 	}
 
 	@Test
-	@DisplayName("disabled keys are rejected with 403")
+	@DisplayName("terminally revoked keys are indistinguishable from unknown keys")
 	void rejectsDisabledKey() throws Exception {
 		String key = seedKey("gw-dddddddddddddddddddddddddddddddd", 100_000, 100_000, Set.of(), false);
 
 		HttpResponse<String> response = post(key, body("gpt-4o", 100));
-		assertThat(response.statusCode()).isEqualTo(403);
-		assertThat(errorCode(response)).isEqualTo("KEY_DISABLED");
+		assertThat(response.statusCode()).isEqualTo(401);
+		assertThat(errorCode(response)).isEqualTo("KEY_NOT_FOUND");
 	}
 
 	@Test
@@ -214,9 +226,12 @@ class RateLimitIntegrationTest {
 	@Test
 	@DisplayName("concurrent boots converge on one deterministic bootstrap record")
 	void concurrentBootsConvergeOnSingleRecord() throws Exception {
+		ensureUser("race-owner");
 		GatewayProperties properties = new GatewayProperties();
 		properties.setBootstrapKeys(List.of(new BootstrapKey(
-				"race-owner", "race-key", "gw-rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr", 7, 700, Set.of(), Set.of())));
+				"race-owner", "race-key", "gw-rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr", 7, 700,
+				Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(),
+				Set.of(CacheScope.TENANT), "race-owner")));
 		int booters = 8;
 		ExecutorService pool = Executors.newFixedThreadPool(booters);
 		CountDownLatch ready = new CountDownLatch(booters);
@@ -255,9 +270,12 @@ class RateLimitIntegrationTest {
 	// ---------------------------------------------------------------------
 
 	private String seedKey(String plaintext, int rpm, int tpm, Set<String> models, boolean enabled) {
+		ensureUser("it-owner");
 		GatewayProperties properties = new GatewayProperties();
 		properties.setBootstrapKeys(List.of(new BootstrapKey(
-				"it-owner", "integration-test", plaintext, rpm, tpm, models, Set.of())));
+				"it-owner", "integration-test", plaintext, rpm, tpm, models, Set.of(),
+				Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(),
+				"it-owner")));
 		keyManagementService.seedBootstrapKeys(properties);
 		if (!enabled) {
 			keyManagementService.revokeKey(SHA256Hash.fromRawKey(plaintext));

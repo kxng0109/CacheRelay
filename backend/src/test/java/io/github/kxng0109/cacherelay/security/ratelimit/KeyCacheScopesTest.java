@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -74,7 +75,7 @@ class KeyCacheScopesTest {
 		KeyManagementService.CreatedKey created = service.createKey(
 				"owner", "name", 5, 50, Set.of(), Set.of(), Set.of(), Set.of(),
 				Set.of(), Set.of(), Set.of(), Set.of(), null,
-				Set.of(CacheScope.GLOBAL, CacheScope.TENANT));
+				Set.of(CacheScope.GLOBAL, CacheScope.TENANT), Set.of(), Set.of(), UUID.randomUUID());
 
 		assertEquals(Set.of(CacheScope.GLOBAL, CacheScope.TENANT), created.key().allowedCacheScopes());
 		@SuppressWarnings("unchecked")
@@ -89,7 +90,7 @@ class KeyCacheScopesTest {
 
 		KeyManagementService.CreatedKey created = service.createKey(
 				"owner", "name", 5, 50, null, null, null, null,
-				null, null, null, null, null, null);
+				null, null, null, null, null, null, Set.of(), Set.of(), UUID.randomUUID());
 
 		assertTrue(created.key().allowedModels().isEmpty());
 		assertTrue(created.key().allowedCacheScopes().contains(CacheScope.TENANT));
@@ -170,7 +171,7 @@ class KeyCacheScopesTest {
 		BootstrapKey scoped = new BootstrapKey(
 				"owner", "name", "gw-ffffffffffffffffffffffffffffffff", 1, 1,
 				Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(),
-				Set.of(CacheScope.GLOBAL));
+				Set.of(CacheScope.GLOBAL), null);
 		when(redisTemplate.execute(any(), anyList(), any(Object[].class))).thenReturn(1L);
 
 		GatewayProperties properties = new GatewayProperties();

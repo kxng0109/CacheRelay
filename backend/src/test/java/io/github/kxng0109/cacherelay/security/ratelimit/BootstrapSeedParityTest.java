@@ -44,7 +44,7 @@ class BootstrapSeedParityTest {
 				Set.of("postgres__*"), Set.of("*:delete_*"),
 				Set.of("postgres://*"), Set.of("postgres://secret/*"),
 				Set.of("server__review_*"), Set.of("server__admin_*"),
-				Set.of(CacheScope.TENANT));
+				Set.of(CacheScope.TENANT), null);
 	}
 
 	@Test

@@ -11,6 +11,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.connection.PoolException;
+import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -22,10 +23,12 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
@@ -50,6 +53,7 @@ class KeyAuthFilterTest {
 	@BeforeEach
 	void setUp() {
 		filter = new KeyAuthFilter(kms, engine, objectMapper);
+		when(kms.isOwnerActive(any())).thenReturn(true);
 	}
 
 	// ---------------------------------------------------------------------
@@ -81,6 +85,130 @@ class KeyAuthFilterTest {
 				enabled,
 				Instant.parse("2026-08-28T00:00:00Z")
 		);
+	}
+
+	private static VirtualApiKey ownedKey(boolean enabled, boolean revoked, UUID owner) {
+		return new VirtualApiKey(
+				SHA256Hash.fromRawKey(VALID_KEY),
+				KeyAuthFilter.KEY_PREFIX,
+				OWNER,
+				"owned",
+				10,
+				1000,
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				true,
+				enabled,
+				Instant.parse("2026-08-28T00:00:00Z"),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				owner,
+				revoked
+		);
+	}
+
+	private static String chatBody() {
+		return "{\"model\":\"gpt-a\",\"messages\":[]}";
+	}
+
+	@Test
+	@DisplayName("revoked keys answer byte-identical 401s to unknown keys")
+	void revokedMatchesUnknown() throws Exception {
+		when(kms.findByHash(any())).thenReturn(Optional.empty());
+		MockHttpServletResponse unknown =
+				invoke(request("Bearer " + VALID_KEY, chatBody()), filter);
+
+		when(kms.findByHash(any())).thenReturn(Optional.of(ownedKey(false, true, UUID.randomUUID())));
+		MockHttpServletResponse revoked =
+				invoke(request("Bearer " + VALID_KEY, chatBody()), filter);
+
+		assertEquals(HttpStatus.UNAUTHORIZED.value(), unknown.getStatus());
+		assertEquals(unknown.getStatus(), revoked.getStatus());
+		assertEquals(unknown.getContentAsString(), revoked.getContentAsString());
+	}
+
+	@Test
+	@DisplayName("unowned keys answer byte-identical 401s to unknown keys")
+	void unownedMatchesUnknown() throws Exception {
+		when(kms.findByHash(any())).thenReturn(Optional.empty());
+		MockHttpServletResponse unknown =
+				invoke(request("Bearer " + VALID_KEY, chatBody()), filter);
+
+		when(kms.isOwnerActive(null)).thenReturn(false);
+		when(kms.findByHash(any())).thenReturn(Optional.of(ownedKey(true, false, null)));
+		MockHttpServletResponse unowned =
+				invoke(request("Bearer " + VALID_KEY, chatBody()), filter);
+
+		assertEquals(HttpStatus.UNAUTHORIZED.value(), unknown.getStatus());
+		assertEquals(unknown.getStatus(), unowned.getStatus());
+		assertEquals(unknown.getContentAsString(), unowned.getContentAsString());
+	}
+
+	@Test
+	@DisplayName("disabled-owner keys answer byte-identical 401s to unknown keys")
+	void disabledOwnerMatchesUnknown() throws Exception {
+		UUID owner = UUID.randomUUID();
+		when(kms.findByHash(any())).thenReturn(Optional.empty());
+		MockHttpServletResponse unknown =
+				invoke(request("Bearer " + VALID_KEY, chatBody()), filter);
+
+		when(kms.isOwnerActive(owner)).thenReturn(false);
+		when(kms.findByHash(any())).thenReturn(Optional.of(ownedKey(true, false, owner)));
+		MockHttpServletResponse orphaned =
+				invoke(request("Bearer " + VALID_KEY, chatBody()), filter);
+
+		assertEquals(HttpStatus.UNAUTHORIZED.value(), unknown.getStatus());
+		assertEquals(unknown.getStatus(), orphaned.getStatus());
+		assertEquals(unknown.getContentAsString(), orphaned.getContentAsString());
+	}
+
+	@Test
+	@DisplayName("act-as-self resolves the caller's key and proceeds identically")
+	void actAsSelfProceeds() throws Exception {
+		UUID owner = UUID.randomUUID();
+		VirtualApiKey owned = ownedKey(true, false, owner);
+		when(kms.resolveActAsSelf(eq("session-jwt"), eq("default"))).thenReturn(Optional.of(owned));
+		stubAllowed(10, 9, 1000, 999);
+		MockClientChain chain = new MockClientChain();
+		MockHttpServletResponse response = new MockHttpServletResponse();
+		MockHttpServletRequest mock = new MockHttpServletRequest("POST", PATH);
+		mock.setServletPath(PATH);
+		mock.setRequestURI(PATH);
+		mock.addHeader("Authorization", "Bearer session-jwt");
+		mock.addHeader(KeyAuthFilter.ACT_AS_KEY_HEADER, "default");
+		mock.setContent(chatBody().getBytes(StandardCharsets.UTF_8));
+		filter.doFilterInternal(new CachedBodyHttpServletRequest(mock), response, chain.chain());
+
+		assertEquals(200, response.getStatus());
+		assertNotNull(chain.chain().getRequest());
+	}
+
+	@Test
+	@DisplayName("failed act-as-self answers byte-identical 401s to unknown keys")
+	void actAsSelfFailureMatchesUnknown() throws Exception {
+		when(kms.findByHash(any())).thenReturn(Optional.empty());
+		MockHttpServletResponse unknown =
+				invoke(request("Bearer " + VALID_KEY, chatBody()), filter);
+
+		when(kms.resolveActAsSelf(eq("session-jwt"), eq("default"))).thenReturn(Optional.empty());
+		MockHttpServletRequest mock = new MockHttpServletRequest("POST", PATH);
+		mock.setServletPath(PATH);
+		mock.setRequestURI(PATH);
+		mock.addHeader("Authorization", "Bearer session-jwt");
+		mock.addHeader(KeyAuthFilter.ACT_AS_KEY_HEADER, "default");
+		mock.setContent(chatBody().getBytes(StandardCharsets.UTF_8));
+		MockHttpServletResponse denied =
+				invoke(new CachedBodyHttpServletRequest(mock), filter);
+
+		assertEquals(unknown.getStatus(), denied.getStatus());
+		assertEquals(unknown.getContentAsString(), denied.getContentAsString());
 	}
 
 	private static CachedBodyHttpServletRequest request(String authHeader, String jsonBody) throws IOException {

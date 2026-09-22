@@ -31,6 +31,9 @@ import java.util.Set;
  * @param allowedPrompts   empty means all visible
  * @param deniedPrompts    empty means none hidden
  * @param allowedCacheScopes cache isolation scopes (SEC-01; null or empty means TENANT only)
+ * @param ownerUsername    owning account username resolved at seed time; {@code null} seeds unowned
+ *                         (legacy/test scaffolding only — production seeds require it, see
+ *                         {@code KeyManagementService})
  */
 public record BootstrapKey(
 		String ownerId,
@@ -62,7 +65,8 @@ public record BootstrapKey(
 		@Size(max = PolicyBounds.MAX_PATTERNS)
 		Set<@Size(max = PolicyBounds.MAX_PATTERN_LENGTH)
 				@Pattern(regexp = PolicyBounds.NON_BLANK_PATTERN) String> deniedPrompts,
-		Set<CacheScope> allowedCacheScopes
+		Set<CacheScope> allowedCacheScopes,
+		String ownerUsername
 ) {
 	/**
 	 * Canonical constructor: stores immutable copies of the allow and deny lists so callers
@@ -83,7 +87,8 @@ public record BootstrapKey(
 			Set<String> deniedResources,
 			Set<String> allowedPrompts,
 			Set<String> deniedPrompts,
-			Set<CacheScope> allowedCacheScopes
+			Set<CacheScope> allowedCacheScopes,
+			String ownerUsername
 	) {
 		this.ownerId = ownerId;
 		this.name = name;
@@ -99,6 +104,7 @@ public record BootstrapKey(
 		this.allowedPrompts = allowedPrompts == null ? Set.of() : Set.copyOf(allowedPrompts);
 		this.deniedPrompts = deniedPrompts == null ? Set.of() : Set.copyOf(deniedPrompts);
 		this.allowedCacheScopes = VirtualApiKey.normalizeCacheScopes(allowedCacheScopes);
+		this.ownerUsername = ownerUsername;
 	}
 
 	/**
@@ -127,7 +133,8 @@ public record BootstrapKey(
 				Set.of(),
 				Set.of(),
 				Set.of(),
-				Set.of(CacheScope.TENANT)
+				Set.of(CacheScope.TENANT),
+				null
 		);
 	}
 
@@ -159,7 +166,8 @@ public record BootstrapKey(
 				Set.of(),
 				Set.of(),
 				Set.of(),
-				Set.of(CacheScope.TENANT)
+				Set.of(CacheScope.TENANT),
+				null
 		);
 	}
 }

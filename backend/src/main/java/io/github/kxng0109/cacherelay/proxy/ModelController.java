@@ -50,7 +50,7 @@ public class ModelController {
 	@GetMapping
 	public ResponseEntity<Map<String, Object>> listModels(HttpServletRequest request) {
 		VirtualApiKey apiKey = resolveApiKey(request);
-		if (apiKey == null || !apiKey.enabled()) {
+		if (!keyManagementService.isUsable(apiKey)) {
 			return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
 					.body(Map.of("error", Map.of("message", "Invalid API key", "code", "KEY_NOT_FOUND")));
 		}

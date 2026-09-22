@@ -178,7 +178,7 @@ public class A2aProxyController {
 		}
 
 		VirtualApiKey apiKey = resolveApiKey(httpRequest);
-		if (apiKey == null || !apiKey.enabled()) {
+		if (!keyManagementService.isUsable(apiKey)) {
 			return jsonRpc(HttpStatus.UNAUTHORIZED,
 					McpJsonRpcResponse.failure(null,
 							McpJsonRpcError.internalError("Unauthorized: Invalid or disabled API key")));
@@ -505,7 +505,7 @@ public class A2aProxyController {
 			return ResponseEntity.notFound().build();
 		}
 		VirtualApiKey apiKey = resolveApiKey(httpRequest);
-		if (apiKey == null || !apiKey.enabled()) {
+		if (!keyManagementService.isUsable(apiKey)) {
 			return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
 		}
 		Optional<A2aAgentConfig> resolved = agentRegistry.resolve(agentName);

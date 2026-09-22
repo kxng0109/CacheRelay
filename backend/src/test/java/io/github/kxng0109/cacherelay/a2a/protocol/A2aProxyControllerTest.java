@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 import io.github.kxng0109.cacherelay.a2a.config.A2aAgentConfig;
 import io.github.kxng0109.cacherelay.a2a.config.A2aGatewayProperties;
@@ -117,6 +118,7 @@ class A2aProxyControllerTest {
 		);
 		keyManagementService = mock(KeyManagementService.class);
 		when(keyManagementService.findByHash(any())).thenReturn(Optional.of(apiKey));
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		rateLimitEngine = mock(RateLimitEngine.class);
 
@@ -250,6 +252,7 @@ class A2aProxyControllerTest {
 				Set.of("other-*"), Set.of());
 		KeyManagementService restrictedKeys = mock(KeyManagementService.class);
 		when(restrictedKeys.findByHash(any())).thenReturn(Optional.of(restricted));
+		when(restrictedKeys.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 		A2aProxyController restrictedController = new A2aProxyController(
 				properties, registry, new A2aRbacPolicyEngine(), breakers, restrictedKeys,
 				rateLimitEngine, objectMapper, HttpClient.newHttpClient());
@@ -259,6 +262,28 @@ class A2aProxyControllerTest {
 		assertThat(unknown.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(errorCode(unknown)).isEqualTo(-32603);
 		assertThat(errorMessage(unknown)).isEqualTo(errorMessage(forbidden));
+		assertThat(upstream.getRequestCount()).isZero();
+	}
+
+	@Test
+	@DisplayName("revoked keys are indistinguishable from unknown keys")
+	void revokedMatchesUnknown() throws Exception {
+		when(keyManagementService.findByHash(any())).thenReturn(Optional.empty());
+		ResponseEntity<StreamingResponseBody> unknown = controller.relay(
+				AGENT, SEND_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		VirtualApiKey revoked = new VirtualApiKey(
+				apiKey.keyHash(), "gw-", "tenant-corp", "revoked", 100, 1000,
+				Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(),
+				true, false, Instant.now(), VirtualApiKey.normalizeCacheScopes(Set.of()),
+				Set.of(), Set.of(), UUID.randomUUID(), true);
+		when(keyManagementService.findByHash(any())).thenReturn(Optional.of(revoked));
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(false);
+		ResponseEntity<StreamingResponseBody> denied = controller.relay(
+				AGENT, SEND_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(denied.getStatusCode()).isEqualTo(unknown.getStatusCode());
+		assertThat(body(denied)).isEqualTo(body(unknown));
 		assertThat(upstream.getRequestCount()).isZero();
 	}
 
@@ -688,6 +713,7 @@ class A2aProxyControllerTest {
 				Set.of("other-*"), Set.of());
 		KeyManagementService restrictedKeys = mock(KeyManagementService.class);
 		when(restrictedKeys.findByHash(any())).thenReturn(Optional.of(restricted));
+		when(restrictedKeys.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 		A2aProxyController restrictedController = new A2aProxyController(
 				properties, registry, new A2aRbacPolicyEngine(), breakers, restrictedKeys,
 				rateLimitEngine, objectMapper, HttpClient.newHttpClient());

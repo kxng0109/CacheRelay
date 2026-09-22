@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **User-attached keys (mandatory ownership + terminal revocation):** every virtual key carries an
+  owning account (`ownerUserId`) resolved to an active account at creation, seed, and generation
+  time (unknown/disabled owners fail fast); revocation sets an irreversible tombstone (no code path
+  back, re-enabling rejected, admin included) and revoked/unowned/orphaned keys answer
+  byte-identical 401s to unknown keys. User deactivation suspends access; deletion cascades
+  terminal revocation first. Admin surface: owner forwarding on create, reassignment on PATCH,
+  `POST /v1/admin/keys/{keyId}/revoke`, owner attribution on reads, and account lifecycle
+  endpoints. Full `verify` green, branch >= 0.95.
+- **Act-as-self + self-service keys (`/v1/me/keys`):** session owners act with owned keys without
+  handling key material (`X-Act-As-Key: default` or key hash on Bearer session JWTs; quotas burn
+  on the key, ledger attributes to the account); per-account default-key selection; metadata-only
+  self listing; terminal self-revocation. Every failure answers the session/key 401 shape with no
+  cross-user oracle. Full `verify` green, branch >= 0.95.
+
 ## [1.8.0] - 2026-09-22
 
 ### Security

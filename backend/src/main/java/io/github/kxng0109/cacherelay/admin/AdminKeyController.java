@@ -88,64 +88,7 @@ public class AdminKeyController {
 	@PostMapping
 	public ResponseEntity<CreatedKeyResponse> createKey(@Valid @RequestBody CreateKeyRequest request) {
 		KeyManagementService.CreatedKey created;
-		boolean noAgents = request.allowedAgents().isEmpty() && request.deniedAgents().isEmpty();
-		boolean visibilityEmpty = request.allowedResources().isEmpty() && request.deniedResources().isEmpty()
-				&& request.allowedPrompts().isEmpty() && request.deniedPrompts().isEmpty();
-		boolean scopesDefault = request.allowedCacheScopes().equals(Set.of(CacheScope.TENANT));
-		if (request.allowedTools().isEmpty() && request.deniedTools().isEmpty() && visibilityEmpty
-				&& request.injectionBlock() == null && scopesDefault && noAgents) {
-			created = keyManagementService.createKey(
-					request.ownerId(),
-					request.name(),
-					request.rpmLimit(),
-					request.tpmLimit(),
-					request.allowedModels(),
-					request.allowedProviders()
-			);
-		} else if (visibilityEmpty && request.injectionBlock() == null && scopesDefault && noAgents) {
-			created = keyManagementService.createKey(
-					request.ownerId(),
-					request.name(),
-					request.rpmLimit(),
-					request.tpmLimit(),
-					request.allowedModels(),
-					request.allowedProviders(),
-					request.allowedTools(),
-					request.deniedTools()
-			);
-		} else if (request.injectionBlock() == null && scopesDefault && noAgents) {
-			created = keyManagementService.createKey(
-					request.ownerId(),
-					request.name(),
-					request.rpmLimit(),
-					request.tpmLimit(),
-					request.allowedModels(),
-					request.allowedProviders(),
-					request.allowedTools(),
-					request.deniedTools(),
-					request.allowedResources(),
-					request.deniedResources(),
-					request.allowedPrompts(),
-					request.deniedPrompts()
-			);
-		} else if (noAgents) {
-			created = keyManagementService.createKey(
-					request.ownerId(),
-					request.name(),
-					request.rpmLimit(),
-					request.tpmLimit(),
-					request.allowedModels(),
-					request.allowedProviders(),
-					request.allowedTools(),
-					request.deniedTools(),
-					request.allowedResources(),
-					request.deniedResources(),
-					request.allowedPrompts(),
-					request.deniedPrompts(),
-					request.injectionBlock(),
-					request.allowedCacheScopes()
-			);
-		} else {
+		try {
 			created = keyManagementService.createKey(
 					request.ownerId(),
 					request.name(),
@@ -162,8 +105,11 @@ public class AdminKeyController {
 					request.injectionBlock(),
 					request.allowedCacheScopes(),
 					request.allowedAgents(),
-					request.deniedAgents()
+					request.deniedAgents(),
+					request.ownerUserId()
 			);
+		} catch (IllegalArgumentException invalid) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, invalid.getMessage());
 		}
 		CreatedKeyResponse response = new CreatedKeyResponse(
 				created.hash().hex(),
@@ -186,7 +132,9 @@ public class AdminKeyController {
 				created.key().createdAt(),
 				created.key().allowedCacheScopes(),
 				created.key().allowedAgents(),
-				created.key().deniedAgents()
+				created.key().deniedAgents(),
+				created.key().ownerUserId(),
+				keyManagementService.usernameOf(created.key().ownerUserId())
 		);
 		return ResponseEntity.status(HttpStatus.CREATED).body(response);
 	}
@@ -283,68 +231,13 @@ public class AdminKeyController {
 	) {
 		SHA256Hash hash = parseHash(hashHex);
 		Optional<VirtualApiKey> updated;
-		boolean noAgents = request.allowedAgents() == null && request.deniedAgents() == null;
-		boolean visibilityNull = request.allowedResources() == null && request.deniedResources() == null
-				&& request.allowedPrompts() == null && request.deniedPrompts() == null;
-		if (request.allowedTools() == null && request.deniedTools() == null && visibilityNull
-				&& request.injectionBlock() == null && request.allowedCacheScopes() == null && noAgents) {
-			updated = keyManagementService.updateKey(
-					hash,
-					request.name(),
-					request.rpmLimit(),
-					request.tpmLimit(),
-					request.allowedModels(),
-					request.allowedProviders(),
-					request.enabled()
-			);
-		} else if (visibilityNull && request.injectionBlock() == null
-				&& request.allowedCacheScopes() == null && noAgents) {
-			updated = keyManagementService.updateKey(
-					hash,
-					request.name(),
-					request.rpmLimit(),
-					request.tpmLimit(),
-					request.allowedModels(),
-					request.allowedProviders(),
-					request.allowedTools(),
-					request.deniedTools(),
-					request.enabled()
-			);
-		} else if (request.injectionBlock() == null && request.allowedCacheScopes() == null && noAgents) {
-			updated = keyManagementService.updateKey(
-					hash,
-					request.name(),
-					request.rpmLimit(),
-					request.tpmLimit(),
-					request.allowedModels(),
-					request.allowedProviders(),
-					request.allowedTools(),
-					request.deniedTools(),
-					request.allowedResources(),
-					request.deniedResources(),
-					request.allowedPrompts(),
-					request.deniedPrompts(),
-					request.enabled()
-			);
-		} else if (noAgents) {
-			updated = keyManagementService.updateKey(
-					hash,
-					request.name(),
-					request.rpmLimit(),
-					request.tpmLimit(),
-					request.allowedModels(),
-					request.allowedProviders(),
-					request.allowedTools(),
-					request.deniedTools(),
-					request.allowedResources(),
-					request.deniedResources(),
-					request.allowedPrompts(),
-					request.deniedPrompts(),
-					request.injectionBlock(),
-					request.allowedCacheScopes(),
-					request.enabled()
-			);
-		} else {
+		try {
+			if (request.ownerUserId() != null) {
+				updated = keyManagementService.assignOwner(hash, request.ownerUserId());
+				if (updated.isEmpty()) {
+					return ResponseEntity.notFound().build();
+				}
+			}
 			updated = keyManagementService.updateKey(
 					hash,
 					request.name(),
@@ -364,6 +257,8 @@ public class AdminKeyController {
 					request.deniedAgents(),
 					request.enabled()
 			);
+		} catch (IllegalArgumentException invalid) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, invalid.getMessage());
 		}
 		return updated.map(this::toKeyResponse)
 		              .map(ResponseEntity::ok)
@@ -402,6 +297,43 @@ public class AdminKeyController {
 		return ResponseEntity.notFound().build();
 	}
 
+	/**
+	 * Terminally revokes a key by its hash. The tombstone is irreversible by
+	 * design: no endpoint, including this one, can un-revoke a key.
+	 *
+	 * @param hashHex key hash hex string
+	 * @return HTTP 200 OK with the tombstoned metadata, or HTTP 404 Not Found
+	 */
+	@Operation(
+			summary = "Revoke virtual API key terminally",
+			description = "Sets the irreversible revocation tombstone and disables the key. There is no inverse.",
+			security = {
+					@SecurityRequirement(name = OpenApiConfig.SCHEME_ADMIN_KEY_HEADER),
+					@SecurityRequirement(name = OpenApiConfig.SCHEME_ADMIN_BEARER)
+			}
+	)
+	@ApiResponses(value = {
+			@ApiResponse(responseCode = "200", description = "Key tombstoned", content = @Content(mediaType = "application/json", schema = @Schema(implementation = KeyResponse.class))),
+			@ApiResponse(responseCode = "404", description = "Key not found"),
+			@ApiResponse(responseCode = "401", description = "Unauthorized")
+	})
+	@PostMapping("/{hashHex}/revoke")
+	public ResponseEntity<KeyResponse> revokeKey(
+			@Parameter(description = "64-character SHA-256 hex digest of the key", example = "a1b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d")
+			@PathVariable("hashHex") String hashHex
+	) {
+		SHA256Hash hash = parseHash(hashHex);
+		Optional<VirtualApiKey> before = keyManagementService.findByHash(hash);
+		if (before.isEmpty()) {
+			return ResponseEntity.notFound().build();
+		}
+		keyManagementService.revokeKey(hash);
+		return keyManagementService.findByHash(hash)
+				.map(this::toKeyResponse)
+				.map(ResponseEntity::ok)
+				.orElseGet(() -> ResponseEntity.notFound().build());
+	}
+
 	private KeyResponse toKeyResponse(VirtualApiKey key) {
 		return new KeyResponse(
 				key.keyHash() != null ? key.keyHash().hex() : "",
@@ -423,7 +355,9 @@ public class AdminKeyController {
 				key.createdAt(),
 				key.allowedCacheScopes(),
 				key.allowedAgents(),
-				key.deniedAgents()
+				key.deniedAgents(),
+				key.ownerUserId(),
+				keyManagementService.usernameOf(key.ownerUserId())
 		);
 	}
 

@@ -107,6 +107,7 @@ class CoverageCompletionTest {
 	private MockHttpServletRequest keyedRequest() {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", apiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 		return request;
 	}
 
@@ -273,6 +274,7 @@ class CoverageCompletionTest {
 		)).thenReturn(Optional.empty());
 		MockHttpServletRequest flagged = new MockHttpServletRequest();
 		flagged.setAttribute("virtualApiKey", flagKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
 		ResponseEntity<String> response = controller.handleStreamableHttp(
 				"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"srv__inj\",\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{\"tools\":{}}}}}",
