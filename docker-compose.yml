@@ -233,6 +233,16 @@ services:
       # in your local .env (Ollama needs no network-access toggle; it listens on 11434).
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
 
+      # Local self-hosted bases (host gateway: containers cannot reach the host's
+      # localhost). Compose-side defaults mirror application.yml so unset entries
+      # behave exactly as before; set LMSTUDIO_BASE_URL / LLAMACPP_BASE_URL to
+      # http://host.docker.internal:<port> in .env for host servers.
+      VLLM_BASE_URL: ${VLLM_BASE_URL:-http://localhost:8000}
+      LLAMACPP_BASE_URL: ${LLAMACPP_BASE_URL:-http://localhost:8081}
+      LMSTUDIO_BASE_URL: ${LMSTUDIO_BASE_URL:-http://localhost:1234}
+      QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode}
+      AWS_BEDROCK_BASE_URL: ${AWS_BEDROCK_BASE_URL:-https://bedrock-runtime.us-east-1.amazonaws.com/openai}
+
       # SSRF allowlist for local development backends (exact host; see SsrfUpstreamUrlValidator).
       # Empty by default = every private target fails closed; add host.docker.internal and/or
       # localhost for local Ollama development.

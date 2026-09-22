@@ -123,6 +123,21 @@ class AdminProviderControllerTest {
 	}
 
 	@Test
+	@DisplayName("reports integration validation status per provider")
+	void reportsValidationStatus() {
+		ProviderListResponse body = controller.listProviders().getBody();
+
+		assertThat(body).isNotNull();
+		assertThat(body.providers()).extracting(ProviderStatusResponse::name,
+						ProviderStatusResponse::validationStatus)
+				.containsExactly(
+						Tuple.tuple("groq", "AUTH_REACHABLE"),
+						Tuple.tuple("local", "UNVERIFIED"),
+						Tuple.tuple("minimal", "UNVERIFIED"),
+						Tuple.tuple("openai", "AUTH_REACHABLE"));
+	}
+
+	@Test
 	@DisplayName("counts alias chain step references per provider")
 	void countsAliasReferences() {
 		ProviderListResponse body = controller.listProviders().getBody();

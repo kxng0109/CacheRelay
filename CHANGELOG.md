@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [1.8.0] - 2026-09-22
 
 ### Security
 
@@ -110,7 +110,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   duplicates are `409`, unknown providers and bad payloads `400`, deletes `204`. Startup ordering is explicit
   (`DatabaseMigrator` first), database outages degrade to file-only reads with `503` mutations and scheduled
   retry, and every mutation is audit-logged with the admin actor. Full `verify` 2,026 green, branch ≥ 0.95.
-- **Provider breadth (26 pre-wired entries, config-only):** `gateway.providers` now ships Together, Groq,
+- **Provider breadth (27 pre-wired entries, config-only):** `gateway.providers` now ships Together, Groq,
   Mistral, xAI, DeepInfra, Fireworks, Cerebras, SambaNova, Nebius, Novita, Moonshot, Zhipu, MiniMax, Qwen,
   StepFun, Cloudflare, Hyperbolic, io.net, FriendliAI, Bedrock (Bearer-key chat), vLLM, llama.cpp, and
   LM Studio alongside the existing OpenAI/OpenRouter/Anthropic/Ollama — all `type: OPENAI`, zero Java.
@@ -122,7 +122,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   credential presence (boolean only, never the key), live circuit-breaker state, and alias reference counts;
   `GET /v1/admin/model-catalog` searches the existing pricing snapshot (provider filter, case-insensitive
   model-id substring, `limit` 1–200) with context windows and per-token prices for the model picker. Both are
-  admin-gated and add no hot-path work. Full `verify` green; branch ≥ 0.95.
+  admin-gated and add no hot-path work.
+- **Provider URL correctness (prefix-form bases + path override):** research across all 27 providers
+  showed the adapter (`baseUrl + /v1/chat/completions`) doubled version prefixes for 19 entries, so every
+  base URL is now a verified prefix and odd shapes ride a per-provider `chat-completions-path` (Zhipu
+  `/chat/completions`, DeepInfra `/v1/openai/chat/completions`). Qwen/Bedrock carry verified regional
+  prefix defaults; llama.cpp moved to `:8081` (was clashing with the gateway). Locked by a 27-row
+  join-matrix test plus per-provider path-override tests. Full `verify` green, branch >= 0.95.
+- **Provider validation status + contracts dossier:** `GET /v1/admin/providers` reports `validationStatus`
+  per provider (23 `AUTH_REACHABLE` via one-shot dummy-key probes 2026-09-22, 4 self-hosted
+  `CONTRACT_CHECKED`, nothing `LIVE_VERIFIED` without live inference, unknown names `UNVERIFIED`);
+  `backend/docs/PROVIDER_CONTRACTS.md` records base URLs, auth, quirks, and honest limits per provider.
+- **Model quality tiers + curation API:** `model_quality` table (Flyway V17, separate from pricing so the
+  daily sync never clobbers curation) with `GET`/`PUT`/`DELETE /v1/admin/model-quality/{modelId}` and tier
+  annotations on the model-catalog read side. Unrated models read as empty, never as a default tier.
+  Full `verify` green, branch >= 0.95.
+- **Cost-router phase 1 (decision log, zero behavior change):** `routing_decision_log` (Flyway V18) with a
+  sampled best-effort writer (never throws, PII-free) wired post-outcome in the chat path, plus
+  `X-CacheRelay-Min-Quality-Tier` / `X-CacheRelay-Tradeoff-Mode` headers (validated fail-fast, logged
+  not enforced). Effective routing is unchanged: quality-first always. Full `verify` green,
+  branch >= 0.95.
+- **Compose env forwarding for local bases:** the app container now receives `VLLM_BASE_URL`,
+  `LLAMACPP_BASE_URL`, `LMSTUDIO_BASE_URL`, `QWEN_BASE_URL`, and `AWS_BEDROCK_BASE_URL` with
+  compose-side defaults mirroring `application.yml` (previously only Ollama was forwarded, so
+  host-server overrides silently died at the container boundary). Full `verify` green; branch ≥ 0.95.
 - **Resource/prompt governance (no more unfiltered surfaces):** virtual keys carry `allowedResources` /
   `deniedResources` (URI globs) and `allowedPrompts` / `deniedPrompts` (name globs) with deny-wins,
   empty-means-visible semantics; catalog lists and filters enforce them (null keys fail closed). Redis-stored

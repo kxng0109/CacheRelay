@@ -26,17 +26,12 @@ import java.util.Map;
 @RequiredArgsConstructor
 public final class OpenAiPassthroughAdapter implements ProtocolAdapter {
 
-	/**
-	 * The OpenAI compatible chat completions path.
-	 */
-	public static final String CHAT_COMPLETIONS_PATH = "/v1/chat/completions";
-
 	private final ObjectMapper objectMapper;
 
 	@Override
 	public URI buildUpstreamUrl(ProviderConfig config) {
 		String baseUrl = stripTrailingSlash(config.baseUrl().toString());
-		return URI.create(baseUrl + CHAT_COMPLETIONS_PATH);
+		return URI.create(baseUrl + config.chatCompletionsPath());
 	}
 
 	@Override

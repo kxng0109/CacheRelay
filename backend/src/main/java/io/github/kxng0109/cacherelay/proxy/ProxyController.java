@@ -13,10 +13,14 @@ import io.github.kxng0109.cacherelay.config.OpenApiConfig;
 import io.github.kxng0109.cacherelay.contracts.GatewayProperties;
 import io.github.kxng0109.cacherelay.contracts.ModelAlias;
 import io.github.kxng0109.cacherelay.contracts.ProviderConfig;
+import io.github.kxng0109.cacherelay.contracts.ProviderRef;
 import io.github.kxng0109.cacherelay.contracts.ProviderType;
 import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
 import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
 import io.github.kxng0109.cacherelay.ledger.CostCalculator;
+import io.github.kxng0109.cacherelay.ledger.DecisionLogWriter;
+import io.github.kxng0109.cacherelay.ledger.ModelPriceCatalog;
+import io.github.kxng0109.cacherelay.ledger.ModelPricingEntry;
 import io.github.kxng0109.cacherelay.ledger.TokenUsageEvent;
 import io.github.kxng0109.cacherelay.proxy.failover.FailoverOrchestrator;
 import io.github.kxng0109.cacherelay.proxy.failover.ProviderResponse;
@@ -60,6 +64,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
@@ -69,11 +74,13 @@ import tools.jackson.databind.node.ObjectNode;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletionException;
 
@@ -115,6 +122,10 @@ public class ProxyController {
 	private volatile @Nullable BudgetSettlement budgetSettlement;
 
 	private volatile @Nullable ReplayService replayService;
+
+	private volatile @Nullable DecisionLogWriter decisionLogWriter;
+
+	private volatile @Nullable ModelPriceCatalog modelPriceCatalog;
 
 	/**
 	 * Full enterprise constructor injecting all components including cache, security, and compliance subsystems.
@@ -377,6 +388,15 @@ public class ProxyController {
 			return errorResponse(HttpStatus.BAD_REQUEST, "invalid Idempotency-Key");
 		}
 
+		// Cost-router phase 1: routing preferences are validated fail-fast and logged, never enforced.
+		final RoutingDecisionContext routingContext;
+		try {
+			routingContext = RoutingDecisionContext.fromRequest(request);
+		} catch (ResponseStatusException badHeaders) {
+			String reason = badHeaders.getReason();
+			return errorResponse(HttpStatus.BAD_REQUEST, reason == null ? "invalid routing headers" : reason);
+		}
+
 		@Nullable String ownerId = (String) request.getAttribute(KeyAuthFilter.OWNER_ID_ATTRIBUTE);
 		@Nullable VirtualApiKey apiKey =
 				(VirtualApiKey) request.getAttribute(KeyAuthFilter.VIRTUAL_KEY_ATTRIBUTE);
@@ -473,6 +493,7 @@ public class ProxyController {
 		ProviderResponse providerResponse;
 		try {			providerResponse = failoverOrchestrator.execute(alias, trimmed).join();
 		} catch (CompletionException ex) {
+			recordDecision(alias, model, routingContext, null);
 			Throwable cause = ex.getCause();
 			if (cause instanceof UpstreamUnavailableException upstream) {
 				throw upstream;
@@ -483,6 +504,7 @@ public class ProxyController {
 					cause, false, false
 			);
 		}
+		recordDecision(alias, model, routingContext, providerResponse);
 
 		int status = providerResponse.response().statusCode();
 		if (status != HttpStatus.OK.value()) {
@@ -1072,6 +1094,28 @@ public class ProxyController {
 	}
 
 	/**
+	 * Wires the routing decision log writer when present. Optional on purpose: unit-constructed controllers keep
+	 * working with decision logging silently skipped, exactly like the budget enforcer.
+	 *
+	 * @param decisionLogWriter the writer, if available
+	 */
+	@Autowired(required = false)
+	public void setDecisionLogWriter(DecisionLogWriter decisionLogWriter) {
+		this.decisionLogWriter = decisionLogWriter;
+	}
+
+	/**
+	 * Wires the pricing catalog for decision rate annotation when present. Optional like the writer: unit-constructed
+	 * controllers keep working with rates left unknown rather than fabricated.
+	 *
+	 * @param modelPriceCatalog the pricing read side, if available
+	 */
+	@Autowired(required = false)
+	public void setModelPriceCatalog(ModelPriceCatalog modelPriceCatalog) {
+		this.modelPriceCatalog = modelPriceCatalog;
+	}
+
+	/**
 	 * Wires the settlement orchestrator when present. Optional like the enforcer: unit-constructed controllers
 	 * keep working with hold-then-settle silently skipped (admission then charges the prompt-only estimate).
 	 *
@@ -1116,6 +1160,63 @@ public class ProxyController {
 			ProviderType budgetType,
 			String model
 	) {
+	}
+
+	/**
+	 * Best-effort routing decision observation. Runs after the outcome is known, writes nothing on the request path,
+	 * and never throws: a logging fault must not change serving. Skipped when the writer is unwired (unit-test
+	 * controllers) and rates stay unknown when the pricing catalog is unwired rather than fabricated.
+	 *
+	 * @param alias            the routing plan that was walked
+	 * @param model            the requested model name
+	 * @param routingContext   validated routing preferences
+	 * @param providerResponse the winning response with tried legs, or {@code null} when all legs failed
+	 */
+	private void recordDecision(
+			ModelAlias alias,
+			String model,
+			RoutingDecisionContext routingContext,
+			@Nullable ProviderResponse providerResponse) {
+		DecisionLogWriter writer = this.decisionLogWriter;
+		if (writer == null) {
+			return;
+		}
+		try {
+			List<String> chain = alias.chain().stream()
+					.map(ref -> ref.modelOverride() == null
+							? ref.providerName()
+							: ref.providerName() + ":" + ref.modelOverride())
+					.toList();
+			List<String> tried = providerResponse == null
+					? List.of()
+					: List.copyOf(providerResponse.triedProviders());
+			String winner = providerResponse == null ? null : providerResponse.providerName();
+			BigDecimal inputRate = null;
+			BigDecimal outputRate = null;
+			ModelPriceCatalog catalog = this.modelPriceCatalog;
+			if (providerResponse != null && catalog != null) {
+				ProviderConfig winnerConfig =
+						gatewayProperties.getProviders().get(providerResponse.providerName());
+				if (winnerConfig != null && winnerConfig.type() != null) {
+					String servedModel = model;
+					for (ProviderRef ref : alias.chain()) {
+						if (ref.providerName().equals(providerResponse.providerName())
+								&& ref.modelOverride() != null) {
+							servedModel = ref.modelOverride();
+						}
+					}
+					Optional<ModelPricingEntry> price = catalog.lookup(winnerConfig.type(), servedModel);
+					if (price.isPresent()) {
+						inputRate = price.get().inputCostPerToken();
+						outputRate = price.get().outputCostPerToken();
+					}
+				}
+			}
+			writer.record(model, model, routingContext.minQualityTier(), routingContext.tradeoffMode(),
+					chain, tried, winner, inputRate, outputRate);
+		} catch (RuntimeException ex) {
+			log.debug("Dropping routing decision observation: {}", ex.getMessage());
+		}
 	}
 
 	/**

@@ -18,6 +18,10 @@ import io.swagger.v3.oas.annotations.media.Schema;
  * @param circuitState             live circuit breaker state ({@code CLOSED}, {@code OPEN},
  *                                 {@code HALF_OPEN}) as observed by this instance
  * @param aliasReferences          how many effective alias chain steps reference this provider
+ * @param validationStatus         how far the integration has been validated
+ *                                 ({@code CONTRACT_CHECKED}, {@code AUTH_REACHABLE},
+ *                                 {@code LIVE_VERIFIED}, {@code UNVERIFIED}); see
+ *                                 {@link ProviderValidationStatus}
  */
 @Schema(name = "ProviderStatus", description = "Configured upstream provider with live routing health")
 public record ProviderStatusResponse(
@@ -50,6 +54,11 @@ public record ProviderStatusResponse(
 
 		@Schema(description = "How many effective alias chain steps reference this provider",
 				example = "2")
-		int aliasReferences
+		int aliasReferences,
+
+		@Schema(description = "How far the integration has been validated",
+				example = "AUTH_REACHABLE",
+				allowableValues = {"CONTRACT_CHECKED", "AUTH_REACHABLE", "LIVE_VERIFIED", "UNVERIFIED"})
+		String validationStatus
 ) {
 }

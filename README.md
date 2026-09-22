@@ -359,6 +359,13 @@ runs on a bounded async executor (never gates readiness) with exponential backof
 (`gateway.pricing.max-attempts` default 5, `gateway.pricing.backoff-base-seconds` default 5); parse errors fail
 fast.
 
+Cost-router phase 1 is observation only: every chat request may emit one row into `routing_decision_log`
+(sampled, `gateway.routing.decision-log-sample-per-mille` default 10) recording alias, model, quality
+floor, tradeoff mode, planned chain, tried legs, winner, and known price rates - identifiers and rates
+only, never prompts or keys. Clients may send `X-CacheRelay-Min-Quality-Tier` (FRONTIER/STANDARD/BUDGET)
+and `X-CacheRelay-Tradeoff-Mode` (`quality`, default; `eco` is accepted but unenforced); unknown values
+are `400`. Nothing routes on cost yet: effective policy stays quality-first.
+
 ## Project layout
 
 The code is organized by responsibility under `backend/src/main/java/io/github/kxng0109/cacherelay`:
@@ -542,7 +549,9 @@ The service listens on port 8080.
 
 All configuration lives in `backend/src/main/resources/application.yml`. The most important settings:
 
-- `gateway.providers` describes every upstream provider with its dialect, URL, key, and per request timeout.
+- `gateway.providers` describes every upstream provider with its dialect, URL, key, and per request timeout. Base URLs are prefixes: the adapter appends the chat path (default
+  `/v1/chat/completions`, overridable per provider via `chat-completions-path` for odd shapes like Zhipu
+  and DeepInfra) - never include the chat path in `base-url`.
 - `gateway.aliases` maps each client facing model name to a provider chain and a strategy. A step can pin its upstream model with `model-override`.
 - `spring.data.redis.*` controls the Redis connection (host/port/topology selection only — there is
   no Lettuce pool; each custom factory shares one native connection).
@@ -702,10 +711,16 @@ immediately if the old shipped default was ever used; generate fresh with `opens
   `409` file-bound). Every mutation is audit-logged with the admin actor.
 - **`GET /v1/admin/providers`**: Lists every configured upstream provider with dialect, base URL,
   `keyConfigured` (boolean only, never the key), timeouts, live `circuitState`, and how many alias chain
-  steps reference it — the provider dropdown source for admin UIs.
+  steps reference it, and `validationStatus` (`CONTRACT_CHECKED` / `AUTH_REACHABLE` /
+  `LIVE_VERIFIED` / `UNVERIFIED`)— the provider dropdown source for admin UIs.
 - **`GET /v1/admin/model-catalog`**: Searches the pricing catalog snapshot for model suggestions
-  (`provider` filter, case-insensitive `q` substring, `limit` 1–200) with context windows and per-token
-  prices — the model picker source when composing alias chain steps.
+  (`provider` filter, case-insensitive `q` substring, `limit` 1-200) with context windows, per-token
+  prices, and curated quality tiers (`qualityTier` / `benchmarkRefs`, null when unrated) - the model
+  picker source when composing alias chain steps.
+- **`GET /v1/admin/model-quality/{modelId}`**, **`PUT /v1/admin/model-quality/{modelId}`**,
+  **`DELETE /v1/admin/model-quality/{modelId}`**: read, curate (`tier` FRONTIER/STANDARD/BUDGET plus
+  optional benchmark references), or unrate a model quality tier (`404` when unrated). Tiers live
+  apart from pricing so the daily sync can never clobber them.
 - **`GET /v1/admin/circuits`**: Inspects real-time circuit breaker states (`CLOSED`, `OPEN`, `HALF_OPEN`) across all
   providers.
 - **`POST /v1/admin/circuits/{provider}/reset`**: Force-resets an upstream circuit breaker to `CLOSED`.

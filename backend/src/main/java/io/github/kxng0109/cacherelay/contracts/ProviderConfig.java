@@ -23,16 +23,25 @@ import java.time.Duration;
  *                       REQUIRE arrays while string-only providers REJECT them, so no single wire
  *                       shape fits all targets; keep the default array form unless the provider
  *                       is string-only (default false)
+ * @param chatCompletionsPath path appended to {@code baseUrl} for chat requests
+ *                       (for example {@code /chat/completions} where a provider
+ *                       omits the {@code /v1} infix); null or blank reads as
+ *                       {@link #DEFAULT_CHAT_COMPLETIONS_PATH}
  */
 public record ProviderConfig(
-		String name,
-		ProviderType type,
-		URI baseUrl,
-		SensitiveString apiKey,
-		Duration connectTimeout,
-		Duration requestTimeout,
-		Boolean embeddingSingleAsString
+	String name,
+	ProviderType type,
+	URI baseUrl,
+	SensitiveString apiKey,
+	Duration connectTimeout,
+	Duration requestTimeout,
+	Boolean embeddingSingleAsString,
+	String chatCompletionsPath
 ) {
+	/**
+	 * Default chat-completions path used when none is configured.
+	 */
+	public static final String DEFAULT_CHAT_COMPLETIONS_PATH = "/v1/chat/completions";
 	/**
 	 * Canonical constructor, designated for configuration binding. Null components read as absent (the
 	 * {@link #isEmbeddingSingleAsString()} accessor normalizes).
@@ -45,7 +54,8 @@ public record ProviderConfig(
 			SensitiveString apiKey,
 			Duration connectTimeout,
 			Duration requestTimeout,
-			Boolean embeddingSingleAsString
+			Boolean embeddingSingleAsString,
+			String chatCompletionsPath
 	) {
 		this.name = name;
 		this.type = type;
@@ -54,10 +64,12 @@ public record ProviderConfig(
 		this.connectTimeout = connectTimeout;
 		this.requestTimeout = requestTimeout;
 		this.embeddingSingleAsString = embeddingSingleAsString;
+		this.chatCompletionsPath = chatCompletionsPath;
 	}
 
 	/**
-	 * Backwards-compatible constructor defaulting {@code embeddingSingleAsString} to false.
+	 * Backwards-compatible constructor defaulting {@code embeddingSingleAsString} to false and
+	 * {@code chatCompletionsPath} to {@link #DEFAULT_CHAT_COMPLETIONS_PATH}.
 	 */
 	public ProviderConfig(
 			String name,
@@ -71,6 +83,22 @@ public record ProviderConfig(
 	}
 
 	/**
+	 * Backwards-compatible constructor defaulting {@code chatCompletionsPath} to
+	 * {@link #DEFAULT_CHAT_COMPLETIONS_PATH}.
+	 */
+	public ProviderConfig(
+			String name,
+			ProviderType type,
+			URI baseUrl,
+			SensitiveString apiKey,
+			Duration connectTimeout,
+			Duration requestTimeout,
+			Boolean embeddingSingleAsString
+	) {
+		this(name, type, baseUrl, apiKey, connectTimeout, requestTimeout, embeddingSingleAsString, null);
+	}
+
+	/**
 	 * Whether single-text embedding batches serialize as a bare string for this provider. Null-safe: a null component
 	 * (e.g. legacy YAML without the key) reads as false.
 	 *
@@ -78,5 +106,20 @@ public record ProviderConfig(
 	 */
 	public boolean isEmbeddingSingleAsString() {
 		return Boolean.TRUE.equals(embeddingSingleAsString);
+	}
+
+	/**
+	 * Chat-completions path appended to {@code baseUrl} by OpenAI-dialect adapters. Null-safe: a
+	 * null or blank component (for example legacy YAML without the key) reads as
+	 * {@link #DEFAULT_CHAT_COMPLETIONS_PATH}, and a missing leading slash is prepended.
+	 *
+	 * @return the configured path, always starting with {@code /}
+	 */
+	public String chatCompletionsPath() {
+		String path = chatCompletionsPath == null ? "" : chatCompletionsPath.trim();
+		if (path.isEmpty()) {
+			return DEFAULT_CHAT_COMPLETIONS_PATH;
+		}
+		return path.startsWith("/") ? path : "/" + path;
 	}
 }

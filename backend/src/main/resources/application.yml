@@ -121,57 +121,62 @@ gateway:
     # Config-only OpenAI-compatible providers: zero Java, activated by setting
     # the key and referencing the name in an alias chain (see README). Unset
     # keys stay inert; nothing calls a provider until a chain references it.
+    # Base URLs are prefixes: the adapter appends the chat path (default
+    # /v1/chat/completions, overridable per provider via chat-completions-path
+    # for odd shapes like Zhipu and DeepInfra). Never include the chat path here.
     together:
       type: OPENAI
-      base-url: https://api.together.ai/v1
+      base-url: https://api.together.ai
       api-key: ${TOGETHER_API_KEY:}
       connect-timeout: ${TOGETHER_CONNECT_TIMEOUT:5s}
       request-timeout: ${TOGETHER_REQUEST_TIMEOUT:60s}
     groq:
       type: OPENAI
-      base-url: https://api.groq.com/openai/v1
+      base-url: https://api.groq.com/openai
       api-key: ${GROQ_API_KEY:}
       connect-timeout: ${GROQ_CONNECT_TIMEOUT:5s}
       request-timeout: ${GROQ_REQUEST_TIMEOUT:60s}
     mistral:
       type: OPENAI
-      base-url: https://api.mistral.ai/v1
+      base-url: https://api.mistral.ai
       api-key: ${MISTRAL_API_KEY:}
       connect-timeout: ${MISTRAL_CONNECT_TIMEOUT:5s}
       request-timeout: ${MISTRAL_REQUEST_TIMEOUT:60s}
     xai:
       type: OPENAI
-      base-url: https://api.x.ai/v1
+      base-url: https://api.x.ai
       api-key: ${XAI_API_KEY:}
       connect-timeout: ${XAI_CONNECT_TIMEOUT:5s}
       request-timeout: ${XAI_REQUEST_TIMEOUT:120s}
     deepinfra:
       type: OPENAI
-      base-url: https://api.deepinfra.com/v1/openai
+      base-url: https://api.deepinfra.com
+      chat-completions-path: /v1/openai/chat/completions
       api-key: ${DEEPINFRA_API_KEY:}
       connect-timeout: ${DEEPINFRA_CONNECT_TIMEOUT:5s}
       request-timeout: ${DEEPINFRA_REQUEST_TIMEOUT:60s}
     fireworks:
       type: OPENAI
-      base-url: https://api.fireworks.ai/inference/v1
+      base-url: https://api.fireworks.ai/inference
       api-key: ${FIREWORKS_API_KEY:}
       connect-timeout: ${FIREWORKS_CONNECT_TIMEOUT:5s}
       request-timeout: ${FIREWORKS_REQUEST_TIMEOUT:60s}
     cerebras:
       type: OPENAI
-      base-url: https://api.cerebras.ai/v1
+      base-url: https://api.cerebras.ai
       api-key: ${CEREBRAS_API_KEY:}
       connect-timeout: ${CEREBRAS_CONNECT_TIMEOUT:5s}
       request-timeout: ${CEREBRAS_REQUEST_TIMEOUT:60s}
     sambanova:
       type: OPENAI
-      base-url: https://api.sambanova.ai/v1
+      base-url: https://api.sambanova.ai
       api-key: ${SAMBANOVA_API_KEY:}
       connect-timeout: ${SAMBANOVA_CONNECT_TIMEOUT:5s}
       request-timeout: ${SAMBANOVA_REQUEST_TIMEOUT:60s}
     nebius:
       type: OPENAI
-      base-url: https://api.studio.nebius.com/v1
+      # AI Studio host; Token Factory keys use https://api.tokenfactory.nebius.com (key provenance decides).
+      base-url: https://api.studio.nebius.com
       api-key: ${NEBIUS_API_KEY:}
       connect-timeout: ${NEBIUS_CONNECT_TIMEOUT:5s}
       request-timeout: ${NEBIUS_REQUEST_TIMEOUT:60s}
@@ -183,43 +188,51 @@ gateway:
       request-timeout: ${NOVITA_REQUEST_TIMEOUT:60s}
     moonshot:
       type: OPENAI
-      base-url: https://api.moonshot.ai/v1
+      # Global platform; China keys need https://api.moonshot.cn (keys are not interchangeable).
+      base-url: https://api.moonshot.ai
       api-key: ${MOONSHOT_API_KEY:}
       connect-timeout: ${MOONSHOT_CONNECT_TIMEOUT:5s}
       request-timeout: ${MOONSHOT_REQUEST_TIMEOUT:60s}
     zhipu:
       type: OPENAI
       base-url: https://open.bigmodel.cn/api/paas/v4
+      chat-completions-path: /chat/completions
       api-key: ${ZHIPU_API_KEY:}
       connect-timeout: ${ZHIPU_CONNECT_TIMEOUT:5s}
       request-timeout: ${ZHIPU_REQUEST_TIMEOUT:60s}
     minimax:
       type: OPENAI
-      base-url: https://api.minimax.io/v1
+      # International platform; China keys use https://api.minimaxi.com.
+      base-url: https://api.minimax.io
       api-key: ${MINIMAX_API_KEY:}
       connect-timeout: ${MINIMAX_CONNECT_TIMEOUT:5s}
       request-timeout: ${MINIMAX_REQUEST_TIMEOUT:60s}
     qwen:
       type: OPENAI
-      base-url: ${QWEN_BASE_URL:}
+      # Beijing legacy default; keys are region-bound. Alternatives: Singapore/intl
+      # https://dashscope-intl.aliyuncs.com/compatible-mode, Virginia
+      # https://dashscope-us.aliyuncs.com/compatible-mode, or workspace-dedicated
+      # https://{WorkspaceId}.{region}.maas.aliyuncs.com/compatible-mode.
+      base-url: ${QWEN_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode}
       api-key: ${DASHSCOPE_API_KEY:}
       connect-timeout: ${QWEN_CONNECT_TIMEOUT:5s}
       request-timeout: ${QWEN_REQUEST_TIMEOUT:60s}
     stepfun:
       type: OPENAI
-      base-url: https://api.stepfun.com/v1
+      # China platform; international keys use https://api.stepfun.ai.
+      base-url: https://api.stepfun.com
       api-key: ${STEP_API_KEY:}
       connect-timeout: ${STEP_CONNECT_TIMEOUT:5s}
       request-timeout: ${STEP_REQUEST_TIMEOUT:60s}
     cloudflare:
       type: OPENAI
-      base-url: https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID:}/ai/v1
+      base-url: https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID:}/ai
       api-key: ${CLOUDFLARE_API_TOKEN:}
       connect-timeout: ${CLOUDFLARE_CONNECT_TIMEOUT:5s}
       request-timeout: ${CLOUDFLARE_REQUEST_TIMEOUT:60s}
     hyperbolic:
       type: OPENAI
-      base-url: https://api.hyperbolic.xyz/v1
+      base-url: https://api.hyperbolic.xyz
       api-key: ${HYPERBOLIC_API_KEY:}
       connect-timeout: ${HYPERBOLIC_CONNECT_TIMEOUT:5s}
       request-timeout: ${HYPERBOLIC_REQUEST_TIMEOUT:60s}
@@ -231,31 +244,35 @@ gateway:
       request-timeout: ${IO_REQUEST_TIMEOUT:60s}
     friendli:
       type: OPENAI
-      base-url: https://api.friendli.ai/serverless/v1
+      base-url: https://api.friendli.ai/serverless
       api-key: ${FRIENDLI_API_KEY:}
       connect-timeout: ${FRIENDLI_CONNECT_TIMEOUT:5s}
       request-timeout: ${FRIENDLI_REQUEST_TIMEOUT:60s}
     bedrock:
       type: OPENAI
-      base-url: ${AWS_BEDROCK_BASE_URL:}
+      # Plain Bearer works (no SigV4 needed), but the base must be explicit and regional.
+      # Open-weight models only on this route (no Claude/Nova/Llama); mantle host
+      # https://bedrock-mantle.{region}.api.aws/openai is the alternative.
+      base-url: ${AWS_BEDROCK_BASE_URL:https://bedrock-runtime.us-east-1.amazonaws.com/openai}
       api-key: ${AWS_BEARER_TOKEN_BEDROCK:}
       connect-timeout: ${BEDROCK_CONNECT_TIMEOUT:5s}
       request-timeout: ${BEDROCK_REQUEST_TIMEOUT:60s}
     vllm:
       type: OPENAI
-      base-url: ${VLLM_BASE_URL:http://localhost:8000/v1}
+      base-url: ${VLLM_BASE_URL:http://localhost:8000}
       api-key: ${VLLM_API_KEY:}
       connect-timeout: ${VLLM_CONNECT_TIMEOUT:3s}
       request-timeout: ${VLLM_REQUEST_TIMEOUT:120s}
     llamacpp:
       type: OPENAI
-      base-url: ${LLAMACPP_BASE_URL:http://localhost:8080/v1}
+      # Port 8081: llama-server defaults to 8080, which clashes with the gateway itself.
+      base-url: ${LLAMACPP_BASE_URL:http://localhost:8081}
       api-key: ${LLAMACPP_API_KEY:}
       connect-timeout: ${LLAMACPP_CONNECT_TIMEOUT:3s}
       request-timeout: ${LLAMACPP_REQUEST_TIMEOUT:120s}
     lmstudio:
       type: OPENAI
-      base-url: ${LMSTUDIO_BASE_URL:http://localhost:1234/v1}
+      base-url: ${LMSTUDIO_BASE_URL:http://localhost:1234}
       api-key: ${LMSTUDIO_API_KEY:}
       connect-timeout: ${LMSTUDIO_CONNECT_TIMEOUT:3s}
       request-timeout: ${LMSTUDIO_REQUEST_TIMEOUT:120s}

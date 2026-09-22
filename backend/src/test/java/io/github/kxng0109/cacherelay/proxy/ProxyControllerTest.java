@@ -9,6 +9,11 @@ import io.github.kxng0109.cacherelay.cache.engine.streaming.CachedStreamReconsti
 import io.github.kxng0109.cacherelay.config.SensitiveString;
 import io.github.kxng0109.cacherelay.contracts.*;
 import io.github.kxng0109.cacherelay.ledger.CostCalculator;
+import io.github.kxng0109.cacherelay.ledger.DecisionLogWriter;
+import io.github.kxng0109.cacherelay.ledger.ModelPriceCatalog;
+import io.github.kxng0109.cacherelay.ledger.ModelPricingEntry;
+import io.github.kxng0109.cacherelay.ledger.RoutingDecisionEntity;
+import io.github.kxng0109.cacherelay.ledger.RoutingDecisionRepository;
 import io.github.kxng0109.cacherelay.ledger.TokenUsageEvent;
 import io.github.kxng0109.cacherelay.budget.BudgetDecision;
 import io.github.kxng0109.cacherelay.budget.BudgetEnforcer;
@@ -39,6 +44,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.math.BigDecimal;
 import java.net.URI;
 import java.net.http.HttpHeaders;
 import java.net.http.HttpResponse;
@@ -48,6 +54,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -3090,5 +3097,66 @@ class ProxyControllerTest {
 		ByteArrayOutputStream out = new ByteArrayOutputStream();
 		response.getBody().writeTo(out);
 		return out.toString(StandardCharsets.UTF_8);
+	}
+
+	@Test
+	@DisplayName("records the routing decision with rates on success")
+	void recordsRoutingDecisionOnSuccess() throws Exception {
+		RoutingDecisionRepository decisions = mock(RoutingDecisionRepository.class);
+		when(decisions.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		controller.setDecisionLogWriter(new DecisionLogWriter(decisions, objectMapper, 1000));
+		ModelPriceCatalog prices = mock(ModelPriceCatalog.class);
+		when(prices.lookup(eq(ProviderType.OPENAI), eq("gpt-5.6-luna"))).thenReturn(Optional.of(
+				new ModelPricingEntry("gpt-5.6-luna", "openai", "chat",
+						new BigDecimal("0.0000025"), new BigDecimal("0.00001"))));
+		controller.setModelPriceCatalog(prices);
+		ProviderResponse response = providerResponse("openai", 200, sseHeaders(),
+				Stream.of("data: [DONE]"), List.of("openai", "groq (circuit open)"));
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+		MockHttpServletRequest req = request();
+		req.addHeader("X-CacheRelay-Min-Quality-Tier", "STANDARD");
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, req);
+
+		assertEquals(200, entity.getStatusCode().value());
+		ArgumentCaptor<RoutingDecisionEntity> saved = ArgumentCaptor.forClass(RoutingDecisionEntity.class);
+		verify(decisions).save(saved.capture());
+		assertEquals("gpt-5.6-luna", saved.getValue().getAlias());
+		assertEquals("STANDARD", saved.getValue().getMinQualityTier());
+		assertEquals("quality", saved.getValue().getTradeoffMode());
+		assertEquals("openai", saved.getValue().getWinner());
+		assertEquals(0, new BigDecimal("0.0000025").compareTo(saved.getValue().getInputRate()));
+		assertTrue(saved.getValue().getTriedJson().contains("groq (circuit open)"));
+	}
+
+	@Test
+	@DisplayName("records the routing decision without a winner when all legs fail")
+	void recordsRoutingDecisionOnFailure() {
+		RoutingDecisionRepository decisions = mock(RoutingDecisionRepository.class);
+		when(decisions.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		controller.setDecisionLogWriter(new DecisionLogWriter(decisions, objectMapper, 1000));
+		when(orchestrator.execute(any(), anyString())).thenReturn(CompletableFuture.failedFuture(
+				new UpstreamUnavailableException("down", null, false, false, 503)));
+
+		assertThrows(UpstreamUnavailableException.class,
+				() -> controller.proxyChatCompletions(PATH_BODY, request()));
+
+		ArgumentCaptor<RoutingDecisionEntity> saved = ArgumentCaptor.forClass(RoutingDecisionEntity.class);
+		verify(decisions).save(saved.capture());
+		assertNull(saved.getValue().getWinner());
+		assertEquals("[]", saved.getValue().getTriedJson());
+	}
+
+	@Test
+	@DisplayName("unknown routing headers are rejected with 400 before any upstream call")
+	void rejectsUnknownRoutingHeaders() {
+		MockHttpServletRequest req = request();
+		req.addHeader("X-CacheRelay-Min-Quality-Tier", "ULTRA");
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, req);
+
+		assertEquals(400, entity.getStatusCode().value());
+		verify(orchestrator, never()).execute(any(), anyString());
 	}
 }

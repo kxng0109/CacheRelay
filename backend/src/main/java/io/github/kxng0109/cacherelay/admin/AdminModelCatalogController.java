@@ -1,12 +1,15 @@
 package io.github.kxng0109.cacherelay.admin;
 
 import java.util.List;
+import java.util.Optional;
 
 import io.github.kxng0109.cacherelay.admin.dto.ModelCatalogEntryResponse;
 import io.github.kxng0109.cacherelay.admin.dto.ModelCatalogResponse;
 import io.github.kxng0109.cacherelay.config.OpenApiConfig;
 import io.github.kxng0109.cacherelay.ledger.ModelPriceCatalog;
 import io.github.kxng0109.cacherelay.ledger.ModelPricingEntry;
+import io.github.kxng0109.cacherelay.ledger.ModelQualityCatalog;
+import io.github.kxng0109.cacherelay.ledger.ModelQualityEntry;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -15,8 +18,8 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import lombok.RequiredArgsConstructor;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -35,7 +38,6 @@ import org.springframework.web.server.ResponseStatusException;
  */
 @RestController
 @RequestMapping("/v1/admin/model-catalog")
-@RequiredArgsConstructor
 @Tag(name = "Admin - Model Catalog", description = "Searchable model suggestions with context windows and pricing")
 public class AdminModelCatalogController {
 
@@ -48,6 +50,31 @@ public class AdminModelCatalogController {
 	private static final int MAX_PROVIDER_LENGTH = 64;
 
 	private final ModelPriceCatalog modelPriceCatalog;
+
+	private final ModelQualityCatalog modelQualityCatalog;
+
+	/**
+	 * Creates the controller with both catalogs.
+	 *
+	 * @param modelPriceCatalog   pricing read side
+	 * @param modelQualityCatalog quality read side
+	 */
+	@Autowired
+	public AdminModelCatalogController(
+			ModelPriceCatalog modelPriceCatalog,
+			ModelQualityCatalog modelQualityCatalog) {
+		this.modelPriceCatalog = modelPriceCatalog;
+		this.modelQualityCatalog = modelQualityCatalog;
+	}
+
+	/**
+	 * Creates the controller without quality annotations (tests).
+	 *
+	 * @param modelPriceCatalog pricing read side
+	 */
+	public AdminModelCatalogController(ModelPriceCatalog modelPriceCatalog) {
+		this(modelPriceCatalog, null);
+	}
 
 	/**
 	 * Searches the catalog for model suggestions.
@@ -85,7 +112,7 @@ public class AdminModelCatalogController {
 	) {
 		validate(provider, query, limit);
 		List<ModelCatalogEntryResponse> models = modelPriceCatalog.search(provider, query, limit).stream()
-				.map(AdminModelCatalogController::toResponse)
+				.map(this::toResponse)
 				.toList();
 		return ResponseEntity.ok(new ModelCatalogResponse(models));
 	}
@@ -105,7 +132,16 @@ public class AdminModelCatalogController {
 		}
 	}
 
-	private static ModelCatalogEntryResponse toResponse(ModelPricingEntry entry) {
+	private ModelCatalogEntryResponse toResponse(ModelPricingEntry entry) {
+		String qualityTier = null;
+		String benchmarkRefs = null;
+		if (modelQualityCatalog != null) {
+			Optional<ModelQualityEntry> quality = modelQualityCatalog.qualityOf(entry.modelId());
+			if (quality.isPresent()) {
+				qualityTier = quality.get().tier().name();
+				benchmarkRefs = quality.get().benchmarkRefs();
+			}
+		}
 		return new ModelCatalogEntryResponse(
 				entry.modelId(),
 				entry.provider(),
@@ -115,6 +151,8 @@ public class AdminModelCatalogController {
 				entry.cacheReadInputTokenCost(),
 				entry.cacheCreationInputTokenCost(),
 				entry.maxInputTokens(),
-				entry.maxOutputTokens());
+				entry.maxOutputTokens(),
+				qualityTier,
+				benchmarkRefs);
 	}
 }

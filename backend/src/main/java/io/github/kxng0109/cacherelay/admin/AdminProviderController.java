@@ -53,7 +53,7 @@ public class AdminProviderController {
 	 */
 	@Operation(
 			summary = "List configured providers",
-			description = "Lists every provider configured under `gateway.providers` with its dialect, base URL, whether a credential is configured (the key value is never exposed), its timeouts, the live circuit breaker state observed by this instance, and how many alias chain steps reference it.",
+			description = "Lists every provider configured under `gateway.providers` with its dialect, base URL, whether a credential is configured (the key value is never exposed), its timeouts, the live circuit breaker state observed by this instance, how many alias chain steps reference it, and its integration validation status.",
 			security = {
 					@SecurityRequirement(name = OpenApiConfig.SCHEME_ADMIN_KEY_HEADER),
 					@SecurityRequirement(name = OpenApiConfig.SCHEME_ADMIN_BEARER)
@@ -96,7 +96,8 @@ public class AdminProviderController {
 				config.requestTimeout() == null ? 0L : config.requestTimeout().toSeconds(),
 				config.isEmbeddingSingleAsString(),
 				circuitBreakerFactory.get(name).getState().name(),
-				aliasReferences);
+				aliasReferences,
+				ProviderValidationRegistry.statusOf(name).name());
 	}
 
 	private static boolean isKeyConfigured(ProviderConfig config) {
