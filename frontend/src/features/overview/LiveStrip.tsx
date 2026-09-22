@@ -7,14 +7,15 @@ const TAIL_SIZE = 5
 const POLL_MS = 15_000
 
 /**
- * Overview live strip: ticking eyebrow, latest-requests tail, cache gauge.
+ * Overview live strip: ticking eyebrow, latest-requests tail, cache config.
  *
  * @remarks Proof-type: live + recorded. The eyebrow re-renders whenever the
  * shared `ledger-summary` cache or the live RPS value moves, so operators
  * see the gateway tick without opening another screen. The tail reads the
  * first page of `/v1/admin/ledger/entries` on its own `ledger-tail` key and
- * the gauge shares the `cache-stats` key with the cache screen, both
+ * the config panel shares the `cache-stats` key with the cache screen, both
  * polling on the operator cadence. Unknowns render em dashes, never zeros.
+ * The stats endpoint reports configuration flags, never fill counters.
  *
  * @param props - Ledger summary, live RPS, both owned by the overview page.
  * @returns The live strip section.
@@ -40,12 +41,7 @@ export function LiveStrip({
   })
 
   const entries = tail.data?.content ?? []
-  const l0Size = cache.data?.l0Size ?? null
-  const l0Capacity = cache.data?.l0Capacity ?? null
-  const l0Percent =
-    l0Size === null || l0Capacity === null || l0Capacity <= 0
-      ? null
-      : Math.min(100, Math.round((100 * l0Size) / l0Capacity))
+  const cacheFlags = cache.data
 
   return (
     <section aria-label="Live gateway activity" className="space-y-4">
@@ -140,12 +136,12 @@ export function LiveStrip({
           </div>
           {cache.isPending ? (
             <p role="status" className="mt-2 text-sm">
-              Loading cache stats…
+              Loading cache config…
             </p>
           ) : cache.error instanceof Error ? (
             <div role="alert" className="mt-2 space-y-2">
               <p className="text-sm text-danger dark:text-danger-soft">
-                Cache stats unavailable: {cache.error.message}
+                Cache config unavailable: {cache.error.message}
               </p>
               <button
                 type="button"
@@ -155,43 +151,28 @@ export function LiveStrip({
                 Retry [r]
               </button>
             </div>
-          ) : (
+          ) : cacheFlags === undefined ? null : (
             <dl className="mt-2 space-y-3">
-              <div>
-                <div className="flex items-baseline justify-between gap-2">
-                  <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">L0 fill</dt>
-                  <dd className="font-mono text-sm tnum">
-                    {l0Size === null || l0Capacity === null
-                      ? '—'
-                      : `${String(l0Size)}/${String(l0Capacity)}`}
-                  </dd>
-                </div>
-                <div
-                  role="progressbar"
-                  aria-label="L0 cache fill"
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={l0Percent ?? 0}
-                  className="mt-1 h-2 overflow-hidden rounded-full bg-ink/10 dark:bg-parchment/10"
-                >
-                  <div
-                    aria-hidden="true"
-                    className="h-full rounded-full bg-ember"
-                    style={{ width: `${String(l0Percent ?? 0)}%` }}
-                  />
-                </div>
+              <div className="flex items-baseline justify-between gap-2">
+                <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">State</dt>
+                <dd className="font-mono text-sm tnum">
+                  {cacheFlags.enabled ? 'on' : 'off'} · {cacheFlags.defaultScope}
+                </dd>
               </div>
               <div className="flex items-baseline justify-between gap-2">
-                <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">
-                  Exact entries
-                </dt>
-                <dd className="font-mono text-sm tnum">{cache.data?.exactEntries ?? '—'}</dd>
+                <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">L0 cap</dt>
+                <dd className="font-mono text-sm tnum">
+                  {cacheFlags.l0MaxBytes} B · TTL {cacheFlags.l0InMemoryTtlSeconds}s
+                </dd>
               </div>
               <div className="flex items-baseline justify-between gap-2">
-                <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">
-                  Semantic vectors
-                </dt>
-                <dd className="font-mono text-sm tnum">{cache.data?.semanticVectors ?? '—'}</dd>
+                <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Tiers</dt>
+                <dd className="font-mono text-sm tnum">
+                  l1 {cacheFlags.l1RedisEnabled ? 'on' : 'off'} · l2{' '}
+                  {cacheFlags.l2SemanticEnabled ? 'on' : 'off'} · guards{' '}
+                  {cacheFlags.polarityGuardEnabled ? 'on' : 'off'}/
+                  {cacheFlags.entityGuardEnabled ? 'on' : 'off'}
+                </dd>
               </div>
             </dl>
           )}

@@ -7,20 +7,25 @@ import { renderApp } from '../../test/utils.js'
 import { CachePage } from './page.js'
 
 const STATS = {
-  l0Size: 10,
-  l0Capacity: 100,
-  redisConfigured: true,
-  exactEntries: 5,
-  semanticVectors: 2,
+  enabled: true,
+  defaultScope: 'TENANT',
+  similarityThreshold: 0.92,
+  embeddingModel: 'test-embed',
+  l0MaxBytes: 1048576,
+  l0InMemoryTtlSeconds: 300,
+  l1RedisEnabled: true,
+  l2SemanticEnabled: true,
+  polarityGuardEnabled: true,
+  entityGuardEnabled: true,
 }
 
 describe('CachePage', () => {
   it('mounts the board without a session (router guards access)', () => {
     renderApp(<CachePage />)
-    expect(screen.getByText(/loading cache stats/i)).toBeInTheDocument()
+    expect(screen.getByText(/loading cache config/i)).toBeInTheDocument()
   })
 
-  it('renders tier stats and budget caps', async () => {
+  it('renders tier config and budget caps', async () => {
     server.use(
       http.get('*/v1/admin/cache/stats', () => HttpResponse.json(STATS)),
       http.get('*/v1/admin/budgets', () =>
@@ -42,7 +47,9 @@ describe('CachePage', () => {
     await waitFor(() => {
       expect(screen.getByText('tenant-corp')).toBeInTheDocument()
     })
-    expect(screen.getByText('10/100')).toBeInTheDocument()
+    expect(screen.getByText('on · TENANT')).toBeInTheDocument()
+    expect(screen.getByText('1048576 B')).toBeInTheDocument()
+    expect(screen.getByText(/l1 on · l2 on/)).toBeInTheDocument()
     expect(screen.getByText('TEAM')).toBeInTheDocument()
     expect(screen.getByText('5000')).toBeInTheDocument()
   })
@@ -230,10 +237,33 @@ describe('CachePage', () => {
     })
   })
 
+  it('shows cache off and tier flags honestly', async () => {
+    server.use(
+      http.get('*/v1/admin/cache/stats', () =>
+        HttpResponse.json({
+          ...STATS,
+          enabled: false,
+          defaultScope: 'GLOBAL',
+          l1RedisEnabled: false,
+          l2SemanticEnabled: false,
+          polarityGuardEnabled: false,
+          entityGuardEnabled: false,
+        }),
+      ),
+      http.get('*/v1/admin/budgets', () => HttpResponse.json([])),
+    )
+    renderApp(<CachePage />, { adminSession: true })
+    await waitFor(() => {
+      expect(screen.getByText('off · GLOBAL')).toBeInTheDocument()
+    })
+    expect(screen.getByText(/l1 off · l2 off/)).toBeInTheDocument()
+    expect(screen.getByText(/guards off\/off/i)).toBeInTheDocument()
+  })
+
   it('shows redis as off and zero caps honestly', async () => {
     server.use(
       http.get('*/v1/admin/cache/stats', () =>
-        HttpResponse.json({ ...STATS, redisConfigured: false }),
+        HttpResponse.json({ ...STATS, l1RedisEnabled: false }),
       ),
       http.get('*/v1/admin/budgets', () =>
         HttpResponse.json([
@@ -271,6 +301,107 @@ describe('CachePage', () => {
     expect(screen.getAllByText(/expected number, received NaN/i)).toHaveLength(2)
   })
 
+  it('copies visible budgets as a markdown table', async () => {
+    const user = userEvent.setup()
+    const writes: string[] = []
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: (s: string): Promise<void> => {
+          writes.push(s)
+          return Promise.resolve()
+        },
+      },
+    })
+    try {
+      server.use(
+        http.get('*/v1/admin/cache/stats', () => HttpResponse.json(STATS)),
+        http.get('*/v1/admin/budgets', () =>
+          HttpResponse.json([
+            {
+              id: 'b1',
+              level: 'TEAM',
+              subjectId: 'tenant-corp',
+              minuteMicros: 100,
+              monthMicros: 5000,
+              webhookUrl: null,
+              createdAt: '2026-09-18T00:00:00Z',
+              updatedAt: '2026-09-18T00:00:00Z',
+            },
+          ]),
+        ),
+      )
+      renderApp(<CachePage />, { adminSession: true })
+      await user.click(await screen.findByRole('button', { name: /copy markdown/i }))
+      expect(writes.length).toBe(1)
+      const first = writes.at(0)
+      expect(first).toBeDefined()
+      if (first !== undefined) {
+        expect(first.startsWith('# Spend budgets')).toBe(true)
+        expect(first).toContain('| tenant-corp | TEAM | 100 | 5000 |')
+      }
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+    }
+  })
+
+  it('reports budget copy failure inline', async () => {
+    const user = userEvent.setup()
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: (): Promise<void> => Promise.reject(new Error('denied')) },
+    })
+    try {
+      server.use(
+        http.get('*/v1/admin/cache/stats', () => HttpResponse.json(STATS)),
+        http.get('*/v1/admin/budgets', () =>
+          HttpResponse.json([
+            {
+              id: 'b1',
+              level: 'TEAM',
+              subjectId: 'tenant-corp',
+              minuteMicros: 100,
+              monthMicros: 5000,
+              webhookUrl: null,
+              createdAt: '2026-09-18T00:00:00Z',
+              updatedAt: '2026-09-18T00:00:00Z',
+            },
+          ]),
+        ),
+      )
+      renderApp(<CachePage />, { adminSession: true })
+      await user.click(await screen.findByRole('button', { name: /copy markdown/i }))
+      expect(await screen.findByText(/copy failed. select the text manually/i)).toBeInTheDocument()
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+    }
+  })
+
+  it('reports budget copy absence inline', async () => {
+    const user = userEvent.setup()
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+    server.use(
+      http.get('*/v1/admin/cache/stats', () => HttpResponse.json(STATS)),
+      http.get('*/v1/admin/budgets', () =>
+        HttpResponse.json([
+          {
+            id: 'b1',
+            level: 'TEAM',
+            subjectId: 'tenant-corp',
+            minuteMicros: 100,
+            monthMicros: 5000,
+            webhookUrl: null,
+            createdAt: '2026-09-18T00:00:00Z',
+            updatedAt: '2026-09-18T00:00:00Z',
+          },
+        ]),
+      ),
+    )
+    renderApp(<CachePage />, { adminSession: true })
+    await user.click(await screen.findByRole('button', { name: /copy markdown/i }))
+    expect(screen.getByText(/copy unavailable in this browser/i)).toBeInTheDocument()
+  })
+
   it('refreshes stats on demand', async () => {
     const user = userEvent.setup()
     let calls = 0
@@ -283,7 +414,7 @@ describe('CachePage', () => {
     )
     renderApp(<CachePage />, { adminSession: true })
     await waitFor(() => {
-      expect(screen.getByText('10/100')).toBeInTheDocument()
+      expect(screen.getByText('on · TENANT')).toBeInTheDocument()
     })
     expect(calls).toBe(1)
     await user.click(screen.getByRole('button', { name: /refresh/i }))

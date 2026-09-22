@@ -8,9 +8,9 @@ import { server } from '../../test/setup.js'
 import { renderApp } from '../../test/utils.js'
 import { ModelSelect } from './ModelSelect.js'
 
-function Harness({ token }: { token: string }) {
-  const { register } = useForm<{ model: string }>({ defaultValues: { model: '' } })
-  const [value, setValue] = useState('')
+function Harness({ token, initial }: { token: string; initial?: string }) {
+  const { register } = useForm<{ model: string }>({ defaultValues: { model: initial ?? '' } })
+  const [value, setValue] = useState(initial ?? '')
   return (
     <>
       <label htmlFor="model-probe">Model</label>
@@ -48,6 +48,14 @@ describe('ModelSelect', () => {
     })
     await user.selectOptions(screen.getByLabelText(/model/i), 'beta')
     expect(screen.getByLabelText(/model/i)).toHaveValue('beta')
+  })
+
+  it('keeps a saved choice visible when the catalog no longer lists it', async () => {
+    server.use(http.get('*/v1/models', () => HttpResponse.json({ data: [{ id: 'alpha' }] })))
+    renderApp(<Harness token="gw-test" initial="retired-model" />)
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: /retired-model \(saved\)/i })).toBeInTheDocument()
+    })
   })
 
   it('offers reload instead of free text when the catalog fails', async () => {

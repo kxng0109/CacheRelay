@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { GatewayClient } from '../../shared/api/client.js'
+import { RunInspector } from './RunInspector.js'
 
 const PAGE_SIZE = 25
 
@@ -30,6 +31,16 @@ function LedgerBoard(): React.JSX.Element {
 
   const entries = logs.data?.content ?? []
   const inspected = entries.find((e) => e.requestId === selected) ?? null
+
+  /**
+   * Selects a receipt row. Shared by pointer and keyboard so audit rows
+   * are never click-only.
+   *
+   * @param requestId - Row to select, or toggle off when already selected.
+   */
+  const selectRow = (requestId: string): void => {
+    setSelected(requestId === selected ? null : requestId)
+  }
   const [tableFilter, setTableFilter] = useState('')
   const filterQuery = tableFilter.trim().toLowerCase()
   const visible =
@@ -139,9 +150,16 @@ function LedgerBoard(): React.JSX.Element {
                     {visible.map((e) => (
                       <tr
                         key={e.requestId}
+                        tabIndex={0}
                         aria-selected={e.requestId === selected}
                         onClick={() => {
-                          setSelected(e.requestId === selected ? null : e.requestId)
+                          selectRow(e.requestId)
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            selectRow(e.requestId)
+                          }
                         }}
                         className={`cursor-pointer border-t border-ink/10 dark:border-parchment/10 ${
                           e.requestId === selected ? 'bg-ink/4 dark:bg-parchment/6' : ''
@@ -201,37 +219,14 @@ function LedgerBoard(): React.JSX.Element {
             Select a row to inspect its receipt.
           </p>
         ) : (
-          <div className="space-y-3 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
-            <h2 className="font-mono text-sm break-all">{inspected.requestId}</h2>
-            <dl className="space-y-2 text-[13px]">
-              <div className="flex justify-between gap-3">
-                <dt className="text-ink-soft dark:text-parchment-soft">Model</dt>
-                <dd>{inspected.model}</dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-ink-soft dark:text-parchment-soft">Cost (µ$)</dt>
-                <dd className="tnum">{inspected.costUsdMicros}</dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-ink-soft dark:text-parchment-soft">Created</dt>
-                <dd className="tnum">{inspected.createdAt}</dd>
-              </div>
-            </dl>
-            <button
-              type="button"
-              onClick={() => {
-                const clip = navigator.clipboard as Clipboard | undefined
-                if (clip !== undefined) {
-                  void clip.writeText(
-                    `request ${inspected.requestId} · model ${inspected.model} · cost ${String(inspected.costUsdMicros)}µ$ · ${inspected.createdAt}`,
-                  )
-                }
-              }}
-              className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
-            >
-              Copy receipt
-            </button>
-          </div>
+          <RunInspector
+            rows={visible}
+            selected={inspected.requestId}
+            onSelect={setSelected}
+            onClose={() => {
+              setSelected(null)
+            }}
+          />
         )}
       </aside>
     </div>

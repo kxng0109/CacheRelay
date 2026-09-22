@@ -17,7 +17,7 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>
 
 /**
- * Cache and budget administration: tier stats, purge, budget gauge + create.
+ * Cache and budget administration: tier configuration, purge, budget caps.
  *
  * @remarks Proof-type: live (real `/v1/admin/cache/*` and `/v1/admin/budgets`).
  *
@@ -32,10 +32,12 @@ export function CachePage(): React.JSX.Element {
 }
 
 /**
- * Tier stats, purge, budget gauges, and budget creation.
+ * Tier configuration, purge, budget caps, and budget creation.
  *
  * @remarks Behind the admin route guard; the session Bearer attaches
- * automatically, so no credential prop is needed.
+ * automatically, so no credential prop is needed. The stats endpoint
+ * reports configuration flags (scopes, caps, tier and guard switches),
+ * never live fill counters — unknowns render as em dashes.
  *
  * @returns The cache board.
  */
@@ -44,6 +46,8 @@ function CacheBoard(): React.JSX.Element {
   const [notice, setNotice] = useState<string | null>(null)
   const [confirmingPurge, setConfirmingPurge] = useState(false)
   const [purgeScope, setPurgeScope] = useState('')
+  const [budgetsCopied, setBudgetsCopied] = useState(false)
+  const [budgetsCopyError, setBudgetsCopyError] = useState<string | null>(null)
 
   const stats = useQuery({
     queryKey: ['cache-stats'],
@@ -105,7 +109,8 @@ function CacheBoard(): React.JSX.Element {
           <h1 className="font-display text-3xl font-medium tracking-tight">Cache and budgets</h1>
           {stats.data === undefined ? null : (
             <span className="rounded-full border border-ink/15 px-2 py-0.5 font-mono text-xs tnum dark:border-parchment/15">
-              redis {stats.data.redisConfigured ? 'on' : 'off'}
+              cache {stats.data.enabled ? 'on' : 'off'} · l1 redis{' '}
+              {stats.data.l1RedisEnabled ? 'on' : 'off'}
             </span>
           )}
           <span className="flex-1" />
@@ -177,7 +182,7 @@ function CacheBoard(): React.JSX.Element {
       )}
       {stats.isPending ? (
         <p role="status" className="text-sm">
-          Loading cache stats…
+          Loading cache config…
         </p>
       ) : stats.error instanceof Error ? (
         <p role="alert" className="text-sm text-danger dark:text-danger-soft">
@@ -186,32 +191,74 @@ function CacheBoard(): React.JSX.Element {
       ) : stats.data === undefined ? null : (
         <dl className="grid grid-cols-3 gap-3">
           <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
-            <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">L0 fill</dt>
+            <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">State</dt>
             <dd className="font-mono text-lg tnum">
-              {stats.data.l0Size}/{stats.data.l0Capacity}
+              {stats.data.enabled ? 'on' : 'off'} · {stats.data.defaultScope}
             </dd>
             <dd className="mt-1 text-xs text-ink-soft dark:text-parchment-soft">
-              In memory exact hits.
-            </dd>
-          </div>
-          <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
-            <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Exact entries</dt>
-            <dd className="font-mono text-lg tnum">{stats.data.exactEntries}</dd>
-            <dd className="mt-1 text-xs text-ink-soft dark:text-parchment-soft">
-              Byte identical prompts.
+              Default scope for new entries.
             </dd>
           </div>
           <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
-            <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Semantic vectors</dt>
-            <dd className="font-mono text-lg tnum">{stats.data.semanticVectors}</dd>
+            <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">L0 cap</dt>
+            <dd className="font-mono text-lg tnum">{stats.data.l0MaxBytes} B</dd>
             <dd className="mt-1 text-xs text-ink-soft dark:text-parchment-soft">
-              Same meaning, new wording.
+              TTL {stats.data.l0InMemoryTtlSeconds}s in memory.
+            </dd>
+          </div>
+          <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
+            <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Tiers</dt>
+            <dd className="font-mono text-lg tnum">
+              l1 {stats.data.l1RedisEnabled ? 'on' : 'off'} · l2{' '}
+              {stats.data.l2SemanticEnabled ? 'on' : 'off'}
+            </dd>
+            <dd className="mt-1 text-xs text-ink-soft dark:text-parchment-soft">
+              {stats.data.embeddingModel} @ {stats.data.similarityThreshold} · guards{' '}
+              {stats.data.polarityGuardEnabled ? 'on' : 'off'}/
+              {stats.data.entityGuardEnabled ? 'on' : 'off'}.
             </dd>
           </div>
         </dl>
       )}
       <div className="space-y-1">
-        <h2 className="text-base font-semibold">Budgets</h2>
+        <div className="flex flex-wrap items-baseline gap-2">
+          <h2 className="text-base font-semibold">Budgets</h2>
+          <span className="flex-1" />
+          {budgets.data === undefined || budgets.data.budgets.length === 0 ? null : (
+            <button
+              type="button"
+              onClick={() => {
+                setBudgetsCopyError(null)
+                const clip = navigator.clipboard as Clipboard | undefined
+                if (clip === undefined) {
+                  setBudgetsCopyError('Copy unavailable in this browser.')
+                  return
+                }
+                const rows = budgets.data.budgets.map(
+                  (b) =>
+                    `| ${b.subjectId} | ${b.level} | ${String(b.minuteMicros)} | ${String(b.monthMicros)} |`,
+                )
+                const doc = `# Spend budgets\n\n| Subject | Level | Minute (µ$) | Month (µ$) |\n| --- | --- | --- | --- |\n${rows.join('\n')}`
+                void clip.writeText(doc).then(
+                  () => {
+                    setBudgetsCopied(true)
+                  },
+                  () => {
+                    setBudgetsCopyError('Copy failed. Select the text manually.')
+                  },
+                )
+              }}
+              className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+            >
+              {budgetsCopied ? 'Copied' : 'Copy markdown'}
+            </button>
+          )}
+        </div>
+        {budgetsCopyError === null ? null : (
+          <p role="alert" className="text-[13px] text-danger dark:text-danger-soft">
+            {budgetsCopyError}
+          </p>
+        )}
         <p className="text-sm text-ink-soft dark:text-parchment-soft">
           Caps in micro dollars per minute and per month. Zero means no cap. Breaches alert through
           the webhook.

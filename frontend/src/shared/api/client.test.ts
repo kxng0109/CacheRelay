@@ -641,6 +641,44 @@ describe('GatewayClient transport', () => {
     expect(refreshCalls).toBe(0)
   })
 
+  it('refreshes through the auth path outside the login exchange', async () => {
+    const { refreshSession } = await import('../auth/session.js')
+    useAuthStore.getState().setSession({ accessToken: 'stale-jwt', admin: true, username: 'op' })
+    let refreshCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (typeof url === 'string' && url.endsWith('/v1/auth/refresh')) {
+          refreshCalls += 1
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ accessToken: 'fresh-jwt', expiresInSeconds: 300, admin: true }),
+              { status: 200 },
+            ),
+          )
+        }
+        return Promise.resolve(new Response('x', { status: 401 }))
+      }),
+    )
+    try {
+      const fresh = await refreshSession()
+      expect(refreshCalls).toBe(1)
+      expect(fresh?.accessToken).toBe('fresh-jwt')
+      expect(useAuthStore.getState().session?.accessToken).toBe('fresh-jwt')
+    } finally {
+      useAuthStore.getState().clear()
+    }
+  })
+
+  it('degrades to an empty board when the models envelope drifts', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify({ models: null }), { status: 200 }))),
+    )
+    const out = await new GatewayClient({ base: '', token: 'gw-test' }).listModelAliases()
+    expect(out.models).toEqual([])
+  })
+
   it('notifies the module reporter with success-path headers', async () => {
     const seen: string[] = []
     setHeadersReporter((h, code) => {

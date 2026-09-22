@@ -41,6 +41,23 @@ function pageOf(requestIds: string[], hasNext: boolean, page = 0) {
   }
 }
 
+function receiptOf(requestId: string) {
+  return {
+    requestId,
+    ownerId: 'tenant-corp',
+    provider: 'openai',
+    model: 'gpt-4o-mini',
+    promptTokens: 8,
+    completionTokens: 4,
+    totalTokens: 12,
+    costUsdMicros: 12,
+    durationMs: 41,
+    cached: false,
+    cacheTier: null,
+    createdAt: '2026-09-21T00:00:00Z',
+  }
+}
+
 describe('LedgerPage', () => {
   it('mounts the board without a session (router guards access)', () => {
     renderApp(<LedgerPage />)
@@ -59,6 +76,20 @@ describe('LedgerPage', () => {
     expect(screen.getByText('42')).toBeInTheDocument()
     expect(screen.getByText('$0.000000')).toBeInTheDocument()
     expect(screen.getByText('123.5')).toBeInTheDocument()
+  })
+
+  it('selects a row with the Space key', async () => {
+    const user = userEvent.setup()
+    server.use(
+      summary({ totalRequests: 1, totalCostUsdMicros: 12, averageDurationMs: 3 }),
+      http.get('*/v1/admin/ledger/entries', () => HttpResponse.json(pageOf(['r9'], false))),
+      http.get('*/v1/admin/ledger/entries/:id', () => HttpResponse.json(receiptOf('r9'))),
+    )
+    renderApp(<LedgerPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    within(table).getByText('gpt-4o-mini').closest('tr')?.focus()
+    await user.keyboard('{ }')
+    expect(await screen.findByRole('complementary')).toHaveTextContent(/r9|gpt-4o-mini/)
   })
 
   it('shows the empty state without traffic', async () => {
@@ -113,17 +144,25 @@ describe('LedgerPage', () => {
     server.use(
       summary({ totalRequests: 1, totalCostUsdMicros: 12, averageDurationMs: 3 }),
       http.get('*/v1/admin/ledger/entries', () => HttpResponse.json(pageOf(['r9'], false))),
+      http.get('*/v1/admin/ledger/entries/:id', () => HttpResponse.json(receiptOf('r9'))),
     )
     renderApp(<LedgerPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('r9'))
-    const inspector = screen.getByRole('complementary', { name: /receipt inspector/i })
-    expect(inspector).toHaveTextContent('gpt-4o-mini')
-    expect(inspector).toHaveTextContent('12')
-    await user.click(within(table).getByText('r9'))
-    expect(screen.getByRole('complementary', { name: /receipt inspector/i })).toHaveTextContent(
-      /select a row to inspect/i,
-    )
+    const row = within(table).getByText('gpt-4o-mini').closest('tr')
+    expect(row).not.toBeNull()
+    if (row !== null) {
+      await user.click(row)
+    }
+    const inspector = await screen.findByRole('complementary')
+    expect(inspector).toHaveTextContent(/r9|gpt-4o-mini/)
+    const rowAgain = within(table).getByText('gpt-4o-mini').closest('tr')
+    expect(rowAgain).not.toBeNull()
+    if (rowAgain !== null) {
+      await user.click(rowAgain)
+    }
+    await waitFor(() => {
+      expect(screen.getByRole('complementary')).toHaveTextContent(/select a row to inspect/i)
+    })
   })
 
   it('filters rows by request id without refetching', async () => {
@@ -163,12 +202,97 @@ describe('LedgerPage', () => {
       )
       renderApp(<LedgerPage />, { adminSession: true })
       const table = await screen.findByRole('table')
-      await user.click(within(table).getByText('r9'))
+      await user.click(within(table).getByText('gpt-4o-mini'))
       await user.click(screen.getByRole('button', { name: /copy receipt/i }))
       expect(writes.length).toBe(1)
       const first = writes.at(0)
       expect(first).toBeDefined()
       if (first !== undefined) expect(first).toContain('r9')
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+    }
+  })
+
+  it('selects a row from the keyboard', async () => {
+    const user = userEvent.setup()
+    server.use(
+      summary({ totalRequests: 1, totalCostUsdMicros: 12, averageDurationMs: 3 }),
+      http.get('*/v1/admin/ledger/entries', () => HttpResponse.json(pageOf(['r9'], false))),
+      http.get('*/v1/admin/ledger/entries/:id', () => HttpResponse.json(receiptOf('r9'))),
+    )
+    renderApp(<LedgerPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    within(table).getByText('gpt-4o-mini').closest('tr')?.focus()
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('complementary', { name: /receipt inspector/i })).toHaveTextContent(
+      'gpt-4o-mini',
+    )
+  })
+
+  it('copies the inspected receipt as markdown with a heading and fence', async () => {
+    const user = userEvent.setup()
+    const writes: string[] = []
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: (s: string): Promise<void> => {
+          writes.push(s)
+          return Promise.resolve()
+        },
+      },
+    })
+    try {
+      server.use(
+        summary({ totalRequests: 1, totalCostUsdMicros: 12, averageDurationMs: 3 }),
+        http.get('*/v1/admin/ledger/entries', () => HttpResponse.json(pageOf(['r9'], false))),
+      )
+      renderApp(<LedgerPage />, { adminSession: true })
+      const table = await screen.findByRole('table')
+      await user.click(within(table).getByText('gpt-4o-mini'))
+      await user.click(screen.getByRole('button', { name: /copy markdown/i }))
+      expect(writes.length).toBe(1)
+      const first = writes.at(0)
+      expect(first).toBeDefined()
+      if (first !== undefined) {
+        expect(first.startsWith('# Receipt r9')).toBe(true)
+        expect(first).toContain('```json')
+        expect(first.toLowerCase()).not.toContain('bearer')
+      }
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+    }
+  })
+
+  it('reports clipboard absence inline instead of failing silently', async () => {
+    const user = userEvent.setup()
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+    server.use(
+      summary({ totalRequests: 1, totalCostUsdMicros: 12, averageDurationMs: 3 }),
+      http.get('*/v1/admin/ledger/entries', () => HttpResponse.json(pageOf(['r9'], false))),
+    )
+    renderApp(<LedgerPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByText('gpt-4o-mini'))
+    await user.click(screen.getByRole('button', { name: /copy receipt/i }))
+    expect(screen.getByText(/copy unavailable in this browser/i)).toBeInTheDocument()
+  })
+
+  it('reports clipboard rejection inline', async () => {
+    const user = userEvent.setup()
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: (): Promise<void> => Promise.reject(new Error('denied')) },
+    })
+    try {
+      server.use(
+        summary({ totalRequests: 1, totalCostUsdMicros: 12, averageDurationMs: 3 }),
+        http.get('*/v1/admin/ledger/entries', () => HttpResponse.json(pageOf(['r9'], false))),
+      )
+      renderApp(<LedgerPage />, { adminSession: true })
+      const table = await screen.findByRole('table')
+      await user.click(within(table).getByText('gpt-4o-mini'))
+      await user.click(screen.getByRole('button', { name: /copy markdown/i }))
+      expect(await screen.findByText(/copy failed. select the text manually/i)).toBeInTheDocument()
     } finally {
       Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
     }

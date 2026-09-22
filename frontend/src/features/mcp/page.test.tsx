@@ -57,6 +57,31 @@ describe('McpPage', () => {
     expect(screen.getByText(/tools:/i)).toHaveTextContent('3')
   })
 
+  it('selects a tool with the keyboard', async () => {
+    const user = userEvent.setup()
+    server.use(http.post('*/v1/mcp', () => HttpResponse.json(toolsList())))
+    renderApp(<McpPage />, { gatewayKey: 'gw-test' })
+    const table = await screen.findByRole('table')
+    within(table).getByText('postgres__run_query').closest('tr')?.focus()
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('complementary', { name: /tool inspector/i })).toHaveTextContent(
+      'postgres__run_query',
+    )
+  })
+
+  it('closes the tool inspector from its close button', async () => {
+    const user = userEvent.setup()
+    server.use(http.post('*/v1/mcp', () => HttpResponse.json(toolsList())))
+    renderApp(<McpPage />, { gatewayKey: 'gw-test' })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByText('postgres__run_query'))
+    const inspector = await screen.findByRole('complementary', { name: /tool inspector/i })
+    await user.click(within(inspector).getByRole('button', { name: /close inspector/i }))
+    expect(screen.getByRole('complementary', { name: /tool inspector/i })).toHaveTextContent(
+      /select a tool to inspect/i,
+    )
+  })
+
   it('filters tools and inspects schemas', async () => {
     const user = userEvent.setup()
     server.use(http.post('*/v1/mcp', () => HttpResponse.json(toolsList())))

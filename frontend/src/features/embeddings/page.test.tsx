@@ -179,6 +179,31 @@ describe('EmbeddingsPage', () => {
     )
   })
 
+  it('closes the run inspector from its close button', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/models', () => HttpResponse.json({ data: [{ id: 'm' }] })),
+      http.post('*/v1/embeddings', () =>
+        HttpResponse.json({ data: [{ embedding: [0.1], index: 0 }], model: 'm' }),
+      ),
+    )
+    renderApp(<EmbeddingsPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: 'm' })).toBeInTheDocument()
+    })
+    await user.selectOptions(screen.getByLabelText(/^model$/i), 'm')
+    await user.type(screen.getByLabelText(/input text/i), 'one')
+    await user.click(screen.getByRole('button', { name: /create embeddings/i }))
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByText('m'))
+    const inspector = await screen.findByRole('complementary', { name: /run inspector/i })
+    await user.click(within(inspector).getByRole('button', { name: /close inspector/i }))
+    expect(screen.getByRole('complementary', { name: /run inspector/i })).toHaveTextContent(
+      /select a run to inspect/i,
+    )
+  })
+
   it('surfaces gateway errors without leaking internals', async () => {
     const user = userEvent.setup()
     server.use(
@@ -260,5 +285,24 @@ describe('EmbeddingsPage', () => {
     expect(screen.getByRole('complementary', { name: /run inspector/i })).toHaveTextContent(
       /select a run/i,
     )
+  })
+
+  it('selects a run with the Space key', async () => {
+    const user = userEvent.setup()
+    server.use(
+      catalog(),
+      http.post('*/v1/embeddings', () =>
+        HttpResponse.json({ data: [{ embedding: [0.1], index: 0 }], model: 'm' }),
+      ),
+    )
+    renderApp(<EmbeddingsPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
+    await user.type(screen.getByLabelText(/input text/i), 'hi')
+    await user.click(screen.getByRole('button', { name: /create embeddings/i }))
+    const table = await screen.findByRole('table')
+    within(table).getByText('● ok').closest('tr')?.focus()
+    await user.keyboard('{ }')
+    expect(screen.getByRole('complementary', { name: /run inspector/i })).toHaveTextContent('m')
   })
 })

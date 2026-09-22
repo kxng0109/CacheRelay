@@ -10,6 +10,7 @@ import type {
   EmbeddingResponse,
   HitlApproval,
   LedgerLogEntry,
+  LedgerReceipt,
   LedgerSummary,
   McpSuspended,
   McpTool,
@@ -722,10 +723,29 @@ export class GatewayClient {
   }
 
   /**
-   * Reads cache statistics.
+   * Reads one full receipt by request id.
+   *
+   * @remarks Backend truth (`AdminLedgerController`): unknown ids answer
+   * empty-body `404`. The inspector treats that as a gone receipt, never
+   * a crash.
+   *
+   * @param requestId - Receipt to hydrate.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The twelve-field receipt.
+   */
+  ledgerReceipt(requestId: string, opts?: RequestOptions): Promise<LedgerReceipt> {
+    return this.request<LedgerReceipt>(
+      `/v1/admin/ledger/entries/${encodeURIComponent(requestId)}`,
+      { headers: this.headers() },
+      opts,
+    )
+  }
+
+  /**
+   * Reads cache configuration flags.
    *
    * @param opts - Optional request options (abort signal, headers listener).
-   * @returns L0/L1/L2 counters.
+   * @returns Tier configuration (scopes, caps, tier and guard flags).
    */
   cacheStats(opts?: RequestOptions): Promise<CacheStats> {
     return this.request<CacheStats>('/v1/admin/cache/stats', { headers: this.headers() }, opts)

@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { GatewayClient } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 import type { ModelAliasRecord, ProviderChainStep } from '../../shared/api/types.js'
+import { InspectorShell } from '../../shared/components/InspectorShell.js'
 
 const STRATEGIES = ['SEQUENTIAL', 'RACE'] as const
 const MAX_STEPS = 8
@@ -382,9 +383,16 @@ function ModelsBoard(): React.JSX.Element {
                 return (
                   <tr
                     key={a.name}
+                    tabIndex={0}
                     aria-selected={active}
                     onClick={() => {
                       setSelected(active ? null : a.name)
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        setSelected(active ? null : a.name)
+                      }
                     }}
                     className={`cursor-pointer border-t border-ink/10 dark:border-parchment/10 ${
                       active ? 'bg-ink/4 dark:bg-parchment/6' : ''
@@ -515,8 +523,12 @@ function ModelsBoard(): React.JSX.Element {
             Select a row to inspect an alias.
           </p>
         ) : (
-          <div className="space-y-3 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
-            <h2 className="font-mono text-sm break-all">{inspected.name}</h2>
+          <InspectorShell
+            title={inspected.name}
+            onClose={() => {
+              setSelected(null)
+            }}
+          >
             <dl className="space-y-2 text-[13px]">
               <div className="flex justify-between gap-3">
                 <dt className="text-ink-soft dark:text-parchment-soft">Source</dt>
@@ -551,7 +563,7 @@ function ModelsBoard(): React.JSX.Element {
                 File-bound aliases are read-only.
               </p>
             )}
-          </div>
+          </InspectorShell>
         )}
       </aside>
     </div>

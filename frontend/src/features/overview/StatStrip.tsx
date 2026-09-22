@@ -22,10 +22,8 @@ export function StatStrip({
   liveRps: number | null
   onRetry: () => void
 }): React.JSX.Element {
-  // Arrays are contractually present, but a drifted gateway must degrade
-  // to dashes, never throw inside the shell.
-  const models = Array.isArray(summary.byModel) ? summary.byModel : []
-  const providers = Array.isArray(summary.byProvider) ? summary.byProvider : []
+  const models = summary.byModel
+  const providers = summary.byProvider
   const top =
     models.length === 0
       ? null

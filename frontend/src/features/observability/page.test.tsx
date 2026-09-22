@@ -45,6 +45,7 @@ describe('ObservabilityPage', () => {
     await waitFor(() => {
       expect(screen.getByText(/gateway reports down/i)).toBeInTheDocument()
     })
+    expect(screen.getByText(/gateway:down/i)).toBeInTheDocument()
   })
 
   it('surfaces probe failures as alerts', async () => {
@@ -91,6 +92,33 @@ describe('ObservabilityPage', () => {
       setTimeout(resolve, 0)
     })
     expect(scraped).toBe(false)
+  })
+
+  it('reads the signal rail from the live probes', async () => {
+    server.use(
+      http.get('*/actuator/health', () => HttpResponse.json({ status: 'UP' })),
+      http.get('*/actuator/prometheus', () =>
+        HttpResponse.json({ status: 'UP' }, { headers: { 'Content-Type': 'text/plain' } }),
+      ),
+    )
+    renderApp(<ObservabilityPage />, { adminSession: true })
+    await waitFor(() => {
+      expect(screen.getByText(/gateway:up/i)).toBeInTheDocument()
+    })
+    const rail = await screen.findByRole('region', { name: /signal rail/i })
+    expect(rail).toHaveTextContent(/gateway up/i)
+    expect(rail).toHaveTextContent(/metrics live/i)
+  })
+
+  it('hides the metrics signal from non-admin sessions', async () => {
+    server.use(http.get('*/actuator/health', () => HttpResponse.json({ status: 'UP' })))
+    renderApp(<ObservabilityPage />, { nonAdminSession: true })
+    await waitFor(() => {
+      expect(screen.getByText(/gateway is up/i)).toBeInTheDocument()
+    })
+    const rail = await screen.findByRole('region', { name: /signal rail/i })
+    expect(rail).toHaveTextContent(/gateway up/i)
+    expect(rail).not.toHaveTextContent(/metrics/i)
   })
 
   it('inspects an endpoint without leaving the list', async () => {

@@ -275,6 +275,48 @@ export function ObservabilityPage(): React.JSX.Element {
           <LatencyChart />
         </Suspense>
       ) : null}
+      <section
+        aria-label="Signal rail"
+        className="rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent"
+      >
+        <h2 className="font-mono text-[13px] text-ink-soft dark:text-parchment-soft">
+          <span aria-hidden="true" className="mr-1 text-ember">
+            ❯
+          </span>
+          signals
+        </h2>
+        <ul className="mt-2 space-y-1 text-sm">
+          <li className="flex items-baseline justify-between gap-3">
+            <span>
+              <span aria-hidden="true" className="mr-1">
+                {gateway === 'up' ? '●' : gateway === 'down' ? '■' : '○'}
+              </span>
+              Gateway {gateway}
+            </span>
+            <span className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft">
+              /actuator/health
+            </span>
+          </li>
+          {isAdmin ? (
+            <li className="flex items-baseline justify-between gap-3">
+              <span>
+                <span aria-hidden="true" className="mr-1">
+                  {metrics.error instanceof Error ? '■' : metrics.data ? '●' : '○'}
+                </span>
+                Metrics{' '}
+                {metrics.error instanceof Error ? 'failing' : metrics.data ? 'live' : 'probing'}
+              </span>
+              <span className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft">
+                /actuator/prometheus
+              </span>
+            </li>
+          ) : null}
+        </ul>
+        <p className="mt-2 text-[13px] text-ink-soft dark:text-parchment-soft">
+          One rail, two signals, same 15s cadence as the cards above. No alert feed exists on this
+          stack, so the rail reads the probes directly.
+        </p>
+      </section>
       <details className="rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
         <summary className="cursor-pointer font-mono text-[13px]">
           Reading cache headers on a stream

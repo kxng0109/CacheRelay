@@ -43,6 +43,19 @@ describe('CircuitsPage', () => {
     expect(screen.getByText(/requests flow normally/i)).toBeInTheDocument()
   })
 
+  it('closes the inspector from its close button', async () => {
+    const user = userEvent.setup()
+    server.use(http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)))
+    renderBoard()
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByText('openai'))
+    const inspector = await screen.findByRole('complementary', { name: /circuit inspector/i })
+    await user.click(within(inspector).getByRole('button', { name: /close inspector/i }))
+    expect(screen.getByRole('complementary', { name: /circuit inspector/i })).toHaveTextContent(
+      /select a row to inspect/i,
+    )
+  })
+
   it('resets a circuit and announces the outcome', async () => {
     const user = userEvent.setup()
     server.use(
@@ -135,6 +148,7 @@ describe('CircuitsPage', () => {
   })
 
   it('renders future states under their own name', async () => {
+    const user = userEvent.setup()
     server.use(
       http.get('*/v1/admin/circuits', () =>
         HttpResponse.json([
@@ -152,6 +166,35 @@ describe('CircuitsPage', () => {
     await waitFor(() => {
       expect(screen.getByText('DRAINING')).toBeInTheDocument()
     })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByText('c'))
+    const inspector = screen.getByRole('complementary', { name: /circuit inspector/i })
+    expect(inspector).toHaveTextContent(/unknown state/i)
+    expect(inspector).toHaveTextContent(/treat traffic as suspect/i)
+  })
+
+  it('selects an unknown-state row from the keyboard', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/circuits', () =>
+        HttpResponse.json([
+          {
+            provider: 'c',
+            state: 'DRAINING',
+            failures: 0,
+            cooldownMsRemaining: 0,
+            halfOpenProbe: false,
+          },
+        ]),
+      ),
+    )
+    renderBoard()
+    const table = await screen.findByRole('table')
+    within(table).getByText('c').closest('tr')?.focus()
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('complementary', { name: /circuit inspector/i })).toHaveTextContent(
+      /unknown state/i,
+    )
   })
 
   it('shows the same-origin base when unconfigured', async () => {

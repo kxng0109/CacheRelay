@@ -58,6 +58,27 @@ describe('PulseStrip', () => {
     expect(strip).not.toHaveTextContent('0')
   })
 
+  it('renders sub-minute uptime and small heaps honestly', async () => {
+    server.use(
+      http.get(
+        '*/actuator/prometheus',
+        () =>
+          new HttpResponse(
+            [
+              'process_uptime_seconds 45.0',
+              'jvm_memory_used_bytes{area="heap"} 1048576',
+              'jvm_memory_max_bytes{area="heap"} 2097152',
+            ].join('\n'),
+          ),
+      ),
+    )
+    renderApp(<PulseStrip />, { adminSession: true })
+    await waitFor(() => {
+      expect(screen.getByText('<1m')).toBeInTheDocument()
+    })
+    expect(screen.getByText('1 MB')).toBeInTheDocument()
+  })
+
   it('stays silent when the scrape fails', async () => {
     let called = false
     server.use(

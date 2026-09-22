@@ -163,6 +163,72 @@ describe('ModelsPage', () => {
     expect(screen.queryByLabelText(/provider 2/i)).not.toBeInTheDocument()
   })
 
+  it('caps chain steps at the backend maximum', async () => {
+    const user = userEvent.setup()
+    server.use(listOk())
+    renderApp(<ModelsPage />, { adminSession: true })
+    await screen.findByRole('table')
+    await user.click(screen.getByRole('button', { name: /new alias/i }))
+    for (let i = 0; i < 7; i += 1) {
+      await user.click(screen.getByRole('button', { name: /add step/i }))
+    }
+    expect(screen.getByLabelText(/provider 8/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /add step/i })).not.toBeInTheDocument()
+  })
+
+  it('selects an alias with the Space key', async () => {
+    const user = userEvent.setup()
+    server.use(listOk())
+    renderApp(<ModelsPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    within(table).getByText('db-fast').closest('tr')?.focus()
+    await user.keyboard('{ }')
+    expect(screen.getByRole('complementary', { name: /alias inspector/i })).toHaveTextContent(
+      'db-fast',
+    )
+    await user.click(
+      within(screen.getByRole('complementary', { name: /alias inspector/i })).getByRole('button', {
+        name: /close inspector/i,
+      }),
+    )
+    expect(screen.getByRole('complementary', { name: /alias inspector/i })).toHaveTextContent(
+      /select a row to inspect/i,
+    )
+  })
+
+  it('selects an alias with the Space key', async () => {
+    const user = userEvent.setup()
+    server.use(listOk())
+    renderApp(<ModelsPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    within(table).getByText('db-fast').closest('tr')?.focus()
+    await user.keyboard('{ }')
+    expect(screen.getByRole('complementary', { name: /alias inspector/i })).toHaveTextContent(
+      'db-fast',
+    )
+  })
+
+  it('clears the inspector when its alias is deleted', async () => {
+    const user = userEvent.setup()
+    server.use(
+      listOk(),
+      http.delete('*/v1/admin/models/:name', () => new HttpResponse(null, { status: 204 })),
+    )
+    renderApp(<ModelsPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByText('db-fast'))
+    expect(screen.getByRole('complementary', { name: /alias inspector/i })).toHaveTextContent(
+      'db-fast',
+    )
+    await user.click(within(table).getByRole('button', { name: /^delete$/i }))
+    await user.click(screen.getByRole('button', { name: /^yes$/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('complementary', { name: /alias inspector/i })).toHaveTextContent(
+        /select a row to inspect/i,
+      )
+    })
+  })
+
   it('cancels creation without calling the gateway', async () => {
     const user = userEvent.setup()
     let posts = 0
@@ -207,7 +273,9 @@ describe('ModelsPage', () => {
     await user.click(within(table).getByText('file-gpt'))
     const inspector = screen.getByRole('complementary', { name: /alias inspector/i })
     expect(inspector).toHaveTextContent(/file-bound aliases are read-only/i)
-    expect(within(inspector).queryByRole('button')).not.toBeInTheDocument()
+    expect(
+      within(inspector).queryByRole('button', { name: /^replace plan$/i }),
+    ).not.toBeInTheDocument()
   })
 
   it('cancels replacement without calling the gateway', async () => {

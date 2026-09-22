@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { GatewayClient } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
+import { InspectorShell } from '../../shared/components/InspectorShell.js'
 
 function permissionBadges(
   annotations: {
@@ -145,9 +146,16 @@ export function McpPage(): React.JSX.Element {
                   {visible.map((t) => (
                     <tr
                       key={t.name}
+                      tabIndex={0}
                       aria-selected={t.name === selected}
                       onClick={() => {
                         setSelected(t.name === selected ? null : t.name)
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          setSelected(t.name === selected ? null : t.name)
+                        }
                       }}
                       className={`cursor-pointer border-t border-ink/10 dark:border-parchment/10 ${
                         t.name === selected ? 'bg-ink/4 dark:bg-parchment/6' : ''
@@ -174,8 +182,12 @@ export function McpPage(): React.JSX.Element {
                 Select a tool to inspect its schema.
               </p>
             ) : (
-              <div className="space-y-3 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
-                <h2 className="font-mono text-sm break-all">{inspected.name}</h2>
+              <InspectorShell
+                title={inspected.name}
+                onClose={() => {
+                  setSelected(null)
+                }}
+              >
                 <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
                   {inspected.description ?? 'No description.'}
                 </p>
@@ -190,7 +202,7 @@ export function McpPage(): React.JSX.Element {
                     {JSON.stringify(inspected.inputSchema, null, 2)}
                   </pre>
                 </div>
-              </div>
+              </InspectorShell>
             )}
           </aside>
         </div>

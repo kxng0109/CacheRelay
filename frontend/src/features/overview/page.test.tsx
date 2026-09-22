@@ -1,4 +1,5 @@
 import { screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { server } from '../../test/setup.js'
@@ -41,11 +42,16 @@ beforeEach(() => {
     ),
     http.get('*/v1/admin/cache/stats', () =>
       HttpResponse.json({
-        l0Size: 0,
-        l0Capacity: 100,
-        redisConfigured: false,
-        exactEntries: 0,
-        semanticVectors: 0,
+        enabled: true,
+        defaultScope: 'TENANT',
+        similarityThreshold: 0.92,
+        embeddingModel: 'test-embed',
+        l0MaxBytes: 1048576,
+        l0InMemoryTtlSeconds: 300,
+        l1RedisEnabled: false,
+        l2SemanticEnabled: true,
+        polarityGuardEnabled: true,
+        entityGuardEnabled: false,
       }),
     ),
   )
@@ -135,6 +141,7 @@ describe('OverviewPage', () => {
     expect(screen.queryByText(/unlock the admin key/i)).not.toBeInTheDocument()
     expect(screen.queryByText('42')).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /overview/i })).toBeInTheDocument()
+    expect(screen.queryByLabelText(/live gateway activity/i)).not.toBeInTheDocument()
   })
 
   it('hides tiles for non-admin sessions without a hint', () => {
@@ -144,6 +151,7 @@ describe('OverviewPage', () => {
     // Operator pulse and latency stay admin-only.
     expect(screen.queryByLabelText(/gateway pulse/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/request latency/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/live gateway activity/i)).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /overview/i })).toBeInTheDocument()
   })
 
@@ -187,5 +195,29 @@ describe('OverviewPage', () => {
     expect(screen.getByText(/top model/i)).toBeInTheDocument()
     expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(2)
     expect(screen.getByText(/across 0 models/i)).toBeInTheDocument()
+  })
+
+  it('announces a live RPS reading once scrapes arrive', async () => {
+    const user = userEvent.setup()
+    let calls = 0
+    server.use(
+      http.get('*/v1/admin/ledger/summary', () => {
+        calls += 1
+        return fullSummary()
+      }),
+      http.get(
+        '*/actuator/prometheus',
+        () => new HttpResponse('', { headers: { 'Content-Type': 'text/plain' } }),
+      ),
+    )
+    renderApp(<OverviewPage />, { adminSession: true })
+    await waitFor(() => {
+      expect(screen.getByText('42')).toBeInTheDocument()
+    })
+    expect(screen.getByText(/waiting for live rate/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /retry totals/i }))
+    await waitFor(() => {
+      expect(calls).toBeGreaterThan(1)
+    })
   })
 })

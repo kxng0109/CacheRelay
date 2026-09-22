@@ -7,6 +7,7 @@ import { GatewayClient } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { ModelSelect } from '../../shared/models/ModelSelect.js'
+import { InspectorShell } from '../../shared/components/InspectorShell.js'
 
 const schema = z.object({
   model: z.string().min(1, 'Model is required'),
@@ -345,9 +346,16 @@ export function EmbeddingsPage(): React.JSX.Element {
                 {visible.map((r) => (
                   <tr
                     key={r.id}
+                    tabIndex={0}
                     aria-selected={r.id === selected}
                     onClick={() => {
                       setSelected(r.id === selected ? null : r.id)
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        setSelected(r.id === selected ? null : r.id)
+                      }
                     }}
                     className={`cursor-pointer border-t border-ink/10 dark:border-parchment/10 ${
                       r.id === selected ? 'bg-ink/4 dark:bg-parchment/6' : ''
@@ -373,10 +381,12 @@ export function EmbeddingsPage(): React.JSX.Element {
               Select a run to inspect vectors and errors.
             </p>
           ) : (
-            <div className="space-y-3 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
-              <h2 className="font-mono text-sm">
-                run <span className="tnum">{inspected.at}</span>
-              </h2>
+            <InspectorShell
+              title={`run ${inspected.at}`}
+              onClose={() => {
+                setSelected(null)
+              }}
+            >
               <dl className="space-y-2 text-[13px]">
                 <div className="flex justify-between gap-3">
                   <dt className="text-ink-soft dark:text-parchment-soft">Status</dt>
@@ -407,7 +417,7 @@ export function EmbeddingsPage(): React.JSX.Element {
                   {inspected.input.slice(0, 500)}
                 </pre>
               </div>
-            </div>
+            </InspectorShell>
           )}
         </aside>
       </div>

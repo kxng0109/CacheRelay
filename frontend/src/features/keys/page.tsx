@@ -6,6 +6,7 @@ import * as z from 'zod/v4'
 import { GatewayClient } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 import type { ApiKeyCreated } from '../../shared/api/types.js'
+import { InspectorShell } from '../../shared/components/InspectorShell.js'
 
 const schema = z.object({
   ownerId: z.string().min(1, 'Owner is required'),
@@ -343,9 +344,16 @@ function KeysBoard(): React.JSX.Element {
               {visible.map((k) => (
                 <tr
                   key={k.keyId}
+                  tabIndex={0}
                   aria-selected={k.keyId === selected}
                   onClick={() => {
                     setSelected(k.keyId === selected ? null : k.keyId)
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      setSelected(k.keyId === selected ? null : k.keyId)
+                    }
                   }}
                   className={`cursor-pointer border-t border-ink/10 dark:border-parchment/10 ${
                     k.keyId === selected ? 'bg-ink/4 dark:bg-parchment/6' : ''
@@ -421,8 +429,12 @@ function KeysBoard(): React.JSX.Element {
           </p>
         ) : (
           <aside aria-label="Key inspector" className="space-y-3">
-            <div className="space-y-3 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
-              <h2 className="font-mono text-sm">{inspected.name}</h2>
+            <InspectorShell
+              title={inspected.name}
+              onClose={() => {
+                setSelected(null)
+              }}
+            >
               <dl className="space-y-2 text-[13px]">
                 <div className="flex justify-between gap-3">
                   <dt className="text-ink-soft dark:text-parchment-soft">Key ID</dt>
@@ -435,7 +447,8 @@ function KeysBoard(): React.JSX.Element {
                 <div className="flex justify-between gap-3">
                   <dt className="text-ink-soft dark:text-parchment-soft">RPM / TPM</dt>
                   <dd className="tnum">
-                    {inspected.rpmLimit} / {inspected.tpmLimit}
+                    {inspected.rpmLimit === 0 ? 'unlimited' : inspected.rpmLimit} /{' '}
+                    {inspected.tpmLimit === 0 ? 'unlimited' : inspected.tpmLimit}
                   </dd>
                 </div>
                 <div className="flex justify-between gap-3">
@@ -447,10 +460,25 @@ function KeysBoard(): React.JSX.Element {
                   </dd>
                 </div>
                 <div className="flex justify-between gap-3">
+                  <dt className="text-ink-soft dark:text-parchment-soft">Providers</dt>
+                  <dd>
+                    {inspected.allowedProviders.length === 0
+                      ? 'all'
+                      : inspected.allowedProviders.join(', ')}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-ink-soft dark:text-parchment-soft">State</dt>
+                  <dd>● {inspected.enabled ? 'enabled' : 'disabled'}</dd>
+                </div>
+                <div className="flex justify-between gap-3">
                   <dt className="text-ink-soft dark:text-parchment-soft">Created</dt>
                   <dd className="tnum">{inspected.createdAt}</dd>
                 </div>
               </dl>
+              <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
+                Plaintext shows once at creation only. Key IDs are safe to copy.
+              </p>
               <button
                 type="button"
                 onClick={() => {
@@ -460,7 +488,7 @@ function KeysBoard(): React.JSX.Element {
               >
                 {copied === inspected.keyId ? 'Copied' : 'Copy key ID'}
               </button>
-            </div>
+            </InspectorShell>
           </aside>
         )}
       </div>

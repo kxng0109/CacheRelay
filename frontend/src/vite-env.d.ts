@@ -8,6 +8,8 @@
 interface ImportMetaEnv {
   /** Gateway base URL (no trailing slash). Absent or empty means same-origin. */
   readonly VITE_API_BASE_URL?: string
+  /** Management base URL for actuator scrapes (SEC-15, default port 9091). */
+  readonly VITE_MANAGEMENT_BASE_URL?: string
   /** `false` forces non-streaming JSON completions; anything else streams. */
   readonly VITE_FEATURE_STREAMING?: string
 }

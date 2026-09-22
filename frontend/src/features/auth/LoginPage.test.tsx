@@ -99,6 +99,15 @@ describe('LoginPage', () => {
     expect(screen.queryByText(/caps lock is on/i)).not.toBeInTheDocument()
   })
 
+  it('stays silent when the browser hides modifier state', () => {
+    renderApp(<LoginPage />)
+    const password = screen.getByLabelText(/^password$/i)
+    const down = new KeyboardEvent('keydown', { key: 'a', bubbles: true })
+    Object.defineProperty(down, 'getModifierState', { value: undefined })
+    fireEvent(password, down)
+    expect(screen.queryByText(/caps lock is on/i)).not.toBeInTheDocument()
+  })
+
   it('links first accounts to the invite screen', async () => {
     const user = userEvent.setup()
     renderApp(

@@ -83,12 +83,23 @@ export interface RateLimitSnapshot {
   retryAfter: number | null
 }
 
+/**
+ * Cache configuration flags.
+ *
+ * @remarks Mirrors `CacheStatsResponse`: the endpoint reports tier
+ * configuration, not live counters. Unknowns render as em dashes.
+ */
 export interface CacheStats {
-  l0Size: number
-  l0Capacity: number
-  redisConfigured: boolean
-  exactEntries: number
-  semanticVectors: number
+  enabled: boolean
+  defaultScope: string
+  similarityThreshold: number
+  embeddingModel: string
+  l0MaxBytes: number
+  l0InMemoryTtlSeconds: number
+  l1RedisEnabled: boolean
+  l2SemanticEnabled: boolean
+  polarityGuardEnabled: boolean
+  entityGuardEnabled: boolean
 }
 
 export interface CircuitSnapshot {
@@ -221,10 +232,37 @@ export interface LedgerSummary {
   byProvider: ProviderUsageSummary[]
 }
 
+/**
+ * One billed request in the audit log.
+ *
+ * @remarks Narrow server subset: the list view reads four identity fields.
+ * The inspector hydrates the full twelve-field receipt on demand.
+ */
 export interface LedgerLogEntry {
   requestId: string
   model: string
   costUsdMicros: number
+  createdAt: string
+}
+
+/**
+ * Full receipt for one billed request.
+ *
+ * @remarks Mirrors the twelve-field server receipt. Optional fields stay
+ * `null`-able: older rows predate token accounting.
+ */
+export interface LedgerReceipt {
+  requestId: string
+  ownerId: string
+  provider: string
+  model: string
+  promptTokens: number | null
+  completionTokens: number | null
+  totalTokens: number
+  costUsdMicros: number
+  durationMs: number
+  cached: boolean
+  cacheTier: string | null
   createdAt: string
 }
 

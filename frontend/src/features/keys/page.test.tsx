@@ -50,6 +50,39 @@ describe('KeysPage', () => {
     expect(screen.getByText('all')).toBeInTheDocument()
   })
 
+  it('selects a disabled key row from the keyboard', async () => {
+    const user = userEvent.setup()
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn(() => Promise.resolve()) },
+      configurable: true,
+    })
+    server.use(
+      http.get('*/v1/admin/keys', () =>
+        HttpResponse.json([
+          {
+            ...KEYS[0],
+            keyId: 'k9',
+            name: 'old-key',
+            enabled: false,
+            rpmLimit: 0,
+            tpmLimit: 0,
+          },
+        ]),
+      ),
+    )
+    renderApp(<KeysPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    within(table).getByText('old-key').closest('tr')?.focus()
+    await user.keyboard('{Enter}')
+    const inspector = await screen.findByRole('complementary', { name: /key inspector/i })
+    expect(inspector).toHaveTextContent('disabled')
+    expect(inspector).toHaveTextContent('all')
+    expect(inspector).toHaveTextContent('unlimited / unlimited')
+    await user.click(within(inspector).getByRole('button', { name: /close inspector/i }))
+    expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+    expect(screen.getByText(/select a row to inspect a key/i)).toBeInTheDocument()
+  })
+
   it('shows the empty state before any key exists', async () => {
     server.use(http.get('*/v1/admin/keys', () => HttpResponse.json([])))
     renderApp(<KeysPage />, { adminSession: true })
@@ -195,10 +228,11 @@ describe('KeysPage', () => {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
     server.use(http.get('*/v1/admin/keys', () => HttpResponse.json(KEYS)))
     renderApp(<KeysPage />, { adminSession: true })
-    const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('ci-key'))
-    const inspector = screen.getByRole('complementary', { name: /key inspector/i })
+    await screen.findByRole('table')
+    await user.click(screen.getByText('ci-key'))
+    const inspector = await screen.findByRole('complementary', { name: /key inspector/i })
     expect(inspector).toHaveTextContent('tenant-corp')
+    expect(inspector).toHaveTextContent('all')
     await user.click(within(inspector).getByRole('button', { name: /copy key id/i }))
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith('k1')
@@ -260,6 +294,8 @@ describe('KeysPage', () => {
     expect(screen.queryByLabelText(/^owner$/i)).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /new key/i }))
     expect(screen.getByLabelText(/^owner$/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /^cancel$/i }))
+    expect(screen.queryByLabelText(/^owner$/i)).not.toBeInTheDocument()
   })
 
   it('copies the reveal plaintext and dismisses it', async () => {
@@ -295,7 +331,9 @@ describe('KeysPage', () => {
     renderApp(<KeysPage />, { adminSession: true })
     const table = await screen.findByRole('table')
     await user.click(within(table).getByText('ci-key'))
-    const inspector = screen.getByRole('complementary', { name: /key inspector/i })
+    const inspector = await screen.findByRole('complementary', { name: /key inspector/i })
+    expect(inspector).toHaveTextContent('tenant-corp')
+    expect(inspector).toHaveTextContent('all')
     await user.click(within(inspector).getByRole('button', { name: /copy key id/i }))
     await waitFor(() => {
       expect(within(inspector).getByRole('button', { name: /copy key id/i })).toBeInTheDocument()

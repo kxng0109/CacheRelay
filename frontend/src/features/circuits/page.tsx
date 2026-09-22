@@ -1,27 +1,24 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { GatewayClient } from '../../shared/api/client.js'
-import { resolveApiBase } from '../../shared/api/client.js'
+import { GatewayClient, resolveApiBase } from '../../shared/api/client.js'
+import { InspectorShell } from '../../shared/components/InspectorShell.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 
-const STATE_META: Record<string, { badge: string; dark: string; label: string; wash: string }> = {
+const STATE_META: Record<string, { badge: string; dark: string; label: string }> = {
   CLOSED: {
     badge: 'bg-success/15 text-success',
     dark: 'dark:text-success-soft',
     label: '● Closed',
-    wash: '',
   },
   OPEN: {
     badge: 'bg-danger/15 text-danger',
     dark: 'dark:text-danger-soft',
     label: '■ Open',
-    wash: 'border-danger/40 bg-danger/[0.06] dark:border-danger-soft/40',
   },
   HALF_OPEN: {
     badge: 'bg-warn/15 text-warn',
     dark: 'dark:text-warn-soft',
     label: '▲ Half-open',
-    wash: 'border-warn/40 bg-warn/[0.06] dark:border-warn-soft/40',
   },
 }
 
@@ -30,12 +27,12 @@ const STATE_META: Record<string, { badge: string; dark: string; label: string; w
  * newer backend may introduce.
  *
  * @param state - Raw state string from the gateway.
- * @returns Badge classes (plus dark-mode text class), an icon+text label,
- * and the panel wash for non-closed states; unknown states get an explicit
- * Unknown badge instead of being mislabeled.
+ * @returns Badge classes (plus dark-mode text class) and an icon+text
+ * label; unknown states get an explicit Unknown badge instead of being
+ * mislabeled.
  */
-function stateMeta(state: string): { badge: string; dark: string; label: string; wash: string } {
-  return STATE_META[state] ?? { badge: '', dark: '', label: '? Unknown', wash: '' }
+function stateMeta(state: string): { badge: string; dark: string; label: string } {
+  return STATE_META[state] ?? { badge: '', dark: '', label: '? Unknown' }
 }
 
 /**
@@ -230,9 +227,16 @@ function CircuitsBoard(): React.JSX.Element {
                 return (
                   <tr
                     key={c.provider}
+                    tabIndex={0}
                     aria-selected={active}
                     onClick={() => {
                       setSelected(active ? null : c.provider)
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        setSelected(active ? null : c.provider)
+                      }
                     }}
                     className={`cursor-pointer border-t border-ink/10 dark:border-parchment/10 ${
                       active ? 'bg-ink/4 dark:bg-parchment/6' : ''
@@ -284,10 +288,12 @@ function CircuitsBoard(): React.JSX.Element {
             Select a row to inspect a circuit.
           </p>
         ) : (
-          <div
-            className={`space-y-3 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent ${stateMeta(inspected.state).wash}`}
+          <InspectorShell
+            title={inspected.provider}
+            onClose={() => {
+              setSelected(null)
+            }}
           >
-            <h2 className="font-mono text-sm">{inspected.provider}</h2>
             <p className="font-display text-3xl font-medium tracking-tight tnum">
               {stateWord(inspected.state)}
             </p>
@@ -321,7 +327,7 @@ function CircuitsBoard(): React.JSX.Element {
             >
               Reset circuit
             </button>
-          </div>
+          </InspectorShell>
         )}
       </aside>
     </div>

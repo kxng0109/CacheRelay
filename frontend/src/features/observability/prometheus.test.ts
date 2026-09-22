@@ -274,4 +274,17 @@ describe('parseGatewayPulse', () => {
     expect(pulse.heapUsedBytes).toBeNull()
     expect(pulse.liveStreams).toBeNull()
   })
+
+  it('keeps the first uptime sample across duplicate series', () => {
+    const pulse = parseGatewayPulse('process_uptime_seconds 100\nprocess_uptime_seconds 200')
+    expect(pulse.uptimeSeconds).toBe(100)
+  })
+
+  it('tolerates non-numeric heap samples without dropping valid gauges', () => {
+    const pulse = parseGatewayPulse(
+      'jvm_memory_used_bytes{area="heap"} lots\nsse_connection_active 2',
+    )
+    expect(pulse.heapUsedBytes).toBeNull()
+    expect(pulse.liveStreams).toBe(2)
+  })
 })

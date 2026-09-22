@@ -1,4 +1,5 @@
 import { screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { server } from '../../test/setup.js'
@@ -34,17 +35,22 @@ function entriesPage(
 
 function cacheStats(overrides: Record<string, unknown> = {}) {
   return HttpResponse.json({
-    l0Size: 10,
-    l0Capacity: 100,
-    redisConfigured: false,
-    exactEntries: 5,
-    semanticVectors: 2,
+    enabled: true,
+    defaultScope: 'TENANT',
+    similarityThreshold: 0.92,
+    embeddingModel: 'test-embed',
+    l0MaxBytes: 1048576,
+    l0InMemoryTtlSeconds: 300,
+    l1RedisEnabled: false,
+    l2SemanticEnabled: true,
+    polarityGuardEnabled: true,
+    entityGuardEnabled: false,
     ...overrides,
   })
 }
 
 describe('LiveStrip', () => {
-  it('renders the ticking eyebrow, latest rows, and cache gauge', async () => {
+  it('renders the ticking eyebrow, latest rows, and cache config', async () => {
     server.use(
       http.get('*/v1/admin/ledger/entries', () =>
         entriesPage([
@@ -61,11 +67,9 @@ describe('LiveStrip', () => {
     })
     expect(screen.getByText('gpt-56-luna')).toBeInTheDocument()
     expect(screen.getByText('120')).toBeInTheDocument()
-    expect(screen.getByText('10/100')).toBeInTheDocument()
-    expect(screen.getByRole('progressbar', { name: /l0 cache fill/i })).toHaveAttribute(
-      'aria-valuenow',
-      '10',
-    )
+    expect(screen.getByText('on · TENANT')).toBeInTheDocument()
+    expect(screen.getByText('1048576 B · TTL 300s')).toBeInTheDocument()
+    expect(screen.getByText(/l1 off · l2 on · guards on\/off/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /explore ledger/i })).toHaveAttribute('href', '/ledger')
     expect(screen.getByRole('link', { name: /explore cache/i })).toHaveAttribute('href', '/cache')
   })
@@ -96,25 +100,54 @@ describe('LiveStrip', () => {
   })
 
   it('reports tail failures as alerts with a retry', async () => {
+    const user = userEvent.setup()
+    let calls = 0
     server.use(
-      http.get('*/v1/admin/ledger/entries', () => new HttpResponse('x', { status: 500 })),
+      http.get('*/v1/admin/ledger/entries', () => {
+        calls += 1
+        return calls === 1 ? new HttpResponse('x', { status: 500 }) : entriesPage([])
+      }),
       http.get('*/v1/admin/cache/stats', () => cacheStats()),
     )
     renderApp(<LiveStrip summary={summary} liveRps={null} />, { adminSession: true })
     await waitFor(() => {
       expect(screen.getByText(/latest requests unavailable/i)).toBeInTheDocument()
     })
-    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /retry/i }))
+    await waitFor(() => {
+      expect(screen.getByText('No requests yet')).toBeInTheDocument()
+    })
   })
 
   it('reports cache failures as alerts with a retry', async () => {
+    const user = userEvent.setup()
+    let calls = 0
     server.use(
       http.get('*/v1/admin/ledger/entries', () => entriesPage([])),
-      http.get('*/v1/admin/cache/stats', () => new HttpResponse('x', { status: 503 })),
+      http.get('*/v1/admin/cache/stats', () => {
+        calls += 1
+        return calls === 1 ? new HttpResponse('x', { status: 503 }) : cacheStats()
+      }),
     )
     renderApp(<LiveStrip summary={summary} liveRps={null} />, { adminSession: true })
     await waitFor(() => {
-      expect(screen.getByText(/cache stats unavailable/i)).toBeInTheDocument()
+      expect(screen.getByText(/cache config unavailable/i)).toBeInTheDocument()
     })
+    await user.click(screen.getByRole('button', { name: /retry/i }))
+    await waitFor(() => {
+      expect(screen.getByText('on · TENANT')).toBeInTheDocument()
+    })
+  })
+
+  it('renders nothing for the cache panel on an empty 204', async () => {
+    server.use(
+      http.get('*/v1/admin/ledger/entries', () => entriesPage([])),
+      http.get('*/v1/admin/cache/stats', () => new HttpResponse(null, { status: 204 })),
+    )
+    renderApp(<LiveStrip summary={summary} liveRps={null} />, { adminSession: true })
+    await waitFor(() => {
+      expect(screen.getByText('No requests yet')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('State')).not.toBeInTheDocument()
   })
 })
