@@ -99,7 +99,7 @@ export function OverviewPage(): React.JSX.Element {
               onClick={() => void summary.refetch()}
               className="mt-2 text-sm underline"
             >
-              Retry [r]
+              Retry
             </button>
           </div>
         ) : summary.data === undefined ? null : (

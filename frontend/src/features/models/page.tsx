@@ -257,7 +257,7 @@ function ModelsBoard(): React.JSX.Element {
             id="model-filter"
             type="search"
             value={filter}
-            placeholder="Filter [/]"
+            placeholder="Filter"
             onChange={(e) => {
               setFilter(e.target.value)
             }}

@@ -66,12 +66,25 @@ describe('LiveStrip', () => {
       expect(screen.getByText('req-1')).toBeInTheDocument()
     })
     expect(screen.getByText('gpt-56-luna')).toBeInTheDocument()
-    expect(screen.getByText('120')).toBeInTheDocument()
+    expect(screen.getByText('120µ$')).toBeInTheDocument()
     expect(screen.getByText('on · TENANT')).toBeInTheDocument()
-    expect(screen.getByText('1048576 B · TTL 300s')).toBeInTheDocument()
+    expect(screen.getByText('1 MB · TTL 300s')).toBeInTheDocument()
     expect(screen.getByText(/l1 off · l2 on · guards on\/off/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /explore ledger/i })).toHaveAttribute('href', '/ledger')
     expect(screen.getByRole('link', { name: /explore cache/i })).toHaveAttribute('href', '/cache')
+  })
+
+  it('reads mirrored guard flags honestly', async () => {
+    server.use(
+      http.get('*/v1/admin/ledger/entries', () => entriesPage([])),
+      http.get('*/v1/admin/cache/stats', () =>
+        cacheStats({ polarityGuardEnabled: false, entityGuardEnabled: true }),
+      ),
+    )
+    renderApp(<LiveStrip summary={summary} liveRps={null} />, { adminSession: true })
+    await waitFor(() => {
+      expect(screen.getByText(/guards off\/on/)).toBeInTheDocument()
+    })
   })
 
   it('waits for the live rate instead of printing a zero', () => {

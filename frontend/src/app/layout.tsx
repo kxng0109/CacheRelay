@@ -467,10 +467,11 @@ export function Layout(): React.JSX.Element {
           <div className="border-b border-ink/10 dark:border-parchment/10">
             <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-1">
               <p className="min-w-0 flex-1 truncate font-mono text-xs whitespace-nowrap text-ink-soft dark:text-parchment-soft">
-                cacherelay · {base || 'same-origin'}
+                cacherelay
+                {import.meta.env.DEV ? ` · ${base || 'same-origin'}` : null}
               </p>
-              <p className="shrink-0 font-mono text-xs whitespace-nowrap text-ink-soft tnum dark:text-parchment-soft">
-                auth: {authLabel}
+              <p className="shrink-0 rounded-full border border-ink/15 px-2 py-0.5 font-mono text-xs whitespace-nowrap text-ink-soft tnum dark:border-parchment/15 dark:text-parchment-soft">
+                {authLabel}
               </p>
             </div>
           </div>
@@ -518,16 +519,18 @@ export function Layout(): React.JSX.Element {
           }}
         />
         <Toasts />
-        <footer className="border-t border-ink/10 dark:border-parchment/10">
-          <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-1">
-            <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
-              route: {routeLabel}
-            </p>
-            <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
-              theme: {dark ? 'dark' : 'light'}
-            </p>
-          </div>
-        </footer>
+        {import.meta.env.DEV ? (
+          <footer className="border-t border-ink/10 dark:border-parchment/10">
+            <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-1">
+              <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+                route: {routeLabel}
+              </p>
+              <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+                theme: {dark ? 'dark' : 'light'}
+              </p>
+            </div>
+          </footer>
+        ) : null}
       </div>
     </div>
   )

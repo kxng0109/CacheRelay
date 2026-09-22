@@ -292,7 +292,7 @@ export function EmbeddingsPage(): React.JSX.Element {
               id="emb-filter"
               type="search"
               value={filter}
-              placeholder="Filter [/]"
+              placeholder="Filter"
               onChange={(e) => {
                 setFilter(e.target.value)
               }}

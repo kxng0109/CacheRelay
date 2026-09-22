@@ -2,6 +2,13 @@ import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { GatewayClient } from '../../shared/api/client.js'
+import {
+  formatCount,
+  formatDurationMs,
+  formatMicros,
+  formatShortDate,
+  formatUsd,
+} from '../../shared/utils/format.js'
 import { RunInspector } from './RunInspector.js'
 
 const PAGE_SIZE = 25
@@ -67,18 +74,20 @@ function LedgerBoard(): React.JSX.Element {
           <dl className="grid grid-cols-3 gap-3">
             <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
               <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Requests</dt>
-              <dd className="font-mono text-lg tnum">{summary.data.totalRequests}</dd>
+              <dd className="font-mono text-lg tnum">{formatCount(summary.data.totalRequests)}</dd>
             </div>
             <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
               <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Billed</dt>
-              <dd className="font-mono text-lg tnum">${summary.data.totalCostUsd}</dd>
+              <dd className="font-mono text-lg tnum">
+                {formatUsd(summary.data.totalCostUsdMicros)}
+              </dd>
             </div>
             <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
               <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">
                 Avg duration (ms)
               </dt>
               <dd className="font-mono text-lg tnum">
-                {summary.data.averageDurationMs.toFixed(1)}
+                {formatDurationMs(summary.data.averageDurationMs)}
               </dd>
             </div>
           </dl>
@@ -118,7 +127,7 @@ function LedgerBoard(): React.JSX.Element {
                 onChange={(e) => {
                   setTableFilter(e.target.value)
                 }}
-                placeholder="Filter [/]"
+                placeholder="Filter"
                 className="w-60 rounded-md border border-ink/15 bg-transparent px-3 py-2 text-[13px] dark:border-parchment/15"
               />
             </div>
@@ -175,9 +184,15 @@ function LedgerBoard(): React.JSX.Element {
                           {e.model}
                         </td>
                         <td className="py-2 pr-3 text-right font-mono text-[13px] tnum">
-                          {e.costUsdMicros}
+                          {e.costUsdMicros === 0 ? (
+                            <span className="text-ink-soft dark:text-parchment-soft">free</span>
+                          ) : (
+                            formatMicros(e.costUsdMicros)
+                          )}
                         </td>
-                        <td className="py-2 text-right text-[13px] tnum">{e.createdAt}</td>
+                        <td className="py-2 text-right text-[13px] tnum" title={e.createdAt}>
+                          {formatShortDate(e.createdAt)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -191,7 +206,7 @@ function LedgerBoard(): React.JSX.Element {
                     }}
                     className="rounded-md border border-ink/15 px-3 py-2 text-[13px] disabled:cursor-not-allowed disabled:border-ink-soft disabled:text-ink-soft dark:border-parchment/15 dark:disabled:border-parchment-soft dark:disabled:text-parchment-soft"
                   >
-                    Previous [p]
+                    Previous
                   </button>
                   <p className="p-2 font-mono text-[13px] tnum" role="status">
                     Page {page + 1}
@@ -205,7 +220,7 @@ function LedgerBoard(): React.JSX.Element {
                     }}
                     className="rounded-md border border-ink/15 px-3 py-2 text-[13px] disabled:cursor-not-allowed disabled:border-ink-soft disabled:text-ink-soft dark:border-parchment/15 dark:disabled:border-parchment-soft dark:disabled:text-parchment-soft"
                   >
-                    Next [n]
+                    Next
                   </button>
                 </div>
               </>

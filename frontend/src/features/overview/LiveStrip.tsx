@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { GatewayClient } from '../../shared/api/client.js'
 import type { LedgerSummary } from '../../shared/api/types.js'
+import { formatBytes, formatMicros } from '../../shared/utils/format.js'
 
 const TAIL_SIZE = 5
 const POLL_MS = 15_000
@@ -74,7 +75,7 @@ export function LiveStrip({
                 onClick={() => void tail.refetch()}
                 className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
               >
-                Retry [r]
+                Retry
               </button>
             </div>
           ) : entries.length === 0 ? (
@@ -87,7 +88,7 @@ export function LiveStrip({
                 to="/playground"
                 className="mt-2 inline-block rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
               >
-                Open playground [p]
+                Open playground
               </Link>
             </div>
           ) : (
@@ -119,7 +120,11 @@ export function LiveStrip({
                       {e.model}
                     </td>
                     <td className="py-1 text-right font-mono text-[13px] tnum">
-                      {e.costUsdMicros}
+                      {e.costUsdMicros === 0 ? (
+                        <span className="text-ink-soft dark:text-parchment-soft">free</span>
+                      ) : (
+                        formatMicros(e.costUsdMicros)
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -148,7 +153,7 @@ export function LiveStrip({
                 onClick={() => void cache.refetch()}
                 className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
               >
-                Retry [r]
+                Retry
               </button>
             </div>
           ) : cacheFlags === undefined ? null : (
@@ -162,7 +167,7 @@ export function LiveStrip({
               <div className="flex items-baseline justify-between gap-2">
                 <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">L0 cap</dt>
                 <dd className="font-mono text-sm tnum">
-                  {cacheFlags.l0MaxBytes} B · TTL {cacheFlags.l0InMemoryTtlSeconds}s
+                  {formatBytes(cacheFlags.l0MaxBytes)} · TTL {cacheFlags.l0InMemoryTtlSeconds}s
                 </dd>
               </div>
               <div className="flex items-baseline justify-between gap-2">

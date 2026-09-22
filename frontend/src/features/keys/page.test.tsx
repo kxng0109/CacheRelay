@@ -34,7 +34,7 @@ describe('KeysPage', () => {
       expect(screen.getByText('ci-key')).toBeInTheDocument()
     })
     expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument()
-    expect(screen.getByText('100000')).toBeInTheDocument()
+    expect(screen.getByText('100K')).toBeInTheDocument()
   })
 
   it('renders unlimited for zero limits', async () => {

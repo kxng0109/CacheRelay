@@ -48,7 +48,7 @@ describe('CachePage', () => {
       expect(screen.getByText('tenant-corp')).toBeInTheDocument()
     })
     expect(screen.getByText('on · TENANT')).toBeInTheDocument()
-    expect(screen.getByText('1048576 B')).toBeInTheDocument()
+    expect(screen.getByText('1 MB')).toBeInTheDocument()
     expect(screen.getByText(/l1 on · l2 on/)).toBeInTheDocument()
     expect(screen.getByText('TEAM')).toBeInTheDocument()
     expect(screen.getByText('5000')).toBeInTheDocument()

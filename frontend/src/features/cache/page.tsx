@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import * as z from 'zod/v4'
 import { GatewayClient } from '../../shared/api/client.js'
+import { formatBytes } from '../../shared/utils/format.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 
 const schema = z.object({
@@ -121,7 +122,7 @@ function CacheBoard(): React.JSX.Element {
             }}
             className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
           >
-            Refresh [r]
+            Refresh
           </button>
           <button
             type="button"
@@ -201,7 +202,7 @@ function CacheBoard(): React.JSX.Element {
           </div>
           <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
             <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">L0 cap</dt>
-            <dd className="font-mono text-lg tnum">{stats.data.l0MaxBytes} B</dd>
+            <dd className="font-mono text-lg tnum">{formatBytes(stats.data.l0MaxBytes)}</dd>
             <dd className="mt-1 text-xs text-ink-soft dark:text-parchment-soft">
               TTL {stats.data.l0InMemoryTtlSeconds}s in memory.
             </dd>

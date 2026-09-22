@@ -92,14 +92,14 @@ describe('Layout', () => {
   it('shows session identity and route in the shell bars', () => {
     renderApp(<Layout />, { gatewayKey: 'gw-test', adminSession: true })
     expect(screen.getByText(/cacherelay ·/i)).toBeInTheDocument()
-    expect(screen.getByText('auth: gateway + admin')).toBeInTheDocument()
+    expect(screen.getByText('gateway + admin')).toBeInTheDocument()
     expect(screen.getByText('route: Overview')).toBeInTheDocument()
     expect(screen.getByText('theme: dark')).toBeInTheDocument()
   })
 
   it('shows locked auth when signed out', () => {
     renderApp(<Layout />)
-    expect(screen.getByText('auth: locked')).toBeInTheDocument()
+    expect(screen.getByText('locked')).toBeInTheDocument()
   })
 
   it('falls back to the raw path on unknown routes', () => {
@@ -116,18 +116,18 @@ describe('Layout', () => {
 
   it('names partial credentials honestly', () => {
     const { unmount } = renderApp(<Layout />, { gatewayKey: 'gw-test' })
-    expect(screen.getByText('auth: gateway')).toBeInTheDocument()
+    expect(screen.getByText('gateway')).toBeInTheDocument()
     unmount()
     renderApp(<Layout />, { adminSession: true })
-    expect(screen.getByText('auth: admin')).toBeInTheDocument()
+    expect(screen.getByText('admin')).toBeInTheDocument()
   })
 
   it('labels a regular session as user, never admin', () => {
     const { unmount } = renderApp(<Layout />, { nonAdminSession: true })
-    expect(screen.getByText('auth: user')).toBeInTheDocument()
+    expect(screen.getByText('user')).toBeInTheDocument()
     unmount()
     renderApp(<Layout />, { nonAdminSession: true, gatewayKey: 'gw-test' })
-    expect(screen.getByText('auth: gateway + user')).toBeInTheDocument()
+    expect(screen.getByText('gateway + user')).toBeInTheDocument()
   })
 
   it('links the wordmark home for sessions and to playground for guests', () => {

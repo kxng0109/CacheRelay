@@ -7,6 +7,7 @@ import { GatewayClient } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 import type { ApiKeyCreated } from '../../shared/api/types.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
+import { formatCount, formatShortDate } from '../../shared/utils/format.js'
 
 const schema = z.object({
   ownerId: z.string().min(1, 'Owner is required'),
@@ -146,7 +147,7 @@ function KeysBoard(): React.JSX.Element {
             id="key-filter"
             type="search"
             value={filter}
-            placeholder="Filter [/]"
+            placeholder="Filter"
             onChange={(e) => {
               setFilter(e.target.value)
             }}
@@ -361,10 +362,10 @@ function KeysBoard(): React.JSX.Element {
                 >
                   <td className="py-2 pr-3 font-mono text-[13px]">{k.name}</td>
                   <td className="py-2 pr-3 text-right text-[13px] tnum">
-                    {k.rpmLimit === 0 ? 'unlimited' : k.rpmLimit}
+                    {k.rpmLimit === 0 ? 'unlimited' : formatCount(k.rpmLimit)}
                   </td>
                   <td className="py-2 pr-3 text-right text-[13px] tnum">
-                    {k.tpmLimit === 0 ? 'unlimited' : k.tpmLimit}
+                    {k.tpmLimit === 0 ? 'unlimited' : formatCount(k.tpmLimit)}
                   </td>
                   <td className="max-w-48 truncate py-2 pr-3 text-[13px]">
                     {k.allowedModels.length === 0 ? 'all' : k.allowedModels.join(', ')}
@@ -447,8 +448,8 @@ function KeysBoard(): React.JSX.Element {
                 <div className="flex justify-between gap-3">
                   <dt className="text-ink-soft dark:text-parchment-soft">RPM / TPM</dt>
                   <dd className="tnum">
-                    {inspected.rpmLimit === 0 ? 'unlimited' : inspected.rpmLimit} /{' '}
-                    {inspected.tpmLimit === 0 ? 'unlimited' : inspected.tpmLimit}
+                    {inspected.rpmLimit === 0 ? 'unlimited' : formatCount(inspected.rpmLimit)} /{' '}
+                    {inspected.tpmLimit === 0 ? 'unlimited' : formatCount(inspected.tpmLimit)}
                   </dd>
                 </div>
                 <div className="flex justify-between gap-3">
@@ -473,7 +474,9 @@ function KeysBoard(): React.JSX.Element {
                 </div>
                 <div className="flex justify-between gap-3">
                   <dt className="text-ink-soft dark:text-parchment-soft">Created</dt>
-                  <dd className="tnum">{inspected.createdAt}</dd>
+                  <dd className="tnum" title={inspected.createdAt}>
+                    {formatShortDate(inspected.createdAt)}
+                  </dd>
                 </div>
               </dl>
               <p className="text-[13px] text-ink-soft dark:text-parchment-soft">

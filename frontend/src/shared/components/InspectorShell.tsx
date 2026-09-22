@@ -40,7 +40,7 @@ export function InspectorShell({
   }, [])
 
   return (
-    <div className="space-y-3 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
+    <div className="space-y-3 rounded-xl border border-ink/10 bg-cream p-4 shadow-lift dark:border-parchment/10 dark:bg-transparent dark:shadow-none">
       <div className="flex items-start justify-between gap-3">
         <h2 ref={headingRef} tabIndex={-1} className="font-mono text-sm break-all outline-none">
           {title}

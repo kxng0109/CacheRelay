@@ -146,7 +146,7 @@ export function ObservabilityPage(): React.JSX.Element {
             onClick={retryAll}
             className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
           >
-            Retry [r]
+            Retry
           </button>
         </div>
         <p className="text-sm text-ink-soft dark:text-parchment-soft">

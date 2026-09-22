@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { GatewayClient } from '../../shared/api/client.js'
 import type { LedgerLogEntry, LedgerReceipt } from '../../shared/api/types.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
+import { formatDurationMs } from '../../shared/utils/format.js'
 
 /**
  * Formats an ISO instant as a short local date-time.
@@ -146,7 +147,7 @@ export function RunInspector({
         <div className="rounded-lg border border-ink/10 p-2 dark:border-parchment/10">
           <dt className="font-mono text-xs text-ink-soft dark:text-parchment-soft">Duration</dt>
           <dd className="font-mono text-sm tnum">
-            {detail === null ? '…' : `${String(detail.durationMs)}ms`}
+            {detail === null ? '…' : formatDurationMs(detail.durationMs)}
           </dd>
         </div>
       </dl>
@@ -198,7 +199,7 @@ export function RunInspector({
           }}
           className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
         >
-          {copied ? 'Copied' : 'Copy receipt [c]'}
+          {copied ? 'Copied' : 'Copy receipt'}
         </button>
         <button
           type="button"

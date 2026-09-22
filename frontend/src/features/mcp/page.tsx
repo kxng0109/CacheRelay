@@ -78,7 +78,7 @@ export function McpPage(): React.JSX.Element {
           }}
           className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
         >
-          Retry [r]
+          Retry
         </button>
       </div>
       {suspended ? (
@@ -113,7 +113,7 @@ export function McpPage(): React.JSX.Element {
                 id="mcp-filter"
                 type="search"
                 value={filter}
-                placeholder="Filter [/]"
+                placeholder="Filter"
                 onChange={(e) => {
                   setFilter(e.target.value)
                 }}

@@ -28,10 +28,14 @@
   --color-ink-soft: #57534a;
   --color-parchment-soft: #a8a094;
 
-  /* Light raised surface + hairline: warm white panels on paper, with a
-     hairline one step deeper than ink/10 so elevation reads without shadow. */
-  --color-cream: #fffdf8;
-  --color-sand: #e4ddcd;
+  /* Light raised surface + hairline: white panels on paper, with a
+      hairline deeper than ink/10 so elevation reads without shadow. */
+  --color-cream: #ffffff;
+  --color-sand: #d9cfb8;
+
+  /* Lift: single soft shadow for inspector docks and stat tiles.
+     Ink-tinted via shadow-ink utilities at the call site. */
+  --shadow-lift: 0 8px 24px -12px rgb(22 19 14 / 0.18);
 
   --font-sans: 'Inter Variable', system-ui, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'Martian Mono Variable', ui-monospace, Consolas, monospace;

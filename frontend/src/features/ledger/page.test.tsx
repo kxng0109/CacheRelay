@@ -74,8 +74,8 @@ describe('LedgerPage', () => {
       expect(screen.getByText('r1')).toBeInTheDocument()
     })
     expect(screen.getByText('42')).toBeInTheDocument()
-    expect(screen.getByText('$0.000000')).toBeInTheDocument()
-    expect(screen.getByText('123.5')).toBeInTheDocument()
+    expect(screen.getByText('$0.009')).toBeInTheDocument()
+    expect(screen.getByText('123.5ms')).toBeInTheDocument()
   })
 
   it('selects a row with the Space key', async () => {

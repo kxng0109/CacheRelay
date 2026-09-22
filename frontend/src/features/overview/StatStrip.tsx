@@ -1,5 +1,6 @@
 import { Link } from 'react-router'
 import type { LedgerSummary } from '../../shared/api/types.js'
+import { formatCount, formatUsd } from '../../shared/utils/format.js'
 
 /**
  * Overview stat strip: five live cells plus a methodology line with
@@ -34,15 +35,15 @@ export function StatStrip({
       <dl className="grid gap-3 sm:grid-cols-5">
         <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
           <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Requests</dt>
-          <dd className="font-mono text-lg tnum">{summary.totalRequests}</dd>
+          <dd className="font-mono text-lg tnum">{formatCount(summary.totalRequests)}</dd>
         </div>
         <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
           <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Billed</dt>
-          <dd className="font-mono text-lg tnum">${summary.totalCostUsd}</dd>
+          <dd className="font-mono text-lg tnum">{formatUsd(summary.totalCostUsdMicros)}</dd>
         </div>
         <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
           <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Tokens</dt>
-          <dd className="font-mono text-lg tnum">{summary.totalTokens}</dd>
+          <dd className="font-mono text-lg tnum">{formatCount(summary.totalTokens)}</dd>
         </div>
         <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
           <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Top model</dt>

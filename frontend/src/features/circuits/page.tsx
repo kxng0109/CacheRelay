@@ -131,7 +131,7 @@ function CircuitsBoard(): React.JSX.Element {
             id="circuit-filter"
             type="search"
             value={filter}
-            placeholder="Filter [/]"
+            placeholder="Filter"
             onChange={(e) => {
               setFilter(e.target.value)
             }}
@@ -170,7 +170,7 @@ function CircuitsBoard(): React.JSX.Element {
             }}
             className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
           >
-            Refresh [r]
+            Refresh
           </button>
         </div>
         {notice === null ? null : (

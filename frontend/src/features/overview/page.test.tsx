@@ -121,8 +121,8 @@ describe('OverviewPage', () => {
     await waitFor(() => {
       expect(screen.getByText('42')).toBeInTheDocument()
     })
-    expect(screen.getByText('$0.009000')).toBeInTheDocument()
-    expect(screen.getByText('1500')).toBeInTheDocument()
+    expect(screen.getByText('$0.009')).toBeInTheDocument()
+    expect(screen.getByText('1.5K')).toBeInTheDocument()
     expect(screen.getByText('gpt-56-luna')).toBeInTheDocument()
     expect(screen.getByText(/across 2 models/i)).toBeInTheDocument()
     // Live strip and stat strip both link out: one Explore ledger each.
