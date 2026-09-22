@@ -2,6 +2,9 @@ package io.github.kxng0109.cacherelay.security.ratelimit;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import io.github.kxng0109.cacherelay.auth.JwtService;
+import io.github.kxng0109.cacherelay.auth.UserAccount;
+import io.github.kxng0109.cacherelay.auth.UserAccountRepository;
 import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
 import io.github.kxng0109.cacherelay.contracts.BootstrapKey;
 import tools.jackson.core.JacksonException;
@@ -12,7 +15,10 @@ import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
+
+import lombok.extern.slf4j.Slf4j;
 
 import java.security.SecureRandom;
 import java.time.Duration;
@@ -35,6 +41,7 @@ import java.util.stream.Collectors;
  * maps it to HTTP 503. A key is never silently treated as absent merely because the backend was down.</p>
  */
 @Service
+@Slf4j
 public class KeyManagementService {
 
 	private static final String REDIS_KEY_PREFIX = "apikey:";
@@ -82,6 +89,44 @@ public class KeyManagementService {
 	 * closed). Sized by {@link RateLimitProperties}.
 	 */
 	private final Cache<SHA256Hash, Optional<VirtualApiKey>> cache;
+
+	/**
+	 * Short-TTL cache of owner activity used only as a backstop on the request
+	 * path. Immediacy comes from cascade revocation writing the keys themselves;
+	 * this cache merely bounds the cost of the per-request owner join.
+	 */
+	private final Cache<UUID, Boolean> ownerActiveCache = Caffeine.newBuilder()
+			.expireAfterWrite(Duration.ofSeconds(60))
+			.maximumSize(5000)
+			.build();
+
+	private volatile UserAccountRepository userAccountRepository;
+
+	private volatile JwtService jwtService;
+
+	/**
+	 * Wires the account repository backing owner validation. Optional on purpose:
+	 * unit-constructed services keep working with owner checks in legacy-tolerant
+	 * mode; production Spring always wires it.
+	 *
+	 * @param userAccountRepository the account repository, if available
+	 */
+	@Autowired(required = false)
+	public void setUserAccountRepository(UserAccountRepository userAccountRepository) {
+		this.userAccountRepository = userAccountRepository;
+	}
+
+	/**
+	 * Wires the session-token service backing act-as-self resolution. Optional on
+	 * purpose, like the account repository; without it self-resolution reads as
+	 * absent.
+	 *
+	 * @param jwtService the session-token service, if available
+	 */
+	@Autowired(required = false)
+	public void setJwtService(JwtService jwtService) {
+		this.jwtService = jwtService;
+	}
 
 	/**
 	 * Creates the service with default key-cache ceilings.
@@ -200,6 +245,8 @@ public class KeyManagementService {
 	 * @param deniedPrompts      denied prompt globs
 	 * @param injectionBlock     injection handling flag
 	 * @param allowedCacheScopes cache isolation scopes
+	 * @param ownerUserId        owning account id, possibly {@code null} for legacy rows
+	 * @param revoked            terminal revocation tombstone
 	 */
 	private static void putPolicyFields(
 			Map<String, String> fields,
@@ -214,7 +261,9 @@ public class KeyManagementService {
 			boolean injectionBlock,
 			Set<CacheScope> allowedCacheScopes,
 			Set<String> allowedAgents,
-			Set<String> deniedAgents
+			Set<String> deniedAgents,
+			UUID ownerUserId,
+			boolean revoked
 	) {
 		fields.put("allowedModels", toCsv(allowedModels));
 		fields.put("allowedProviders", toCsv(allowedProviders));
@@ -228,6 +277,10 @@ public class KeyManagementService {
 		fields.put("allowedCacheScopes", scopesToCsv(allowedCacheScopes));
 		fields.put("allowedAgents", toCsv(allowedAgents));
 		fields.put("deniedAgents", toCsv(deniedAgents));
+		if (ownerUserId != null) {
+			fields.put("ownerUserId", ownerUserId.toString());
+		}
+		fields.put("revoked", Boolean.toString(revoked));
 	}
 
 	/**
@@ -271,6 +324,48 @@ public class KeyManagementService {
 				: Collections.unmodifiableSet(scopes);
 	}
 
+	/**
+	 * Decodes a stored owner id, tolerating legacy rows that predate user linkage.
+	 * A present-but-malformed value fails the whole load via
+	 * {@link IllegalArgumentException} so the key resolves to a miss, never to an
+	 * unowned usable key.
+	 *
+	 * @param raw stored UUID string, possibly {@code null}
+	 * @return the owner id, or {@code null} when absent
+	 */
+	private static UUID parseOwnerUserId(String raw) {
+		if (raw == null || raw.isBlank()) {
+			return null;
+		}
+		try {
+			return UUID.fromString(raw.trim());
+		} catch (IllegalArgumentException malformed) {
+			throw new IllegalArgumentException("Corrupt stored key owner", malformed);
+		}
+	}
+
+	/**
+	 * Decodes the terminal revocation tombstone strictly: only {@code true} revokes.
+	 * Absent reads as non-revoked for legacy rows; anything else fails the whole
+	 * load so a corrupt flag can never silently disarm the tombstone in either
+	 * direction.
+	 *
+	 * @param raw stored flag, possibly {@code null}
+	 * @return whether the key is terminally revoked
+	 */
+	private static boolean parseRevoked(String raw) {
+		if (raw == null) {
+			return false;
+		}
+		if ("true".equalsIgnoreCase(raw)) {
+			return true;
+		}
+		if ("false".equalsIgnoreCase(raw)) {
+			return false;
+		}
+		throw new IllegalArgumentException("Corrupt stored key revocation flag");
+	}
+
 	private static String redisKey(SHA256Hash hash) {
 		return REDIS_KEY_PREFIX + hash.hex();
 	}
@@ -293,6 +388,7 @@ public class KeyManagementService {
 	 * @param template key parameters (owner, label, limits, model/provider allow-lists)
 	 * @return the plaintext key ({@code gw-} + 32 URL-safe characters); this is the only time the plaintext exists and
 	 * it is never logged or stored
+	 * @throws IllegalArgumentException when a wired repository cannot resolve the template owner to an active account
 	 */
 	public String generateKey(BootstrapKey template) {
 		String plaintext = randomPlaintext();
@@ -313,176 +409,34 @@ public class KeyManagementService {
 				true,
 				template.allowedCacheScopes(),
 				Set.of(),
-				Set.of()
+				Set.of(),
+				resolveGeneratedOwner(template)
 		);
 		return plaintext;
 	}
 
 	/**
-	 * Creates a new virtual API key with the given parameters, persists it in Redis, adds it to the admin index, and
-	 * returns the single-exposure plaintext along with metadata.
+	 * Resolves a generation template owner to an account id. Explicit generation
+	 * fails fast on unresolvable owners (unlike the retry-loop seed path); without
+	 * a wired repository (unit tests only) resolution reads as unknown.
 	 *
-	 * @param ownerId          owner identifier
-	 * @param name             label for the key
-	 * @param rpmLimit         requests per minute limit (0 = unlimited)
-	 * @param tpmLimit         tokens per minute limit (0 = unlimited)
-	 * @param allowedModels    allowed model names (empty = all)
-	 * @param allowedProviders allowed provider names (empty = all)
-	 * @return the created key object containing the plaintext and metadata
+	 * @param template generation template
+	 * @return the account id, or {@code null} when unwired
+	 * @throws IllegalArgumentException when wired and the owner is missing, unknown, or disabled
 	 */
-	public CreatedKey createKey(
-			String ownerId,
-			String name,
-			int rpmLimit,
-			int tpmLimit,
-			Set<String> allowedModels,
-			Set<String> allowedProviders
-	) {
-		return createKey(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders, Set.of(), Set.of());
-	}
-
-	/**
-	 * Creates a new virtual API key with model, provider, and tool-level RBAC/ABAC rules.
-	 *
-	 * @param ownerId          owner identifier
-	 * @param name             label for the key
-	 * @param rpmLimit         requests per minute limit (0 = unlimited)
-	 * @param tpmLimit         tokens per minute limit (0 = unlimited)
-	 * @param allowedModels    allowed model names (empty = all)
-	 * @param allowedProviders allowed provider names (empty = all)
-	 * @param allowedTools     allowed tool names or glob patterns (empty = all)
-	 * @param deniedTools      denied tool names or glob patterns (empty = none)
-	 * @return the created key object containing the plaintext and metadata
-	 */
-	public CreatedKey createKey(
-			String ownerId,
-			String name,
-			int rpmLimit,
-			int tpmLimit,
-			Set<String> allowedModels,
-			Set<String> allowedProviders,
-			Set<String> allowedTools,
-			Set<String> deniedTools
-	) {
-		return createKey(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders,
-				allowedTools, deniedTools, Set.of(), Set.of(), Set.of(), Set.of());
-	}
-
-	/**
-	 * Creates a new virtual API key with full governance rules including resource and
-	 * prompt visibility.
-	 *
-	 * @param ownerId          owner identifier
-	 * @param name             label for the key
-	 * @param rpmLimit         requests per minute limit (0 = unlimited)
-	 * @param tpmLimit         tokens per minute limit (0 = unlimited)
-	 * @param allowedModels    allowed model names (empty = all)
-	 * @param allowedProviders allowed provider names (empty = all)
-	 * @param allowedTools     allowed tool names or glob patterns (empty = all)
-	 * @param deniedTools      denied tool names or glob patterns (empty = none)
-	 * @param allowedResources allowed resource URI globs (empty = all visible)
-	 * @param deniedResources  denied resource URI globs (empty = none hidden)
-	 * @param allowedPrompts   allowed prompt name globs (empty = all visible)
-	 * @param deniedPrompts    denied prompt name globs (empty = none hidden)
-	 * @param injectionBlock   whether indirect prompt injection blocks delivery (null = keep default block)
-	 * @return the created key object containing the plaintext and metadata
-	 */
-	public CreatedKey createKey(
-			String ownerId,
-			String name,
-			int rpmLimit,
-			int tpmLimit,
-			Set<String> allowedModels,
-			Set<String> allowedProviders,
-			Set<String> allowedTools,
-			Set<String> deniedTools,
-			Set<String> allowedResources,
-			Set<String> deniedResources,
-			Set<String> allowedPrompts,
-			Set<String> deniedPrompts
-	) {
-		return createKey(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders,
-				allowedTools, deniedTools, allowedResources, deniedResources, allowedPrompts,
-				deniedPrompts, null);
-	}
-
-	/**
-	 * Creates a new virtual API key with full governance rules including resource,
-	 * prompt, and injection handling.
-	 *
-	 * @param ownerId          owner identifier
-	 * @param name             label for the key
-	 * @param rpmLimit         requests per minute limit (0 = unlimited)
-	 * @param tpmLimit         tokens per minute limit (0 = unlimited)
-	 * @param allowedModels    allowed model names (empty = all)
-	 * @param allowedProviders allowed provider names (empty = all)
-	 * @param allowedTools     allowed tool names or glob patterns (empty = all)
-	 * @param deniedTools      denied tool names or glob patterns (empty = none)
-	 * @param allowedResources allowed resource URI globs (empty = all visible)
-	 * @param deniedResources  denied resource URI globs (empty = none hidden)
-	 * @param allowedPrompts   allowed prompt name globs (empty = all visible)
-	 * @param deniedPrompts    denied prompt name globs (empty = none hidden)
-	 * @param injectionBlock   whether indirect prompt injection blocks delivery (null = default block)
-	 * @return the created key object containing the plaintext and metadata
-	 */
-	public CreatedKey createKey(
-			String ownerId,
-			String name,
-			int rpmLimit,
-			int tpmLimit,
-			Set<String> allowedModels,
-			Set<String> allowedProviders,
-			Set<String> allowedTools,
-			Set<String> deniedTools,
-			Set<String> allowedResources,
-			Set<String> deniedResources,
-			Set<String> allowedPrompts,
-			Set<String> deniedPrompts,
-			Boolean injectionBlock
-	) {
-		return createKey(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders,
-				allowedTools, deniedTools, allowedResources, deniedResources, allowedPrompts,
-				deniedPrompts, injectionBlock, null, null, null);
-	}
-
-	/**
-	 * Backwards-compatible overload omitting the A2A agent policy sets.
-	 *
-	 * @param ownerId            owner identifier
-	 * @param name               label for the key
-	 * @param rpmLimit           requests per minute limit (0 = unlimited)
-	 * @param tpmLimit           tokens per minute limit (0 = unlimited)
-	 * @param allowedModels      allowed model names (empty = all)
-	 * @param allowedProviders   allowed provider names (empty = all)
-	 * @param allowedTools       allowed tool names or glob patterns (empty = all)
-	 * @param deniedTools        denied tool names or glob patterns (empty = none)
-	 * @param allowedResources   allowed resource URI globs (empty = all visible)
-	 * @param deniedResources    denied resource URI globs (empty = none hidden)
-	 * @param allowedPrompts     allowed prompt name globs (empty = all visible)
-	 * @param deniedPrompts      denied prompt name globs (empty = none hidden)
-	 * @param injectionBlock     whether indirect prompt injection blocks delivery (null = default block)
-	 * @param allowedCacheScopes cache isolation scopes (null or empty = TENANT only)
-	 * @return the created key object containing the plaintext and metadata
-	 */
-	public CreatedKey createKey(
-			String ownerId,
-			String name,
-			int rpmLimit,
-			int tpmLimit,
-			Set<String> allowedModels,
-			Set<String> allowedProviders,
-			Set<String> allowedTools,
-			Set<String> deniedTools,
-			Set<String> allowedResources,
-			Set<String> deniedResources,
-			Set<String> allowedPrompts,
-			Set<String> deniedPrompts,
-			Boolean injectionBlock,
-			Set<CacheScope> allowedCacheScopes
-	) {
-		return createKey(ownerId, name, rpmLimit, tpmLimit, allowedModels, allowedProviders,
-				allowedTools, deniedTools, allowedResources, deniedResources, allowedPrompts,
-				deniedPrompts, injectionBlock, allowedCacheScopes, null, null);
+	private UUID resolveGeneratedOwner(BootstrapKey template) {
+		UserAccountRepository users = this.userAccountRepository;
+		String username = template.ownerUsername();
+		if (users == null) {
+			return null;
+		}
+		if (username == null || username.isBlank()) {
+			throw new IllegalArgumentException("owning account username is required");
+		}
+		return users.findByUsernameIgnoreCase(username.trim())
+				.filter(account -> !account.isDisabled())
+				.map(UserAccount::getId)
+				.orElseThrow(() -> new IllegalArgumentException("owning account is unknown or disabled"));
 	}
 
 	/**
@@ -503,6 +457,7 @@ public class KeyManagementService {
 	 * @param deniedPrompts      denied prompt name globs (empty = none hidden)
 	 * @param injectionBlock     whether indirect prompt injection blocks delivery (null = default block)
 	 * @param allowedCacheScopes cache isolation scopes (null or empty = TENANT only)
+	 * @param ownerUserId       owning account id, or {@code null} when the caller does not supply one
 	 * @return the created key object containing the plaintext and metadata
 	 */
 	public CreatedKey createKey(
@@ -521,8 +476,10 @@ public class KeyManagementService {
 			Boolean injectionBlock,
 			Set<CacheScope> allowedCacheScopes,
 			Set<String> allowedAgents,
-			Set<String> deniedAgents
+			Set<String> deniedAgents,
+			UUID ownerUserId
 	) {
+		requireActiveOwner(ownerUserId);
 		String plaintext = randomPlaintext();
 		Instant now = Instant.now();
 		SHA256Hash hash = SHA256Hash.fromRawKey(plaintext);
@@ -547,7 +504,9 @@ public class KeyManagementService {
 				now,
 				allowedCacheScopes,
 				allowedAgents,
-				deniedAgents
+				deniedAgents,
+				ownerUserId,
+				false
 		);
 		storeKey(
 				plaintext,
@@ -566,7 +525,8 @@ public class KeyManagementService {
 				injectionBlock == null || injectionBlock,
 				allowedCacheScopes,
 				allowedAgents,
-				deniedAgents
+				deniedAgents,
+				ownerUserId
 		);
 		return new CreatedKey(hash, plaintext, metadata);
 	}
@@ -817,6 +777,13 @@ public class KeyManagementService {
 		if (Boolean.FALSE.equals(redisTemplate.hasKey(key))) {
 			return Optional.empty();
 		}
+		Optional<VirtualApiKey> current = findByHash(hash);
+		if (current.isEmpty()) {
+			return Optional.empty();
+		}
+		if (current.get().revoked() && Boolean.TRUE.equals(enabled)) {
+			throw new IllegalArgumentException("terminally revoked keys cannot be re-enabled");
+		}
 		Map<String, String> updates = new LinkedHashMap<>();
 		if (name != null) {
 			updates.put("name", name);
@@ -888,13 +855,18 @@ public class KeyManagementService {
 	}
 
 	/**
-	 * Disables a key by flipping its {@code enabled} flag in Redis and evicting the local cache entry so the next
-	 * lookup observes the revocation.
+	 * Terminally revokes a key: sets the revocation tombstone and clears
+	 * {@code enabled}, then evicts the local cache entry so the next lookup
+	 * observes it. There is no inverse: nothing in this service can unset the
+	 * tombstone, and {@link #updateKey} refuses to re-enable revoked keys.
+	 * Idempotent.
 	 *
 	 * @param hash key hash to revoke
 	 */
 	public void revokeKey(SHA256Hash hash) {
-		redisTemplate.opsForHash().put(redisKey(hash), "enabled", "false");
+		String key = redisKey(hash);
+		redisTemplate.opsForHash().put(key, "revoked", "true");
+		redisTemplate.opsForHash().put(key, "enabled", "false");
 		cache.invalidate(hash);
 	}
 
@@ -911,6 +883,288 @@ public class KeyManagementService {
 	 */
 	public Optional<VirtualApiKey> findByHash(SHA256Hash hash) {
 		return cache.get(hash, this::loadFromRedis);
+	}
+
+	/**
+	 * Validates an owner for key creation or reassignment: present, known, and
+	 * active. Unknown or disabled accounts fail fast so no key can ever be born
+	 * orphaned. Without a wired repository (unit tests only) only presence is
+	 * checked; production Spring always wires it.
+	 *
+	 * @param ownerUserId owning account id
+	 * @throws IllegalArgumentException when the owner is missing, unknown, or disabled
+	 */
+	private void requireActiveOwner(UUID ownerUserId) {
+		if (ownerUserId == null) {
+			throw new IllegalArgumentException("owning account is required");
+		}
+		UserAccountRepository users = this.userAccountRepository;
+		if (users == null) {
+			return;
+		}
+		boolean active = users.findById(ownerUserId).map(account -> !account.isDisabled()).orElse(false);
+		if (!active) {
+			throw new IllegalArgumentException("owning account is unknown or disabled");
+		}
+	}
+
+	/**
+	 * Reports whether an owner id currently resolves to an active account. Used
+	 * as a backstop on the request path; immediacy comes from cascade revocation
+	 * writing the keys themselves. Short-TTL cached to bound the per-request join
+	 * cost; unwired repositories (unit tests only) read as active.
+	 *
+	 * @param ownerUserId owning account id, possibly {@code null}
+	 * @return true when the owner is present and active
+	 */
+	public boolean isOwnerActive(UUID ownerUserId) {
+		if (ownerUserId == null) {
+			return false;
+		}
+		UserAccountRepository users = this.userAccountRepository;
+		if (users == null) {
+			return true;
+		}
+		Boolean cached = ownerActiveCache.getIfPresent(ownerUserId);
+		if (cached != null) {
+			return cached;
+		}
+		boolean active = users.findById(ownerUserId).map(account -> !account.isDisabled()).orElse(false);
+		ownerActiveCache.put(ownerUserId, active);
+		return active;
+	}
+
+	/**
+	 * Central usability verdict for every request-path gate: enabled,
+	 * non-revoked, and owned by an active account. A single predicate keeps the
+	 * five gates consistent; revoked, unowned, or orphaned keys read exactly like
+	 * unknown keys (fail closed, no existence oracle).
+	 *
+	 * @param key resolved key metadata, possibly {@code null}
+	 * @return true only when the key may serve traffic
+	 */
+	public boolean isUsable(VirtualApiKey key) {
+		if (key == null || !key.enabled() || key.revoked()) {
+			return false;
+		}
+		return isOwnerActive(key.ownerUserId());
+	}
+
+	/**
+	 * Evicts a cached owner-activity verdict, for example after an account is
+	 * disabled outside the cascade path.
+	 *
+	 * @param ownerUserId owning account id, possibly {@code null}
+	 */
+	public void invalidateOwnerCache(UUID ownerUserId) {
+		if (ownerUserId != null) {
+			ownerActiveCache.invalidate(ownerUserId);
+		}
+	}
+
+	/**
+	 * Reassigns a key to another active account. Terminal revocation is
+	 * unaffected: moving a revoked key keeps the tombstone.
+	 *
+	 * @param hash      key hash to move
+	 * @param ownerUserId new owning account id; must resolve to an active account
+	 * @return the updated key metadata, or empty if the key was not found
+	 * @throws IllegalArgumentException when the new owner is missing, unknown, or disabled
+	 */
+	public Optional<VirtualApiKey> assignOwner(SHA256Hash hash, UUID ownerUserId) {
+		requireActiveOwner(ownerUserId);
+		String key = redisKey(hash);
+		if (Boolean.FALSE.equals(redisTemplate.hasKey(key))) {
+			return Optional.empty();
+		}
+		redisTemplate.opsForHash().put(key, "ownerUserId", ownerUserId.toString());
+		cache.invalidate(hash);
+		return findByHash(hash);
+	}
+
+	/**
+	 * Lists all keys owned by one account, newest first.
+	 *
+	 * @param ownerUserId owning account id; {@code null} reads as empty
+	 * @return owned keys sorted by creation time descending
+	 */
+	public List<VirtualApiKey> listKeysByUser(UUID ownerUserId) {
+		if (ownerUserId == null) {
+			return List.of();
+		}
+		Set<String> hexes = redisTemplate.opsForSet().members(INDEX_KEY);
+		if (hexes == null || hexes.isEmpty()) {
+			return List.of();
+		}
+		List<VirtualApiKey> keys = new ArrayList<>();
+		for (String hex : hexes) {
+			try {
+				SHA256Hash hash = SHA256Hash.fromHex(hex);
+				findByHash(hash).ifPresent(key -> {
+					if (ownerUserId.equals(key.ownerUserId())) {
+						keys.add(key);
+					}
+				});
+			} catch (IllegalArgumentException ignored) {
+				// skip invalid hex entry in index
+			}
+		}
+		keys.sort(Comparator.comparing(VirtualApiKey::createdAt).reversed());
+		return Collections.unmodifiableList(keys);
+	}
+
+	/**
+	 * Terminally revokes every key owned by one account: the user-deactivation
+	 * cascade. Each key gets the irreversible tombstone; already-revoked keys
+	 * are idempotent no-ops that still count.
+	 *
+	 * @param ownerUserId owning account id; {@code null} revokes nothing
+	 * @return how many keys carry the tombstone afterwards
+	 */
+	public int revokeUserKeys(UUID ownerUserId) {
+		if (ownerUserId == null) {
+			return 0;
+		}
+		int revoked = 0;
+		for (VirtualApiKey key : listKeysByUser(ownerUserId)) {
+			revokeKey(key.keyHash());
+			revoked++;
+		}
+		return revoked;
+	}
+
+	/**
+	 * Redis key holding one account's default key selection for act-as-self flows.
+	 */
+	private static String defaultKeyName(UUID ownerUserId) {
+		return "userkey:" + ownerUserId + ":default";
+	}
+
+	/**
+	 * Sets the default key used when an account acts as itself without naming a
+	 * key. The key must exist and belong to the account; usability is checked at
+	 * request time, not here.
+	 *
+	 * @param ownerUserId owning account id
+	 * @param hash        default key hash, owned by the account
+	 * @throws IllegalArgumentException when the key is unknown or owned by someone else
+	 */
+	public void setDefaultKey(UUID ownerUserId, SHA256Hash hash) {
+		Optional<VirtualApiKey> key = findByHash(hash);
+		if (key.isEmpty() || !ownerUserId.equals(key.get().ownerUserId())) {
+			throw new IllegalArgumentException("default key must be owned by the account");
+		}
+		redisTemplate.opsForValue().set(defaultKeyName(ownerUserId), hash.hex());
+	}
+
+	/**
+	 * Reads an account's default key selection.
+	 *
+	 * @param ownerUserId owning account id, possibly {@code null}
+	 * @return the selected key hash, or empty when none is set or parsable
+	 */
+	public Optional<SHA256Hash> defaultKey(UUID ownerUserId) {
+		if (ownerUserId == null) {
+			return Optional.empty();
+		}
+		String hex = redisTemplate.opsForValue().get(defaultKeyName(ownerUserId));
+		if (hex == null || hex.isBlank()) {
+			return Optional.empty();
+		}
+		try {
+			return Optional.of(SHA256Hash.fromHex(hex.trim()));
+		} catch (IllegalArgumentException malformed) {
+			return Optional.empty();
+		}
+	}
+
+	/**
+	 * Clears an account's default key selection, for example after the key is
+	 * deleted or the account is removed.
+	 *
+	 * @param ownerUserId owning account id, possibly {@code null}
+	 */
+	public void clearDefaultKey(UUID ownerUserId) {
+		if (ownerUserId == null) {
+			return;
+		}
+		redisTemplate.delete(defaultKeyName(ownerUserId));
+	}
+
+	/**
+	 * Resolves an act-as-self request to the caller's own key: validates the
+	 * session token, resolves the account, then resolves the named (or default)
+	 * key and admits it only when owned by the account and currently usable.
+	 * Every failure reads as empty so callers answer uniformly, revealing
+	 * nothing about which step failed.
+	 *
+	 * @param sessionJwt  session token from the Authorization header
+	 * @param keySelector key hash hex, {@code default}, or blank for the default
+	 * @return the caller's usable key, or empty
+	 */
+	public Optional<VirtualApiKey> resolveActAsSelf(String sessionJwt, String keySelector) {
+		JwtService sessions = this.jwtService;
+		if (sessions == null || sessionJwt == null || sessionJwt.isBlank()) {
+			return Optional.empty();
+		}
+		final Jwt decoded;
+		try {
+			decoded = sessions.validate(sessionJwt);
+		} catch (RuntimeException invalid) {
+			return Optional.empty();
+		}
+		final UUID userId;
+		try {
+			userId = UUID.fromString(decoded.getSubject());
+		} catch (RuntimeException malformed) {
+			return Optional.empty();
+		}
+		if (!isOwnerActive(userId)) {
+			return Optional.empty();
+		}
+		String selector = keySelector == null ? "" : keySelector.trim();
+		String hex;
+		if (selector.isEmpty() || "default".equalsIgnoreCase(selector)) {
+			Optional<SHA256Hash> def = defaultKey(userId);
+			if (def.isEmpty()) {
+				return Optional.empty();
+			}
+			hex = def.get().hex();
+		} else {
+			hex = selector;
+		}
+		final SHA256Hash hash;
+		try {
+			hash = SHA256Hash.fromHex(hex);
+		} catch (IllegalArgumentException malformed) {
+			return Optional.empty();
+		}
+		Optional<VirtualApiKey> key = findByHash(hash);
+		if (key.isEmpty() || !userId.equals(key.get().ownerUserId())) {
+			return Optional.empty();
+		}
+		return isUsable(key.get()) ? key : Optional.empty();
+	}
+
+	/**
+	 * Resolves an owning account id to its login name for admin attribution.
+	 * Best-effort: unknown accounts and unwired repositories read as
+	 * {@code null} rather than failing reads.
+	 *
+	 * @param ownerUserId owning account id, possibly {@code null}
+	 * @return the login name, or {@code null}
+	 */
+	public String usernameOf(UUID ownerUserId) {
+		UserAccountRepository users = this.userAccountRepository;
+		if (ownerUserId == null || users == null) {
+			return null;
+		}
+		try {
+			return users.findById(ownerUserId).map(UserAccount::getUsername).orElse(null);
+		} catch (RuntimeException ex) {
+			log.debug("Dropping owner username lookup: {}", ex.getMessage());
+			return null;
+		}
 	}
 
 	/**
@@ -931,6 +1185,10 @@ public class KeyManagementService {
 			if (bootstrapKey.plaintextKey() == null || bootstrapKey.plaintextKey().isBlank()) {
 				continue;
 			}
+			UUID seedOwner = resolveSeedOwner(bootstrapKey.ownerUsername(), bootstrapKey.name());
+			if (seedOwner == null && userAccountRepository != null) {
+				continue;
+			}
 			trySeedKey(
 					bootstrapKey.plaintextKey(),
 					bootstrapKey.ownerId(),
@@ -948,14 +1206,46 @@ public class KeyManagementService {
 					SEED_INJECTION_BLOCK,
 					bootstrapKey.allowedCacheScopes(),
 					Set.of(),
-					Set.of()
+					Set.of(),
+					seedOwner
 			);
 		}
 	}
 
 	/**
+	 * Resolves a bootstrap owner username to an account id. Unresolvable owners
+	 * skip the seed with an error log instead of birthing orphaned keys; the
+	 * seeder retry picks the key up once the account exists. Without a wired
+	 * repository (unit tests only) resolution reads as unknown.
+	 *
+	 * @param username configured owner username, possibly {@code null}
+	 * @param keyName  key label for log context
+	 * @return the account id, or {@code null} when unknown
+	 */
+	private UUID resolveSeedOwner(String username, String keyName) {
+		UserAccountRepository users = this.userAccountRepository;
+		if (username == null || username.isBlank()) {
+			if (users != null) {
+				log.error("Skipping bootstrap key '{}': owner-username is required", keyName);
+			}
+			return null;
+		}
+		if (users == null) {
+			return null;
+		}
+		Optional<UserAccount> account = users.findByUsernameIgnoreCase(username.trim());
+		if (account.isEmpty() || account.get().isDisabled()) {
+			log.error("Skipping bootstrap key '{}': owning account '{}' is unknown or disabled",
+					keyName, username);
+			return null;
+		}
+		return account.get().getId();
+	}
+
+	/**
 	 * Attempts to claim one bootstrap-key slot atomically, storing metadata plus index entry only on success.
 	 *
+	 * @param ownerUserId owning account id, possibly {@code null} for legacy seeds
 	 * @return {@code true} when this caller won the claim (losers change nothing)
 	 */
 	private boolean trySeedKey(
@@ -975,7 +1265,8 @@ public class KeyManagementService {
 			boolean injectionBlock,
 			Set<CacheScope> allowedCacheScopes,
 			Set<String> allowedAgents,
-			Set<String> deniedAgents
+			Set<String> deniedAgents,
+			UUID ownerUserId
 	) {
 		SHA256Hash hash = SHA256Hash.fromRawKey(plaintextKey);
 		Map<String, String> fields = new LinkedHashMap<>();
@@ -986,7 +1277,7 @@ public class KeyManagementService {
 		fields.put("enabled", "true");
 		putPolicyFields(fields, allowedModels, allowedProviders, allowedTools, deniedTools,
 				allowedResources, deniedResources, allowedPrompts, deniedPrompts,
-				injectionBlock, allowedCacheScopes, allowedAgents, deniedAgents);
+				injectionBlock, allowedCacheScopes, allowedAgents, deniedAgents, ownerUserId, false);
 		fields.put("createdAt", Instant.now().toString());
 		fields.put("keyPrefix", prefixOf(plaintextKey));
 		List<Object> args = new ArrayList<>();
@@ -1021,7 +1312,8 @@ public class KeyManagementService {
 			boolean injectionBlock,
 			Set<CacheScope> allowedCacheScopes,
 			Set<String> allowedAgents,
-			Set<String> deniedAgents
+			Set<String> deniedAgents,
+			UUID ownerUserId
 	) {
 		SHA256Hash hash = SHA256Hash.fromRawKey(plaintextKey);
 		Map<String, String> fields = new LinkedHashMap<>();
@@ -1032,7 +1324,7 @@ public class KeyManagementService {
 		fields.put("enabled", "true");
 		putPolicyFields(fields, allowedModels, allowedProviders, allowedTools, deniedTools,
 				allowedResources, deniedResources, allowedPrompts, deniedPrompts,
-				injectionBlock, allowedCacheScopes, allowedAgents, deniedAgents);
+				injectionBlock, allowedCacheScopes, allowedAgents, deniedAgents, ownerUserId, false);
 		fields.put("createdAt", Instant.now().toString());
 		fields.put("keyPrefix", prefixOf(plaintextKey));
 		redisTemplate.opsForHash().putAll(redisKey(hash), fields);
@@ -1070,6 +1362,8 @@ public class KeyManagementService {
 			Set<CacheScope> allowedCacheScopes = parseScopes((String) raw.get("allowedCacheScopes"));
 			Set<String> allowedAgents = parseCsv((String) raw.get("allowedAgents"));
 			Set<String> deniedAgents = parseCsv((String) raw.get("deniedAgents"));
+			UUID ownerUserId = parseOwnerUserId((String) raw.get("ownerUserId"));
+			boolean revoked = parseRevoked((String) raw.get("revoked"));
 			Instant createdAt = Instant.parse((String) raw.get("createdAt"));
 			String keyPrefix = (String) raw.getOrDefault("keyPrefix", KEY_PREFIX_RAW);
 			return Optional.of(new VirtualApiKey(
@@ -1092,7 +1386,9 @@ public class KeyManagementService {
 					createdAt,
 					allowedCacheScopes,
 					allowedAgents,
-					deniedAgents
+					deniedAgents,
+					ownerUserId,
+					revoked
 			));
 		} catch (RuntimeException ignored) {
 			// Malformed or incomplete stored metadata: treat as absent, never throw.
