@@ -65,6 +65,8 @@ import io.github.kxng0109.cacherelay.web.SpaFallbackController;
   *   <li><b>Human authentication:</b> {@code /v1/auth/**} (login, redeem, identity;
   *       refresh rotation lives in its own filter) and Spring's OAuth2 login/code
   *       endpoints (SSO entry points).</li>
+  *   <li><b>Self-service keys:</b> {@code /v1/me/**} (session-JWT authenticated inside
+  *       {@code MeKeyController}; secrets never cross that boundary).</li>
  *   <li><b>Operator SPA shell:</b> {@code /}, {@code /index.html}, {@code /assets/**},
  *       {@code /error}, and {@code SpaFallbackController#SPA_PATH_PATTERN} (extensionless
  *       non-API routes forward to the shell; reserved first segments stay denied).</li>
@@ -145,6 +147,7 @@ public class SecurityConfig {
 						).permitAll()
 						.requestMatchers(
 								"/v1/auth/**",
+								"/v1/me/**",
 								"/oauth2/**",
 								"/login/oauth2/**"
 						).permitAll()

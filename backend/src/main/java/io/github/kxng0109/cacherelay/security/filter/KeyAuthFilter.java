@@ -75,6 +75,14 @@ public class KeyAuthFilter extends OncePerRequestFilter {
 	public static final String KEY_PREFIX = "gw-";
 
 	/**
+	 * Opt-in header for act-as-self flows: the Bearer token is a session JWT and
+	 * this header selects which of the caller's own keys to act with
+	 * ({@code default} or a key hash hex). Key material never crosses this
+	 * boundary in either direction.
+	 */
+	public static final String ACT_AS_KEY_HEADER = "X-Act-As-Key";
+
+	/**
 	 * Number of random URL-safe characters after the prefix.
 	 */
 	public static final int KEY_SUFFIX_LENGTH = 32;
@@ -233,25 +241,43 @@ public class KeyAuthFilter extends OncePerRequestFilter {
 		}
 
 		String rawKey = authHeader.substring(AUTH_SCHEME.length()).trim();
-		if (!isWellFormedKey(rawKey)) {
-			writeJsonError(response, HttpStatus.UNAUTHORIZED, "Invalid API key", RejectionReason.KEY_NOT_FOUND);
-			return;
-		}
-
-		SHA256Hash keyHash = SHA256Hash.fromRawKey(rawKey);
-
+		SHA256Hash keyHash;
 		Optional<VirtualApiKey> keyOpt;
-		try {
-			keyOpt = keyManagementService.findByHash(keyHash);
-		} catch (DataAccessException | PoolException ex) {
-			writeJsonError(response, HttpStatus.SERVICE_UNAVAILABLE, "Authentication service unavailable", null);
-			return;
+		if (!isWellFormedKey(rawKey)) {
+			String actAsKey = request.getHeader(ACT_AS_KEY_HEADER);
+			if (actAsKey == null) {
+				writeJsonError(response, HttpStatus.UNAUTHORIZED, "Invalid API key", RejectionReason.KEY_NOT_FOUND);
+				return;
+			}
+			try {
+				keyOpt = keyManagementService.resolveActAsSelf(rawKey, actAsKey);
+			} catch (DataAccessException | PoolException ex) {
+				writeJsonError(response, HttpStatus.SERVICE_UNAVAILABLE, "Authentication service unavailable", null);
+				return;
+			}
+			if (keyOpt.isEmpty()) {
+				writeJsonError(response, HttpStatus.UNAUTHORIZED, "Invalid API key", RejectionReason.KEY_NOT_FOUND);
+				return;
+			}
+			keyHash = keyOpt.get().keyHash();
+		} else {
+			keyHash = SHA256Hash.fromRawKey(rawKey);
+			try {
+				keyOpt = keyManagementService.findByHash(keyHash);
+			} catch (DataAccessException | PoolException ex) {
+				writeJsonError(response, HttpStatus.SERVICE_UNAVAILABLE, "Authentication service unavailable", null);
+				return;
+			}
 		}
 		if (keyOpt.isEmpty()) {
 			writeJsonError(response, HttpStatus.UNAUTHORIZED, "Invalid API key", RejectionReason.KEY_NOT_FOUND);
 			return;
 		}
 		VirtualApiKey key = keyOpt.get();
+		if (key.revoked() || !keyManagementService.isOwnerActive(key.ownerUserId())) {
+			writeJsonError(response, HttpStatus.UNAUTHORIZED, "Invalid API key", RejectionReason.KEY_NOT_FOUND);
+			return;
+		}
 		if (!key.enabled()) {
 			writeJsonError(response, HttpStatus.FORBIDDEN, "API key is disabled", RejectionReason.KEY_DISABLED);
 			return;
