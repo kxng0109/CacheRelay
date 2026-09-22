@@ -10,7 +10,7 @@
     </parent>
     <groupId>io.github.kxng0109</groupId>
     <artifactId>CacheRelay</artifactId>
-    <version>1.7.0</version>
+    <version>1.8.0</version>
     <name>CacheRelay</name>
     <description>Enterprise-Grade AI Reverse Proxy Gateway with Virtual Threads and Semantic Caching</description>
     <url/>
