@@ -91,10 +91,14 @@ body {
   top: 1rem;
 }
 
-/* Focus indicator meets 3:1 against both paper and night canvases. */
+/* Focus indicator meets 3:1 against both canvases. Neutral ink keeps it
+   from reading as an error state; ember stays reserved for errors. */
 :focus-visible {
-  outline: 3px solid var(--color-ember);
+  outline: 3px solid var(--color-ink);
   outline-offset: 2px;
+}
+.dark :focus-visible {
+  outline-color: var(--color-parchment);
 }
 
 /* WCAG 2.2 AA pointer target floor: 24px minimum (44px preferred). */

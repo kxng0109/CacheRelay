@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { GatewayClient } from '../shared/api/client.js'
 import { useAuthStore } from '../shared/auth/store.js'
 import { useRateLimitStore } from '../shared/ratelimit/store.js'
+import { useUiStore } from '../shared/store.js'
 import { server } from '../test/setup.js'
 import { renderApp } from '../test/utils.js'
 import { Layout, parseSidebar } from './layout.js'
@@ -24,13 +25,29 @@ describe('Layout', () => {
     expect(screen.getByRole('link', { name: /skip to content/i })).toHaveAttribute('href', '#main')
   })
 
-  it('toggles the theme on the document root', async () => {
+  it('cycles the theme on the document root', async () => {
     const user = userEvent.setup()
+    act(() => {
+      useUiStore.getState().setTheme('light')
+    })
     renderApp(<Layout />)
-    expect(document.documentElement.classList.contains('dark')).toBe(true)
-    await user.click(screen.getByRole('button', { name: /light theme/i }))
     expect(document.documentElement.classList.contains('dark')).toBe(false)
-    await user.click(screen.getByRole('button', { name: /dark theme/i }))
+    await user.click(screen.getByRole('button', { name: /theme: light/i }))
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+    expect(screen.getByText('theme: dark')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /theme: dark/i }))
+    expect(screen.getByText('theme: system')).toBeInTheDocument()
+  })
+
+  it('toggles the theme with Ctrl+Shift+L', async () => {
+    act(() => {
+      useUiStore.getState().setTheme('light')
+    })
+    renderApp(<Layout />)
+    fireEvent.keyDown(document, { key: 'L', ctrlKey: true, shiftKey: true })
+    await waitFor(() => {
+      expect(screen.getByText('theme: dark')).toBeInTheDocument()
+    })
     expect(document.documentElement.classList.contains('dark')).toBe(true)
   })
 
@@ -90,6 +107,9 @@ describe('Layout', () => {
   })
 
   it('shows session identity and route in the shell bars', () => {
+    act(() => {
+      useUiStore.getState().setTheme('dark')
+    })
     renderApp(<Layout />, { gatewayKey: 'gw-test', adminSession: true })
     expect(screen.getByText(/cacherelay ·/i)).toBeInTheDocument()
     expect(screen.getByText('gateway + admin')).toBeInTheDocument()
@@ -141,13 +161,18 @@ describe('Layout', () => {
     )
   })
 
-  it('reflects the light theme in the footer', async () => {
+  it('cycles light, dark, and system from the footer', async () => {
     const user = userEvent.setup()
+    act(() => {
+      useUiStore.getState().setTheme('light')
+    })
     renderApp(<Layout />)
-    await user.click(screen.getByRole('button', { name: /light theme/i }))
-    expect(screen.getByText('theme: light')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: /dark theme/i }))
+    await user.click(screen.getByRole('button', { name: /theme: light/i }))
     expect(screen.getByText('theme: dark')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /theme: dark/i }))
+    expect(screen.getByText('theme: system')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /theme: system/i }))
+    expect(screen.getByText('theme: light')).toBeInTheDocument()
   })
 
   it('stops mirroring headers after unmount', async () => {

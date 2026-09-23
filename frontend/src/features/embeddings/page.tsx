@@ -301,7 +301,7 @@ export function EmbeddingsPage(): React.JSX.Element {
             />
           </div>
           {runs.length === 0 ? (
-            <div className="rise rounded-xl border border-dashed border-ink/20 p-6 text-center sm:p-8 dark:border-parchment/20">
+            <div className="rise rounded-xl border border-dashed border-ink/20 bg-cream p-6 text-center sm:p-8 dark:border-parchment/20 dark:bg-parchment/5">
               <p className="font-display text-xl font-medium tracking-tight">No runs yet</p>
               <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-soft dark:text-parchment-soft">
                 Paste a key, pick a model, submit text. Vectors and usage land here.

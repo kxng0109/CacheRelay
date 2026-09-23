@@ -102,7 +102,7 @@ function LedgerBoard(): React.JSX.Element {
             {logs.error.message}
           </p>
         ) : logs.data === undefined || entries.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-ink/20 p-6 text-center dark:border-parchment/20">
+          <div className="rounded-xl border border-dashed border-ink/20 bg-cream p-6 text-center dark:border-parchment/20 dark:bg-parchment/5">
             <p className="font-display text-xl font-medium tracking-tight">No entries yet</p>
             <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-soft dark:text-parchment-soft">
               Send traffic through the gateway to populate the audit log. Each request lands here

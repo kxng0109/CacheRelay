@@ -168,7 +168,9 @@ describe('KeysPage', () => {
     expect(inspector).toHaveTextContent('all')
     expect(inspector).toHaveTextContent('unlimited / unlimited')
     await user.click(within(inspector).getByRole('button', { name: /close inspector/i }))
-    expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+    })
     expect(screen.getByText(/select a row to inspect a key/i)).toBeInTheDocument()
   })
 

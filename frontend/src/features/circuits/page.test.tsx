@@ -23,20 +23,49 @@ function renderBoard() {
   return renderApp(<CircuitsPage />, { adminSession: true })
 }
 
+/**
+ * Mocks the provider inventory. Names left out of `unconfigured` report a
+ * key set, mirroring the backend `keyConfigured` boolean.
+ */
+function providers(names: string[], unconfigured: string[] = []) {
+  return http.get('*/v1/admin/providers', () =>
+    HttpResponse.json(
+      names.map((name) => ({
+        name,
+        type: 'openai-compatible',
+        baseUrl: null,
+        keyConfigured: !unconfigured.includes(name),
+        connectTimeoutSeconds: 5,
+        requestTimeoutSeconds: 60,
+        embeddingSingleAsString: false,
+        circuitState: 'CLOSED',
+        aliasReferences: 0,
+        validationStatus: 'UNVERIFIED',
+      })),
+    ),
+  )
+}
+
 describe('CircuitsPage', () => {
   it('renders provider states with icon and text', async () => {
-    server.use(http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)))
+    server.use(
+      http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)),
+      providers(['openai']),
+    )
     renderBoard()
     await waitFor(() => {
       expect(screen.getByText('openai')).toBeInTheDocument()
     })
     expect(screen.getByText('● Closed')).toBeInTheDocument()
-    expect(screen.getByText(/1 providers · 1 flowing/i)).toBeInTheDocument()
+    expect(screen.getByText(/1 of 1 shown · 1 flowing/i)).toBeInTheDocument()
   })
 
   it('states the traffic consequence in the inspector', async () => {
     const user = userEvent.setup()
-    server.use(http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)))
+    server.use(
+      http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)),
+      providers(['openai']),
+    )
     renderBoard()
     const table = await screen.findByRole('table')
     await user.click(within(table).getByText('openai'))
@@ -45,7 +74,10 @@ describe('CircuitsPage', () => {
 
   it('closes the inspector from its close button', async () => {
     const user = userEvent.setup()
-    server.use(http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)))
+    server.use(
+      http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)),
+      providers(['openai']),
+    )
     renderBoard()
     const table = await screen.findByRole('table')
     await user.click(within(table).getByText('openai'))
@@ -66,6 +98,7 @@ describe('CircuitsPage', () => {
       http.post('*/v1/admin/circuits/*/reset', () =>
         HttpResponse.json({ provider: 'openai', state: 'CLOSED' }),
       ),
+      providers(['openai']),
     )
     renderBoard()
     const table = await screen.findByRole('table')
@@ -83,6 +116,7 @@ describe('CircuitsPage', () => {
         '*/v1/admin/circuits',
         () => new HttpResponse(JSON.stringify({ title: 'x' }), { status: 503 }),
       ),
+      providers([]),
     )
     renderBoard()
     await waitFor(() => {
@@ -95,6 +129,7 @@ describe('CircuitsPage', () => {
     server.use(
       http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)),
       http.post('*/v1/admin/circuits/*/reset', () => new HttpResponse('x', { status: 500 })),
+      providers(['openai']),
     )
     renderBoard()
     const table = await screen.findByRole('table')
@@ -107,14 +142,17 @@ describe('CircuitsPage', () => {
   })
 
   it('names an empty board honestly', async () => {
-    server.use(http.get('*/v1/admin/circuits', () => HttpResponse.json([])))
+    server.use(
+      http.get('*/v1/admin/circuits', () => HttpResponse.json([])),
+      providers([]),
+    )
     renderBoard()
     await waitFor(() => {
       expect(screen.getByText(/no providers reported/i)).toBeInTheDocument()
     })
   })
 
-  it('renders every known state plus unknown future states', async () => {
+  it('renders every known state plus other future states', async () => {
     const user = userEvent.setup()
     server.use(
       http.get('*/v1/admin/circuits', () =>
@@ -148,7 +186,7 @@ describe('CircuitsPage', () => {
       expect(screen.getByText('■ Open')).toBeInTheDocument()
     })
     expect(screen.getByText('▲ Half-open')).toBeInTheDocument()
-    expect(screen.getByText('? Unknown')).toBeInTheDocument()
+    expect(screen.getByText('? DRAINING')).toBeInTheDocument()
     expect(screen.getByText('15000')).toBeInTheDocument()
     await user.click(within(screen.getByRole('table')).getByText('b'))
     expect(screen.getByRole('complementary', { name: /circuit inspector/i })).toHaveTextContent(
@@ -170,6 +208,7 @@ describe('CircuitsPage', () => {
           },
         ]),
       ),
+      providers(['c']),
     )
     renderBoard()
     await waitFor(() => {
@@ -178,11 +217,11 @@ describe('CircuitsPage', () => {
     const table = await screen.findByRole('table')
     await user.click(within(table).getByText('c'))
     const inspector = screen.getByRole('complementary', { name: /circuit inspector/i })
-    expect(inspector).toHaveTextContent(/unknown state/i)
+    expect(inspector).toHaveTextContent(/not mapped in this ui/i)
     expect(inspector).toHaveTextContent(/treat traffic as suspect/i)
   })
 
-  it('selects an unknown-state row from the keyboard', async () => {
+  it('selects an other segment row from the keyboard', async () => {
     const user = userEvent.setup()
     server.use(
       http.get('*/v1/admin/circuits', () =>
@@ -196,19 +235,23 @@ describe('CircuitsPage', () => {
           },
         ]),
       ),
+      providers(['c']),
     )
     renderBoard()
     const table = await screen.findByRole('table')
     within(table).getByText('c').closest('tr')?.focus()
     await user.keyboard('{Enter}')
     expect(screen.getByRole('complementary', { name: /circuit inspector/i })).toHaveTextContent(
-      /unknown state/i,
+      /not mapped in this ui/i,
     )
   })
 
   it('shows the same-origin base when unconfigured', async () => {
     vi.stubEnv('VITE_API_BASE_URL', '')
-    server.use(http.get('*/v1/admin/circuits', () => HttpResponse.json([])))
+    server.use(
+      http.get('*/v1/admin/circuits', () => HttpResponse.json([])),
+      providers([]),
+    )
     renderBoard()
     await waitFor(() => {
       expect(screen.getByText(/same-origin/i)).toBeInTheDocument()
@@ -222,6 +265,7 @@ describe('CircuitsPage', () => {
         calls += 1
         return HttpResponse.json(STATE)
       }),
+      providers(['openai']),
     )
     renderBoard()
     await waitFor(() => {
@@ -237,7 +281,10 @@ describe('CircuitsPage', () => {
 
   it('names a filter with zero matches honestly', async () => {
     const user = userEvent.setup()
-    server.use(http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)))
+    server.use(
+      http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)),
+      providers(['openai']),
+    )
     renderBoard()
     await waitFor(() => {
       expect(screen.getByText('openai')).toBeInTheDocument()
@@ -248,7 +295,10 @@ describe('CircuitsPage', () => {
 
   it('deselects a row on second click', async () => {
     const user = userEvent.setup()
-    server.use(http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)))
+    server.use(
+      http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)),
+      providers(['openai']),
+    )
     renderBoard()
     const table = await screen.findByRole('table')
     await user.click(within(table).getByText('openai'))
@@ -285,6 +335,7 @@ describe('CircuitsPage', () => {
           },
         ]),
       ),
+      providers(['openai', 'anthropic']),
     )
     renderBoard()
     await waitFor(() => {
@@ -316,6 +367,7 @@ describe('CircuitsPage', () => {
           },
         ]),
       ),
+      providers(['openai', 'anthropic']),
     )
     renderBoard()
     await waitFor(() => {
@@ -326,6 +378,51 @@ describe('CircuitsPage', () => {
     expect(screen.getByText('anthropic')).toBeInTheDocument()
   })
 
+  it('shows configured providers by default and reveals all on demand', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/circuits', () =>
+        HttpResponse.json([
+          {
+            provider: 'openai',
+            state: 'CLOSED',
+            failures: 0,
+            cooldownMsRemaining: 0,
+            halfOpenProbe: false,
+          },
+          {
+            provider: 'quiet',
+            state: 'CLOSED',
+            failures: 0,
+            cooldownMsRemaining: 0,
+            halfOpenProbe: false,
+          },
+        ]),
+      ),
+      providers(['openai', 'quiet'], ['quiet']),
+    )
+    renderBoard()
+    await waitFor(() => {
+      expect(screen.getByText('openai')).toBeInTheDocument()
+    })
+    expect(screen.getByText(/1 of 2 shown/i)).toBeInTheDocument()
+    expect(screen.queryByText('quiet')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'All' }))
+    expect(screen.getByText('quiet')).toBeInTheDocument()
+    expect(screen.getByText(/2 of 2 shown/i)).toBeInTheDocument()
+  })
+
+  it('says honestly when no provider has keys', async () => {
+    server.use(
+      http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)),
+      providers(['openai'], ['openai']),
+    )
+    renderBoard()
+    await waitFor(() => {
+      expect(screen.getByText(/no configured providers yet/i)).toBeInTheDocument()
+    })
+  })
+
   it('inspects a row and resets from the inspector', async () => {
     const user = userEvent.setup()
     server.use(
@@ -333,6 +430,7 @@ describe('CircuitsPage', () => {
       http.post('*/v1/admin/circuits/*/reset', () =>
         HttpResponse.json({ provider: 'openai', state: 'CLOSED' }),
       ),
+      providers(['openai']),
     )
     renderBoard()
     const table = await screen.findByRole('table')

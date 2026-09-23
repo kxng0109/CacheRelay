@@ -1,9 +1,11 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
+import { Plus } from 'lucide-react'
 import * as z from 'zod/v4'
 import { GatewayClient } from '../../shared/api/client.js'
+import { Modal } from '../../shared/components/Modal.js'
 import { formatBytes, formatMicros } from '../../shared/utils/format.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 
@@ -46,6 +48,8 @@ function CacheBoard(): React.JSX.Element {
   const qc = useQueryClient()
   const [notice, setNotice] = useState<string | null>(null)
   const [confirmingPurge, setConfirmingPurge] = useState(false)
+  const [creatingBudget, setCreatingBudget] = useState(false)
+  const createOpener = useRef<HTMLElement | null>(null)
   const [purgeScope, setPurgeScope] = useState('')
   const [budgetsCopied, setBudgetsCopied] = useState(false)
   const [budgetsCopyError, setBudgetsCopyError] = useState<string | null>(null)
@@ -91,10 +95,23 @@ function CacheBoard(): React.JSX.Element {
         ...(webhook ? { webhookUrl: webhook } : {}),
       })
       reset()
+      setNotice(`Budget created for ${d.subjectId}.`)
+      closeCreate()
       await qc.invalidateQueries({ queryKey: ['budgets'] })
     } catch (e) {
       setNotice(toErrorMessage(e, 'Budget creation failed.'))
     }
+  }
+
+  const openCreate = (): void => {
+    createOpener.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    setCreatingBudget(true)
+  }
+
+  const closeCreate = (): void => {
+    setCreatingBudget(false)
+    createOpener.current?.focus()
   }
 
   return (
@@ -110,8 +127,9 @@ function CacheBoard(): React.JSX.Element {
           <h1 className="font-display text-3xl font-medium tracking-tight">Cache and budgets</h1>
           {stats.data === undefined ? null : (
             <span className="rounded-full border border-ink/15 px-2 py-0.5 font-mono text-xs tnum dark:border-parchment/15">
-              cache {stats.data.enabled ? 'on' : 'off'} · l1 redis{' '}
-              {stats.data.l1RedisEnabled ? 'on' : 'off'}
+              Cache {stats.data.enabled ? 'on' : 'off'} · exact{' '}
+              {stats.data.l1RedisEnabled ? 'on' : 'off'} · semantic{' '}
+              {stats.data.l2SemanticEnabled ? 'on' : 'off'}
             </span>
           )}
           <span className="flex-1" />
@@ -192,30 +210,40 @@ function CacheBoard(): React.JSX.Element {
       ) : stats.data === undefined ? null : (
         <dl className="grid grid-cols-3 gap-3">
           <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
-            <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">State</dt>
-            <dd className="font-mono text-lg tnum">
-              {stats.data.enabled ? 'on' : 'off'} · {stats.data.defaultScope}
-            </dd>
+            <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Status</dt>
+            <dd className="font-mono text-lg tnum">{stats.data.enabled ? 'On' : 'Off'}</dd>
             <dd className="mt-1 text-xs text-ink-soft dark:text-parchment-soft">
-              Default scope for new entries.
+              Scope {stats.data.defaultScope} ·{' '}
+              {stats.data.defaultScope === 'GLOBAL'
+                ? 'entries shared by all tenants'
+                : stats.data.defaultScope === 'USER'
+                  ? 'entries isolated per user'
+                  : 'entries isolated per tenant'}{' '}
+              · server config.
             </dd>
           </div>
           <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
-            <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">L0 cap</dt>
+            <dt className="flex items-baseline justify-between gap-2 text-[13px] text-ink-soft dark:text-parchment-soft">
+              <span>Local memory</span>
+              <span className="font-mono text-xs tnum">L0</span>
+            </dt>
             <dd className="font-mono text-lg tnum">{formatBytes(stats.data.l0MaxBytes)}</dd>
             <dd className="mt-1 text-xs text-ink-soft dark:text-parchment-soft">
-              TTL {stats.data.l0InMemoryTtlSeconds}s in memory.
+              Per instance cap · {stats.data.l0InMemoryTtlSeconds}s entry TTL.
             </dd>
           </div>
           <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
-            <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Tiers</dt>
+            <dt className="flex items-baseline justify-between gap-2 text-[13px] text-ink-soft dark:text-parchment-soft">
+              <span>Tiers & safety</span>
+              <span className="font-mono text-xs tnum">L1 · L2</span>
+            </dt>
             <dd className="font-mono text-lg tnum">
-              l1 {stats.data.l1RedisEnabled ? 'on' : 'off'} · l2{' '}
+              Exact {stats.data.l1RedisEnabled ? 'on' : 'off'} · Semantic{' '}
               {stats.data.l2SemanticEnabled ? 'on' : 'off'}
             </dd>
             <dd className="mt-1 text-xs text-ink-soft dark:text-parchment-soft">
-              {stats.data.embeddingModel} @ {stats.data.similarityThreshold} · guards{' '}
-              {stats.data.polarityGuardEnabled ? 'on' : 'off'}/
+              {stats.data.embeddingModel} · similarity {stats.data.similarityThreshold} · polarity{' '}
+              {stats.data.polarityGuardEnabled ? 'on' : 'off'} / entity{' '}
               {stats.data.entityGuardEnabled ? 'on' : 'off'}.
             </dd>
           </div>
@@ -226,33 +254,43 @@ function CacheBoard(): React.JSX.Element {
           <h2 className="text-base font-semibold">Budgets</h2>
           <span className="flex-1" />
           {budgets.data === undefined || budgets.data.budgets.length === 0 ? null : (
-            <button
-              type="button"
-              onClick={() => {
-                setBudgetsCopyError(null)
-                const clip = navigator.clipboard as Clipboard | undefined
-                if (clip === undefined) {
-                  setBudgetsCopyError('Copy unavailable in this browser.')
-                  return
-                }
-                const rows = budgets.data.budgets.map(
-                  (b) =>
-                    `| ${b.subjectId} | ${b.level} | ${String(b.minuteMicros)} | ${String(b.monthMicros)} |`,
-                )
-                const doc = `# Spend budgets\n\n| Subject | Level | Minute (µ$) | Month (µ$) |\n| --- | --- | --- | --- |\n${rows.join('\n')}`
-                void clip.writeText(doc).then(
-                  () => {
-                    setBudgetsCopied(true)
-                  },
-                  () => {
-                    setBudgetsCopyError('Copy failed. Select the text manually.')
-                  },
-                )
-              }}
-              className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
-            >
-              {budgetsCopied ? 'Copied' : 'Copy markdown'}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={openCreate}
+                className="inline-flex items-center gap-2 rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+              >
+                <Plus aria-hidden="true" className="size-4" />
+                Create budget
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setBudgetsCopyError(null)
+                  const clip = navigator.clipboard as Clipboard | undefined
+                  if (clip === undefined) {
+                    setBudgetsCopyError('Copy unavailable in this browser.')
+                    return
+                  }
+                  const rows = budgets.data.budgets.map(
+                    (b) =>
+                      `| ${b.subjectId} | ${b.level} | ${String(b.minuteMicros)} | ${String(b.monthMicros)} |`,
+                  )
+                  const doc = `# Spend budgets\n\n| Subject | Level | Minute (µ$) | Month (µ$) |\n| --- | --- | --- | --- |\n${rows.join('\n')}`
+                  void clip.writeText(doc).then(
+                    () => {
+                      setBudgetsCopied(true)
+                    },
+                    () => {
+                      setBudgetsCopyError('Copy failed. Select the text manually.')
+                    },
+                  )
+                }}
+                className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+              >
+                {budgetsCopied ? 'Copied' : 'Copy markdown'}
+              </button>
+            </>
           )}
         </div>
         {budgetsCopyError === null ? null : (
@@ -274,9 +312,21 @@ function CacheBoard(): React.JSX.Element {
           {budgets.error.message}
         </p>
       ) : budgets.data === undefined || budgets.data.budgets.length === 0 ? (
-        <p className="text-sm text-ink-soft dark:text-parchment-soft">
-          No budgets yet. Create the first budget below.
-        </p>
+        <div className="rounded-xl border border-dashed border-ink/20 bg-cream p-6 text-center dark:border-parchment/20 dark:bg-parchment/5">
+          <p className="font-display text-xl font-medium tracking-tight">No budgets yet</p>
+          <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-soft dark:text-parchment-soft">
+            Set spending caps per key, team, or org. Zero means no cap. Breaches alert through the
+            webhook.
+          </p>
+          <button
+            type="button"
+            onClick={openCreate}
+            className="mt-3 inline-flex items-center gap-2 rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+          >
+            <Plus aria-hidden="true" className="size-4" />
+            Create budget
+          </button>
+        </div>
       ) : (
         <table className="w-full text-left text-sm">
           <caption className="sr-only">Spend budgets</caption>
@@ -320,103 +370,121 @@ function CacheBoard(): React.JSX.Element {
           </tbody>
         </table>
       )}
-      <form
-        onSubmit={(e) => {
-          void handleSubmit(onCreate)(e)
-        }}
-        className="grid gap-3 rounded-lg border border-ink/10 bg-cream p-4 sm:grid-cols-2 dark:border-parchment/10 dark:bg-transparent"
-      >
-        <div>
-          <label htmlFor="budget-level" className="mb-1 block text-[13px] font-medium">
-            Level
-          </label>
-          <input
-            id="budget-level"
-            {...register('level')}
-            placeholder="KEY, TEAM, or ORG"
-            className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
-          />
-          {errors.level === undefined ? null : (
-            <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
-              {errors.level.message}
-            </p>
-          )}
-        </div>
-        <div>
-          <label htmlFor="budget-subject" className="mb-1 block text-[13px] font-medium">
-            Subject
-          </label>
-          <input
-            id="budget-subject"
-            {...register('subjectId')}
-            placeholder="Key hex, owner, or scope"
-            className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
-          />
-          {errors.subjectId === undefined ? null : (
-            <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
-              {errors.subjectId.message}
-            </p>
-          )}
-        </div>
-        <div>
-          <label htmlFor="budget-minute" className="mb-1 block text-[13px] font-medium">
-            Minute cap (µ$, 0 means none)
-          </label>
-          <input
-            id="budget-minute"
-            type="number"
-            {...register('minuteMicros', { valueAsNumber: true })}
-            className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
-          />
-          {errors.minuteMicros === undefined ? null : (
-            <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
-              {errors.minuteMicros.message}
-            </p>
-          )}
-        </div>
-        <div>
-          <label htmlFor="budget-month" className="mb-1 block text-[13px] font-medium">
-            Month cap (µ$, 0 means none)
-          </label>
-          <input
-            id="budget-month"
-            type="number"
-            {...register('monthMicros', { valueAsNumber: true })}
-            className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
-          />
-          {errors.monthMicros === undefined ? null : (
-            <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
-              {errors.monthMicros.message}
-            </p>
-          )}
-        </div>
-        <div>
-          <label htmlFor="budget-webhook" className="mb-1 block text-[13px] font-medium">
-            Webhook URL (optional)
-          </label>
-          <input
-            id="budget-webhook"
-            type="url"
-            {...register('webhookUrl')}
-            placeholder="https://ops.example.com/hook"
-            className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
-          />
-          {errors.webhookUrl === undefined ? null : (
-            <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
-              {errors.webhookUrl.message}
-            </p>
-          )}
-        </div>
-        <div className="sm:col-span-2">
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper disabled:cursor-not-allowed disabled:bg-ink-soft disabled:text-paper dark:bg-parchment dark:text-night dark:disabled:bg-parchment-soft dark:disabled:text-night"
+      {creatingBudget ? (
+        <Modal
+          label="Create budget"
+          title="Create budget"
+          subtitle="Caps in micro dollars. Zero means no cap."
+          closeLabel="Close create budget"
+          onClose={closeCreate}
+        >
+          <form
+            onSubmit={(e) => {
+              void handleSubmit(onCreate)(e)
+            }}
+            className="grid gap-3 sm:grid-cols-2"
           >
-            Create budget
-          </button>
-        </div>
-      </form>
+            <div>
+              <label htmlFor="budget-level" className="mb-1 block text-[13px] font-medium">
+                Level
+              </label>
+              <input
+                id="budget-level"
+                autoFocus
+                {...register('level')}
+                placeholder="KEY, TEAM, or ORG"
+                className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
+              />
+              {errors.level === undefined ? null : (
+                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                  {errors.level.message}
+                </p>
+              )}
+            </div>
+            <div>
+              <label htmlFor="budget-subject" className="mb-1 block text-[13px] font-medium">
+                Subject
+              </label>
+              <input
+                id="budget-subject"
+                {...register('subjectId')}
+                placeholder="Key hex, owner, or scope"
+                className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
+              />
+              {errors.subjectId === undefined ? null : (
+                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                  {errors.subjectId.message}
+                </p>
+              )}
+            </div>
+            <div>
+              <label htmlFor="budget-minute" className="mb-1 block text-[13px] font-medium">
+                Minute cap (µ$, 0 means none)
+              </label>
+              <input
+                id="budget-minute"
+                type="number"
+                {...register('minuteMicros', { valueAsNumber: true })}
+                className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
+              />
+              {errors.minuteMicros === undefined ? null : (
+                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                  {errors.minuteMicros.message}
+                </p>
+              )}
+            </div>
+            <div>
+              <label htmlFor="budget-month" className="mb-1 block text-[13px] font-medium">
+                Month cap (µ$, 0 means none)
+              </label>
+              <input
+                id="budget-month"
+                type="number"
+                {...register('monthMicros', { valueAsNumber: true })}
+                className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
+              />
+              {errors.monthMicros === undefined ? null : (
+                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                  {errors.monthMicros.message}
+                </p>
+              )}
+            </div>
+            <div>
+              <label htmlFor="budget-webhook" className="mb-1 block text-[13px] font-medium">
+                Webhook URL (optional)
+              </label>
+              <input
+                id="budget-webhook"
+                type="url"
+                {...register('webhookUrl')}
+                placeholder="https://ops.example.com/hook"
+                className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
+              />
+              {errors.webhookUrl === undefined ? null : (
+                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                  {errors.webhookUrl.message}
+                </p>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 sm:col-span-2">
+              <button
+                type="button"
+                onClick={closeCreate}
+                className="rounded-md border border-ink/15 px-4 py-2 text-sm dark:border-parchment/15"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper disabled:cursor-not-allowed disabled:bg-ink-soft disabled:text-paper dark:bg-parchment dark:text-night dark:disabled:bg-parchment-soft dark:disabled:text-night"
+              >
+                Create budget
+              </button>
+            </div>
+          </form>
+        </Modal>
+      ) : null}
     </div>
   )
 }

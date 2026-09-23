@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useShallow } from 'zustand/react/shallow'
 import { useAuthStore } from '../auth/store.js'
+import { useUiStore } from '../store.js'
 
 export interface PaletteAction {
   id: string
@@ -47,6 +48,13 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
 
   const session = useAuthStore(useShallow((s) => s.session))
   const isAdmin = session?.admin === true
+  const dark = useUiStore((s) => s.dark)
+  const toggleDark = useUiStore((s) => s.toggleDark)
+
+  const toggleTheme = (): void => {
+    setOpen(false)
+    toggleDark()
+  }
 
   const nav: PaletteAction[] = [
     {
@@ -139,7 +147,19 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
     },
   ]
 
-  const visible = [...nav, ...actions].filter(
+  const ops: PaletteAction[] = [
+    {
+      id: 'op-theme',
+      label: dark ? 'Switch to light theme' : 'Switch to dark theme',
+      hint: 'Ctrl+Shift+L',
+      audience: 'public',
+      run: () => {
+        toggleTheme()
+      },
+    },
+  ]
+
+  const visible = [...nav, ...ops, ...actions].filter(
     (a) =>
       a.audience === undefined ||
       a.audience === 'public' ||

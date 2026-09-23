@@ -38,6 +38,30 @@ if (typeof Element !== 'undefined' && isJsdom) {
  */
 export const scrolledIntoView: Element[] = []
 
+// jsdom lacks window.matchMedia (drawers check the reduced motion
+// preference before animating). Minimal stub reports no preference so
+// components take the animated path.
+if (typeof window !== 'undefined' && typeof window.matchMedia === 'undefined') {
+  window.matchMedia = (query: string): MediaQueryList => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: (): void => {
+      // stub: media never changes in tests
+    },
+    removeListener: (): void => {
+      // stub: media never changes in tests
+    },
+    addEventListener: (): void => {
+      // stub: media never changes in tests
+    },
+    removeEventListener: (): void => {
+      // stub: media never changes in tests
+    },
+    dispatchEvent: (): boolean => false,
+  })
+}
+
 // Shared MSW server for unit and integration tests. Individual test files add
 // scenario handlers with `server.use(...)`; the hooks below keep scenarios
 // isolated. Unhandled requests fail loudly so missing mocks surface at once.

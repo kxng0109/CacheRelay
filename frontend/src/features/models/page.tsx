@@ -1,9 +1,10 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { GatewayClient } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 import type { ModelAliasRecord, ProviderChainStep } from '../../shared/api/types.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
+import { Modal } from '../../shared/components/Modal.js'
 import { ProviderBoard } from './ProviderBoard.js'
 
 const STRATEGIES = ['SEQUENTIAL', 'RACE'] as const
@@ -76,7 +77,7 @@ function ChainEditor({
                   ),
                 )
               }}
-              placeholder="blank sends the requested model"
+              placeholder="e.g. claude-x"
               className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
             />
           </div>
@@ -106,6 +107,9 @@ function ChainEditor({
           Add step
         </button>
       ) : null}
+      <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+        Blank override sends the requested model.
+      </p>
     </div>
   )
 }
@@ -133,6 +137,7 @@ function ModelsBoard(): React.JSX.Element {
   const [newChain, setNewChain] = useState<ProviderChainStep[]>([blankStep()])
   const [editStrategy, setEditStrategy] = useState<string>('SEQUENTIAL')
   const [editChain, setEditChain] = useState<ProviderChainStep[]>([blankStep()])
+  const createOpener = useRef<HTMLElement | null>(null)
 
   const query = useQuery({
     queryKey: ['model-aliases'],
@@ -174,6 +179,7 @@ function ModelsBoard(): React.JSX.Element {
       .then((out) => {
         setNotice(`Alias ${out.name} created.`)
         setCreating(false)
+        createOpener.current?.focus()
         setNewName('')
         setNewStrategy('SEQUENTIAL')
         setNewChain([blankStep()])
@@ -182,6 +188,18 @@ function ModelsBoard(): React.JSX.Element {
       .catch((e: unknown) => {
         setError(toErrorMessage(e, 'Alias creation failed.'))
       })
+  }
+
+  const openCreate = (): void => {
+    setError(null)
+    createOpener.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    setCreating(true)
+  }
+
+  const closeCreate = (): void => {
+    setCreating(false)
+    createOpener.current?.focus()
   }
 
   /**
@@ -268,16 +286,13 @@ function ModelsBoard(): React.JSX.Element {
           <span className="flex-1" />
           <button
             type="button"
-            onClick={() => {
-              setError(null)
-              setCreating((c) => !c)
-            }}
+            onClick={openCreate}
             className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper dark:bg-parchment dark:text-night"
           >
             New alias
           </button>
         </div>
-        {error === null ? null : (
+        {error === null || creating ? null : (
           <p role="alert" className="text-sm text-danger dark:text-danger-soft">
             {error}
           </p>
@@ -288,63 +303,78 @@ function ModelsBoard(): React.JSX.Element {
           </p>
         )}
         {creating ? (
-          <div className="space-y-3 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <label htmlFor="model-new-name" className="mb-1 block text-[13px] font-medium">
-                  Name (lowercase slug)
-                </label>
-                <input
-                  id="model-new-name"
-                  value={newName}
-                  autoComplete="off"
-                  onChange={(e) => {
-                    setNewName(e.target.value)
-                  }}
-                  placeholder="fast-gpt"
-                  className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
-                />
+          <Modal
+            label="New alias"
+            title="New alias"
+            subtitle="Map a client name to a provider chain."
+            closeLabel="Close new alias"
+            onClose={closeCreate}
+          >
+            {error === null ? null : (
+              <p role="alert" className="text-sm text-danger dark:text-danger-soft">
+                {error}
+              </p>
+            )}
+            <div className="space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="model-new-name" className="mb-1 block text-[13px] font-medium">
+                    Name (lowercase slug)
+                  </label>
+                  <input
+                    id="model-new-name"
+                    value={newName}
+                    autoComplete="off"
+                    autoFocus
+                    onChange={(e) => {
+                      setNewName(e.target.value)
+                    }}
+                    placeholder="fast-gpt"
+                    className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="model-new-strategy"
+                    className="mb-1 block text-[13px] font-medium"
+                  >
+                    Strategy
+                  </label>
+                  <select
+                    id="model-new-strategy"
+                    value={newStrategy}
+                    onChange={(e) => {
+                      setNewStrategy(e.target.value)
+                    }}
+                    className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
+                  >
+                    {STRATEGIES.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-              <div>
-                <label htmlFor="model-new-strategy" className="mb-1 block text-[13px] font-medium">
-                  Strategy
-                </label>
-                <select
-                  id="model-new-strategy"
-                  value={newStrategy}
-                  onChange={(e) => {
-                    setNewStrategy(e.target.value)
-                  }}
-                  className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
+              <ChainEditor steps={newChain} onChange={setNewChain} idPrefix="model-new" />
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={closeCreate}
+                  className="rounded-md border border-ink/15 px-4 py-2 text-sm dark:border-parchment/15"
                 >
-                  {STRATEGIES.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={onCreate}
+                  className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper dark:bg-parchment dark:text-night"
+                >
+                  Create alias
+                </button>
               </div>
             </div>
-            <ChainEditor steps={newChain} onChange={setNewChain} idPrefix="model-new" />
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={onCreate}
-                className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper dark:bg-parchment dark:text-night"
-              >
-                Create alias
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setCreating(false)
-                }}
-                className="rounded-md border border-ink/15 px-4 py-2 text-sm dark:border-parchment/15"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
+          </Modal>
         ) : null}
         {query.isPending ? (
           <p role="status" className="text-sm">

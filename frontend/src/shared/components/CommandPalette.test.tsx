@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { renderApp } from '../../test/utils.js'
+import { useUiStore } from '../store.js'
 import { CommandPalette } from './CommandPalette.js'
 
 describe('CommandPalette', () => {
@@ -44,6 +45,19 @@ describe('CommandPalette', () => {
     await waitFor(() => {
       expect(screen.queryByText('Go to Playground')).not.toBeInTheDocument()
     })
+  })
+
+  it('switches the theme from the menu', async () => {
+    const user = userEvent.setup()
+    if (useUiStore.getState().dark) useUiStore.getState().toggleDark()
+    renderApp(<CommandPalette />)
+    await user.click(screen.getByRole('button', { name: /commands/i }))
+    await user.click(await screen.findByText('Switch to dark theme'))
+    expect(useUiStore.getState().dark).toBe(true)
+    await waitFor(() => {
+      expect(screen.queryByText('Switch to dark theme')).not.toBeInTheDocument()
+    })
+    useUiStore.getState().toggleDark()
   })
 
   it('ignores unrelated keys', () => {

@@ -176,13 +176,16 @@ export function PlaygroundPage(): React.JSX.Element {
           </span>
           run
         </p>
-        <h1 className="font-display text-3xl font-medium tracking-tight">Playground</h1>
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="font-display text-3xl font-medium tracking-tight">Playground</h1>
+          <span className="flex-1" />
+          <p className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft">
+            model {modelValue || 'unset'} · key {keyValue ? 'set' : 'missing'} ·{' '}
+            {streaming ? 'streaming' : 'static'} · {promptLength}/8000
+          </p>
+        </div>
         <p className="text-sm text-ink-soft dark:text-parchment-soft">
           Send a prompt through the gateway. Tokens, cost, and phase land live below.
-        </p>
-        <p className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft">
-          model {modelValue || 'unset'} · key {keyValue ? 'set' : 'missing'} ·{' '}
-          {streaming ? 'streaming' : 'static'} · {promptLength}/8000
         </p>
       </div>
       <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
@@ -317,26 +320,12 @@ export function PlaygroundPage(): React.JSX.Element {
             </p>
           </details>
           {submitted === null ? (
-            <div className="rise rounded-xl border border-dashed border-ink/20 p-6 text-center sm:p-8 dark:border-parchment/20">
+            <div className="rise rounded-xl border border-dashed border-ink/20 bg-cream p-6 text-center sm:p-8 dark:border-parchment/20 dark:bg-parchment/5">
               <p className="font-display text-xl font-medium tracking-tight">No output yet</p>
               <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-soft dark:text-parchment-soft">
                 Pick a model, paste a key, write a prompt. Then send. Tokens, cost, and phase show
-                here as the stream flows.
+                here as the stream flows. Recipes live under Start from a recipe instead above.
               </p>
-              <div className="mt-3 flex flex-wrap justify-center gap-2">
-                {SAMPLES.map((sample) => (
-                  <button
-                    key={sample.label}
-                    type="button"
-                    onClick={() => {
-                      fillRecipe(sample.prompt)
-                    }}
-                    className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
-                  >
-                    Try {sample.label.toLowerCase()}
-                  </button>
-                ))}
-              </div>
             </div>
           ) : (
             <section

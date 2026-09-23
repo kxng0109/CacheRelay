@@ -17,6 +17,7 @@ import {
   Plug,
   ShieldCheck,
   Sun,
+  SunMoon,
   Zap,
 } from 'lucide-react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router'
@@ -118,9 +119,10 @@ function writeStoredSidebar(state: SidebarState): void {
  * @returns The shell layout wrapping every route.
  */
 export function Layout(): React.JSX.Element {
-  const { dark, toggleDark } = useUiStore(
-    useShallow((s) => ({ dark: s.dark, toggleDark: s.toggleDark })),
+  const { theme, toggleDark, setTheme } = useUiStore(
+    useShallow((s) => ({ theme: s.theme, toggleDark: s.toggleDark, setTheme: s.setTheme })),
   )
+  const themeLabel = theme.charAt(0).toUpperCase() + theme.slice(1)
   const { gatewayKey, session } = useAuthStore(
     useShallow((s) => ({ gatewayKey: s.gatewayKey, session: s.session })),
   )
@@ -269,6 +271,11 @@ export function Layout(): React.JSX.Element {
     // never travel anywhere the session may not see.
     const onKey = (e: KeyboardEvent): void => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') return
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'l') {
+        e.preventDefault()
+        toggleDark()
+        return
+      }
       if (e.key === 'Escape') {
         if (sheetOpen) setSheetOpen(false)
         else setDrawer(false)
@@ -296,7 +303,7 @@ export function Layout(): React.JSX.Element {
     return () => {
       document.removeEventListener('keydown', onKey)
     }
-  }, [navigate, sheetOpen, visiblePaths])
+  }, [navigate, sheetOpen, toggleDark, visiblePaths])
 
   const routeLabel =
     pathname === '/'
@@ -426,12 +433,26 @@ export function Layout(): React.JSX.Element {
         )}
         <button
           type="button"
-          onClick={toggleDark}
-          aria-label={collapsed ? (dark ? 'Light theme' : 'Dark theme') : undefined}
+          onClick={() => {
+            setTheme(theme === 'light' ? 'dark' : theme === 'dark' ? 'system' : 'light')
+          }}
+          title="Cycle color theme (Ctrl+Shift+L)"
+          aria-label={collapsed ? `Theme: ${theme}` : undefined}
           className="flex w-full items-center gap-2 rounded-md p-2 text-[13px]"
         >
-          {dark ? <Sun size={16} aria-hidden="true" /> : <Moon size={16} aria-hidden="true" />}
-          {collapsed ? null : <span>{dark ? 'Light theme' : 'Dark theme'}</span>}
+          {theme === 'dark' ? (
+            <Moon size={16} aria-hidden="true" />
+          ) : theme === 'light' ? (
+            <Sun size={16} aria-hidden="true" />
+          ) : (
+            <SunMoon size={16} aria-hidden="true" />
+          )}
+          {collapsed ? null : <span className="whitespace-nowrap">Theme: {themeLabel}</span>}
+          {collapsed ? null : (
+            <span className="ml-auto font-mono text-[10px] whitespace-nowrap text-ink-soft dark:text-parchment-soft">
+              [Ctrl+Shift+L]
+            </span>
+          )}
         </button>
       </div>
     </div>
@@ -454,7 +475,7 @@ export function Layout(): React.JSX.Element {
       ) : null}
       <aside
         aria-label="Console navigation"
-        className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col overflow-hidden border-r border-ink/10 bg-paper transition-transform dark:border-parchment/10 dark:bg-night ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col overflow-hidden border-r border-ink/10 bg-cream/60 transition-transform dark:border-parchment/10 dark:bg-parchment/2 ${
           drawer ? 'translate-x-0' : '-translate-x-full'
         } motion-reduce:transition-none lg:sticky lg:top-0 lg:z-auto lg:h-screen lg:shrink-0 lg:translate-x-0 lg:transition-[width] lg:duration-200 lg:ease-out ${
           collapsed ? 'lg:w-16' : 'lg:w-64'
@@ -510,7 +531,9 @@ export function Layout(): React.JSX.Element {
           </div>
         ) : null}
         <main id="main" className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
-          <Outlet />
+          <div key={pathname} className="rise">
+            <Outlet />
+          </div>
         </main>
         <ShortcutSheet
           open={sheetOpen}
@@ -526,7 +549,7 @@ export function Layout(): React.JSX.Element {
                 route: {routeLabel}
               </p>
               <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
-                theme: {dark ? 'dark' : 'light'}
+                theme: {theme}
               </p>
             </div>
           </footer>

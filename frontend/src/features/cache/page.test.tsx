@@ -47,9 +47,11 @@ describe('CachePage', () => {
     await waitFor(() => {
       expect(screen.getByText('tenant-corp')).toBeInTheDocument()
     })
-    expect(screen.getByText('on · TENANT')).toBeInTheDocument()
+    expect(screen.getByText('On')).toBeInTheDocument()
+    expect(screen.getByText(/scope TENANT/i)).toBeInTheDocument()
+    expect(screen.getByText('Cache on · exact on · semantic on')).toBeInTheDocument()
     expect(screen.getByText('1 MB')).toBeInTheDocument()
-    expect(screen.getByText(/l1 on · l2 on/)).toBeInTheDocument()
+    expect(screen.getByText('Exact on · Semantic on')).toBeInTheDocument()
     expect(screen.getByText('TEAM')).toBeInTheDocument()
     expect(screen.getByText('5,000µ$')).toBeInTheDocument()
   })
@@ -62,6 +64,41 @@ describe('CachePage', () => {
     renderApp(<CachePage />, { adminSession: true })
     await waitFor(() => {
       expect(screen.getByText(/no budgets yet/i)).toBeInTheDocument()
+    })
+  })
+
+  it('opens the create dialog with focus in the form', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/cache/stats', () => HttpResponse.json(STATS)),
+      http.get('*/v1/admin/budgets', () => HttpResponse.json([])),
+    )
+    renderApp(<CachePage />, { adminSession: true })
+    const shortcuts = await screen.findAllByRole('button', { name: /create budget/i })
+    const shortcut = shortcuts[0]
+    if (shortcut === undefined) throw new Error('Empty-state shortcut not found')
+    await user.click(shortcut)
+    await screen.findByRole('dialog', { name: /create budget/i })
+    await waitFor(() => {
+      expect(screen.getByLabelText(/^level$/i)).toHaveFocus()
+    })
+  })
+
+  it('closes the create dialog on Escape', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/cache/stats', () => HttpResponse.json(STATS)),
+      http.get('*/v1/admin/budgets', () => HttpResponse.json([])),
+    )
+    renderApp(<CachePage />, { adminSession: true })
+    const escapeTriggers = await screen.findAllByRole('button', { name: /create budget/i })
+    const escapeTrigger = escapeTriggers[0]
+    if (escapeTrigger === undefined) throw new Error('Create budget trigger not found')
+    await user.click(escapeTrigger)
+    await screen.findByRole('dialog', { name: /create budget/i })
+    await user.keyboard('{Escape}')
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /create budget/i })).not.toBeInTheDocument()
     })
   })
 
@@ -141,12 +178,19 @@ describe('CachePage', () => {
       }),
     )
     renderApp(<CachePage />, { adminSession: true })
+    const webhookTriggers = await screen.findAllByRole('button', { name: /create budget/i })
+    const webhookTrigger = webhookTriggers[0]
+    if (webhookTrigger === undefined) throw new Error('Create budget trigger not found')
+    await user.click(webhookTrigger)
     await user.type(await screen.findByLabelText(/^level$/i), 'KEY')
     await user.type(screen.getByLabelText(/^subject$/i), 'k1')
     await user.type(screen.getByLabelText(/minute cap/i), '5')
     await user.type(screen.getByLabelText(/month cap/i), '50')
     await user.type(screen.getByLabelText(/webhook/i), 'https://ops.example.com/hook')
-    await user.click(screen.getByRole('button', { name: /create budget/i }))
+    const createButtons = screen.getAllByRole('button', { name: /create budget/i })
+    const submitButton = createButtons[createButtons.length - 1]
+    if (submitButton === undefined) throw new Error('Create budget submit not found')
+    await user.click(submitButton)
     await waitFor(() => {
       expect(screen.queryByText(/budget creation failed/i)).not.toBeInTheDocument()
     })
@@ -172,11 +216,18 @@ describe('CachePage', () => {
       ),
     )
     renderApp(<CachePage />, { adminSession: true })
+    const basicTriggers = await screen.findAllByRole('button', { name: /create budget/i })
+    const basicTrigger = basicTriggers[0]
+    if (basicTrigger === undefined) throw new Error('Create budget trigger not found')
+    await user.click(basicTrigger)
     await user.type(await screen.findByLabelText(/^level$/i), 'TEAM')
     await user.type(screen.getByLabelText(/^subject$/i), 'tenant-corp')
     await user.type(screen.getByLabelText(/minute cap/i), '10')
     await user.type(screen.getByLabelText(/month cap/i), '100')
-    await user.click(screen.getByRole('button', { name: /create budget/i }))
+    const createButtons = screen.getAllByRole('button', { name: /create budget/i })
+    const submitButton = createButtons[createButtons.length - 1]
+    if (submitButton === undefined) throw new Error('Create budget submit not found')
+    await user.click(submitButton)
     await waitFor(() => {
       expect(screen.queryByText(/budget creation failed/i)).not.toBeInTheDocument()
     })
@@ -205,11 +256,18 @@ describe('CachePage', () => {
       http.post('*/v1/admin/budgets', () => new HttpResponse('x', { status: 400 })),
     )
     renderApp(<CachePage />, { adminSession: true })
+    const failureTriggers = await screen.findAllByRole('button', { name: /create budget/i })
+    const failureTrigger = failureTriggers[0]
+    if (failureTrigger === undefined) throw new Error('Create budget trigger not found')
+    await user.click(failureTrigger)
     await user.type(await screen.findByLabelText(/^level$/i), 'TEAM')
     await user.type(screen.getByLabelText(/^subject$/i), 'bad')
     await user.type(screen.getByLabelText(/minute cap/i), '5')
     await user.type(screen.getByLabelText(/month cap/i), '50')
-    await user.click(screen.getByRole('button', { name: /create budget/i }))
+    const createButtons = screen.getAllByRole('button', { name: /create budget/i })
+    const submitButton = createButtons[createButtons.length - 1]
+    if (submitButton === undefined) throw new Error('Create budget submit not found')
+    await user.click(submitButton)
     await waitFor(() => {
       expect(screen.getByText(/invalid request/i)).toBeInTheDocument()
     })
@@ -254,10 +312,11 @@ describe('CachePage', () => {
     )
     renderApp(<CachePage />, { adminSession: true })
     await waitFor(() => {
-      expect(screen.getByText('off · GLOBAL')).toBeInTheDocument()
+      expect(screen.getByText('Off')).toBeInTheDocument()
     })
-    expect(screen.getByText(/l1 off · l2 off/)).toBeInTheDocument()
-    expect(screen.getByText(/guards off\/off/i)).toBeInTheDocument()
+    expect(screen.getByText(/scope GLOBAL/i)).toBeInTheDocument()
+    expect(screen.getByText('Exact off · Semantic off')).toBeInTheDocument()
+    expect(screen.getByText(/polarity off \/ entity off/i)).toBeInTheDocument()
   })
 
   it('shows redis as off and zero caps honestly', async () => {
@@ -282,7 +341,7 @@ describe('CachePage', () => {
     )
     renderApp(<CachePage />, { adminSession: true })
     await waitFor(() => {
-      expect(screen.getByText(/redis off/i)).toBeInTheDocument()
+      expect(screen.getByText('Cache on · exact off · semantic on')).toBeInTheDocument()
     })
     expect(screen.getByText('uncapped')).toBeInTheDocument()
     expect(screen.getAllByText('no cap').length).toBeGreaterThanOrEqual(2)
@@ -295,7 +354,17 @@ describe('CachePage', () => {
       http.get('*/v1/admin/budgets', () => HttpResponse.json([])),
     )
     renderApp(<CachePage />, { adminSession: true })
-    await user.click(await screen.findByRole('button', { name: /create budget/i }))
+    const validationTriggers = await screen.findAllByRole('button', {
+      name: /create budget/i,
+    })
+    const validationTrigger = validationTriggers[0]
+    if (validationTrigger === undefined) throw new Error('Create budget trigger not found')
+    await user.click(validationTrigger)
+    await screen.findByRole('dialog', { name: /create budget/i })
+    const validationButtons = screen.getAllByRole('button', { name: /create budget/i })
+    const validationSubmit = validationButtons[validationButtons.length - 1]
+    if (validationSubmit === undefined) throw new Error('Create budget submit not found')
+    await user.click(validationSubmit)
     await waitFor(() => {
       expect(screen.getByText(/level is required/i)).toBeInTheDocument()
     })
@@ -415,7 +484,7 @@ describe('CachePage', () => {
     )
     renderApp(<CachePage />, { adminSession: true })
     await waitFor(() => {
-      expect(screen.getByText('on · TENANT')).toBeInTheDocument()
+      expect(screen.getByText('On')).toBeInTheDocument()
     })
     expect(calls).toBe(1)
     await user.click(screen.getByRole('button', { name: /refresh/i }))

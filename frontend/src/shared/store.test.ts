@@ -9,9 +9,10 @@ function setTheme(dark: boolean): void {
 }
 
 describe('parseTheme', () => {
-  it('passes the two allow-listed literals through', () => {
+  it('passes the three allow-listed literals through', () => {
     expect(parseTheme('light')).toBe('light')
     expect(parseTheme('dark')).toBe('dark')
+    expect(parseTheme('system')).toBe('system')
   })
 
   it('rejects everything else, including injection shapes', () => {
@@ -97,6 +98,74 @@ describe('useUiStore persistence', () => {
     } finally {
       vi.unstubAllGlobals()
       setTheme(true)
+    }
+  })
+})
+
+describe('useUiStore system theme', () => {
+  it('defaults to system resolving the OS preference', async () => {
+    vi.resetModules()
+    window.localStorage.clear()
+    const mod = await import('./store.js')
+    expect(mod.useUiStore.getState().theme).toBe('system')
+    expect(mod.useUiStore.getState().dark).toBe(false)
+    act(() => {
+      useUiStore.getState().setTheme('dark')
+    })
+  })
+
+  it('persists the system preference by name', () => {
+    act(() => {
+      useUiStore.getState().setTheme('system')
+    })
+    expect(useUiStore.getState().theme).toBe('system')
+    expect(window.localStorage.getItem('cacherelay.theme')).toBe('system')
+  })
+
+  it('tracks OS changes while system is active', async () => {
+    vi.resetModules()
+    const fires: EventListener[] = []
+    const real = window.matchMedia.bind(window)
+    window.matchMedia = (query: string): MediaQueryList => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: (): void => {
+        // recording stub only
+      },
+      removeListener: (): void => {
+        // recording stub only
+      },
+      addEventListener: (_type: string, listener: EventListener): void => {
+        fires.push(listener)
+      },
+      removeEventListener: (): void => {
+        // recording stub only
+      },
+      dispatchEvent: (): boolean => false,
+    })
+    try {
+      const mod = await import('./store.js')
+      expect(mod.useUiStore.getState().dark).toBe(false)
+      const fire = fires[0]
+      if (fire === undefined) throw new Error('OS listener not registered')
+      const darkening = new Event('change')
+      Object.defineProperty(darkening, 'matches', { value: true })
+      act(() => {
+        fire(darkening)
+      })
+      expect(mod.useUiStore.getState().dark).toBe(true)
+      act(() => {
+        mod.useUiStore.getState().setTheme('light')
+      })
+      const lightening = new Event('change')
+      Object.defineProperty(lightening, 'matches', { value: true })
+      act(() => {
+        fire(lightening)
+      })
+      expect(mod.useUiStore.getState().dark).toBe(false)
+    } finally {
+      window.matchMedia = real
     }
   })
 })

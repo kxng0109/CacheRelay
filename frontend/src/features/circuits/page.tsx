@@ -28,11 +28,11 @@ const STATE_META: Record<string, { badge: string; dark: string; label: string }>
  *
  * @param state - Raw state string from the gateway.
  * @returns Badge classes (plus dark-mode text class) and an icon+text
- * label; unknown states get an explicit Unknown badge instead of being
- * mislabeled.
+ * label; unmapped states get a badge carrying the raw backend value instead
+ * of being mislabeled.
  */
 function stateMeta(state: string): { badge: string; dark: string; label: string } {
-  return STATE_META[state] ?? { badge: '', dark: '', label: '? Unknown' }
+  return STATE_META[state] ?? { badge: '', dark: '', label: `? ${state}` }
 }
 
 /**
@@ -63,22 +63,24 @@ function stateConsequence(state: string): string {
   if (state === 'CLOSED') return 'Requests flow normally.'
   if (state === 'OPEN') return 'Requests fail fast until cooldown ends.'
   if (state === 'HALF_OPEN') return 'One trial request decides the next state.'
-  return 'Unknown state. Treat traffic as suspect until confirmed.'
+  return 'State not mapped in this UI. Treat traffic as suspect until confirmed.'
 }
 
 /**
  * Live provider-state board plus force-reset.
  *
- * @remarks Proof-type: live (polls real `/v1/admin/circuits`). The route
- * guard guarantees an admin session, so no credential prop is needed —
- * the client attaches the session Bearer automatically.
+ * @remarks Proof-type: live (polls real `/v1/admin/circuits`, joins the
+ * shared `providers` cache for key presence). The route guard guarantees
+ * an admin session, so no credential prop is needed: the client attaches
+ * the session Bearer automatically.
  *
  * @returns The circuits board.
  */
 function CircuitsBoard(): React.JSX.Element {
   const [notice, setNotice] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
-  const [segment, setSegment] = useState<'all' | 'CLOSED' | 'OPEN' | 'HALF_OPEN' | 'unknown'>('all')
+  const [segment, setSegment] = useState<'all' | 'CLOSED' | 'OPEN' | 'HALF_OPEN' | 'other'>('all')
+  const [scope, setScope] = useState<'configured' | 'all'>('configured')
   const [selected, setSelected] = useState<string | null>(null)
   const qc = useQueryClient()
 
@@ -86,6 +88,11 @@ function CircuitsBoard(): React.JSX.Element {
     queryKey: ['circuits'],
     queryFn: ({ signal }) => new GatewayClient().circuitState({ signal }),
     refetchInterval: 5000,
+  })
+  const providers = useQuery({
+    queryKey: ['providers'],
+    queryFn: ({ signal }) => new GatewayClient().listProviders({ signal }),
+    retry: false,
   })
 
   const reset = async (provider: string): Promise<void> => {
@@ -100,28 +107,36 @@ function CircuitsBoard(): React.JSX.Element {
   }
 
   const circuits = query.data?.circuits ?? []
+  const configuredNames = new Set(
+    (providers.data?.providers ?? []).filter((p) => p.keyConfigured).map((p) => p.name),
+  )
   const queryText = filter.trim().toLowerCase()
   const visible = circuits.filter((c) => {
+    // Configured scope hides providers without keys. While the provider
+    // list is still loading the board fails open to the full list so rows
+    // never flash away on first paint.
+    if (scope === 'configured' && providers.data !== undefined && !configuredNames.has(c.provider))
+      return false
     // Widened to string: the gateway may introduce states newer than the
-    // generated union, and those must land in `unknown`, never mislabeled.
+    // generated union, and those must land in `other`, never mislabeled.
     const state: string = c.state
     const dimension =
-      state === 'CLOSED' || state === 'OPEN' || state === 'HALF_OPEN' ? state : 'unknown'
+      state === 'CLOSED' || state === 'OPEN' || state === 'HALF_OPEN' ? state : 'other'
     if (segment !== 'all' && dimension !== segment) return false
     if (queryText.length === 0) return true
     return c.provider.toLowerCase().includes(queryText) || c.state.toLowerCase().includes(queryText)
   })
   const inspected = circuits.find((c) => c.provider === selected) ?? null
-  const flowing = circuits.filter((c) => c.state === 'CLOSED').length
-  const tripped = circuits.filter((c) => c.state === 'OPEN').length
-  const probing = circuits.filter((c) => c.state === 'HALF_OPEN').length
+  const flowing = visible.filter((c) => c.state === 'CLOSED').length
+  const tripped = visible.filter((c) => c.state === 'OPEN').length
+  const probing = visible.filter((c) => c.state === 'HALF_OPEN').length
 
   return (
     <div className="space-y-6">
       <div className="space-y-4">
         <p className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft">
-          {circuits.length} providers · {flowing} flowing · {tripped} tripped · {probing} probing ·
-          refreshes every 5s
+          {visible.length} of {circuits.length} shown · {flowing} flowing · {tripped} tripped ·{' '}
+          {probing} probing · refreshes every 5s
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <label htmlFor="circuit-filter" className="sr-only">
@@ -138,7 +153,7 @@ function CircuitsBoard(): React.JSX.Element {
             className="w-48 rounded-md border border-ink/15 bg-transparent px-3 py-2 text-[13px] dark:border-parchment/15"
           />
           <div role="group" aria-label="State filter" className="flex gap-1">
-            {(['all', 'CLOSED', 'OPEN', 'HALF_OPEN', 'unknown'] as const).map((s) => (
+            {(['all', 'CLOSED', 'OPEN', 'HALF_OPEN', 'other'] as const).map((s) => (
               <button
                 key={s}
                 type="button"
@@ -156,9 +171,28 @@ function CircuitsBoard(): React.JSX.Element {
                   ? 'all'
                   : s === 'HALF_OPEN'
                     ? 'half'
-                    : s === 'unknown'
-                      ? '?'
+                    : s === 'other'
+                      ? 'other'
                       : s.toLowerCase()}
+              </button>
+            ))}
+          </div>
+          <div role="group" aria-label="Provider scope" className="flex gap-1">
+            {(['configured', 'all'] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                aria-pressed={scope === s}
+                onClick={() => {
+                  setScope(s)
+                }}
+                className={`rounded-md p-2 font-mono text-xs ${
+                  scope === s
+                    ? 'bg-ink text-paper dark:bg-parchment dark:text-night'
+                    : 'text-ink-soft dark:text-parchment-soft'
+                }`}
+              >
+                {s === 'configured' ? 'Configured' : 'All'}
               </button>
             ))}
           </div>
@@ -167,6 +201,7 @@ function CircuitsBoard(): React.JSX.Element {
             type="button"
             onClick={() => {
               void qc.invalidateQueries({ queryKey: ['circuits'] })
+              void qc.invalidateQueries({ queryKey: ['providers'] })
             }}
             className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
           >
@@ -192,7 +227,9 @@ function CircuitsBoard(): React.JSX.Element {
           <p className="text-sm text-ink-soft dark:text-parchment-soft">
             {circuits.length === 0
               ? 'No providers reported. Configure providers in the backend to populate this board.'
-              : 'No circuits match this filter.'}
+              : scope === 'configured' && providers.data !== undefined && configuredNames.size === 0
+                ? 'No configured providers yet. Add provider keys in the backend, or switch to All.'
+                : 'No circuits match this filter.'}
           </p>
         ) : null}
         {visible.length === 0 ? null : (

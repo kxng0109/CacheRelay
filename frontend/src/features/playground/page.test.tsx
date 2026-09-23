@@ -230,7 +230,8 @@ describe('PlaygroundPage', () => {
   it('fills a sanctioned recipe without sending', async () => {
     const user = userEvent.setup()
     renderApp(<PlaygroundPage />)
-    await user.click(screen.getByRole('button', { name: /try cache outcomes/i }))
+    await user.click(screen.getByText('Start from a recipe instead', { selector: 'summary' }))
+    await user.click(screen.getByRole('button', { name: /cache outcomes/i }))
     expect(screen.getByLabelText(/prompt/i, { selector: 'textarea' })).toHaveValue(
       'Summarize the three cache outcomes (HIT, MISS, STALE) in one sentence each.',
     )

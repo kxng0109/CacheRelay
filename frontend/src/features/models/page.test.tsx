@@ -86,6 +86,19 @@ describe('ModelsPage', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(/name and at least one/i)
   })
 
+  it('closes the create dialog on Escape', async () => {
+    const user = userEvent.setup()
+    server.use(listOk())
+    renderApp(<ModelsPage />, { adminSession: true })
+    await screen.findByRole('table')
+    await user.click(screen.getByRole('button', { name: /new alias/i }))
+    await screen.findByRole('dialog', { name: /new alias/i })
+    await user.keyboard('{Escape}')
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /new alias/i })).not.toBeInTheDocument()
+    })
+  })
+
   it('surfaces duplicate names honestly', async () => {
     const user = userEvent.setup()
     server.use(

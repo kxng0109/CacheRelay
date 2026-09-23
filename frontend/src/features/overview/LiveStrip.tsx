@@ -161,21 +161,30 @@ export function LiveStrip({
               <div className="flex items-baseline justify-between gap-2">
                 <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">State</dt>
                 <dd className="font-mono text-sm tnum">
-                  {cacheFlags.enabled ? 'on' : 'off'} · {cacheFlags.defaultScope}
+                  {cacheFlags.enabled ? 'On' : 'Off'} · scope {cacheFlags.defaultScope}
                 </dd>
               </div>
               <div className="flex items-baseline justify-between gap-2">
-                <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">L0 cap</dt>
+                <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">
+                  Local memory (L0)
+                </dt>
                 <dd className="font-mono text-sm tnum">
                   {formatBytes(cacheFlags.l0MaxBytes)} · TTL {cacheFlags.l0InMemoryTtlSeconds}s
                 </dd>
               </div>
               <div className="flex items-baseline justify-between gap-2">
-                <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Tiers</dt>
+                <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">
+                  Tiers (L1 · L2)
+                </dt>
                 <dd className="font-mono text-sm tnum">
-                  l1 {cacheFlags.l1RedisEnabled ? 'on' : 'off'} · l2{' '}
-                  {cacheFlags.l2SemanticEnabled ? 'on' : 'off'} · guards{' '}
-                  {cacheFlags.polarityGuardEnabled ? 'on' : 'off'}/
+                  Exact {cacheFlags.l1RedisEnabled ? 'on' : 'off'} · Semantic{' '}
+                  {cacheFlags.l2SemanticEnabled ? 'on' : 'off'}
+                </dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-2">
+                <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Safety</dt>
+                <dd className="font-mono text-sm tnum">
+                  Polarity {cacheFlags.polarityGuardEnabled ? 'on' : 'off'} · Entity{' '}
                   {cacheFlags.entityGuardEnabled ? 'on' : 'off'}
                 </dd>
               </div>
