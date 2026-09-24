@@ -6,7 +6,6 @@ import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 import java.util.UUID;
 
-import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -14,11 +13,8 @@ import org.postgresql.ds.PGSimpleDataSource;
 import org.springframework.data.jpa.repository.support.SimpleJpaRepository;
 import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
 import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.postgresql.PostgreSQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
+import io.github.kxng0109.cacherelay.SharedContainersBase;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityTransaction;
 
@@ -30,12 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * expires_at), and composite-key equality holds across the TOAST boundary.
  */
 @DisplayName("Replay repository against real PostgreSQL")
-@Testcontainers
-class ReplayRepositoryIT {
-
-	@Container
-	static final PostgreSQLContainer POSTGRES =
-			new PostgreSQLContainer(DockerImageName.parse("postgres:16.15-alpine"));
+class ReplayRepositoryIT extends SharedContainersBase {
 
 	private SimpleJpaRepository<ReplayRecord, ReplayId> repository;
 
@@ -43,13 +34,7 @@ class ReplayRepositoryIT {
 
 	@BeforeEach
 	void migrate() {
-		PGSimpleDataSource dataSource = new PGSimpleDataSource();
-		dataSource.setServerNames(new String[]{POSTGRES.getHost()});
-		dataSource.setPortNumbers(new int[]{POSTGRES.getMappedPort(5432)});
-		dataSource.setDatabaseName(POSTGRES.getDatabaseName());
-		dataSource.setUser(POSTGRES.getUsername());
-		dataSource.setPassword(POSTGRES.getPassword());
-		Flyway.configure().dataSource(dataSource).load().migrate();
+		PGSimpleDataSource dataSource = SharedContainersBase.newDataSource();
 
 		LocalContainerEntityManagerFactoryBean factoryBean = new LocalContainerEntityManagerFactoryBean();
 		factoryBean.setDataSource(dataSource);

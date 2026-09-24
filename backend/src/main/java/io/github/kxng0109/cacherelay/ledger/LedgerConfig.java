@@ -6,6 +6,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
+import java.time.Clock;
 import java.util.concurrent.ThreadPoolExecutor;
 
 /**
@@ -20,7 +21,7 @@ import java.util.concurrent.ThreadPoolExecutor;
  */
 @Configuration
 @EnableAsync
-@EnableConfigurationProperties(LedgerExecutorProperties.class)
+@EnableConfigurationProperties({LedgerExecutorProperties.class, DashboardProperties.class})
 public class LedgerConfig {
 
 	/**
@@ -40,5 +41,15 @@ public class LedgerConfig {
 		executor.setWaitForTasksToCompleteOnShutdown(true);
 		executor.setAwaitTerminationSeconds(properties.awaitTerminationSeconds());
 		return executor;
+	}
+
+	/**
+	 * Creates the UTC clock dashboards use for cache TTL and watermarks.
+	 *
+	 * @return system UTC clock
+	 */
+	@Bean
+	public Clock dashboardClock() {
+		return Clock.systemUTC();
 	}
 }

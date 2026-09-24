@@ -1,5 +1,6 @@
 package io.github.kxng0109.cacherelay.ledger;
 
+import io.github.kxng0109.cacherelay.SharedContainersBase;
 import io.github.kxng0109.cacherelay.ledger.queue.DisruptorUsageLedgerQueue;
 import io.github.kxng0109.cacherelay.ledger.queue.MicroBatchLedgerWriter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -11,12 +12,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataAccessResourceFailureException;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.postgresql.PostgreSQLContainer;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -41,14 +40,16 @@ import static org.mockito.Mockito.when;
  * Enterprise stress harness validating concurrent events over Virtual Threads, database downtime fallback to
  * dead-letter storage, and queue backpressure handling.
  */
-@Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @DisplayName("Usage Ledger High-Throughput Stress & Downtime Resilience Harness")
-class LedgerStressAndBackpressureIntegrationTest {
+class LedgerStressAndBackpressureIntegrationTest extends SharedContainersBase {
 
-	@Container
-	@ServiceConnection
-	static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:16.15-alpine");
+	@DynamicPropertySource
+	static void sharedContainers(DynamicPropertyRegistry registry) {
+		registry.add("spring.datasource.url", SharedContainersBase::postgresJdbcUrl);
+		registry.add("spring.datasource.username", SharedContainersBase::postgresUsername);
+		registry.add("spring.datasource.password", SharedContainersBase::postgresPassword);
+	}
 
 	@Autowired
 	private ApplicationEventPublisher eventPublisher;

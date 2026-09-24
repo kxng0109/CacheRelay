@@ -30,6 +30,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param loginMaxAttempts   failed logins before lockout within {@code loginAttemptWindow}
  * @param loginAttemptWindow window for counting failed logins
  * @param loginLockout       lockout duration after {@code loginMaxAttempts} failures
+ * @param inviteBaseUrl      frontend-origin base URL for invite links
+ *                           ({@code ""} keeps the request-derived fallback)
  * @since 1.8.0
  */
 @ConfigurationProperties(prefix = "gateway.auth")
@@ -49,7 +51,8 @@ public record AuthProperties(
 		Map<String, Integer> auditRetentionDaysByJurisdiction,
 		int loginMaxAttempts,
 		Duration loginAttemptWindow,
-		Duration loginLockout
+		Duration loginLockout,
+		String inviteBaseUrl
 ) {
 	/**
 	 * Applies production-safe defaults for every property the operator leaves unset.
@@ -71,6 +74,7 @@ public record AuthProperties(
 				: Map.of();
 		loginAttemptWindow = loginAttemptWindow != null ? loginAttemptWindow : Duration.ofMinutes(15);
 		loginLockout = loginLockout != null ? loginLockout : Duration.ofMinutes(30);
+		inviteBaseUrl = inviteBaseUrl != null ? inviteBaseUrl : "";
 	}
 
 	/**
@@ -80,6 +84,6 @@ public record AuthProperties(
 	 */
 	public static AuthProperties defaults() {
 		return new AuthProperties(null, null, null, null, null, null, null, null, null, null, "",
-				180, new HashMap<>(), 5, null, null);
+				180, new HashMap<>(), 5, null, null, "");
 	}
 }

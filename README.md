@@ -744,6 +744,16 @@ immediately if the old shipped default was ever used; generate fresh with `opens
   `?page=0&size=20&sort=createdAt,desc`).
 - **`GET /v1/admin/ledger/entries/{requestId}`**: Retrieves full transaction and token coordinates for a single
   correlated client request.
+- **`GET /v1/admin/ledger/user/{userId}/summary`**: Admin drill-down into one account's usage dashboard
+  (same shape as the personal view; every access is audit-logged with the admin actor).
+- **Usage dashboards (`GET /v1/me/usage`, org-wide admin summary):** on-demand views computed only when
+  opened — nothing precomputes in the background. Personal views resolve the caller to their owned keys
+  server-side (callers can only ever read their own usage); windows default to the trailing 7 days
+  (90-day cap). Results cache for 5 minutes with newest-row watermarks (exact delta merges, averages
+  recomputed from merged sums); settled days persist as lazy daily buckets; concurrent identical views
+  coalesce; scans run under a statement timeout and per-user views are rate-limited. Freshness rides on
+  `X-Dashboard-Generated-At` / `X-Dashboard-Watermark` headers. Team scope arrives with SSO teams
+  (Phase 2). Tune via `gateway.dashboard.*` (`GATEWAY_DASHBOARD_*`).
 - **`POST /v1/admin/budgets`**: Creates a hard spend budget (`KEY` = key sha256 hex, `TEAM` = owner slug, `ORG` =
   global scope) with rolling-60s and UTC-calendar-month caps in micro-dollars (`0` = no cap). Duplicate
   level/subject is `409`; bad levels/subjects/negative caps are `400`.
@@ -770,9 +780,44 @@ Humans log in with local username+password or any configured SSO provider; API k
   logs it in. The first-ever redemption bootstraps the initial admin.
 - **`POST /v1/admin/invites`**: Creates an invite (master key or admin session). Always returns a copyable
   redemption link; emails it too when an address is given and the mail channel is configured.
+  Links use `gateway.auth.invite-base-url` (`GATEWAY_AUTH_INVITE_BASE_URL`) when set — point it at the
+  public frontend origin (Vite dev `http://localhost:5173`, prod frontend URL); blank (default) derives
+  the base from the request host, which is only correct for single-origin stacks. Malformed values fail
+  startup; A2A agent-card rewriting keeps its own backend-origin `gateway.a2a.public-base-url`.
 - **SSO**: Google, GitHub, Entra ID, Azure B2C, Okta, and generic OIDC via Authorization Code + PKCE. Providers
   activate from `SSO_*` env credentials; identities link to shadow accounts by `(sub, iss)`, never email.
   Success sets the refresh cookie and redirects to the SPA with the access token in the URL fragment.
+- **SSO teams (IdP-driven)**: per-registration claim mappings (`GATEWAY_SSO_TEAMS_REGISTRATIONS_*`) bind
+  IdP groups/roles to orgs and teams via exact/prefix patterns (exact beats prefix, TEAM LEAD is max);
+  tenant allowlists fail closed; gateway admin stays locally assigned, never from claims. Accounts with
+  no mapped team land in the org's least-privilege `unassigned` team. `GET /v1/me/teams` (own memberships),
+  `GET /v1/admin/teams?org=` (inventory with live counts), team-scoped dashboard views for leads.
+- **SSO backfill (first login)**: where tokens cannot carry membership, per-registration modes
+  (`GATEWAY_SSO_BACKFILL_REGISTRATIONS_*`: `ENTRA_GRAPH`, `OKTA_API`, `GOOGLE_DIRECTORY`, `GITHUB_API`)
+  fetch one user's groups blocking the first login and fail closed (disabled/deleted deny; misconfiguration
+  fails startup). GitHub uses the user's own OAuth token; Okta uses a scoped service app (`private_key_jwt`
+  with `kid`); Google uses domain-wide delegation. Later logins use claims; revalidation sweeps keep them
+  fresh (Phase 3).
+- **SSO revalidation sweep**: two ShedLock single-holder jobs (hot 15-min, nightly) re-check known SSO
+  accounts at the IdP (`GATEWAY_SSO_REVALIDATION_*`). Watermarks self-seed at the epoch and advance on
+  every attempt, so outages retry at cadence instead of hot-looping; revocation (account disable, key
+  revocation, session revocation, `SSO_REVOKE` audit) happens only on positive IdP-disabled signals,
+  never on transport errors. GitHub links skip (no service credential); removals still deny the
+  next login.
+- **SSO webhooks (fast-lane invalidation)**: `POST /v1/sso/webhooks/{github,okta,entra,google}`
+  (`GATEWAY_SSO_WEBHOOKS_*`, secrets ≥ 32 chars) validate per-IdP contracts (GitHub HMAC-SHA256 +
+  ping/member/org events; Okta verification challenge + header secret + lifecycle events; Entra
+  validation-token handshake + client-state echo; Google channel-token match) and stamp watermarks
+  at the epoch for a prompt sweep re-check. Receivers never revoke; redeliveries are idempotent.
+- **Usage capture (off by default)**: `GATEWAY_CAPTURE_*` enables prompt/output capture with
+  deterministic request-id sampling (per-mille) plus per-owner/key full-fidelity allowlists and a
+  per-second persist ceiling. Hot path decides in nanoseconds and offers once to a bounded queue
+  (drop, never block); a background writer truncates, redacts PII with throwaway vaults, gates on
+  secret scans (credential hits suppress bodies), and appends to hourly per-jurisdiction JSONL
+  segments with sidecar manifests. Rows expire by TTL (default 90d, strict 7d); `GET
+  /v1/admin/capture/recent` (audited) reads bounded recent rows, `DELETE
+  /v1/admin/capture/owner/{ownerId}` erases per-owner. Longitudinal per-person analysis joins on
+  owner linkage, never on PII.
 - **Strict admin posture**: 5-minute admin access tokens, 7-day admin refresh ceilings, stealth-404 on every
   admin denial (probing cannot confirm the control plane exists), mandatory audit on every admin mutation, and
   per-response CSP nonces. No token ever touches `localStorage`.
@@ -881,6 +926,32 @@ The suite currently has 1,666 tests (100% passing):
 
 JaCoCo coverage gates (BUNDLE, `backend/target/site/jacoco/jacoco.xml` is single-session honest via
 `<append>false</append>` on `prepare-agent`): INSTRUCTION/BRANCH/LINE/METHOD/CLASS ≥ 95%, COMPLEXITY ≥ 90%.
+
+### Fast local loop (iteration only — never the gate)
+
+Targeted runs skip coverage and the SBOM step; the full gate stays mandatory before any work is
+declared done:
+
+```bash
+cd backend
+# one class (or comma list), quiet, gate deferred
+./mvnw test "-Dtest=RateLimitEngineTest" "-Djacoco.skip=true" -q
+# local profile: full suite minus SBOM packaging and coverage *rendering*
+# (agent + check stay active, fork/context behavior unchanged)
+./mvnw test -Plocal -q
+# completion gate, always: full suite with coverage check + SBOM
+./mvnw verify -q
+```
+
+`-Plocal` is explicit opt-in (never default, never CI): it skips CycloneDX packaging and the JaCoCo
+HTML/XML/CSV rendering only. A green targeted or `-Plocal` run is not evidence — only a green
+`verify` with all coverage checks met counts.
+
+Container-backed tests share one Postgres + one Redis per JVM (`SharedContainersBase`: single start,
+single Flyway migrate, per-method truncate + flush). Two rules: never declare per-class containers
+unless the image/config differs (passworded Redis, redis-stack, no-Docker skip), and any future
+migration that *seeds data rows* must join the truncation exclusion list next to `model_pricing`
+(seeds are read by tests; everything else truncates to fresh-DB semantics).
 
 - Enterprise Model Context Protocol (MCP) gateway tests in `mcp/*`: `McpContractsAndDtoTest`, `McpHeaderNormalizerTest`,
   `McpSseEventFormatterTest`, `McpStreamableHttpControllerTest`, `McpAdversarialCoverageTest`,

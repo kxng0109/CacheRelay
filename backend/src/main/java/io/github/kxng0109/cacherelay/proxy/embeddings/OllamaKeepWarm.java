@@ -13,8 +13,11 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Ollama keep-warm heartbeat.
@@ -26,16 +29,18 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * <p>The ping targets the same endpoint and effective model that real semantic-cache embeddings
  * resolve to (via {@link EmbeddingService#resolveWarmTarget}), so the right model stays resident.
- * Failures are swallowed by design &mdash; a dead Ollama must never crash the scheduler; consecutive
- * failures log a WARN on the first occurrence and every 50th thereafter to avoid log spam. The
- * request timeout is bounded to 5&nbsp;s so a hung Ollama cannot starve the shared scheduler.</p>
+ * Failures are swallowed by design &mdash; a dead Ollama must never crash the scheduler; the
+ * first failure logs a WARN and later ones at most one WARN per hour while the outage persists,
+ * everything else at debug. Recovery logs one INFO with the true failure count, and successful
+ * pings stay at debug so healthy operation is silent. The request timeout is bounded to
+ * 5&nbsp;s so a hung Ollama cannot starve the shared scheduler.</p>
  */
 @Slf4j
 @Component
 public class OllamaKeepWarm {
 
 	private static final Duration PING_TIMEOUT = Duration.ofSeconds(5);
-	private static final int WARN_FAILURE_INTERVAL = 50;
+	private static final Duration WARN_FAILURE_COOLDOWN = Duration.ofHours(1);
 	private static final String KEEP_ALIVE_PROMPT = "keep-alive";
 	private static final String KEEP_ALIVE_TTL = "30m";
 
@@ -43,8 +48,10 @@ public class OllamaKeepWarm {
 	private final CacheRelayCacheProperties cacheProperties;
 	private final HttpClient httpClient;
 	private final EmbeddingProperties properties;
+	private final Clock clock;
 	private final ObjectMapper objectMapper = new ObjectMapper();
 	private final AtomicInteger consecutiveFailures = new AtomicInteger();
+	private final AtomicReference<Instant> lastWarnAt = new AtomicReference<>();
 
 	/**
 	 * Creates the heartbeat (test-visible).
@@ -53,12 +60,14 @@ public class OllamaKeepWarm {
 			EmbeddingService embeddingService,
 			CacheRelayCacheProperties cacheProperties,
 			HttpClient httpClient,
-			EmbeddingProperties properties
+			EmbeddingProperties properties,
+			Clock clock
 	) {
 		this.embeddingService = embeddingService;
 		this.cacheProperties = cacheProperties;
 		this.httpClient = httpClient;
 		this.properties = properties;
+		this.clock = clock;
 	}
 
 	/**
@@ -105,8 +114,9 @@ public class OllamaKeepWarm {
 		try {
 			HttpRequest request = buildPingRequest(target);
 			httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
-			if (consecutiveFailures.getAndSet(0) > 0) {
-				log.info("Ollama keep-warm ping recovered after {} consecutive failures", consecutiveFailures.get());
+			int failed = consecutiveFailures.getAndSet(0);
+			if (failed > 0) {
+				log.info("Ollama keep-warm ping recovered after {} consecutive failures", failed);
 			}
 			log.debug("Ollama keep-warm ping sent to {}", target.targetUri());
 		} catch (IOException | InterruptedException ex) {
@@ -114,10 +124,16 @@ public class OllamaKeepWarm {
 				Thread.currentThread().interrupt();
 			}
 			int failures = consecutiveFailures.incrementAndGet();
-			if (failures == 1 || failures % WARN_FAILURE_INTERVAL == 0) {
-				log.warn("Ollama keep-warm ping failed ({} consecutive): {}", failures, ex.getMessage());
+			String cause = ex.getMessage() != null ? ex.getMessage()
+					: ex.getClass().getSimpleName();
+			Instant now = clock.instant();
+			Instant previous = lastWarnAt.get();
+			if (failures == 1 || Duration.between(previous, now).compareTo(
+					WARN_FAILURE_COOLDOWN) >= 0) {
+				lastWarnAt.set(now);
+				log.warn("Ollama keep-warm ping failed ({} consecutive): {}", failures, cause);
 			} else {
-				log.debug("Ollama keep-warm ping failed ({} consecutive): {}", failures, ex.getMessage());
+				log.debug("Ollama keep-warm ping failed ({} consecutive): {}", failures, cause);
 			}
 		}
 	}

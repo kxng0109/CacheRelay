@@ -5,6 +5,7 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.TypedQuery;
 import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.persistence.criteria.CriteriaQuery;
+import jakarta.persistence.criteria.Path;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
 import org.junit.jupiter.api.DisplayName;
@@ -15,6 +16,7 @@ import org.springframework.data.domain.Sort;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -232,5 +234,54 @@ class UsageLedgerRepositoryImplTest {
 		// Unsorted query
 		Page<UsageLedgerEntry> unsortedPage = repository.findEntries(filter, PageRequest.of(0, 20, Sort.unsorted()));
 		assertThat(unsortedPage.getContent()).hasSize(1);
+	}
+
+	@Test
+	@DisplayName("getDetailRows builds grouped detail query with owner set and bounds")
+	void getDetailRowsExecutes() {
+		CriteriaQuery<OwnerModelUsageRecord> cq = mock(CriteriaQuery.class);
+		Root<UsageLedgerEntry> root = mock(Root.class);
+		TypedQuery<OwnerModelUsageRecord> typedQuery = mock(TypedQuery.class);
+		OwnerModelUsageRecord record = new OwnerModelUsageRecord("owner-1", "openai", "gpt-4o",
+				10L, 1000L, 500L, 1500L, 14_000L, 13_000L, 13_000L, 1_200L, 200L, 50L, 750L, 0L);
+
+		when(em.getCriteriaBuilder()).thenReturn(cb);
+		when(cb.createQuery(OwnerModelUsageRecord.class)).thenReturn(cq);
+		when(cq.from(UsageLedgerEntry.class)).thenReturn(root);
+		Path<Object> ownerPath = mock(Path.class);
+		when(root.get("ownerId")).thenReturn(ownerPath);
+		when(em.createQuery(cq)).thenReturn(typedQuery);
+		when(typedQuery.getResultList()).thenReturn(List.of(record));
+
+		Instant from = Instant.now().minusSeconds(3600);
+		Instant to = Instant.now();
+		List<OwnerModelUsageRecord> actual =
+				repository.getDetailRows(Set.of("owner-1", "owner-2"), from, to);
+
+		assertThat(actual).containsExactly(record);
+		verify(cq).where(any(Predicate[].class));
+	}
+
+	@Test
+	@DisplayName("getDetailRows accepts null owners and null bounds")
+	void getDetailRowsUnbounded() {
+		CriteriaQuery<OwnerModelUsageRecord> cq = mock(CriteriaQuery.class);
+		Root<UsageLedgerEntry> root = mock(Root.class);
+		TypedQuery<OwnerModelUsageRecord> typedQuery = mock(TypedQuery.class);
+
+		when(em.getCriteriaBuilder()).thenReturn(cb);
+		when(cb.createQuery(OwnerModelUsageRecord.class)).thenReturn(cq);
+		when(cq.from(UsageLedgerEntry.class)).thenReturn(root);
+		when(em.createQuery(cq)).thenReturn(typedQuery);
+		when(typedQuery.getResultList()).thenReturn(List.of());
+
+		assertThat(repository.getDetailRows(null, null, null)).isEmpty();
+	}
+
+	@Test
+	@DisplayName("getDetailRows short-circuits an empty owner set without touching the database")
+	void getDetailRowsEmptyOwners() {
+		assertThat(repository.getDetailRows(Set.of(), Instant.now(), Instant.now())).isEmpty();
+		verifyNoInteractions(em);
 	}
 }

@@ -62,7 +62,7 @@ class AuthConfigSecretGateTest {
 		AuthProperties configured = new AuthProperties(
 				null, null, null, null, null, null, null, null, null, null,
 				"test-only-jwt-secret-32-bytes-min!!",
-				180, new HashMap<>(), 5, null, null);
+				180, new HashMap<>(), 5, null, null, null);
 		Environment prodEnv = mock(Environment.class);
 		when(prodEnv.getActiveProfiles()).thenReturn(new String[]{"prod"});
 

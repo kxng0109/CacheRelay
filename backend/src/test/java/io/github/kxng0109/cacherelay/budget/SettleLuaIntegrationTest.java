@@ -6,7 +6,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 
-import com.redis.testcontainers.RedisContainer;
+import io.github.kxng0109.cacherelay.SharedContainersBase;
 import io.github.kxng0109.cacherelay.ledger.CostCalculator;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Assumptions;
@@ -15,8 +15,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -24,20 +24,14 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
-import static org.testcontainers.utility.DockerImageName.parse;
 
 /**
  * Proves hold-then-settle against real Redis: admission hold charged into month counters, stream-end true-up by
  * delta, exactly-once replay, abort re-arm, missing-hold gap, rollover straddle, and absurd-actual fail-closed.
  * Zero-cost holds (H=0) settle cleanly without tripping the missing-hold path.
  */
-@Testcontainers
 @DisplayName("Settle Lua scripts against real Redis")
-class SettleLuaIntegrationTest {
-
-	@Container
-	static final RedisContainer REDIS =
-			new RedisContainer(parse("redis:8.10.1-alpine3.23"));
+class SettleLuaIntegrationTest extends SharedContainersBase {
 
 	private static StringRedisTemplate sharedTemplate;
 
@@ -45,7 +39,7 @@ class SettleLuaIntegrationTest {
 		if (sharedTemplate == null) {
 			org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory factory =
 					new org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory(
-							REDIS.getHost(), REDIS.getMappedPort(6379));
+							SharedContainersBase.redisHost(), SharedContainersBase.redisPort());
 			factory.afterPropertiesSet();
 			sharedTemplate = new StringRedisTemplate(factory);
 			sharedTemplate.afterPropertiesSet();

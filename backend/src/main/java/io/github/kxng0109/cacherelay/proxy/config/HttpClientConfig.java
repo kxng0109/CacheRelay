@@ -1,5 +1,6 @@
 package io.github.kxng0109.cacherelay.proxy.config;
 
+import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -7,6 +8,7 @@ import org.springframework.context.annotation.Primary;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
@@ -30,16 +32,29 @@ public class HttpClientConfig {
 	 * @param connectTimeoutSeconds bound for establishing a connection in seconds
 	 * @return the shared client
 	 */
+	private ExecutorService executor;
+
 	@Primary
 	@Bean("proxyHttpClient")
 	public HttpClient proxyHttpClient(
 			@Value("${gateway.proxy.connect-timeout-seconds:5}") long connectTimeoutSeconds
 	) {
+		executor = Executors.newVirtualThreadPerTaskExecutor();
 		return HttpClient.newBuilder()
 		                 .version(HttpClient.Version.HTTP_2)
 		                 .connectTimeout(Duration.ofSeconds(Math.max(1L, connectTimeoutSeconds)))
-		                 .executor(Executors.newVirtualThreadPerTaskExecutor())
+		                 .executor(executor)
 		                 .followRedirects(HttpClient.Redirect.NEVER)
 		                 .build();
+	}
+
+	/**
+	 * Shuts the client executor down on context close (DC-08) so no executor threads outlive the context.
+	 */
+	@PreDestroy
+	void shutdownExecutor() {
+		if (executor != null) {
+			executor.shutdownNow();
+		}
 	}
 }

@@ -167,7 +167,13 @@ public class RefreshService {
 		return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
 	}
 
-	static String sha256Hex(String value) {
+	/**
+	 * Hashes a value with SHA-256 for privacy-preserving audit and lookup keys.
+	 *
+	 * @param value raw value, never {@code null}
+	 * @return lowercase hex digest, never {@code null}
+	 */
+	public static String sha256Hex(String value) {
 		try {
 			MessageDigest digest = MessageDigest.getInstance("SHA-256");
 			return HexFormat.of().formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));

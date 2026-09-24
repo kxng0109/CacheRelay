@@ -11,9 +11,11 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Implementation of {@link UsageLedgerRepositoryCustom} using JPA {@link CriteriaBuilder} for safe, dynamic, and
@@ -154,6 +156,54 @@ public class UsageLedgerRepositoryImpl implements UsageLedgerRepositoryCustom {
 				cb.coalesce(cb.sumAsLong(root.get("totalTokens")), 0L),
 				cb.coalesce(cb.sum(root.get("costUsdMicros")), 0L),
 				cb.coalesce(cb.avg(root.get("durationMs")), 0.0)
+		));
+
+		return em.createQuery(cq).getResultList();
+	}
+
+	@Override
+	public List<OwnerModelUsageRecord> getDetailRows(Set<String> ownerIds, Instant from, Instant to) {
+		if (ownerIds != null && ownerIds.isEmpty()) {
+			return List.of();
+		}
+		CriteriaBuilder cb = em.getCriteriaBuilder();
+		CriteriaQuery<OwnerModelUsageRecord> cq = cb.createQuery(OwnerModelUsageRecord.class);
+		Root<UsageLedgerEntry> root = cq.from(UsageLedgerEntry.class);
+
+		List<Predicate> predicates = new ArrayList<>();
+		if (ownerIds != null) {
+			predicates.add(root.get("ownerId").in(ownerIds));
+		}
+		if (from != null) {
+			predicates.add(cb.greaterThanOrEqualTo(root.get("createdAt"), from));
+		}
+		if (to != null) {
+			predicates.add(cb.lessThanOrEqualTo(root.get("createdAt"), to));
+		}
+		if (!predicates.isEmpty()) {
+			cq.where(predicates.toArray(new Predicate[0]));
+		}
+
+		cq.groupBy(root.get("ownerId"), root.get("provider"), root.get("model"));
+		cq.orderBy(cb.desc(cb.sum(root.get("costUsdMicros"))));
+
+		cq.select(cb.construct(
+				OwnerModelUsageRecord.class,
+				root.get("ownerId"),
+				root.get("provider"),
+				root.get("model"),
+				cb.count(root),
+				cb.coalesce(cb.sumAsLong(root.get("promptTokens")), 0L),
+				cb.coalesce(cb.sumAsLong(root.get("completionTokens")), 0L),
+				cb.coalesce(cb.sumAsLong(root.get("totalTokens")), 0L),
+				cb.coalesce(cb.sum(root.get("costUsdMicros")), 0L),
+				cb.coalesce(cb.sum(root.get("billedCostMicros")), 0L),
+				cb.coalesce(cb.sum(root.get("effectiveCostMicros")), 0L),
+				cb.coalesce(cb.sumAsLong(root.get("durationMs")), 0L),
+				cb.coalesce(cb.sumAsLong(root.get("cacheReadTokens")), 0L),
+				cb.coalesce(cb.sumAsLong(root.get("cacheWriteTokens")), 0L),
+				cb.coalesce(cb.sumAsLong(root.get("uncachedPromptTokens")), 0L),
+				cb.coalesce(cb.sumAsLong(root.get("reasoningTokens")), 0L)
 		));
 
 		return em.createQuery(cq).getResultList();

@@ -64,6 +64,19 @@ spring:
   # absent — Boot fails startup on blank client-ids, so registrations are built only
   # for configured providers. Supported day one: google, github, azure (Entra ID),
   # azure-b2c, okta, generic (explicit endpoint URIs, no boot-time discovery calls).
+  # Team provisioning is claim-mapped per registration id (see SsoClaimProperties):
+  # GATEWAY_SSO_TEAMS_REGISTRATIONS_<n>_REGISTRATIONID plus ORGSLUG, GROUPSCLAIM,
+  # ROLESCLAIM, TENANTCLAIM, ALLOWEDTENANTS_<i>, GROUPPATTERNS_<i>. Registrations
+  # without an entry keep legacy shadow accounts with no teams. First-login backfill
+  # (IdP group APIs for claims that cannot carry membership) is wired per registration id:
+  # GATEWAY_SSO_BACKFILL_REGISTRATIONS_<n>_REGISTRATIONID plus MODE (ENTRA_GRAPH, OKTA_API,
+  # GOOGLE_DIRECTORY, GITHUB_API) and APISCOPE, with mode credentials from SSO_* /
+  # GATEWAY_SSO_OKTA_PRIVATE_KEY (+_KEY_ID) / GATEWAY_SSO_GOOGLE_SERVICE_ACCOUNT_JSON
+  # (+_ADMIN_SUBJECT); misconfiguration fails startup, backfill failures deny first logins.
+  # Revalidation sweeps re-check known SSO accounts at the IdP on two ShedLock single-holder
+  # cadences and revoke on positive disabled signals only (transport failures never revoke):
+  # GATEWAY_SSO_REVALIDATION_ENABLED, _HOTCRON, _COLDCRON, _BATCHSIZE, _HOTSTALEMINUTES,
+  # _COLDSTALEHOURS.
 
 gateway:
   admin:
@@ -82,6 +95,10 @@ gateway:
     absolute-max-ttl: ${GATEWAY_AUTH_ABSOLUTE_MAX_TTL:30d}
     admin-absolute-max-ttl: ${GATEWAY_AUTH_ADMIN_ABSOLUTE_MAX_TTL:7d}
     invite-ttl: ${GATEWAY_AUTH_INVITE_TTL:48h}
+    # Frontend-origin base URL for invite links (blank = derive from the request
+    # host). Set GATEWAY_AUTH_INVITE_BASE_URL in split-origin deployments
+    # (Vite dev http://localhost:5173, prod public frontend URL).
+    invite-base-url: ${GATEWAY_AUTH_INVITE_BASE_URL:}
     cookie-name: ${GATEWAY_AUTH_COOKIE_NAME:__Host-refresh}
     cookie-same-site: ${GATEWAY_AUTH_COOKIE_SAMESITE:Lax}
     jwt-issuer: ${GATEWAY_AUTH_JWT_ISSUER:cacherelay}
@@ -473,6 +490,15 @@ gateway:
       max-window-days: ${GATEWAY_LEDGER_QUERY_MAX_WINDOW_DAYS:90}
       max-page-size: ${GATEWAY_LEDGER_QUERY_MAX_PAGE_SIZE:100}
       default-page-size: ${GATEWAY_LEDGER_QUERY_DEFAULT_PAGE_SIZE:20}
+  dashboard:
+    # On-demand dashboard ceilings: views compute only when opened. Results stay
+    # cached for result-ttl-minutes with newest-row watermarks; settled days
+    # persist as lazy buckets once the day end plus grace-overlap-minutes passes.
+    result-ttl-minutes: ${GATEWAY_DASHBOARD_RESULT_TTL_MINUTES:5}
+    grace-overlap-minutes: ${GATEWAY_DASHBOARD_GRACE_OVERLAP_MINUTES:5}
+    default-window-days: ${GATEWAY_DASHBOARD_DEFAULT_WINDOW_DAYS:7}
+    statement-timeout-seconds: ${GATEWAY_DASHBOARD_STATEMENT_TIMEOUT_SECONDS:10}
+    rate-limit-per-minute: ${GATEWAY_DASHBOARD_RATE_LIMIT_PER_MINUTE:30}
   circuit-breaker:
     redis-timeout: ${GATEWAY_CIRCUIT_BREAKER_REDIS_TIMEOUT:250ms}
   guardrails:

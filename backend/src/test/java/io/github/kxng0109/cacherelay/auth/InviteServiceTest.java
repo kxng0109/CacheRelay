@@ -2,6 +2,7 @@ package io.github.kxng0109.cacherelay.auth;
 
 import java.lang.reflect.Field;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -72,6 +73,35 @@ class InviteServiceTest {
 
 		assertThat(skipped.emailed()).isFalse();
 		assertThat(skipped.link()).contains("/redeem?token=");
+	}
+
+	@Test
+	@DisplayName("create prefers the configured invite base over the request base")
+	void createPrefersConfiguredBase() {
+		service = new InviteService(invites, users, withInviteBase("https://app.example.com/"),
+				passwords, audit, mail);
+
+		InviteService.CreatedInvite created =
+				service.create(null, null, true, "http://backend:8080", null);
+
+		assertThat(created.link()).startsWith("https://app.example.com/redeem?token=");
+		assertThat(created.emailed()).isFalse();
+	}
+
+	@Test
+	@DisplayName("create trims trailing slashes but keeps a configured sub-path")
+	void createNormalizesConfiguredBase() {
+		service = new InviteService(invites, users, withInviteBase("https://app.example.com///"),
+				passwords, audit, mail);
+
+		assertThat(service.create(null, null, true, "http://backend:8080", null).link())
+				.startsWith("https://app.example.com/redeem?token=");
+
+		service = new InviteService(invites, users, withInviteBase("https://app.example.com/cr/"),
+				passwords, audit, mail);
+
+		assertThat(service.create(null, null, true, "http://backend:8080", null).link())
+				.startsWith("https://app.example.com/cr/redeem?token=");
 	}
 
 	@Test
@@ -152,6 +182,11 @@ class InviteServiceTest {
 	private InviteToken invite(boolean admin) {
 		return new InviteToken(RefreshService.sha256Hex("token"), null, admin, null,
 				Instant.now().plusSeconds(3600));
+	}
+
+	private static AuthProperties withInviteBase(String base) {
+		return new AuthProperties(null, null, null, null, null, null, null, null, null, null,
+				null, 180, Map.of(), 5, null, null, base);
 	}
 
 	private static void set(Object target, String field, Object value) {

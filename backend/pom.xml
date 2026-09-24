@@ -70,6 +70,24 @@
             <artifactId>spring-boot-starter-oauth2-client</artifactId>
         </dependency>
 
+        <!-- SSO revalidation sweep (Phase 3): ShedLock single-holder distributed
+             locks over Postgres so multi-instance deployments sweep once.
+             Pinned 7.10.1 (latest stable 2026-09-23, Apache-2.0, lukas-krecan,
+             actively maintained, no CVEs on record, tested matrix covers
+             Spring Boot 4.x / Spring 7 / JVM 17+; verified resolvable on Maven
+             Central; not managed by the Boot BOM). jdbc-template provider for
+             the blocking JPA stack; usingDbTime() avoids app-clock skew. -->
+        <dependency>
+            <groupId>net.javacrumbs.shedlock</groupId>
+            <artifactId>shedlock-spring</artifactId>
+            <version>7.10.1</version>
+        </dependency>
+        <dependency>
+            <groupId>net.javacrumbs.shedlock</groupId>
+            <artifactId>shedlock-provider-jdbc-template</artifactId>
+            <version>7.10.1</version>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
@@ -350,5 +368,75 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <!-- Fast local iteration only: explicit `-Plocal`, never active by
+                 default and never enabled in CI. The default build (no profile)
+                 stays the strict gate: full suite with JaCoCo agent + check +
+                 report and SBOM packaging. This profile only removes iteration
+                 overhead: SBOM generation and coverage *rendering* are skipped,
+                 while the JaCoCo agent and coverage *check* stay intact so
+                 local full runs still enforce the gates. forkCount, JUnit
+                 parallelism, and the Spring context cache size are deliberately
+                 unchanged: extra forks duplicate every per-class container
+                 startup, Testcontainers-parallel is unsupported upstream, and
+                 the pinned cache size guards the fork shutdown hook. -->
+            <id>local</id>
+            <activation>
+                <activeByDefault>false</activeByDefault>
+            </activation>
+            <properties>
+                <cyclonedx.skip>true</cyclonedx.skip>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <!-- Full copy of the base maps plus zero deltas: profile
+                             configuration replaces (not merges) these nodes, so
+                             a partial map would silently drop the test secrets
+                             and shutdown guards. -->
+                        <configuration>
+                            <environmentVariables>
+                                <GATEWAY_MCP_HITL_SECRET>test-only-hitl-secret-32-bytes-minimum!!</GATEWAY_MCP_HITL_SECRET>
+                                <GATEWAY_ADMIN_MASTERKEY>test-only-admin-master-key-32b-min!!</GATEWAY_ADMIN_MASTERKEY>
+                                <GATEWAY_AUTH_JWT_SECRET>test-only-jwt-secret-32-bytes-minimum!!</GATEWAY_AUTH_JWT_SECRET>
+                            </environmentVariables>
+                            <systemPropertyVariables>
+                                <gateway.scheduling.pool-size>1</gateway.scheduling.pool-size>
+                                <gateway.scheduling.await-termination-seconds>1</gateway.scheduling.await-termination-seconds>
+                                <management.server.port>0</management.server.port>
+                                <spring.test.context.cache.maxSize>2</spring.test.context.cache.maxSize>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.jacoco</groupId>
+                        <artifactId>jacoco-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>report</id>
+                                <!-- Skip rendering only; prepare-agent and check
+                                     stay active so local full runs keep gating. -->
+                                <configuration>
+                                    <skip>true</skip>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.cyclonedx</groupId>
+                        <artifactId>cyclonedx-maven-plugin</artifactId>
+                        <version>2.9.3</version>
+                        <configuration>
+                            <skip>true</skip>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 
 </project>

@@ -259,6 +259,11 @@ services:
       # Generate with: openssl rand -base64 32. Rotate with session invalidation.
       GATEWAY_AUTH_JWT_SECRET: ${GATEWAY_AUTH_JWT_SECRET:-}
 
+      # Frontend-origin base for invite links. Blank = derive from the request
+      # host (correct for single-origin stacks); set to the public frontend URL
+      # in split-origin deployments (e.g. Vite dev http://localhost:5173).
+      GATEWAY_AUTH_INVITE_BASE_URL: ${GATEWAY_AUTH_INVITE_BASE_URL:-}
+
       # HITL AEAD secret (REQUIRED — the app refuses to start without 32+ bytes).
       # Generate with: openssl rand -base64 32
       GATEWAY_MCP_HITL_SECRET: ${GATEWAY_MCP_HITL_SECRET:-}

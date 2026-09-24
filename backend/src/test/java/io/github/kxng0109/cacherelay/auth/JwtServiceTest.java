@@ -48,7 +48,7 @@ class JwtServiceTest {
 	@DisplayName("configured secrets agree between encoder and decoder")
 	void configuredSecretRoundtrip() {
 		AuthProperties configured = new AuthProperties(null, null, null, null, null, null,
-				null, null, null, "cacherelay", "x".repeat(32), 180, null, 5, null, null);
+				null, null, null, "cacherelay", "x".repeat(32), 180, null, 5, null, null, null);
 		AuthConfig authConfig = new AuthConfig(configured, devEnvironment());
 		JwtService service = new JwtService(authConfig.authJwtEncoder(),
 				authConfig.authJwtDecoder(), configured);

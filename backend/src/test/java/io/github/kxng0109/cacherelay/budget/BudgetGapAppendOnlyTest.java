@@ -2,17 +2,14 @@ package io.github.kxng0109.cacherelay.budget;
 
 import java.util.UUID;
 
-import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.postgresql.ds.PGSimpleDataSource;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.postgresql.PostgreSQLContainer;
-import org.testcontainers.utility.DockerImageName;
+
+import io.github.kxng0109.cacherelay.SharedContainersBase;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -23,24 +20,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * proves the V9 table and trigger definitions are valid SQL.
  */
 @DisplayName("Budget gap append-only trigger")
-@Testcontainers
-class BudgetGapAppendOnlyTest {
-
-	@Container
-	static final PostgreSQLContainer POSTGRES =
-			new PostgreSQLContainer(DockerImageName.parse("postgres:16.15-alpine"));
+class BudgetGapAppendOnlyTest extends SharedContainersBase {
 
 	private JdbcTemplate jdbc;
 
 	@BeforeEach
 	void migrate() {
-		PGSimpleDataSource dataSource = new PGSimpleDataSource();
-		dataSource.setServerNames(new String[]{POSTGRES.getHost()});
-		dataSource.setPortNumbers(new int[]{POSTGRES.getMappedPort(5432)});
-		dataSource.setDatabaseName(POSTGRES.getDatabaseName());
-		dataSource.setUser(POSTGRES.getUsername());
-		dataSource.setPassword(POSTGRES.getPassword());
-		Flyway.configure().dataSource(dataSource).load().migrate();
+		PGSimpleDataSource dataSource = SharedContainersBase.newDataSource();
 		jdbc = new JdbcTemplate(dataSource);
 	}
 

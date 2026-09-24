@@ -1,6 +1,6 @@
 package io.github.kxng0109.cacherelay.mcp.protocol;
 
-import com.redis.testcontainers.RedisContainer;
+import io.github.kxng0109.cacherelay.SharedContainersBase;
 import io.github.kxng0109.cacherelay.auth.UserAccount;
 import io.github.kxng0109.cacherelay.auth.UserAccountRepository;
 import io.github.kxng0109.cacherelay.security.ratelimit.KeyManagementService;
@@ -9,13 +9,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.postgresql.PostgreSQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -34,28 +29,21 @@ import static org.assertj.core.api.Assertions.assertThat;
  * live-server pattern with a real key seeded through {@code KeyManagementService}.
  */
 @DisplayName("MCP chain pass-through and self-authentication")
-@Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-class McpChainTest {
+class McpChainTest extends SharedContainersBase {
 
 	private static final String TOOLS_LIST = """
 			{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":\
 			{"io.modelcontextprotocol/protocolVersion":"2026-07-28",\
 			"io.modelcontextprotocol/clientCapabilities":{"tools":{}}}}}""";
 
-	@Container
-	@ServiceConnection
-	static final PostgreSQLContainer POSTGRES =
-			new PostgreSQLContainer(DockerImageName.parse("postgres:16.15-alpine"));
-
-	@Container
-	static final RedisContainer REDIS =
-			new RedisContainer(DockerImageName.parse("redis:8.10.1-alpine3.23"));
-
 	@DynamicPropertySource
-	static void redisProperties(DynamicPropertyRegistry registry) {
-		registry.add("spring.data.redis.host", REDIS::getHost);
-		registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
+	static void sharedContainers(DynamicPropertyRegistry registry) {
+		registry.add("spring.datasource.url", SharedContainersBase::postgresJdbcUrl);
+		registry.add("spring.datasource.username", SharedContainersBase::postgresUsername);
+		registry.add("spring.datasource.password", SharedContainersBase::postgresPassword);
+		registry.add("spring.data.redis.host", SharedContainersBase::redisHost);
+		registry.add("spring.data.redis.port", SharedContainersBase::redisPort);
 	}
 
 	@LocalServerPort

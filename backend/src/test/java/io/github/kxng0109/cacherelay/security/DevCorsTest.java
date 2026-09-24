@@ -1,18 +1,13 @@
 package io.github.kxng0109.cacherelay.security;
 
-import com.redis.testcontainers.RedisContainer;
+import io.github.kxng0109.cacherelay.SharedContainersBase;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.postgresql.PostgreSQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -30,26 +25,19 @@ import static org.assertj.core.api.Assertions.assertThat;
  * preflight assertions below lock in from both sides.
  */
 @DisplayName("Development CORS allow-list")
-@Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("dev")
-class DevCorsTest {
+class DevCorsTest extends SharedContainersBase {
 
 	private static final String DEV_ORIGIN = "http://localhost:5173";
 
-	@Container
-	@ServiceConnection
-	static final PostgreSQLContainer POSTGRES =
-			new PostgreSQLContainer(DockerImageName.parse("postgres:16.15-alpine"));
-
-	@Container
-	static final RedisContainer REDIS =
-			new RedisContainer(DockerImageName.parse("redis:8.10.1-alpine3.23"));
-
 	@DynamicPropertySource
-	static void redisProperties(DynamicPropertyRegistry registry) {
-		registry.add("spring.data.redis.host", REDIS::getHost);
-		registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
+	static void sharedContainers(DynamicPropertyRegistry registry) {
+		registry.add("spring.datasource.url", SharedContainersBase::postgresJdbcUrl);
+		registry.add("spring.datasource.username", SharedContainersBase::postgresUsername);
+		registry.add("spring.datasource.password", SharedContainersBase::postgresPassword);
+		registry.add("spring.data.redis.host", SharedContainersBase::redisHost);
+		registry.add("spring.data.redis.port", SharedContainersBase::redisPort);
 	}
 
 	@LocalServerPort

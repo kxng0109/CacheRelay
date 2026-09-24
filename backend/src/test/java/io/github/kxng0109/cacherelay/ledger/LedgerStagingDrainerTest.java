@@ -1,5 +1,6 @@
 package io.github.kxng0109.cacherelay.ledger;
 
+import io.github.kxng0109.cacherelay.SharedContainersBase;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
@@ -8,16 +9,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -43,13 +40,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * ({@code gateway.ledger.staging-drain.enabled=false}) so background polling cannot race the assertions;
  * every drain runs synchronously inside an explicit transaction instead.</p>
  */
-@Testcontainers
 @SpringBootTest(
 		webEnvironment = SpringBootTest.WebEnvironment.NONE,
 		properties = "gateway.ledger.staging-drain.enabled=false"
 )
 @DisplayName("Shared staging journal against real PostgreSQL")
-class LedgerStagingDrainerTest {
+class LedgerStagingDrainerTest extends SharedContainersBase {
 
 	private static final String PRICING_CATALOG = """
 			{
@@ -73,13 +69,11 @@ class LedgerStagingDrainerTest {
 		}
 	}
 
-	@Container
-	@ServiceConnection
-	static final PostgreSQLContainer POSTGRES =
-			new PostgreSQLContainer("postgres:16.15-alpine");
-
 	@DynamicPropertySource
 	static void pricingSource(DynamicPropertyRegistry registry) {
+		registry.add("spring.datasource.url", SharedContainersBase::postgresJdbcUrl);
+		registry.add("spring.datasource.username", SharedContainersBase::postgresUsername);
+		registry.add("spring.datasource.password", SharedContainersBase::postgresPassword);
 		registry.add("gateway.pricing.source-url", () -> PRICING_SERVER.url("/prices.json").toString());
 	}
 

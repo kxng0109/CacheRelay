@@ -5,6 +5,8 @@ import io.github.kxng0109.cacherelay.admin.dto.LedgerFilter;
 import io.github.kxng0109.cacherelay.admin.dto.LedgerSummaryResponse;
 import io.github.kxng0109.cacherelay.admin.dto.PageResponse;
 import io.github.kxng0109.cacherelay.config.OpenApiConfig;
+import io.github.kxng0109.cacherelay.ledger.DashboardService;
+import io.github.kxng0109.cacherelay.ledger.DashboardView;
 import io.github.kxng0109.cacherelay.ledger.UsageLedgerService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -23,6 +25,7 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import jakarta.servlet.http.HttpServletRequest;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -36,6 +39,8 @@ import java.util.UUID;
 public class AdminLedgerController {
 
 	private final UsageLedgerService usageLedgerService;
+
+	private final DashboardService dashboards;
 
 	/**
 	 * Returns aggregated token consumption, USD costs, and duration metrics with multi-dimensional breakdowns.
@@ -143,6 +148,52 @@ public class AdminLedgerController {
 		LedgerFilter filter = new LedgerFilter(ownerId, provider, model, from, to);
 		PageResponse<LedgerEntryResponse> response = usageLedgerService.getEntries(filter, pageable);
 		return ResponseEntity.ok(response);
+	}
+
+	/**
+	 * Returns one user's usage dashboard for an admin. The access is audit-logged
+	 * with the admin's identity; the viewed data resolves from the target's owned
+	 * keys exactly like their personal view.
+	 *
+	 * @param userId  viewed account id
+	 * @param from    optional start timestamp (inclusive ISO-8601)
+	 * @param to      optional end timestamp (inclusive ISO-8601)
+	 * @param request current request (admin attribution and caller address)
+	 * @return HTTP 200 OK with the target's summary and freshness headers
+	 */
+	@Operation(
+			summary = "Get a user's usage dashboard",
+			description = "Admin drill-down into one account's usage. Every access is audit-logged.",
+			security = {
+					@SecurityRequirement(name = OpenApiConfig.SCHEME_ADMIN_KEY_HEADER),
+					@SecurityRequirement(name = OpenApiConfig.SCHEME_ADMIN_BEARER)
+			}
+	)
+	@ApiResponses(value = {
+			@ApiResponse(responseCode = "200", description = "Target summary retrieved",
+					content = @Content(mediaType = "application/json",
+							schema = @Schema(implementation = LedgerSummaryResponse.class))),
+			@ApiResponse(responseCode = "400", description = "Invalid date range (max 90 days allowed)"),
+			@ApiResponse(responseCode = "401", description = "Unauthorized: Master Admin key missing or incorrect")
+	})
+	@GetMapping("/user/{userId}/summary")
+	public ResponseEntity<LedgerSummaryResponse> getUserSummary(
+			@Parameter(description = "Viewed account id")
+			@PathVariable("userId") UUID userId,
+			@Parameter(description = "Start timestamp (ISO-8601)", example = "2026-08-01T00:00:00Z")
+			@RequestParam(value = "from", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
+			@Parameter(description = "End timestamp (ISO-8601)", example = "2026-09-01T00:00:00Z")
+			@RequestParam(value = "to", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
+			HttpServletRequest request
+	) {
+		Object attribution = request.getAttribute(AdminAuthFilter.ATTRIBUTE_ADMIN_ID);
+		String adminActor = attribution instanceof UUID uuid ? uuid.toString() : "master-key";
+		DashboardView view = dashboards.getUserAsAdmin(adminActor, userId, from, to,
+				request.getRemoteAddr(), request.getHeader("X-Request-ID"));
+		return ResponseEntity.ok()
+				.header(DashboardService.HEADER_GENERATED_AT, view.generatedAt().toString())
+				.header(DashboardService.HEADER_WATERMARK, view.watermark().toString())
+				.body(view.summary());
 	}
 
 	/**

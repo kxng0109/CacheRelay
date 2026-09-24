@@ -148,6 +148,7 @@ public class SecurityConfig {
 						.requestMatchers(
 								"/v1/auth/**",
 								"/v1/me/**",
+								"/v1/sso/webhooks/**",
 								"/oauth2/**",
 								"/login/oauth2/**"
 						).permitAll()

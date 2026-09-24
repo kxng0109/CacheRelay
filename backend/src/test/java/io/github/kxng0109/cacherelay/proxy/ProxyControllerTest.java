@@ -4,6 +4,9 @@ import io.github.kxng0109.cacherelay.cache.contracts.CacheEntry;
 import io.github.kxng0109.cacherelay.cache.contracts.CacheLookupResult;
 import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
 import io.github.kxng0109.cacherelay.cache.contracts.CacheStatus;
+import io.github.kxng0109.cacherelay.capture.CaptureEvent;
+import io.github.kxng0109.cacherelay.capture.CaptureProperties;
+import io.github.kxng0109.cacherelay.capture.CaptureService;
 import io.github.kxng0109.cacherelay.cache.engine.CacheRelayCacheService;
 import io.github.kxng0109.cacherelay.cache.engine.streaming.CachedStreamReconstitution;
 import io.github.kxng0109.cacherelay.config.SensitiveString;
@@ -3097,6 +3100,143 @@ class ProxyControllerTest {
 		ByteArrayOutputStream out = new ByteArrayOutputStream();
 		response.getBody().writeTo(out);
 		return out.toString(StandardCharsets.UTF_8);
+	}
+	@Test
+	@DisplayName("captures non-streaming completions for sampled requests")
+	void capturesNonStreamingCompletion() throws Exception {
+		CaptureService capture = new CaptureService(new CaptureProperties(true, 1000, 100_000,
+				"./data/capture", 32768, 268435456L, 90, 7, List.of()));
+		controller.setCaptureService(capture);
+		try {
+			String upstream = "{\"id\":\"chatcmpl-cap\",\"object\":\"chat.completion\",\"created\":1700000000,"
+					+ "\"model\":\"gpt-5.6-luna\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+					+ "\"content\":\"captured-output\"},\"finish_reason\":\"stop\"}],"
+					+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
+			ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
+			when(orchestrator.execute(any(), anyString()))
+					.thenReturn(CompletableFuture.completedFuture(response));
+
+			ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+			body(entity);
+
+			CaptureEvent event = capture.queue().poll();
+			assertNotNull(event);
+			assertFalse(event.streaming());
+			assertTrue(event.outputJson().contains("captured-output"));
+			assertFalse(event.promptJson().isBlank());
+			assertEquals("gpt-5.6-luna", event.model());
+			assertEquals(1L, capture.offered());
+		} finally {
+			controller.setCaptureService(null);
+		}
+	}
+
+	@Test
+	@DisplayName("captures assembled streaming completions for sampled requests")
+	void capturesStreamingCompletion() throws Exception {		CaptureService capture = new CaptureService(new CaptureProperties(true, 1000, 100_000,
+				"./data/capture", 32768, 268435456L, 90, 7, List.of()));
+		controller.setCaptureService(capture);
+		try {
+			ProviderResponse response = providerResponse(
+					"openai", 200, sseHeaders(),
+					Stream.of("data: {\"choices\":[{\"delta\":{\"content\":\"stream-part\"}}]}",
+							"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7}}",
+							"data: [DONE]")
+			);
+			when(orchestrator.execute(any(), anyString()))
+					.thenReturn(CompletableFuture.completedFuture(response));
+
+			ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+			RecordingServletOutputStream out = new RecordingServletOutputStream();
+			entity.getBody().writeTo(out);
+
+			CaptureEvent event = capture.queue().poll();
+			assertNotNull(event);
+			assertTrue(event.streaming());
+			assertTrue(event.outputJson().contains("stream-part"));
+		} finally {
+			controller.setCaptureService(null);
+		}
+	}
+
+	@Test
+	@DisplayName("unsampled completions skip capture in both modes")
+	void unsampledSkipsCapture() throws Exception {
+		CaptureService capture = new CaptureService(new CaptureProperties(false, 1000, 100_000,
+				"./data/capture", 32768, 268435456L, 90, 7, List.of()));
+		controller.setCaptureService(capture);
+		try {
+			String upstream = "{\"id\":\"chatcmpl-cap2\",\"object\":\"chat.completion\",\"created\":1700000000,"
+					+ "\"model\":\"gpt-5.6-luna\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+					+ "\"content\":\"no-capture\"},\"finish_reason\":\"stop\"}],"
+					+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
+			ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
+			when(orchestrator.execute(any(), anyString()))
+					.thenReturn(CompletableFuture.completedFuture(response));
+
+			ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+			body(entity);
+
+		assertNull(capture.queue().poll());
+		assertEquals(0L, capture.offered());
+	} finally {
+		controller.setCaptureService(null);
+	}
+}
+
+	@Test
+	@DisplayName("unsampled streams skip capture without building payloads")
+	void unsampledStreamSkipsCapture() throws Exception {		CaptureService capture = new CaptureService(new CaptureProperties(false, 1000, 100_000,
+				"./data/capture", 32768, 268435456L, 90, 7, List.of()));
+		controller.setCaptureService(capture);
+		try {
+			ProviderResponse response = providerResponse(
+					"openai", 200, sseHeaders(),
+					Stream.of("data: {\"choices\":[{\"delta\":{\"content\":\"quiet\"}}]}",
+							"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7}}",
+							"data: [DONE]")
+			);
+			when(orchestrator.execute(any(), anyString()))
+					.thenReturn(CompletableFuture.completedFuture(response));
+
+			ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+			RecordingServletOutputStream out = new RecordingServletOutputStream();
+			entity.getBody().writeTo(out);
+
+			assertNull(capture.queue().poll());
+			assertEquals(0L, capture.offered());
+		} finally {
+			controller.setCaptureService(null);
+		}
+	}
+
+	@Test
+	@DisplayName("captures cover unbindable requests with an empty prompt")
+	void capturesUnbindablePrompt() throws Exception {
+		CaptureService capture = new CaptureService(new CaptureProperties(true, 1000, 100_000,
+				"./data/capture", 32768, 268435456L, 90, 7, List.of()));
+		controller.setCaptureService(capture);
+		try {
+			String upstream = "{\"id\":\"chatcmpl-z\",\"object\":\"chat.completion\",\"created\":1700000000,"
+					+ "\"model\":\"gpt-5.6-luna\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+					+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
+					+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
+			ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
+			when(orchestrator.execute(any(), anyString()))
+					.thenReturn(CompletableFuture.completedFuture(response));
+
+			ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(
+					"{\"model\":\"gpt-5.6-luna\",\"messages\":\"nope\"}", request());
+			body(entity);
+
+			CaptureEvent event = capture.queue().poll();
+			assertNotNull(event);
+			assertFalse(event.streaming());
+			assertEquals("{}", event.promptJson());
+			assertTrue(event.outputJson().contains("\"content\":\"hi\""));
+		} finally {
+			controller.setCaptureService(null);
+		}
 	}
 
 	@Test

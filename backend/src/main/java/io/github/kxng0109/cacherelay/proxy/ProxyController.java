@@ -17,8 +17,9 @@ import io.github.kxng0109.cacherelay.contracts.ProviderRef;
 import io.github.kxng0109.cacherelay.contracts.ProviderType;
 import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
 import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
-import io.github.kxng0109.cacherelay.ledger.CostCalculator;
-import io.github.kxng0109.cacherelay.ledger.DecisionLogWriter;
+import io.github.kxng0109.cacherelay.capture.CaptureEvent;
+import io.github.kxng0109.cacherelay.capture.CaptureService;
+import io.github.kxng0109.cacherelay.ledger.CostCalculator;import io.github.kxng0109.cacherelay.ledger.DecisionLogWriter;
 import io.github.kxng0109.cacherelay.ledger.ModelPriceCatalog;
 import io.github.kxng0109.cacherelay.ledger.ModelPricingEntry;
 import io.github.kxng0109.cacherelay.ledger.TokenUsageEvent;
@@ -124,6 +125,8 @@ public class ProxyController {
 	private volatile @Nullable ReplayService replayService;
 
 	private volatile @Nullable DecisionLogWriter decisionLogWriter;
+
+	private volatile @Nullable CaptureService captureService;
 
 	private volatile @Nullable ModelPriceCatalog modelPriceCatalog;
 
@@ -821,20 +824,37 @@ public class ProxyController {
 			// Stream completed with measured usage: true the hold up to actual spend.
 			settleQuietly(settlementContext, costUsdMicros, false);
 
-			if ((cacheService != null || replayFlight != null) && chatRequest != null) {
-				int pt = (int) Math.min(Integer.MAX_VALUE, usage.promptTokens());
-				int ct = (int) Math.min(Integer.MAX_VALUE, usage.completionTokens());
-				String completionJson = buildCompletionJson(model, accumulatedContent.toString(), pt, ct);
+			CaptureService capture = this.captureService;
+			String captureKeyHash = capture == null ? null
+					: (String) servletRequest.getAttribute(KeyAuthFilter.KEY_HASH_ATTRIBUTE);
+			boolean wantCapture = capture != null
+					&& capture.shouldCapture(ownerId, captureKeyHash, requestId);
+			boolean cacheBlock = (cacheService != null || replayFlight != null)
+					&& chatRequest != null;
+			String completionJson = null;
+			int pt = 0;
+			int ct = 0;
+			if (wantCapture || cacheBlock) {
+				pt = (int) Math.min(Integer.MAX_VALUE, usage.promptTokens());
+				ct = (int) Math.min(Integer.MAX_VALUE, usage.completionTokens());
+				completionJson = buildCompletionJson(model, accumulatedContent.toString(), pt, ct);
+			}
+			if (wantCapture) {
+				recordCapture(chatRequest, completionJson, requestId, ownerId, providerName,
+						model, usage.promptTokens(), usage.completionTokens(), true,
+						servletRequest);
+			}
+			if (cacheBlock) {
 				if (cacheService != null) {
 					@Nullable VirtualApiKey streamApiKey = (VirtualApiKey) servletRequest
 							.getAttribute(KeyAuthFilter.VIRTUAL_KEY_ATTRIBUTE);
 					cacheService.storeResponse(
 							chatRequest, servletRequest, ownerId, streamApiKey, completionJson, pt, ct);
 				}
-				// Completed SSE stored re-framed (single data event + DONE on serve): identical content
-				// and usage, transport framing only.
-				replayStoreQuietly(replayFlight,
-						completionJson.getBytes(StandardCharsets.UTF_8), true);
+			// Completed SSE stored re-framed (single data event + DONE on serve): identical content
+			// and usage, transport framing only.
+			replayStoreQuietly(replayFlight,
+					completionJson.getBytes(StandardCharsets.UTF_8), true);
 			}
 		}
 	}
@@ -1048,8 +1068,10 @@ public class ProxyController {
 			));
 			// Non-streaming completion measured: true the hold up to actual spend.
 			settleQuietly(settlementContext, costUsdMicros, false);
-			// Non-streaming payloads store byte-identical for exact re-delivery.
-			replayStoreQuietly(replayFlight, normalizedJson.getBytes(StandardCharsets.UTF_8), false);
+		// Non-streaming payloads store byte-identical for exact re-delivery.
+		replayStoreQuietly(replayFlight, normalizedJson.getBytes(StandardCharsets.UTF_8), false);
+		recordCapture(chatRequest, normalizedJson, requestId, ownerId, providerName,
+				requestedModel, promptTokens, completionTokens, false, servletRequest);
 			if (cacheService != null && chatRequest != null) {
 				try {
 					int pt = (int) Math.min(Integer.MAX_VALUE, promptTokens);
@@ -1102,6 +1124,17 @@ public class ProxyController {
 	@Autowired(required = false)
 	public void setDecisionLogWriter(DecisionLogWriter decisionLogWriter) {
 		this.decisionLogWriter = decisionLogWriter;
+	}
+
+	/**
+	 * Wires the usage capture service when present. Optional on purpose: unit-constructed controllers keep
+	 * working with capture silently skipped, exactly like the decision writer.
+	 *
+	 * @param captureService the capture gate, if available
+	 */
+	@Autowired(required = false)
+	public void setCaptureService(CaptureService captureService) {
+		this.captureService = captureService;
 	}
 
 	/**
@@ -1216,6 +1249,56 @@ public class ProxyController {
 					chain, tried, winner, inputRate, outputRate);
 		} catch (RuntimeException ex) {
 			log.debug("Dropping routing decision observation: {}", ex.getMessage());
+		}
+	}
+
+	/**
+	 * Offers one completed completion for usage capture. Best-effort by design:
+	 * sampling decides first so unsampled requests pay nothing beyond the
+	 * decision, and every failure is absorbed. Payloads travel by reference
+	 * and are truncated before queueing; redaction happens on the writer.
+	 *
+	 * @param chatRequest      parsed request for prompt JSON, or {@code null}
+	 * @param completionJson   completion JSON (or assembled stream), never {@code null}
+	 * @param requestId        stable request id, never {@code null}
+	 * @param ownerId          owning tenant, or {@code null}
+	 * @param providerName     winning provider, never {@code null}
+	 * @param model            requested model, never {@code null}
+	 * @param promptTokens     prompt tokens
+	 * @param completionTokens completion tokens
+	 * @param streaming        whether the output streamed
+	 * @param servletRequest   current request (key hash attribute)
+	 */
+	private void recordCapture(
+			@Nullable OpenAiChatRequest chatRequest,
+			String completionJson,
+			UUID requestId,
+			@Nullable String ownerId,
+			String providerName,
+			String model,
+			long promptTokens,
+			long completionTokens,
+			boolean streaming,
+			HttpServletRequest servletRequest) {
+		CaptureService capture = this.captureService;
+		if (capture == null) {
+			return;
+		}
+		try {
+			String keyHash = (String) servletRequest.getAttribute(
+					KeyAuthFilter.KEY_HASH_ATTRIBUTE);
+			if (!capture.shouldCapture(ownerId, keyHash, requestId)) {
+				return;
+			}
+			String promptJson = "{}";
+			if (chatRequest != null) {
+				promptJson = objectMapper.writeValueAsString(chatRequest);
+			}
+			capture.capture(new CaptureEvent(requestId, ownerId, keyHash, model, providerName,
+					capture.truncate(promptJson), capture.truncate(completionJson), promptTokens,
+					completionTokens, streaming, Instant.now()));
+		} catch (RuntimeException ex) {
+			log.debug("Dropping capture observation: {}", ex.getMessage());
 		}
 	}
 

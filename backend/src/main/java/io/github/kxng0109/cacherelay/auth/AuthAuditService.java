@@ -32,6 +32,18 @@ public class AuthAuditService {
 	public static final String ACTION_LOCKOUT = "ACCOUNT_LOCKED";
 	/** Admin mutation (key/circuit/budget/notification change). */
 	public static final String ACTION_ADMIN_MUTATION = "ADMIN_MUTATION";
+	/** Admin read of another user's usage dashboard (drill-down). */
+	public static final String ACTION_DASHBOARD_VIEW = "DASHBOARD_VIEW";
+	/** SSO team provisioning outcome (success or tenant denial). */
+	public static final String ACTION_SSO_TEAMS_SYNC = "SSO_TEAMS_SYNC";
+	/** First-login backfill attempt outcome (failure or IdP-disabled). */
+	public static final String ACTION_SSO_BACKFILL = "SSO_BACKFILL";
+	/** Sweep revocation of an IdP-disabled account. */
+	public static final String ACTION_SSO_REVOKE = "SSO_REVOKE";
+	/** Webhook authentication outcome (invalid signatures). */
+	public static final String ACTION_WEBHOOK_AUTH = "WEBHOOK_AUTH";
+	/** Admin read or erasure of captured usage content. */
+	public static final String ACTION_CAPTURE_READ = "CAPTURE_READ";
 
 	/** Informational events. */
 	public static final String SEVERITY_INFO = "INFO";

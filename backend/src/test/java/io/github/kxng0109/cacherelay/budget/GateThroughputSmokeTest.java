@@ -3,7 +3,7 @@ package io.github.kxng0109.cacherelay.budget;
 import java.util.List;
 import java.util.UUID;
 
-import com.redis.testcontainers.RedisContainer;
+import io.github.kxng0109.cacherelay.SharedContainersBase;
 import io.github.kxng0109.cacherelay.contracts.ProviderType;
 import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
 import io.github.kxng0109.cacherelay.ledger.CostCalculator;
@@ -15,8 +15,6 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -24,7 +22,6 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
-import static org.testcontainers.utility.DockerImageName.parse;
 
 /**
  * Tripwire for the admission-gate hot path: N full {@code budget_limit.lua} round trips against real Redis must
@@ -32,18 +29,13 @@ import static org.testcontainers.utility.DockerImageName.parse;
  * slow) — this guards against order-of-magnitude regressions, not for proving the 200K ceiling, which needs the
  * distributed k6 harness.
  */
-@Testcontainers
 @DisplayName("Gate throughput smoke against real Redis")
-class GateThroughputSmokeTest {
+class GateThroughputSmokeTest extends SharedContainersBase {
 
 	private static final int WARMUP_CALLS = 200;
 	private static final int MEASURED_CALLS = 2000;
 	private static final double MIN_DECISIONS_PER_SECOND = 200.0;
 	private static final long MAX_SINGLE_CALL_NANOS = 5_000_000_000L;
-
-	@Container
-	static final RedisContainer REDIS =
-			new RedisContainer(parse("redis:8.10.1-alpine3.23"));
 
 	private static StringRedisTemplate sharedTemplate;
 
@@ -51,7 +43,7 @@ class GateThroughputSmokeTest {
 		if (sharedTemplate == null) {
 			LettuceConnectionFactory factory =
 					new LettuceConnectionFactory(
-							REDIS.getHost(), REDIS.getMappedPort(6379));
+							SharedContainersBase.redisHost(), SharedContainersBase.redisPort());
 			factory.afterPropertiesSet();
 			sharedTemplate = new StringRedisTemplate(factory);
 			sharedTemplate.afterPropertiesSet();

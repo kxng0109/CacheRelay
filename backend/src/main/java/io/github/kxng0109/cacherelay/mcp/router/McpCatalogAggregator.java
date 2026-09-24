@@ -53,6 +53,14 @@ public class McpCatalogAggregator {
 	}
 
 	/**
+	 * Drops the cached federated catalog so the next read recomputes it (SEC-07: an upstream
+	 * {@code notifications/tools/list_changed} must not be a no-op).
+	 */
+	public void invalidateCatalog() {
+		catalogCache.invalidate();
+	}
+
+	/**
 	 * Scheduled background catalog refresh to pre-warm the L0 cache.
 	 */
 	@Scheduled(cron = "${gateway.mcp.catalog-refresh-cron:0 */5 * * * *}")

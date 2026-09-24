@@ -4,6 +4,7 @@ import io.github.kxng0109.cacherelay.contracts.ProviderConfig;
 import io.github.kxng0109.cacherelay.proxy.embeddings.dto.EmbeddingData;
 import io.github.kxng0109.cacherelay.proxy.embeddings.dto.EmbeddingRequest;
 import io.github.kxng0109.cacherelay.proxy.embeddings.dto.EmbeddingResponse;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -60,6 +61,14 @@ public class EmbeddingBatchOrchestrator {
 	public EmbeddingBatchOrchestrator(HttpClient httpClient, EmbeddingProperties properties) {
 		this.httpClient = httpClient;
 		this.properties = properties;
+	}
+
+	/**
+	 * Shuts the fan-out executor down on context close (DC-08) so no executor threads outlive the context.
+	 */
+	@PreDestroy
+	void shutdownExecutor() {
+		executor.shutdownNow();
 	}
 
 	/**

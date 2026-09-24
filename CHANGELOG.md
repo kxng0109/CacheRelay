@@ -11,6 +11,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SSO teams, IdP-driven (Phase 2a):** org/team/membership domain (V20) with per-registration
+  claim mappings (`GATEWAY_SSO_TEAMS_REGISTRATIONS_*`): exact/prefix patterns with `:LEAD`/`:MEMBER`
+  roles (exact beats prefix, longest wins, first wins ties), tenant allowlists failing closed, admin
+  always local-only, least-privilege `unassigned` holding teams, memberships flipping ACTIVE/INACTIVE
+  on every login. New reads: `GET /v1/me/teams`, `GET /v1/admin/teams?org=`, team-scoped dashboard
+  views (non-members read 404), admin user drill-down auditing. Full `verify` green, branch >= 0.95.
+- **First-login IdP backfill (Phase 2b):** per-registration modes (`GATEWAY_SSO_BACKFILL_*`)
+  `ENTRA_GRAPH` (overage-triggered transitive membership), `OKTA_API` (scoped service app via
+  `private_key_jwt` + `kid`), `GOOGLE_DIRECTORY` (domain-wide delegation), `GITHUB_API` (user's own
+  OAuth token). Token-complete logins skip fetching; attempts fail closed (disabled/deleted deny,
+  truncation denies, off-host follow-ups deny); misconfiguration fails startup. Team names enrich
+  from IdP display names. Full `verify` green, branch >= 0.95.
+- **Usage capture, off by default (Phase 4):** `GATEWAY_CAPTURE_*` enables prompt/output capture
+  with deterministic request-id per-mille sampling, per-owner/key full-fidelity allowlists, and a
+  per-second persist ceiling. Hot path decides in nanoseconds (mean offer far below a 100µs bound)
+  and offers once to a bounded queue (drop with counters, never block); a background writer truncates,
+  redacts PII with throwaway vaults, gates on secret scans (credential hits suppress bodies with rule
+  metadata), and appends to hourly per-jurisdiction JSONL segments with sidecar manifests. TTL rows
+  expire (default 90d, strict 7d) via nightly purge with rewrite-on-row-TTL; per-owner erasure rewrites
+  segments. `GET /v1/admin/capture/recent` and `DELETE /v1/admin/capture/owner/{ownerId}` are
+  admin-only and audit-logged (`CAPTURE_READ`). Wired into both proxy completion paths. Full `verify`
+  green, branch >= 0.95.
+- **SSO webhooks, fast-lane invalidation (Phase 3b):** `POST /v1/sso/webhooks/{github,okta,`
+  `entra,google}` (`GATEWAY_SSO_WEBHOOKS_*`, secrets ≥ 32 chars, misconfiguration fails startup)
+  validate per-IdP contracts (GitHub HMAC-SHA256 incl. RFC test vector + ping/membership/org events;
+  Okta verification challenge + header secret + lifecycle targets; Entra validation-token handshake +
+  client-state echo; Google channel-token match) and stamp watermarks at the epoch for a prompt sweep
+  re-check. Receivers never revoke; redeliveries idempotent. Full `verify` green, branch >= 0.95.
+- **SSO revalidation sweep (Phase 3a):** ShedLock single-holder jobs (hot 15-min, nightly cold)  re-check known SSO accounts via the backfill clients (`sso_reval_watermark`, V21; ShedLock 7.10.1
+  vetted: Apache-2.0, no CVEs, Boot 4.x matrix). Watermarks self-seed at the epoch and advance on
+  every attempt; revocation (disable + key/session revocation + `SSO_REVOKE` audit) fires only on
+  positive IdP-disabled signals, never on transport errors. GitHub links skip (no service credential).
+  Tunables under `gateway.sso.revalidation.*`. Full `verify` green, branch >= 0.95.
+- **On-demand usage dashboards (personal + org-wide + admin drill-down):** `GET /v1/me/usage` resolves
+  the session account to owned keys server-side (callers read only their own usage); org-wide admin
+  summary unchanged; new `GET /v1/admin/ledger/user/{userId}/summary` drill-down with per-access audit
+  (`DASHBOARD_VIEW`). Nothing precomputes: settled days serve from lazily-persisted daily buckets
+  (`dashboard_daily_bucket`, V19), only the open tail scans live, results cache 5 minutes with exact
+  watermark-delta merges, concurrent identical views coalesce onto one computation, scans run under a
+  statement timeout, per-user views rate-limited (429). Averages recompute from merged duration sums;
+  freshness on `X-Dashboard-Generated-At`/`X-Dashboard-Watermark` headers. Team scope arrives with SSO
+  teams. Tunables under `gateway.dashboard.*` (`GATEWAY_DASHBOARD_*`). Full `verify` green, branch >= 0.95.
+
 - **User-attached keys (mandatory ownership + terminal revocation):** every virtual key carries an
   owning account (`ownerUserId`) resolved to an active account at creation, seed, and generation
   time (unknown/disabled owners fail fast); revocation sets an irreversible tombstone (no code path
@@ -24,6 +67,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on the key, ledger attributes to the account); per-account default-key selection; metadata-only
   self listing; terminal self-revocation. Every failure answers the session/key 401 shape with no
   cross-user oracle. Full `verify` green, branch >= 0.95.
+- **Dedicated invite-link base (`gateway.auth.invite-base-url`):** invite links use the configured
+  frontend origin (`GATEWAY_AUTH_INVITE_BASE_URL`) instead of the incoming request host, so links stay
+  correct in split-origin deployments (Vite dev `http://localhost:5173`, prod frontend URL) and emailed
+  links can no longer be shaped by Host headers. Blank (default) keeps the request-derived fallback for
+  single-origin stacks with a startup warning; malformed values fail startup in every profile. A2A agent
+  cards keep their own backend-origin `gateway.a2a.public-base-url`. Full `verify` green, branch >= 0.95.
+- **Console: overlay inspector drawers + receipt anatomy:** every table (Ledger, Circuits, Keys,
+  Models, Embeddings, MCP, Cache budgets) opens a shared 420px overlay drawer (backdrop + `Esc`
+  dismiss, focus return, slide-fade entrance, reduced-motion respected) instead of reflowing the
+  page. Ledger receipts gain model/provider/cached chips, Cost/Duration/Tokens/derived-throughput
+  cards (`tok/s` computed from receipt facts, labeled derived), sectioned facts, single-receipt
+  hydration with gone-receipt handling, jump-to-page, filter match counts, short dates, grouped
+  micro-costs, and a ranked Top-models list on Overview. Shared Intl-only formatters
+  (`shared/utils/format.ts`): compact counts, byte buckets, significant-decimal dollars.
+  Frontend: 42 suites / 502 tests, branch 95.02.
+- **Console: keys ownership + terminal revocation:** creation collects the required `ownerUserId`
+  (validated UUID, backend 400s naming unknown/disabled owners surface at the field); inspector
+  shows owner username, reversible enable/disable (PATCH, revoked-block message surfaced), and
+  confirm-first terminal revoke with session-local tombstone marking (the list endpoint exposes
+  no revoked flag — verified against `KeyResponse`). No un-revoke UI anywhere. Spring Boot
+  top-level `message` bodies now surface verbatim instead of degrading to generic errors.
+- **Console: provider health board + actuator honesty:** Models gains a Providers section
+  (`GET /v1/admin/providers`: validation badges grey/blue/green/red with unknown-grey fallback,
+  key presence without key material, live circuit state, alias references). Actuator scrapes
+  move to the SEC-15 management port (`VITE_MANAGEMENT_BASE_URL`, loopback `:9091` default
+  when unset) and both probes validate content types, naming a wrong base URL instead of
+  leaking parser errors or a false `scrape ok`. Debug chrome (route/theme footer, raw base
+  URL) is dev-only; phantom `[x]` shortcut labels removed.
 
 ## [1.8.0] - 2026-09-22
 

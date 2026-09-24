@@ -40,7 +40,7 @@ public class AdminInviteController {
 	 * Creates an invite.
 	 *
 	 * @param body    invited address (optional) and privilege
-	 * @param request current request (inviter attribution and link base)
+	 * @param request current request (inviter attribution and fallback link base)
 	 * @return copyable link plus whether it was emailed
 	 */
 	@Operation(

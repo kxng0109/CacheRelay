@@ -19,6 +19,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * redemption link; when the Graph email channel is configured and an address was supplied,
  * the link is also emailed. Redemption is atomic (exactly one winner) and consumed or
  * expired invites answer 410 Gone. The first-ever redemption bootstraps the initial admin.
+ * Links use the configured {@code gateway.auth.invite-base-url} frontend origin when set,
+ * otherwise the caller's request host.
  */
 @Service
 public class InviteService {
@@ -78,7 +80,8 @@ public class InviteService {
 	 * @param createdBy inviting account id, or {@code null} for master-key bootstrap
 	 * @param email     invited address for delivery, or {@code null} for link-only
 	 * @param admin     whether redemption creates an admin account
-	 * @param baseUrl   public base URL (scheme + host) for the link
+	 * @param baseUrl   request-derived public base URL, used only when
+	 *                  {@code gateway.auth.invite-base-url} is blank
 	 * @param requestId correlation id, or {@code null}
 	 * @return link plus whether it was emailed
 	 */
@@ -93,7 +96,7 @@ public class InviteService {
 				admin,
 				createdBy,
 				Instant.now().plus(properties.inviteTtl())));
-		String link = baseUrl + "/redeem?token=" + token;
+		String link = linkBase(baseUrl) + "/redeem?token=" + token;
 		boolean emailed = false;
 		if (email != null) {
 			ChannelResult result = mail.sendDirect(email, "CacheRelay invite",
@@ -153,6 +156,25 @@ public class InviteService {
 		audit.record(action, AuthAuditService.SEVERITY_INFO, username, "/v1/auth/redeem",
 				AuthAuditService.OUTCOME_SUCCESS, ip, requestId);
 		return new RedeemResult.Redeemed(account, bootstrapped);
+	}
+
+	/**
+	 * Resolves the link base for an invite: the configured frontend origin when set,
+	 * otherwise the caller-supplied request-derived fallback. The configured value is
+	 * revalidated here so programmatic use outside the Spring startup gate still fails
+	 * closed instead of emitting hostile links.
+	 *
+	 * @param fallback request-derived base, used only when nothing is configured
+	 * @return trimmed configured base or the fallback
+	 * @throws IllegalStateException when the configured base is malformed
+	 */
+	private String linkBase(String fallback) {
+		String configured = properties.inviteBaseUrl();
+		if (configured.isBlank()) {
+			return fallback;
+		}
+		AuthConfig.validateInviteBaseUrl(configured);
+		return configured.trim().replaceAll("/+$", "");
 	}
 
 	private String randomToken() {

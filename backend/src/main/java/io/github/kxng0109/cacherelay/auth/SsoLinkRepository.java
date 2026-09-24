@@ -1,5 +1,6 @@
 package io.github.kxng0109.cacherelay.auth;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -18,4 +19,20 @@ public interface SsoLinkRepository extends JpaRepository<SsoLink, UUID> {
 	 * @return the link, or empty
 	 */
 	Optional<SsoLink> findByIssuerAndSubject(String issuer, String subject);
+
+	/**
+	 * Lists every link of one local account.
+	 *
+	 * @param userId owning account, never {@code null}
+	 * @return links in no guaranteed order
+	 */
+	List<SsoLink> findByUserId(UUID userId);
+
+	/**
+	 * Lists every link for one external subject across registrations.
+	 *
+	 * @param subject IdP subject, never {@code null}
+	 * @return links in no guaranteed order
+	 */
+	List<SsoLink> findBySubject(String subject);
 }

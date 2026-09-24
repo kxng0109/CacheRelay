@@ -10,19 +10,14 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
 
-import com.redis.testcontainers.RedisContainer;
+import io.github.kxng0109.cacherelay.SharedContainersBase;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalManagementPort;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.postgresql.PostgreSQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
 /**
  * Proves the SEC-15 closure end-to-end: actuator endpoints (health, probe subpaths,
@@ -38,23 +33,16 @@ import org.testcontainers.utility.DockerImageName;
  * live-server test pattern so the aggregate health indicator can reach UP.</p>
  */
 @DisplayName("Management port isolation (SEC-15)")
-@Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-class ManagementPortIsolationTest {
-
-	@Container
-	@ServiceConnection
-	static final PostgreSQLContainer POSTGRES =
-			new PostgreSQLContainer(DockerImageName.parse("postgres:16.15-alpine"));
-
-	@Container
-	static final RedisContainer REDIS =
-			new RedisContainer(DockerImageName.parse("redis:8.10.1-alpine3.23"));
+class ManagementPortIsolationTest extends SharedContainersBase {
 
 	@DynamicPropertySource
-	static void redisProperties(DynamicPropertyRegistry registry) {
-		registry.add("spring.data.redis.host", REDIS::getHost);
-		registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
+	static void sharedContainers(DynamicPropertyRegistry registry) {
+		registry.add("spring.datasource.url", SharedContainersBase::postgresJdbcUrl);
+		registry.add("spring.datasource.username", SharedContainersBase::postgresUsername);
+		registry.add("spring.datasource.password", SharedContainersBase::postgresPassword);
+		registry.add("spring.data.redis.host", SharedContainersBase::redisHost);
+		registry.add("spring.data.redis.port", SharedContainersBase::redisPort);
 	}
 
 	private static final HttpClient CLIENT = HttpClient.newBuilder()

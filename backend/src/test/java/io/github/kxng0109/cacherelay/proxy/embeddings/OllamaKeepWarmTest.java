@@ -13,7 +13,18 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.util.concurrent.atomic.AtomicReference;
+
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import org.slf4j.LoggerFactory;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -36,6 +47,9 @@ class OllamaKeepWarmTest {
 	private final HttpResponse<byte[]> response = mock(HttpResponse.class);
 	private final CacheRelayCacheProperties cacheProperties = new CacheRelayCacheProperties();
 
+	private final ManualClock clock =
+			new ManualClock(Instant.parse("2026-09-23T12:00:00Z"));
+
 	private OllamaKeepWarm keepWarm;
 
 	@BeforeEach
@@ -44,7 +58,8 @@ class OllamaKeepWarmTest {
 		cacheProperties.getSemantic().setEmbeddingModel("local-embed");
 		when(response.statusCode()).thenReturn(200);
 		keepWarm = new OllamaKeepWarm(
-				embeddingService, cacheProperties, httpClient, EmbeddingProperties.DEFAULTS);
+				embeddingService, cacheProperties, httpClient, EmbeddingProperties.DEFAULTS,
+				clock);
 	}
 
 	private EmbeddingService.WarmTarget target(ProviderType type) {
@@ -69,7 +84,8 @@ class OllamaKeepWarmTest {
 	@DisplayName("disabled heartbeat never resolves a target nor sends a ping")
 	void disabledSkipsPing() throws Exception {
 		keepWarm = new OllamaKeepWarm(
-				embeddingService, cacheProperties, httpClient, new EmbeddingProperties(2_048, 4, false));
+				embeddingService, cacheProperties, httpClient,
+				new EmbeddingProperties(2_048, 4, false), clock);
 
 		keepWarm.warm();
 
@@ -173,8 +189,7 @@ class OllamaKeepWarmTest {
 
 	@Test
 	@DisplayName("a recovered ping after failures resets the failure counter and logs the recovery")
-	void recoveredPingResetsFailureCounter() throws Exception {
-		when(embeddingService.resolveWarmTarget("local-embed")).thenReturn(target(ProviderType.OLLAMA));
+	void recoveredPingResetsFailureCounter() throws Exception {		when(embeddingService.resolveWarmTarget("local-embed")).thenReturn(target(ProviderType.OLLAMA));
 		doThrow(new IOException("connection refused")).when(httpClient)
 				.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
 		keepWarm.warm();
@@ -186,8 +201,130 @@ class OllamaKeepWarmTest {
 		verify(httpClient, times(3)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
 	}
 
-	private HttpRequest captureRequest() throws Exception {
-		ArgumentCaptor<HttpRequest> captor = ArgumentCaptor.forClass(HttpRequest.class);
+	@Test
+	@DisplayName("opaque URLs without paths never count as Ollama targets")
+	void opaqueUrlSkips() throws Exception {
+		when(embeddingService.resolveWarmTarget("local-embed")).thenReturn(target(
+				ProviderType.OPENAI, URI.create("mailto:ollama@example.com")));
+
+		keepWarm.warm();
+
+		verify(httpClient, never()).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+	}
+
+	@Test
+	@DisplayName("failure warns once then at most hourly while the outage persists")
+	void failureWarnsHourly() throws Exception {
+		when(embeddingService.resolveWarmTarget("local-embed")).thenReturn(target(ProviderType.OLLAMA));
+		doThrow(new IOException("connection refused")).when(httpClient)
+				.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+		Logger logger = (Logger) LoggerFactory.getLogger(OllamaKeepWarm.class);
+		ListAppender<ILoggingEvent> appender = new ListAppender<>();
+		appender.start();
+		Level previous = logger.getLevel();		logger.setLevel(Level.DEBUG);
+		logger.addAppender(appender);
+		try {
+			keepWarm.warm();
+			keepWarm.warm();
+			clock.advance(Duration.ofMinutes(59));
+			keepWarm.warm();
+			clock.advance(Duration.ofMinutes(2));
+			keepWarm.warm();
+
+			long warns = appender.list.stream()
+					.filter(event -> event.getLevel() == Level.WARN)
+					.count();
+			long debugs = appender.list.stream()
+					.filter(event -> event.getLevel() == Level.DEBUG)
+					.count();
+			assertThat(warns).isEqualTo(2);
+			assertThat(debugs).isEqualTo(2);
+			assertThat(appender.list.get(0).getFormattedMessage()).contains("(1 consecutive)");
+			assertThat(appender.list.get(appender.list.size() - 1).getFormattedMessage())
+					.contains("(4 consecutive)");
+		} finally {
+			logger.setLevel(previous);
+			logger.detachAppender(appender);
+			appender.stop();
+		}
+	}
+
+	@Test
+	@DisplayName("null exception messages fall back to the exception class")
+	void nullMessageLogsClass() throws Exception {
+		when(embeddingService.resolveWarmTarget("local-embed")).thenReturn(target(ProviderType.OLLAMA));
+		doThrow(new IOException()).when(httpClient)
+				.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+		Logger logger = (Logger) LoggerFactory.getLogger(OllamaKeepWarm.class);
+		ListAppender<ILoggingEvent> appender = new ListAppender<>();
+		appender.start();
+		logger.addAppender(appender);
+		try {
+			keepWarm.warm();
+
+			assertThat(appender.list).hasSize(1);
+			assertThat(appender.list.get(0).getFormattedMessage()).contains("IOException");
+		} finally {
+			logger.detachAppender(appender);
+			appender.stop();
+		}
+	}
+
+	@Test
+	@DisplayName("recovery info carries the true consecutive failure count")
+	void recoveryInfoCarriesCount() throws Exception {
+		when(embeddingService.resolveWarmTarget("local-embed")).thenReturn(target(ProviderType.OLLAMA));
+		doThrow(new IOException("connection refused")).when(httpClient)
+				.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+		keepWarm.warm();
+		keepWarm.warm();
+		keepWarm.warm();
+		doReturn(response).when(httpClient).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+		Logger logger = (Logger) LoggerFactory.getLogger(OllamaKeepWarm.class);
+		ListAppender<ILoggingEvent> appender = new ListAppender<>();
+		appender.start();
+		logger.addAppender(appender);
+		try {
+			keepWarm.warm();
+
+			assertThat(appender.list).hasSize(1);
+			assertThat(appender.list.get(0).getLevel())
+					.isEqualTo(Level.INFO);
+			assertThat(appender.list.get(0).getFormattedMessage()).contains("3 consecutive");
+		} finally {
+			logger.detachAppender(appender);
+			appender.stop();
+		}
+	}
+
+	private static final class ManualClock extends Clock {
+		private final AtomicReference<Instant> now;
+
+		ManualClock(Instant now) {
+			this.now = new AtomicReference<>(now);
+		}
+
+		void advance(Duration step) {
+			now.updateAndGet(current -> current.plus(step));
+		}
+
+		@Override
+		public ZoneId getZone() {
+			return ZoneOffset.UTC;
+		}
+
+		@Override
+		public Clock withZone(ZoneId zone) {
+			return this;
+		}
+
+		@Override
+		public Instant instant() {
+			return now.get();
+		}
+	}
+
+	private HttpRequest captureRequest() throws Exception {		ArgumentCaptor<HttpRequest> captor = ArgumentCaptor.forClass(HttpRequest.class);
 		verify(httpClient).send(captor.capture(), any(HttpResponse.BodyHandler.class));
 		return captor.getValue();
 	}

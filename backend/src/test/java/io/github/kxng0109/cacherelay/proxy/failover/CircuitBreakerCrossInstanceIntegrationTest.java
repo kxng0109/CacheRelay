@@ -1,6 +1,6 @@
 package io.github.kxng0109.cacherelay.proxy.failover;
 
-import com.redis.testcontainers.RedisContainer;
+import io.github.kxng0109.cacherelay.SharedContainersBase;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -10,9 +10,6 @@ import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -31,17 +28,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * shared state — one instance tripping the circuit blocks the other, and after the cooldown exactly one of the two
  * racing instances wins the single HALF_OPEN probe; the winner's success then closes the circuit for both.
  */
-@Testcontainers
 @DisplayName("Cross-instance circuit breaker coordination through shared Redis")
-class CircuitBreakerCrossInstanceIntegrationTest {
-
-	@Container
-	static final RedisContainer REDIS = new RedisContainer(DockerImageName.parse("redis:8.10.1-alpine3.23"));
-
-	static {
-		// Start synchronously at class-load time so @BeforeAll can rely on the container being up.
-		REDIS.start();
-	}
+class CircuitBreakerCrossInstanceIntegrationTest extends SharedContainersBase {
 
 	private static StringRedisTemplate breakerTemplate;
 	private static DefaultRedisScript<Long> tryAcquireScript;
@@ -55,7 +43,8 @@ class CircuitBreakerCrossInstanceIntegrationTest {
 	@BeforeAll
 	static void connectToRedis() {
 		connectionFactory = new LettuceConnectionFactory(
-				new RedisStandaloneConfiguration(REDIS.getHost(), REDIS.getMappedPort(6379)));
+				new RedisStandaloneConfiguration(SharedContainersBase.redisHost(),
+						SharedContainersBase.redisPort()));
 		connectionFactory.afterPropertiesSet();
 		breakerTemplate = new StringRedisTemplate(connectionFactory);
 		breakerTemplate.afterPropertiesSet();

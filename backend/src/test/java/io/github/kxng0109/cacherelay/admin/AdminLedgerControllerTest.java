@@ -1,6 +1,8 @@
 package io.github.kxng0109.cacherelay.admin;
 
 import io.github.kxng0109.cacherelay.admin.dto.*;
+import io.github.kxng0109.cacherelay.ledger.DashboardService;
+import io.github.kxng0109.cacherelay.ledger.DashboardView;
 import io.github.kxng0109.cacherelay.ledger.UsageLedgerService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -8,6 +10,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.mock.web.MockHttpServletRequest;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -22,7 +25,8 @@ import static org.mockito.Mockito.*;
 class AdminLedgerControllerTest {
 
 	private final UsageLedgerService usageLedgerService = mock(UsageLedgerService.class);
-	private final AdminLedgerController controller = new AdminLedgerController(usageLedgerService);
+	private final DashboardService dashboards = mock(DashboardService.class);
+	private final AdminLedgerController controller = new AdminLedgerController(usageLedgerService, dashboards);
 
 	@Test
 	@DisplayName("getSummary delegates to service and returns 200 OK")
@@ -130,5 +134,50 @@ class AdminLedgerControllerTest {
 		ResponseEntity<LedgerEntryResponse> notFound = controller.getEntryByRequestId(missingId);
 		assertThat(notFound.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
 		assertThat(notFound.getBody()).isNull();
+	}
+
+	@Test
+	@DisplayName("getUserSummary attributes admin sessions and returns freshness headers")
+	void getUserSummaryAdminSession() {
+		UUID adminId = UUID.randomUUID();
+		UUID targetId = UUID.randomUUID();
+		Instant now = Instant.now();
+		LedgerSummaryResponse expected = new LedgerSummaryResponse(
+				5L, 500L, 250L, 750L, 7_000L, BigDecimal.valueOf(7_000, 6), 100.0,
+				List.of(), List.of(), List.of()
+		);
+		DashboardView view = new DashboardView(expected, now, now);
+		when(dashboards.getUserAsAdmin(eq(adminId.toString()), eq(targetId), any(), any(), any(), any()))
+				.thenReturn(view);
+
+		MockHttpServletRequest request = new MockHttpServletRequest("GET", "/v1/admin/ledger/user/" + targetId + "/summary");
+		request.setAttribute(AdminAuthFilter.ATTRIBUTE_ADMIN_ID, adminId);
+		ResponseEntity<LedgerSummaryResponse> response = controller.getUserSummary(
+				targetId, now.minusSeconds(3600), now, request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody()).isEqualTo(expected);
+		assertThat(response.getHeaders().getFirst(DashboardService.HEADER_GENERATED_AT)).isNotNull();
+		assertThat(response.getHeaders().getFirst(DashboardService.HEADER_WATERMARK)).isNotNull();
+	}
+
+	@Test
+	@DisplayName("getUserSummary attributes master-key callers distinctly")
+	void getUserSummaryMasterKey() {
+		UUID targetId = UUID.randomUUID();
+		Instant now = Instant.now();
+		LedgerSummaryResponse expected = new LedgerSummaryResponse(
+				0L, 0L, 0L, 0L, 0L, BigDecimal.valueOf(0, 6), 0.0,
+				List.of(), List.of(), List.of()
+		);
+		when(dashboards.getUserAsAdmin(eq("master-key"), eq(targetId), any(), any(), any(), any()))
+				.thenReturn(new DashboardView(expected, now, now));
+
+		MockHttpServletRequest request = new MockHttpServletRequest("GET", "/v1/admin/ledger/user/" + targetId + "/summary");
+		ResponseEntity<LedgerSummaryResponse> response = controller.getUserSummary(
+				targetId, null, null, request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		verify(dashboards).getUserAsAdmin(eq("master-key"), eq(targetId), isNull(), isNull(), any(), any());
 	}
 }

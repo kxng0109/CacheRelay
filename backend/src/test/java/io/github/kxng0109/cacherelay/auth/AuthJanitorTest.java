@@ -43,7 +43,7 @@ class AuthJanitorTest {
 		AuthAuditRepository audit = mock(AuthAuditRepository.class);
 		AuthProperties properties = new AuthProperties(null, null, null, null, null, null,
 				null, null, 				null, null, null, 180, Map.of("IN", 365), 5, null,
-				null);
+				null, null);
 		AuthJanitor janitor = new AuthJanitor(refresh, invites, audit, properties);
 
 		janitor.purge();

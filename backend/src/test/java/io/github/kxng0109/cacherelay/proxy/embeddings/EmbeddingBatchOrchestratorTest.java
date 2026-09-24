@@ -10,12 +10,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -33,6 +35,17 @@ class EmbeddingBatchOrchestratorTest {
 			"openai", ProviderType.OPENAI, URI.create("https://api.openai.com"),
 			new SensitiveString("key"), Duration.ofSeconds(5), Duration.ofSeconds(30)
 	);
+
+	@Test
+	@DisplayName("PreDestroy shuts the fan-out executor down (DC-08)")
+	void shutdownExecutorClosesExecutor() throws Exception {
+		orchestrator.shutdownExecutor();
+
+		Field field = EmbeddingBatchOrchestrator.class.getDeclaredField("executor");
+		field.setAccessible(true);
+		ExecutorService executor = (ExecutorService) field.get(orchestrator);
+		assertThat(executor.isShutdown()).isTrue();
+	}
 
 	@Test
 	@DisplayName("execute returns empty response when input is empty")

@@ -1,6 +1,6 @@
 package io.github.kxng0109.cacherelay.security.ratelimit;
 
-import com.redis.testcontainers.RedisContainer;
+import io.github.kxng0109.cacherelay.SharedContainersBase;
 import io.github.kxng0109.cacherelay.auth.UserAccount;
 import io.github.kxng0109.cacherelay.auth.UserAccountRepository;
 import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
@@ -15,14 +15,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.postgresql.PostgreSQLContainer;
-import org.testcontainers.utility.DockerImageName;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -59,7 +54,6 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code JdbcConnectionDetails} for JPA/Flyway). Requests are issued with the JDK {@link HttpClient} so the
  * test needs no additional test-client dependency.</p>
  */
-@Testcontainers
 @SpringBootTest(
 		webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
 		properties = {
@@ -75,22 +69,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 				"spring.data.redis.timeout=3s"
 		})
 @DisplayName("Rate limiting and virtual-key auth against real Redis")
-class RateLimitIntegrationTest {
+class RateLimitIntegrationTest extends SharedContainersBase {
 
 	private static final String PATH = "/v1/chat/completions";
 
-	@Container
-	static final RedisContainer REDIS = new RedisContainer(DockerImageName.parse("redis:8.10.1-alpine3.23"));
-
-	@Container
-	@ServiceConnection
-	static final PostgreSQLContainer POSTGRES =
-			new PostgreSQLContainer(DockerImageName.parse("postgres:16.15-alpine"));
-
 	@DynamicPropertySource
-	static void redisProperties(DynamicPropertyRegistry registry) {
-		registry.add("spring.data.redis.host", REDIS::getHost);
-		registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
+	static void sharedContainers(DynamicPropertyRegistry registry) {
+		registry.add("spring.datasource.url", SharedContainersBase::postgresJdbcUrl);
+		registry.add("spring.datasource.username", SharedContainersBase::postgresUsername);
+		registry.add("spring.datasource.password", SharedContainersBase::postgresPassword);
+		registry.add("spring.data.redis.host", SharedContainersBase::redisHost);
+		registry.add("spring.data.redis.port", SharedContainersBase::redisPort);
 	}
 
 	@LocalServerPort
@@ -212,11 +201,11 @@ class RateLimitIntegrationTest {
 		// New connections are accepted but never answered, so the rate-limit
 		// engine surfaces a DataAccessException and fails closed with 503.
 		try {
-			REDIS.getDockerClient().pauseContainerCmd(REDIS.getContainerId()).exec();
+			SharedContainersBase.pauseRedis();
 			HttpResponse<String> during = post(key, body("gpt-4o", 100));
 			assertThat(during.statusCode()).isEqualTo(503);
 		} finally {
-			REDIS.getDockerClient().unpauseContainerCmd(REDIS.getContainerId()).exec();
+			SharedContainersBase.unpauseRedis();
 		}
 
 		HttpResponse<String> after = post(key, body("gpt-4o", 100));

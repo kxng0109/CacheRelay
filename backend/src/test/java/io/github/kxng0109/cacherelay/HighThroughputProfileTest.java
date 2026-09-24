@@ -1,6 +1,5 @@
 package io.github.kxng0109.cacherelay;
 
-import com.redis.testcontainers.RedisContainer;
 import io.github.kxng0109.cacherelay.ledger.LedgerExecutorProperties;
 import io.github.kxng0109.cacherelay.proxy.embeddings.EmbeddingProperties;
 import io.github.kxng0109.cacherelay.proxy.sse.SseCapacityProperties;
@@ -10,12 +9,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.test.context.ActiveProfiles;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -23,21 +19,19 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Proves the {@code high-throughput} profile loads, merges over the base document, and overrides capacity ceilings
  * while leaving everything else at defaults.
  */
-@Testcontainers
 @SpringBootTest
 @ActiveProfiles("high-throughput")
 @DisplayName("high-throughput profile activation")
-class HighThroughputProfileTest {
+class HighThroughputProfileTest extends SharedContainersBase {
 
-	@Container
-	@ServiceConnection
-	static final PostgreSQLContainer POSTGRES =
-			new PostgreSQLContainer(DockerImageName.parse("postgres:16.15-alpine"));
-
-	@Container
-	@ServiceConnection
-	static final RedisContainer REDIS =
-			new RedisContainer(DockerImageName.parse("redis:8.10.1-alpine3.23"));
+	@DynamicPropertySource
+	static void sharedContainers(DynamicPropertyRegistry registry) {
+		registry.add("spring.datasource.url", SharedContainersBase::postgresJdbcUrl);
+		registry.add("spring.datasource.username", SharedContainersBase::postgresUsername);
+		registry.add("spring.datasource.password", SharedContainersBase::postgresPassword);
+		registry.add("spring.data.redis.host", SharedContainersBase::redisHost);
+		registry.add("spring.data.redis.port", SharedContainersBase::redisPort);
+	}
 
 	@Autowired
 	private LedgerExecutorProperties ledgerExecutor;

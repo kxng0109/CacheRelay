@@ -12,6 +12,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
@@ -32,6 +34,10 @@ import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
  * than 32 bytes, so sessions survive restarts and validate across instances. Under
  * {@code dev}/{@code test} a blank secret mints an ephemeral one (single-instance safe,
  * restart-invalid) with a warning.</p>
+ *
+ * <p>The invite-link base comes from {@code gateway.auth.invite-base-url} and is optional:
+ * blank keeps the request-derived fallback with a warning, while a malformed explicit
+ * value fails startup in every profile.</p>
  */
 @Configuration
 @Slf4j
@@ -51,6 +57,12 @@ public class AuthConfig {
 		List<String> activeProfiles = Arrays.asList(environment.getActiveProfiles());
 		this.secret = resolveSecret(properties.jwtSecret(), activeProfiles);
 		this.issuer = properties.jwtIssuer();
+		validateInviteBaseUrl(properties.inviteBaseUrl());
+		if (properties.inviteBaseUrl().isBlank()) {
+			log.warn("gateway.auth.invite-base-url is blank: invite links derive from the incoming "
+					+ "request host. Set GATEWAY_AUTH_INVITE_BASE_URL to the public frontend origin "
+					+ "in split-origin deployments.");
+		}
 		if (isEphemeral(properties.jwtSecret())) {
 			log.warn("gateway.auth.jwt-secret is blank: using an ephemeral signing secret. "
 					+ "Sessions invalidate on restart and multi-instance hosts will disagree. "
@@ -99,6 +111,42 @@ public class AuthConfig {
 							+ "manager. Active profiles: " + activeProfiles);
 		}
 		return JwtService.resolveSecretBytes(configured);
+	}
+
+	/**
+	 * Validates the configured invite-link base URL, failing fast on explicit
+	 * misconfiguration in any profile. Blank stays unset (invite links derive from
+	 * the incoming request host); anything else must be an absolute {@code http(s)}
+	 * URL with a host and no user info, query, or fragment, so generated links can
+	 * never carry a hostile scheme or a poisoned host.
+	 *
+	 * @param configured raw configured base, possibly {@code null} or blank
+	 * @throws IllegalStateException when a non-blank value is not an absolute http(s) URL
+	 */
+	static void validateInviteBaseUrl(String configured) {
+		if (configured == null || configured.isBlank()) {
+			return;
+		}
+		String trimmed = configured.trim();
+		URI base;
+		try {
+			base = new URI(trimmed);
+		} catch (URISyntaxException invalid) {
+			throw new IllegalStateException(inviteBaseMessage(trimmed), invalid);
+		}
+		String scheme = base.getScheme();
+		if (base.isOpaque() || scheme == null
+				|| (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme))
+				|| base.getHost() == null || base.getUserInfo() != null
+				|| base.getRawQuery() != null || base.getRawFragment() != null) {
+			throw new IllegalStateException(inviteBaseMessage(trimmed));
+		}
+	}
+
+	private static String inviteBaseMessage(String trimmed) {
+		return "gateway.auth.invite-base-url (GATEWAY_AUTH_INVITE_BASE_URL) must be an absolute "
+				+ "http(s) URL with a host and no user info, query, or fragment when set; blank keeps "
+				+ "the request-derived fallback. Offending value: '" + trimmed + "'";
 	}
 
 	/**

@@ -1,15 +1,12 @@
 package io.github.kxng0109.cacherelay.contracts;
 
-import com.redis.testcontainers.RedisContainer;
+import io.github.kxng0109.cacherelay.SharedContainersBase;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.postgresql.PostgreSQLContainer;
-import org.testcontainers.utility.DockerImageName;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -18,20 +15,18 @@ import static org.junit.jupiter.api.Assertions.*;
  * whose names contain dots. Dotted YAML keys are quoted so they bind as literal map keys rather than nested property
  * paths.
  */
-@Testcontainers
 @SpringBootTest
 @DisplayName("GatewayProperties binding")
-class GatewayPropertiesBindingTest {
+class GatewayPropertiesBindingTest extends SharedContainersBase {
 
-	@Container
-	@ServiceConnection
-	static final PostgreSQLContainer POSTGRES =
-			new PostgreSQLContainer(DockerImageName.parse("postgres:16.15-alpine"));
-
-	@Container
-	@ServiceConnection
-	static final RedisContainer REDIS =
-			new RedisContainer(DockerImageName.parse("redis:8.10.1-alpine3.23"));
+	@DynamicPropertySource
+	static void sharedContainers(DynamicPropertyRegistry registry) {
+		registry.add("spring.datasource.url", SharedContainersBase::postgresJdbcUrl);
+		registry.add("spring.datasource.username", SharedContainersBase::postgresUsername);
+		registry.add("spring.datasource.password", SharedContainersBase::postgresPassword);
+		registry.add("spring.data.redis.host", SharedContainersBase::redisHost);
+		registry.add("spring.data.redis.port", SharedContainersBase::redisPort);
+	}
 
 	@Autowired
 	private GatewayProperties gatewayProperties;

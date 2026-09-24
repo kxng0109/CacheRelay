@@ -2,7 +2,7 @@ package io.github.kxng0109.cacherelay.budget;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import com.redis.testcontainers.RedisContainer;
+import io.github.kxng0109.cacherelay.SharedContainersBase;
 import io.github.kxng0109.cacherelay.contracts.ProviderType;
 import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
 import io.github.kxng0109.cacherelay.ledger.CostCalculator;
@@ -12,8 +12,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.YearMonth;
 import java.time.ZoneOffset;
@@ -25,20 +23,14 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
-import static org.testcontainers.utility.DockerImageName.parse;
 
 /**
  * Proves the Lua budget script against real Redis: atomic allow/consume, first-denied-wins, check-before-increment
  * (denials consume nothing), zero-cost key silence, and month key shape. Wire-type coverage (Long vs String results) is
  * asserted through the enforcer in {@link BudgetEnforcerTest}; here the real script exercises real Redis semantics.
  */
-@Testcontainers
 @DisplayName("Budget Lua script against real Redis")
-class BudgetLuaIntegrationTest {
-
-	@Container
-	static final RedisContainer REDIS =
-			new RedisContainer(parse("redis:8.10.1-alpine3.23"));
+class BudgetLuaIntegrationTest extends SharedContainersBase {
 
 	private static StringRedisTemplate sharedTemplate;
 
@@ -46,7 +38,7 @@ class BudgetLuaIntegrationTest {
 		if (sharedTemplate == null) {
 			org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory factory =
 					new org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory(
-							REDIS.getHost(), REDIS.getMappedPort(6379));
+							SharedContainersBase.redisHost(), SharedContainersBase.redisPort());
 			factory.afterPropertiesSet();
 			sharedTemplate = new StringRedisTemplate(factory);
 			sharedTemplate.afterPropertiesSet();
