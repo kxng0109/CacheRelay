@@ -23,16 +23,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   OAuth token). Token-complete logins skip fetching; attempts fail closed (disabled/deleted deny,
   truncation denies, off-host follow-ups deny); misconfiguration fails startup. Team names enrich
   from IdP display names. Full `verify` green, branch >= 0.95.
-- **Usage capture, off by default (Phase 4):** `GATEWAY_CAPTURE_*` enables prompt/output capture
-  with deterministic request-id per-mille sampling, per-owner/key full-fidelity allowlists, and a
-  per-second persist ceiling. Hot path decides in nanoseconds (mean offer far below a 100µs bound)
-  and offers once to a bounded queue (drop with counters, never block); a background writer truncates,
-  redacts PII with throwaway vaults, gates on secret scans (credential hits suppress bodies with rule
-  metadata), and appends to hourly per-jurisdiction JSONL segments with sidecar manifests. TTL rows
-  expire (default 90d, strict 7d) via nightly purge with rewrite-on-row-TTL; per-owner erasure rewrites
-  segments. `GET /v1/admin/capture/recent` and `DELETE /v1/admin/capture/owner/{ownerId}` are
-  admin-only and audit-logged (`CAPTURE_READ`). Wired into both proxy completion paths. Full `verify`
-  green, branch >= 0.95.
 - **SSO webhooks, fast-lane invalidation (Phase 3b):** `POST /v1/sso/webhooks/{github,okta,`
   `entra,google}` (`GATEWAY_SSO_WEBHOOKS_*`, secrets ≥ 32 chars, misconfiguration fails startup)
   validate per-IdP contracts (GitHub HMAC-SHA256 incl. RFC test vector + ping/membership/org events;
@@ -95,6 +85,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when unset) and both probes validate content types, naming a wrong base URL instead of
   leaking parser errors or a false `scrape ok`. Debug chrome (route/theme footer, raw base
   URL) is dev-only; phantom `[x]` shortcut labels removed.
+
+### Removed
+
+- **Usage capture (Phase 4, removed same-day):** the prompt/output flight recorder
+  (`gateway.capture.*` / `GATEWAY_CAPTURE_*`, `GET /v1/admin/capture/recent`, `DELETE
+  /v1/admin/capture/owner/{ownerId}`, `CAPTURE_READ` audit) is deleted. Rationale:
+  local JSONL segments are instance-local (invisible across replicas without shared
+  storage) and the writer's eager directory creation failed startup while disabled.
+  Frontend Capture screens need a frontend-session follow-up (endpoints 404).
 
 ## [1.8.0] - 2026-09-22
 

@@ -809,15 +809,6 @@ Humans log in with local username+password or any configured SSO provider; API k
   ping/member/org events; Okta verification challenge + header secret + lifecycle events; Entra
   validation-token handshake + client-state echo; Google channel-token match) and stamp watermarks
   at the epoch for a prompt sweep re-check. Receivers never revoke; redeliveries are idempotent.
-- **Usage capture (off by default)**: `GATEWAY_CAPTURE_*` enables prompt/output capture with
-  deterministic request-id sampling (per-mille) plus per-owner/key full-fidelity allowlists and a
-  per-second persist ceiling. Hot path decides in nanoseconds and offers once to a bounded queue
-  (drop, never block); a background writer truncates, redacts PII with throwaway vaults, gates on
-  secret scans (credential hits suppress bodies), and appends to hourly per-jurisdiction JSONL
-  segments with sidecar manifests. Rows expire by TTL (default 90d, strict 7d); `GET
-  /v1/admin/capture/recent` (audited) reads bounded recent rows, `DELETE
-  /v1/admin/capture/owner/{ownerId}` erases per-owner. Longitudinal per-person analysis joins on
-  owner linkage, never on PII.
 - **Strict admin posture**: 5-minute admin access tokens, 7-day admin refresh ceilings, stealth-404 on every
   admin denial (probing cannot confirm the control plane exists), mandatory audit on every admin mutation, and
   per-response CSP nonces. No token ever touches `localStorage`.

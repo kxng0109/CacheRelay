@@ -42,8 +42,6 @@ public class AuthAuditService {
 	public static final String ACTION_SSO_REVOKE = "SSO_REVOKE";
 	/** Webhook authentication outcome (invalid signatures). */
 	public static final String ACTION_WEBHOOK_AUTH = "WEBHOOK_AUTH";
-	/** Admin read or erasure of captured usage content. */
-	public static final String ACTION_CAPTURE_READ = "CAPTURE_READ";
 
 	/** Informational events. */
 	public static final String SEVERITY_INFO = "INFO";
