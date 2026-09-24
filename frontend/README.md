@@ -1,10 +1,11 @@
 # CacheRelay Frontend — Enterprise Console
 
 Vite 8.3.0 + React 19.3.0 + TypeScript 6.0.2 + Tailwind CSS 4.3.3.
-Twelve lazy routes mapped to real gateway surfaces (`backend/docs/BACKEND_API_REFERENCE.md`):
-Overview, Playground (live SSE), Circuits, Keys, Ledger, Cache & budgets,
-Embeddings, Approvals (HITL), MCP, Observability, Login, Redeem.
-Product name resolves at runtime from `/v3/api-docs` `info.title`
+Fifteen lazy routes mapped to real gateway surfaces (`backend/docs/BACKEND_API_REFERENCE.md`):
+Overview, Usage (personal dashboard), Teams, Playground (live SSE), Circuits, Keys,
+Ledger (+ admin user drill-down `/ledger/user/:userId`), Cache & budgets,
+Embeddings, Approvals (HITL), MCP, Observability, Login (password + SSO),
+Redeem. Product name resolves at runtime from `/v3/api-docs` `info.title`
 (`CacheRelay AI Gateway & Resilient Reverse Proxy`); the static
 `<title>CacheRelay</title>` in `index.html` is the offline fallback.
 
@@ -23,10 +24,12 @@ Product name resolves at runtime from `/v3/api-docs` `info.title`
 
 ## Env (non-secret only — `VITE_*` is bundle-inlined)
 
-| Var                      | Default                 | Meaning                                                              |
-| ------------------------ | ----------------------- | -------------------------------------------------------------------- |
-| `VITE_API_BASE_URL`      | `http://localhost:8080` | Gateway base URL (contract: `backend/docs/BACKEND_API_REFERENCE.md`) |
-| `VITE_FEATURE_STREAMING` | `true`                  | SSE streaming paths (`data: <json>`, terminal `data: [DONE]`)        |
+| Var                        | Default                 | Meaning                                                                                                                   |
+| -------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `VITE_API_BASE_URL`        | `http://localhost:8080` | Gateway base URL (contract: `backend/docs/BACKEND_API_REFERENCE.md`)                                                      |
+| `VITE_MANAGEMENT_BASE_URL` | `http://localhost:9091` | Actuator base URL (SEC-15 management port; loopback pages default here when unset, other hosts fall back to same-origin)  |
+| `VITE_FEATURE_STREAMING`   | `true`                  | SSE streaming paths (`data: <json>`, terminal `data: [DONE]`)                                                             |
+| `VITE_SSO_PROVIDERS`       | _(empty)_               | SSO providers (comma-separated Spring registration ids, e.g. `google,github`); empty greys SSO out with "SSO not enabled" |
 
 Copy `.env.example` to `.env.local` (gitignored) for local overrides.
 Never commit tokens, keys, or credentials.
@@ -48,23 +51,72 @@ Never commit tokens, keys, or credentials.
   allow-list it for CORS — flagged, prod same-origin is unaffected). The
   master secret has no UI path by design (terminal/curl-only). Route tiers:
   public (Playground, Embeddings, Login, Redeem), session
-  (`RequireAuth`: Overview, MCP, Observability), admin (`RequireAdmin`
-  stealth 404: Circuits, Keys, Ledger, Cache, Approvals). Guests hitting `/`
-  land on `/login?next=<original>` and return after signing in; authed visits
-  to `/login`/`/redeem` bounce home. Sidebar, palette, and G-chords all hide
-  what the session may not see — no hints. See
+  (`RequireAuth`: Overview, Usage, Teams, MCP, Observability), admin
+  (`RequireAdmin` stealth 404: Circuits, Keys, Ledger, drill-down, Cache,
+  Approvals). Guests hitting `/` land on `/login?next=<original>` and return
+  after signing in; authed visits to `/login`/`/redeem` bounce home. Sidebar,
+  palette, and G-chords all hide what the session may not see — no hints. See
   `backend/docs/BACKEND_API_REFERENCE.md` §1–§3.
+- Login offers username/password plus SSO entry buttons driven by the
+  non-secret `VITE_SSO_PROVIDERS` allow-list (unconfigured SSO renders
+  greyed-out with "SSO not enabled", never a dead link). SSO success lands
+  on `/?sso=1#access_token=…&admin=…`; the shell intercepts the landing
+  before guards can bounce it, completes identity via `GET /v1/auth/me`,
+  moves the token to memory, and clears the fragment immediately (first
+  logins show a pending state with 30s timeout copy since IdP backfill
+  blocks). 401/403 at completion names IdP disablement instead of looping.
 - The Observability route renders a live latency centerpiece (`LatencyChart`,
   `React.lazy` + `Suspense` so the `echarts-vendor` chunk stays out of the
-  initial bundle): same-origin `/actuator/prometheus` (no auth), 15s poll,
+  initial bundle): management-port `/actuator/prometheus` (no auth, 15s poll,
+  `VITE_MANAGEMENT_BASE_URL` with a loopback `:9091` default when unset),
   P50/P95 from per-interval histogram deltas (never cumulative counters),
   theme follows the app toggle via v6 `setTheme`, container resizes via
-  `ResizeObserver`, textual P50/P95/RPS summary for assistive tech.
+  `ResizeObserver`, textual P50/P95/RPS summary for assistive tech. Both
+  probes validate content types before claiming health, so a wrong base URL
+  names itself (`not JSON` / `not Prometheus text`) instead of leaking
+  parser errors or a false `scrape ok`.
 - The Ledger route reads the real contract: `/v1/admin/ledger/entries` with
   the `PageResponse` envelope (`content` + `hasNext` drives paging),
   `costUsdMicros` per row, and summary cards (requests, billed µ$ via
   `totalCostUsdMicros`, avg duration via `averageDurationMs`). There is no
-  `cacheHitRate` field — the backend never emitted one.
+  `cacheHitRate` field — the backend never emitted one. Rows open a shared
+  overlay inspector drawer (420px, backdrop + `Esc` dismiss, focus return):
+  model/provider/cached chips, Cost/Duration/Tokens/derived-throughput
+  cards, sectioned receipt facts, single-receipt hydration
+  (`GET /v1/admin/ledger/entries/{id}`, gone receipts read as unavailable),
+  receipt + markdown copies, raw JSON, and prev/next walk. The table adds
+  short dates, grouped micro-costs, filter match counts with clear, and
+  jump-to-page. Every table in the console (Circuits, Keys, Models,
+  Embeddings, MCP, Cache budgets) shares the same drawer shell.
+- Usage dashboards compute on open, nothing precomputes: `/v1/me/usage`
+  (owner derived server-side from the session, trailing 7d default, 90d max)
+  and the admin drill-down `/v1/admin/ledger/user/{userId}/summary`
+  (audit-logged, admin-gated client-side too) share one board — freshness
+  from `X-Dashboard-Generated-At` ("updated Xs ago"), `byOwner`/`byModel`/
+  `byProvider` breakdowns, empty windows render "no usage in range" (never
+  an error), 400s carry narrow-the-window guidance, headerless 429s back
+  off client-side (retry ≤2, 1s/2s/8s-cap). Stealth 404s render a single
+  "admin unavailable" screen that never distinguishes no-access from
+  no-route and never retry-loops.
+- Teams are boundary proof, member lists only (no team-usage route exists
+  yet): `/v1/me/teams` (ACTIVE only, `[]` is normal) plus the admin org
+  picker (`GET /v1/admin/teams?org=`, 404 names unknown orgs). Sudden
+  cross-key 401s name IdP disablement ("contact your admin") instead of
+  "re-login and retry".
+- Every collection screen shares one empty trio (`shared/components/
+EmptyTrio.tsx`: status line + learning cue + optional link/button
+  action, identical container/type/action chrome). Probe failures
+  distinguish answered HTTP errors (red, e.g. `failed: HTTP 503`) from
+  unreachable endpoints (muted + retry — dev CORS gaps and real outages
+  look identical from here), and the header chip reads `probes:up/down`
+  since actuator reachability alone never proves gateway liveness. The
+  Models table drops its Actions column when no database-managed row is
+  visible; file-bound cells read muted `read-only` instead of dashes.
+- Shared number/date formatting (`shared/utils/format.ts`, Intl-only):
+  compact counts (`6.7K`), byte buckets (`256 MB`), significant-decimal
+  dollars (`$4.525`, `$0.00`), grouped micro-costs (`1,184µ$`), short
+  local dates with full-ISO hover titles. Measured zeros render as words
+  (`free`, `no cap`); unknowns render as `n/a`.
 - The shell shows a live rate-limit strip below the header once a credential
   is present and a gateway response has been observed (`RateLimitHeaders`
   over `shared/ratelimit` memory-only state). One smart row shows the binding
@@ -79,8 +131,8 @@ Never commit tokens, keys, or credentials.
   prod is same-origin and unaffected.
 - Keyboard-first shell: `Ctrl/⌘+K` palette (tier-filtered actions with a
   session-context footer), `G then <key>` chords (`O`verview `P`layground
-  `E`mbeddings `B` observability `C`ircuits `K`eys `L`edger `A`pprovals `M`CP,
-  never while typing, never beyond the session tier), `Ctrl/⌘+Enter` sends
+  `E`mbeddings `U`sage `T`eams `B` observability `C`ircuits `K`eys `L`edger
+  `A`pprovals `M`CP, never while typing, never beyond the session tier), `Ctrl/⌘+Enter` sends
   the playground prompt, `?` opens the shortcut sheet, `Esc` walks the
   ladder (dialog → drawer). Post-login focus lands on the screen heading.
 - Playground runs as blocks: each submission renders a `run #N · model`
@@ -93,10 +145,11 @@ Never commit tokens, keys, or credentials.
   clears all, stack capped at five. Approvals decisions hold their buttons
   (`aria-busy`, `Working…`) and confirm with a UTC timestamp toast.
 - Motion tokens (`--dur-micro/ui/panel/shimmer`, enter/exit easings) drive
-  the only permitted flourish (card lift, toast entrance, caret blink,
-  skeleton shimmer); keyboard-initiated actions stay instant and a
-  `prefers-reduced-motion` switch kills every animation while keeping all
-  state changes.
+  the only permitted flourish (card lift, toast entrance, inspector-drawer
+  slide-fade, caret blink, skeleton shimmer); keyboard-initiated actions
+  stay instant and a `prefers-reduced-motion` switch kills every animation
+  while keeping all state changes. Motion orients only — state is never
+  conveyed by animation.
 
 ## Quality gates
 
@@ -106,7 +159,7 @@ Never commit tokens, keys, or credentials.
 | `npm.cmd run format:check`    | Prettier 3.9.7 exact, check only                             |
 | `npm.cmd run typecheck`       | `tsc -b` (solution build; bare `--noEmit` is vacuous here)   |
 | `npm.cmd run test`            | Vitest 5 unit run (jsdom)                                    |
-| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently 98.6/97.0/98.7/99.2) |
+| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently 97.7/96.1/97.3/98.3) |
 | `npm.cmd run test:e2e`        | Playwright 1.63 smoke, chromium, Vite dev reuse              |
 | `npm.cmd run build-storybook` | Storybook 10.6.0 static build                                |
 
@@ -163,7 +216,7 @@ reporter for CI step summaries.
 `cleanup()` after each test, and closes the server at the end.
 `src/test/utils.tsx` renders UI with a fresh query client (no retries),
 memory router, and seeded memory-only credentials.
-30 suites / 363 tests: pure-unit (SSE parser, rate-limit parser/selector/store,
+54 suites / 609 tests: pure-unit (formatters, SSE parser, rate-limit parser/selector/store,
 Prometheus histogram parser/quantiles, ECharts registration, app boot,
 error mapping, URL allow-list, `?next=` validation, chord map, toast store)
 plus MSW integration per screen (happy/error/empty/adversarial).

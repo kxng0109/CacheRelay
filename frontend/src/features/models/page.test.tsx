@@ -37,20 +37,20 @@ beforeEach(() => {
 })
 
 describe('ModelsPage', () => {
-  it('lists aliases with source pills and file rows read-only', async () => {
+  it('lists aliases with source pills and file rows read only', async () => {
     server.use(listOk())
     renderApp(<ModelsPage />, { adminSession: true })
     const table = await screen.findByRole('table')
     expect(table).toHaveTextContent('file-gpt')
     expect(table).toHaveTextContent('db-fast')
     expect(
-      screen.getByText(/2 aliases · 1 file-bound \(read-only\) · 1 database-managed/i),
+      screen.getByText(/2 aliases · 1 file bound \(read only\) · 1 database-managed/i),
     ).toBeInTheDocument()
     const fileRow = within(table).getByText('file-gpt').closest('tr')
     expect(fileRow).not.toBeNull()
     if (fileRow !== null) {
-      expect(fileRow).toHaveTextContent('—')
-      expect(within(fileRow).getByTitle(/file-bound aliases are read-only/i)).toBeInTheDocument()
+      expect(fileRow).toHaveTextContent('read only')
+      expect(within(fileRow).getByTitle(/file bound aliases are read only/i)).toBeInTheDocument()
     }
   })
 
@@ -293,14 +293,14 @@ describe('ModelsPage', () => {
     expect(deletes).toBe(0)
   })
 
-  it('marks file-bound inspectors read-only with no replace action', async () => {
+  it('marks file bound inspectors read only with no replace action', async () => {
     const user = userEvent.setup()
     server.use(listOk())
     renderApp(<ModelsPage />, { adminSession: true })
     const table = await screen.findByRole('table')
     await user.click(within(table).getByText('file-gpt'))
     const inspector = screen.getByRole('complementary', { name: /alias inspector/i })
-    expect(inspector).toHaveTextContent(/file-bound aliases are read-only/i)
+    expect(inspector).toHaveTextContent(/file bound aliases are read only/i)
     expect(
       within(inspector).queryByRole('button', { name: /^replace plan$/i }),
     ).not.toBeInTheDocument()
@@ -337,7 +337,7 @@ describe('ModelsPage', () => {
       listOk(),
       http.put(
         '*/v1/admin/models/db-fast',
-        () => new HttpResponse(JSON.stringify({ message: 'file-bound' }), { status: 409 }),
+        () => new HttpResponse(JSON.stringify({ message: 'plan rejected' }), { status: 409 }),
       ),
     )
     renderApp(<ModelsPage />, { adminSession: true })
@@ -449,5 +449,112 @@ describe('ModelsPage', () => {
       expect(screen.getByRole('status')).toHaveTextContent(/strat-one created/i)
     })
     expect(body).toMatchObject({ name: 'strat-one', strategy: 'RACE' })
+  })
+
+  it('reports alias-list failures as alerts', async () => {
+    server.use(http.get('*/v1/admin/models', () => new HttpResponse('x', { status: 500 })))
+    renderApp(<ModelsPage />, { adminSession: true })
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/HTTP 500/)
+    })
+  })
+
+  it('selects and deselects rows on click', async () => {
+    const user = userEvent.setup()
+    server.use(listOk())
+    renderApp(<ModelsPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByText('db-fast'))
+    expect(await screen.findByRole('complementary')).toHaveTextContent('db-fast')
+    await user.click(within(table).getByText('db-fast'))
+    await waitFor(() => {
+      expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+    })
+  })
+
+  it('selects rows from the keyboard', async () => {
+    const user = userEvent.setup()
+    server.use(listOk())
+    renderApp(<ModelsPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    within(table).getByText('db-fast').closest('tr')?.focus()
+    await user.keyboard('{Enter}')
+    expect(await screen.findByRole('complementary')).toHaveTextContent('db-fast')
+    within(table).getByText('db-fast').closest('tr')?.focus()
+    await user.keyboard('{ }')
+    await waitFor(() => {
+      expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+    })
+  })
+
+  it('ignores non-action keys on rows', async () => {
+    const user = userEvent.setup()
+    server.use(listOk())
+    renderApp(<ModelsPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    within(table).getByText('db-fast').closest('tr')?.focus()
+    await user.keyboard('a')
+    expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+  })
+
+  it('seeds the replace editor with a blank step for empty chains', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/models', () =>
+        HttpResponse.json({
+          models: [{ name: 'empty-db', chain: [], strategy: 'SEQUENTIAL', source: 'database' }],
+        }),
+      ),
+    )
+    renderApp(<ModelsPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    expect(within(table).getByText('empty-db').closest('tr')).toHaveTextContent('none')
+    await user.click(within(table).getByText('empty-db'))
+    await user.click(await screen.findByRole('button', { name: /^replace plan$/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/replace plan:/i)).toHaveTextContent('empty-db')
+    })
+    expect(screen.getByLabelText(/provider 1/i)).toHaveValue('')
+  })
+
+  it('omits the actions column when no database alias is visible', async () => {
+    server.use(
+      http.get('*/v1/admin/models', () =>
+        HttpResponse.json({
+          models: [{ name: 'file-only', chain: [], strategy: 'SEQUENTIAL', source: 'file' }],
+        }),
+      ),
+    )
+    renderApp(<ModelsPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    expect(within(table).queryByText(/actions/i)).not.toBeInTheDocument()
+    expect(within(table).getByText('file-only')).toBeInTheDocument()
+  })
+
+  it('clears overrides back to null instead of sending blanks', async () => {
+    const user = userEvent.setup()
+    let body: unknown = null
+    server.use(
+      listOk(),
+      http.post('*/v1/admin/models', async ({ request }) => {
+        body = await request.json()
+        return HttpResponse.json(
+          { name: 'null-override', chain: [], strategy: 'SEQUENTIAL', source: 'database' },
+          { status: 201 },
+        )
+      }),
+    )
+    renderApp(<ModelsPage />, { adminSession: true })
+    await screen.findByRole('table')
+    await user.click(screen.getByRole('button', { name: /new alias/i }))
+    await user.type(screen.getByLabelText(/name \(lowercase slug\)/i), 'null-override')
+    await user.type(screen.getByLabelText(/provider 1/i), 'openai')
+    await user.type(screen.getByLabelText(/model override/i), 'claude-x')
+    await user.clear(screen.getByLabelText(/model override/i))
+    await user.click(screen.getByRole('button', { name: /create alias/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(/null-override created/i)
+    })
+    expect(body).toMatchObject({ chain: [{ providerName: 'openai', modelOverride: null }] })
   })
 })

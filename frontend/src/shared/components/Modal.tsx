@@ -13,7 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  * settings.
  *
  * @param props - Accessible label, title, optional subtitle, close button
- * label, close handler, and dialog content.
+ * label, wide layout flag, close handler, and dialog content.
  * @returns The modal dialog.
  */
 export function Modal({
@@ -21,6 +21,7 @@ export function Modal({
   title,
   subtitle,
   closeLabel,
+  wide = false,
   onClose,
   children,
 }: {
@@ -28,6 +29,7 @@ export function Modal({
   title: string
   subtitle?: string
   closeLabel: string
+  wide?: boolean
   onClose: () => void
   children: React.ReactNode
 }): React.JSX.Element {
@@ -61,7 +63,7 @@ export function Modal({
 
   return (
     <div
-      className={`fixed inset-0 z-50 flex items-center justify-center bg-night/60 p-4 transition-opacity duration-(--dur-panel) ${
+      className={`fixed inset-0 z-50 m-0 flex items-center justify-center bg-night/60 p-4 transition-opacity duration-(--dur-panel) ${
         show ? 'opacity-100' : 'opacity-0'
       }`}
       onClick={(e) => {
@@ -75,7 +77,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={label}
-        className={`max-h-[calc(100vh-2rem)] w-full max-w-lg space-y-4 overflow-y-auto rounded-xl border border-ink/10 bg-paper p-5 shadow-lift transition-[translate,opacity] duration-(--dur-panel) ease-enter motion-reduce:transition-none dark:border-parchment/10 dark:bg-night ${
+        className={`max-h-[calc(100vh-2rem)] w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} space-y-4 overflow-y-auto rounded-xl border border-ink/10 bg-paper p-5 shadow-lift transition-[translate,opacity] duration-(--dur-panel) ease-enter motion-reduce:transition-none dark:border-parchment/10 dark:bg-night ${
           show ? 'translate-y-0 opacity-100' : 'translate-y-2 opacity-0'
         }`}
       >

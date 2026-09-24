@@ -24,6 +24,21 @@ describe('Modal', () => {
     expect(screen.getByText('body')).toBeInTheDocument()
   })
 
+  it('renders wide on demand', () => {
+    renderApp(
+      <Modal
+        label="Wide dialog"
+        title="Wide dialog"
+        closeLabel="Close dialog"
+        onClose={vi.fn()}
+        wide
+      >
+        <p>body</p>
+      </Modal>,
+    )
+    expect(screen.getByRole('dialog', { name: /wide dialog/i })).toHaveClass('max-w-2xl')
+  })
+
   it('plays the exit transition on close button before closing', async () => {
     const user = userEvent.setup()
     const onClose = vi.fn()

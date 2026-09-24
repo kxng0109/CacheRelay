@@ -157,6 +157,11 @@ function ModelsBoard(): React.JSX.Element {
   const inspected = aliases.find((a) => a.name === selected) ?? null
   const inspectedEditable = inspected !== null && inspected.source === 'database'
   const fileCount = aliases.filter((a) => a.source === 'file').length
+  /**
+   * Whether any visible row carries row actions: the Actions column exists
+   * only then, so file-only boards never show a wall of filler dashes.
+   */
+  const showActions = visible.some((a) => a.source === 'database')
 
   /**
    * Creates the alias from the create form. Client checks mirror the
@@ -266,7 +271,7 @@ function ModelsBoard(): React.JSX.Element {
     <div className="space-y-6">
       <div className="space-y-4">
         <p className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft">
-          {aliases.length} aliases · {fileCount} file-bound (read-only) ·{' '}
+          {aliases.length} aliases · {fileCount} file bound (read only) ·{' '}
           {aliases.length - fileCount} database-managed
         </p>
         <div className="flex flex-wrap items-center gap-2">
@@ -404,9 +409,11 @@ function ModelsBoard(): React.JSX.Element {
                 <th scope="col" className="py-2 pr-3 font-medium">
                   Chain
                 </th>
-                <th scope="col" className="py-2 text-right font-medium">
-                  <span className="sr-only">Actions</span>
-                </th>
+                {showActions ? (
+                  <th scope="col" className="py-2 text-right font-medium">
+                    <span className="sr-only">Actions</span>
+                  </th>
+                ) : null}
               </tr>
             </thead>
             <tbody>
@@ -451,55 +458,59 @@ function ModelsBoard(): React.JSX.Element {
                       className="max-w-56 truncate py-2 pr-3 font-mono text-[13px]"
                       title={a.chain.map((s) => s.providerName).join(' → ')}
                     >
-                      {a.chain.length === 0 ? '—' : a.chain.map((s) => s.providerName).join(' → ')}
+                      {a.chain.length === 0
+                        ? 'none'
+                        : a.chain.map((s) => s.providerName).join(' → ')}
                     </td>
-                    <td className="py-2 text-right">
-                      {a.source === 'database' ? (
-                        confirming === a.name ? (
-                          <span className="inline-flex items-center gap-2 text-[13px]">
-                            Delete “{a.name}”?
+                    {showActions ? (
+                      <td className="py-2 text-right">
+                        {a.source === 'database' ? (
+                          confirming === a.name ? (
+                            <span className="inline-flex items-center gap-2 text-[13px]">
+                              Delete “{a.name}”?
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  onDelete(a.name)
+                                }}
+                                className="rounded-md border border-danger/40 px-2 py-1 text-danger dark:text-danger-soft"
+                              >
+                                Yes
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setConfirming(null)
+                                }}
+                                className="rounded-md border border-ink/15 px-2 py-1 dark:border-parchment/15"
+                              >
+                                No
+                              </button>
+                            </span>
+                          ) : (
                             <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation()
-                                onDelete(a.name)
+                                setConfirming(a.name)
                               }}
-                              className="rounded-md border border-danger/40 px-2 py-1 text-danger dark:text-danger-soft"
+                              className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
                             >
-                              Yes
+                              Delete
                             </button>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setConfirming(null)
-                              }}
-                              className="rounded-md border border-ink/15 px-2 py-1 dark:border-parchment/15"
-                            >
-                              No
-                            </button>
-                          </span>
+                          )
                         ) : (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              setConfirming(a.name)
-                            }}
-                            className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+                          <span
+                            className="font-mono text-xs text-ink-soft dark:text-parchment-soft"
+                            title="File bound aliases are read only"
                           >
-                            Delete
-                          </button>
-                        )
-                      ) : (
-                        <span
-                          className="font-mono text-xs text-ink-soft dark:text-parchment-soft"
-                          title="File-bound aliases are read-only"
-                        >
-                          —
-                        </span>
-                      )}
-                    </td>
+                            read only
+                          </span>
+                        )}
+                      </td>
+                    ) : null}
                   </tr>
                 )
               })}
@@ -595,7 +606,7 @@ function ModelsBoard(): React.JSX.Element {
             </button>
           ) : (
             <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
-              File-bound aliases are read-only.
+              File bound aliases are read only.
             </p>
           )}
         </InspectorShell>
@@ -624,8 +635,8 @@ export function ModelsPage(): React.JSX.Element {
         </p>
         <h1 className="font-display text-3xl font-medium tracking-tight">Models</h1>
         <p className="text-sm text-ink-soft dark:text-parchment-soft">
-          Aliases map client names to provider chains. Database aliases are editable. File-bound
-          aliases are read-only.
+          Aliases map client names to provider chains. Database aliases are editable. File bound
+          aliases are read only.
         </p>
       </div>
       <ModelsBoard />

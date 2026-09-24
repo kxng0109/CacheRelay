@@ -40,6 +40,15 @@ const ObservabilityPage = lazy(() =>
 const LoginPage = lazy(() =>
   import('../features/auth/LoginPage.js').then((m) => ({ default: m.LoginPage })),
 )
+const UsagePage = lazy(() =>
+  import('../features/usage/page.js').then((m) => ({ default: m.UsagePage })),
+)
+const TeamsPage = lazy(() =>
+  import('../features/teams/page.js').then((m) => ({ default: m.TeamsPage })),
+)
+const UserLedgerPage = lazy(() =>
+  import('../features/ledger/UserPage.js').then((m) => ({ default: m.UserLedgerPage })),
+)
 const RedeemPage = lazy(() =>
   import('../features/auth/RedeemPage.js').then((m) => ({ default: m.RedeemPage })),
 )
@@ -96,12 +105,15 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: authed(<OverviewPage />) },
       { path: 'playground', element: suspend(<PlaygroundPage />) },
+      { path: 'usage', element: authed(<UsagePage />) },
+      { path: 'teams', element: authed(<TeamsPage />) },
       { path: 'login', element: guest(<LoginPage />) },
       { path: 'redeem', element: guest(<RedeemPage />) },
       { path: 'circuits', element: guard(<CircuitsPage />) },
       { path: 'models', element: guard(<ModelsPage />) },
       { path: 'keys', element: guard(<KeysPage />) },
       { path: 'ledger', element: guard(<LedgerPage />) },
+      { path: 'ledger/user/:userId', element: guard(<UserLedgerPage />) },
       { path: 'cache', element: guard(<CachePage />) },
       { path: 'embeddings', element: suspend(<EmbeddingsPage />) },
       { path: 'approvals', element: guard(<ApprovalsPage />) },

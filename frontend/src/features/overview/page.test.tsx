@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -193,7 +193,12 @@ describe('OverviewPage', () => {
     })
     expect(screen.getByText(/live rps/i)).toBeInTheDocument()
     expect(screen.getByText(/top model/i)).toBeInTheDocument()
-    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(2)
+    expect(screen.getByText('none')).toBeInTheDocument()
+    const liveRpsCell = screen.getByText(/live rps/i).closest('div')
+    expect(liveRpsCell).not.toBeNull()
+    if (liveRpsCell !== null) {
+      expect(within(liveRpsCell).getByText('n/a')).toBeInTheDocument()
+    }
     expect(screen.getByText(/across 0 models/i)).toBeInTheDocument()
   })
 

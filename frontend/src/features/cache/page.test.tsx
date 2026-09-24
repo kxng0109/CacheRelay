@@ -369,6 +369,8 @@ describe('CachePage', () => {
       expect(screen.getByText(/level is required/i)).toBeInTheDocument()
     })
     expect(screen.getAllByText(/expected number, received NaN/i)).toHaveLength(2)
+    expect(screen.getByLabelText(/minute cap/i)).toHaveAttribute('min', '0')
+    expect(screen.getByLabelText(/month cap/i)).toHaveAttribute('min', '0')
   })
 
   it('copies visible budgets as a markdown table', async () => {

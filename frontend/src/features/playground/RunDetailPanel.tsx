@@ -41,9 +41,9 @@ export function RunDetailPanel({ detail }: { detail: RunDetail }): React.JSX.Ele
   const [markdownCopied, setMarkdownCopied] = useState(false)
   const [copyError, setCopyError] = useState<string | null>(null)
 
-  const latency = detail.latencyMs?.toFixed(0) ?? '—'
+  const latency = detail.latencyMs?.toFixed(0) ?? 'n/a'
   const latencyLabel = detail.latencyMs === undefined ? latency : `${latency} ms`
-  const frames = String(detail.frames ?? '—')
+  const frames = String(detail.frames ?? 'n/a')
   const cache = detail.cacheTier ?? 'live'
 
   const payload = JSON.stringify(

@@ -2,6 +2,7 @@ import { Suspense, lazy, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useShallow } from 'zustand/react/shallow'
 import { resolveApiBase, resolveManagementBase } from '../../shared/api/client.js'
+import { isProbeHttpFailure } from './probe.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { PulseStrip } from './PulseStrip.js'
 
@@ -18,20 +19,20 @@ const ENDPOINTS: EndpointInfo[] = [
   {
     name: 'Metrics (Prometheus)',
     path: '/actuator/prometheus',
-    purpose: 'Latency histograms and counters. Scrape, do not render secrets here.',
-    auth: 'none required',
+    purpose: 'Latency histograms and counters, read by your monitoring scraper.',
+    auth: 'No key needed',
   },
   {
     name: 'API reference',
     path: '/swagger-ui.html',
     purpose: 'Interactive endpoint explorer.',
-    auth: 'none required to view; admin key to call admin routes',
+    auth: 'Viewing is open; admin routes need an admin key',
   },
   {
     name: 'API docs',
     path: '/v3/api-docs',
-    purpose: 'Machine-readable OpenAPI document.',
-    auth: 'none required',
+    purpose: 'Machine readable OpenAPI document.',
+    auth: 'No key needed',
   },
 ]
 
@@ -115,7 +116,7 @@ export function ObservabilityPage(): React.JSX.Element {
     refetchInterval: 15_000,
   })
 
-  const gateway = health.isPending ? 'probing' : health.data?.status === 'UP' ? 'up' : 'down'
+  const probes = health.isPending ? 'probing' : health.data?.status === 'UP' ? 'up' : 'down'
   // The metrics endpoint row is operator tooling: regular sessions do not
   // need its path advertised, admins keep the full list.
   const visibleEndpoints = ENDPOINTS.filter((e) => e.path !== '/actuator/prometheus' || isAdmin)
@@ -147,7 +148,7 @@ export function ObservabilityPage(): React.JSX.Element {
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="font-display text-3xl font-medium tracking-tight">Observability</h1>
           <span className="rounded-full border border-ink/15 px-2 py-0.5 font-mono text-xs dark:border-parchment/15">
-            gateway:{gateway}
+            probes:{probes}
           </span>
           <span className="flex-1" />
           <span className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
@@ -172,14 +173,14 @@ export function ObservabilityPage(): React.JSX.Element {
             <span
               aria-hidden="true"
               className={
-                gateway === 'up'
+                probes === 'up'
                   ? 'text-success dark:text-success-soft'
-                  : gateway === 'down'
+                  : probes === 'down'
                     ? 'text-danger dark:text-danger-soft'
                     : ''
               }
             >
-              {gateway === 'up' ? '●' : gateway === 'down' ? '■' : '○'}
+              {probes === 'up' ? '●' : probes === 'down' ? '■' : '○'}
             </span>
             Liveness {health.data?.status === 'UP' ? 'UP' : health.data ? 'DOWN' : ''}
           </p>
@@ -195,7 +196,15 @@ export function ObservabilityPage(): React.JSX.Element {
               role="alert"
               className="rounded-md border border-ink/10 p-3 dark:border-parchment/10"
             >
-              <p className="text-sm text-danger dark:text-danger-soft">{health.error.message}</p>
+              <p
+                className={
+                  isProbeHttpFailure(health.error)
+                    ? 'text-sm text-danger dark:text-danger-soft'
+                    : 'text-sm text-ink-soft dark:text-parchment-soft'
+                }
+              >
+                {health.error.message}
+              </p>
               <p className="mt-1 font-mono text-xs text-ink-soft dark:text-parchment-soft">
                 GET /actuator/health · auto-retries every 15s
               </p>
@@ -250,7 +259,15 @@ export function ObservabilityPage(): React.JSX.Element {
                 role="alert"
                 className="rounded-md border border-ink/10 p-3 dark:border-parchment/10"
               >
-                <p className="text-sm text-danger dark:text-danger-soft">{metrics.error.message}</p>
+                <p
+                  className={
+                    isProbeHttpFailure(metrics.error)
+                      ? 'text-sm text-danger dark:text-danger-soft'
+                      : 'text-sm text-ink-soft dark:text-parchment-soft'
+                  }
+                >
+                  {metrics.error.message}
+                </p>
                 <p className="mt-1 font-mono text-xs text-ink-soft dark:text-parchment-soft">
                   GET /actuator/prometheus · auto-retries every 15s
                 </p>
@@ -301,9 +318,9 @@ export function ObservabilityPage(): React.JSX.Element {
           <li className="flex items-baseline justify-between gap-3">
             <span>
               <span aria-hidden="true" className="mr-1">
-                {gateway === 'up' ? '●' : gateway === 'down' ? '■' : '○'}
+                {probes === 'up' ? '●' : probes === 'down' ? '■' : '○'}
               </span>
-              Gateway {gateway}
+              Probes {probes}
             </span>
             <span className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft">
               /actuator/health
@@ -329,35 +346,6 @@ export function ObservabilityPage(): React.JSX.Element {
           stack, so the rail reads the probes directly.
         </p>
       </section>
-      <details className="rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
-        <summary className="cursor-pointer font-mono text-[13px]">
-          Reading cache headers on a stream
-        </summary>
-        <dl className="mt-2 space-y-2 text-[13px]">
-          <div className="flex justify-between gap-3">
-            <dt className="font-mono">X-Cache</dt>
-            <dd className="text-right text-ink-soft dark:text-parchment-soft">
-              HIT (L0-Memory), HIT (L1-Exact), or HIT (L2-Semantic). Absent means a provider-backed
-              live response.
-            </dd>
-          </div>
-          <div className="flex justify-between gap-3">
-            <dt className="font-mono">X-CacheRelay-Similarity-Score</dt>
-            <dd className="text-right text-ink-soft dark:text-parchment-soft">
-              Semantic similarity, 4 decimals; 1.0 on exact tiers.
-            </dd>
-          </div>
-          <div className="flex justify-between gap-3">
-            <dt className="font-mono">Age</dt>
-            <dd className="text-right text-ink-soft dark:text-parchment-soft">
-              Seconds since the cached entry was stored.
-            </dd>
-          </div>
-        </dl>
-        <p className="mt-2 text-[13px] text-ink-soft dark:text-parchment-soft">
-          The Playground stream header prints all three live on every run.
-        </p>
-      </details>
       <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
         <ul className="space-y-2 text-sm">
           {visibleEndpoints.map((e) => (
@@ -368,7 +356,7 @@ export function ObservabilityPage(): React.JSX.Element {
                   setSelected(e.path === selected ? null : e.path)
                 }}
                 aria-pressed={e.path === selected}
-                className={`flex w-full items-center gap-3 rounded-lg border border-ink/10 p-3 text-left dark:border-parchment/10 ${
+                className={`flex w-full items-center gap-3 rounded-lg border border-ink/10 bg-cream p-3 text-left dark:border-parchment/10 dark:bg-transparent ${
                   e.path === selected ? 'bg-ink/4 dark:bg-parchment/6' : ''
                 }`}
               >

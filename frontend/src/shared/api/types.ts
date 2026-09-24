@@ -334,3 +334,46 @@ export interface McpTool {
   inputSchema: unknown
   annotations: McpToolAnnotations | null
 }
+
+/**
+ * One team membership of the session account. Mirrors the backend
+ * `TeamMembershipResponse` record field for field.
+ */
+export interface TeamMembership {
+  teamId: string
+  teamName: string
+  orgSlug: string
+  role: string
+  status: string
+}
+
+/**
+ * One SSO-provisioned team in an org with its live active-member count.
+ * Mirrors the backend `TeamResponse` record.
+ */
+export interface OrgTeam {
+  teamId: string
+  orgSlug: string
+  name: string
+  idpGroupId: string
+  activeMembers: number
+}
+
+/**
+ * Session identity from `GET /v1/auth/me`.
+ */
+export interface SessionIdentity {
+  userId: string
+  username: string
+  admin: boolean
+}
+
+/**
+ * Dashboard payload: the summary plus freshness coordinates from the
+ * `X-Dashboard-Generated-At` / `X-Dashboard-Watermark` response headers.
+ */
+export interface DashboardView {
+  summary: LedgerSummary
+  generatedAt: string | null
+  watermark: string | null
+}

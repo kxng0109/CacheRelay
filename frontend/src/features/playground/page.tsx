@@ -8,6 +8,7 @@ import { GatewayClient } from '../../shared/api/client.js'
 import { isStreamingEnabled } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
+import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
 import { RunDetailPanel } from './RunDetailPanel.js'
 import { RequestCard } from './RequestCard.js'
 import type { StreamSummary } from './SseStreamViewer.js'
@@ -320,13 +321,10 @@ export function PlaygroundPage(): React.JSX.Element {
             </p>
           </details>
           {submitted === null ? (
-            <div className="rise rounded-xl border border-dashed border-ink/20 bg-cream p-6 text-center sm:p-8 dark:border-parchment/20 dark:bg-parchment/5">
-              <p className="font-display text-xl font-medium tracking-tight">No output yet</p>
-              <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-soft dark:text-parchment-soft">
-                Pick a model, paste a key, write a prompt. Then send. Tokens, cost, and phase show
-                here as the stream flows. Recipes live under Start from a recipe instead above.
-              </p>
-            </div>
+            <EmptyTrio
+              title="No output yet"
+              cue="Pick a model, paste a key, write a prompt. Then send. Tokens, cost, and phase show here as the stream flows. Recipes live under Start from a recipe instead above."
+            />
           ) : (
             <section
               ref={outputRef}

@@ -62,7 +62,7 @@ export function OverviewPage(): React.JSX.Element {
 
   /**
    * Live requests-per-second from the latency chart's newest point. Null
-   * until two scrapes exist — the cell shows an em dash, never a zero that
+   * until two scrapes exist — the cell shows n/a, never a zero that
    * would read as a dead gateway.
    */
   const [liveRps, setLiveRps] = useState<number | null>(null)

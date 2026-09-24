@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Link } from 'react-router'
 import { GatewayClient } from '../../shared/api/client.js'
+import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
 import {
   formatCount,
   formatDurationMs,
@@ -102,19 +102,11 @@ function LedgerBoard(): React.JSX.Element {
             {logs.error.message}
           </p>
         ) : logs.data === undefined || entries.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-ink/20 bg-cream p-6 text-center dark:border-parchment/20 dark:bg-parchment/5">
-            <p className="font-display text-xl font-medium tracking-tight">No entries yet</p>
-            <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-soft dark:text-parchment-soft">
-              Send traffic through the gateway to populate the audit log. Each request lands here
-              with model, cost, and timestamp.
-            </p>
-            <Link
-              to="/playground"
-              className="mt-3 inline-block rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
-            >
-              Open playground
-            </Link>
-          </div>
+          <EmptyTrio
+            title="No entries yet"
+            cue="Send traffic through the gateway to populate the audit log. Each request lands here with model, cost, and timestamp."
+            action={{ label: 'Open playground', to: '/playground' }}
+          />
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-2">
@@ -275,7 +267,7 @@ function LedgerBoard(): React.JSX.Element {
                         onChange={(e) => {
                           setJump(e.target.value.replace(/[^0-9]/g, ''))
                         }}
-                        placeholder={`1–${String(logs.data.totalPages)}`}
+                        placeholder={`1 to ${String(logs.data.totalPages)}`}
                         className="w-20 rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-[13px] tnum dark:border-parchment/15"
                       />
                       <button

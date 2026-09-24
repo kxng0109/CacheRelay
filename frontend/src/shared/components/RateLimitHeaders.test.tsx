@@ -89,6 +89,6 @@ describe('RateLimitHeaders', () => {
         snapshot={{ dimension: 'RPM', limit: 60, remaining: 59, reset: null, retryAfter: null }}
       />,
     )
-    expect(screen.getByRole('status')).toHaveTextContent('Resets in: —')
+    expect(screen.getByRole('status')).toHaveTextContent('Resets in: n/a')
   })
 })

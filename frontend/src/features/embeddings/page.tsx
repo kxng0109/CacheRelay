@@ -7,6 +7,7 @@ import { GatewayClient } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { ModelSelect } from '../../shared/models/ModelSelect.js'
+import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
 import { formatShortDate } from '../../shared/utils/format.js'
 
@@ -301,19 +302,11 @@ export function EmbeddingsPage(): React.JSX.Element {
             />
           </div>
           {runs.length === 0 ? (
-            <div className="rise rounded-xl border border-dashed border-ink/20 bg-cream p-6 text-center sm:p-8 dark:border-parchment/20 dark:bg-parchment/5">
-              <p className="font-display text-xl font-medium tracking-tight">No runs yet</p>
-              <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-soft dark:text-parchment-soft">
-                Paste a key, pick a model, submit text. Vectors and usage land here.
-              </p>
-              <button
-                type="button"
-                onClick={fillSample}
-                className="mt-3 rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
-              >
-                Fill sample text
-              </button>
-            </div>
+            <EmptyTrio
+              title="No runs yet"
+              cue="Paste a key, pick a model, submit text. Vectors and usage land here."
+              action={{ label: 'Fill sample text', onClick: fillSample }}
+            />
           ) : visible.length === 0 ? (
             <p className="text-sm text-ink-soft dark:text-parchment-soft">
               No runs match this filter.
@@ -367,8 +360,8 @@ export function EmbeddingsPage(): React.JSX.Element {
                     </td>
                     <td className="max-w-44 truncate py-2 pr-3 font-mono text-[13px]">{r.model}</td>
                     <td className="py-2 pr-3 text-right text-[13px] tnum">{r.chars}</td>
-                    <td className="py-2 pr-3 text-right text-[13px] tnum">{r.vecs ?? '—'}</td>
-                    <td className="py-2 pr-3 text-right text-[13px] tnum">{r.dims ?? '—'}</td>
+                    <td className="py-2 pr-3 text-right text-[13px] tnum">{r.vecs ?? 'n/a'}</td>
+                    <td className="py-2 pr-3 text-right text-[13px] tnum">{r.dims ?? 'n/a'}</td>
                     <td className="py-2 text-right text-[13px]">
                       {r.status === 'ok' ? '● ok' : '■ fail'}
                     </td>
@@ -402,7 +395,7 @@ export function EmbeddingsPage(): React.JSX.Element {
               <div className="flex justify-between gap-3">
                 <dt className="text-ink-soft dark:text-parchment-soft">Chars / vectors / dims</dt>
                 <dd className="tnum">
-                  {inspected.chars} / {inspected.vecs ?? '—'} / {inspected.dims ?? '—'}
+                  {inspected.chars} / {inspected.vecs ?? 'n/a'} / {inspected.dims ?? 'n/a'}
                 </dd>
               </div>
               {inspected.error === null ? null : (

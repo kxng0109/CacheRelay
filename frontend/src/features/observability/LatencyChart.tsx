@@ -6,6 +6,7 @@ import { echarts } from '../../shared/echarts/setup.js'
 import type { EChartsOption } from '../../shared/echarts/setup.js'
 import { useUiStore } from '../../shared/store.js'
 import { MAX_POINTS, appendLatencyPoint, parsePrometheusHistogram } from './prometheus.js'
+import { isProbeHttpFailure } from './probe.js'
 import type { Accumulator, LatencyPoint } from './prometheus.js'
 
 const POLL_MS = 15_000
@@ -170,7 +171,14 @@ export default function LatencyChart({
     <section aria-label="Gateway latency">
       <h2 className="text-sm font-semibold tracking-tight">Request latency (P50/P95/P99)</h2>
       {metrics.error instanceof Error ? (
-        <p role="alert" className="text-sm text-danger dark:text-danger-soft">
+        <p
+          role="alert"
+          className={
+            isProbeHttpFailure(metrics.error)
+              ? 'text-sm text-danger dark:text-danger-soft'
+              : 'text-sm text-ink-soft dark:text-parchment-soft'
+          }
+        >
           {metrics.error.message}
         </p>
       ) : null}

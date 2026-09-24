@@ -100,7 +100,7 @@ export function ProviderBoard(): React.JSX.Element {
                     </span>
                   </td>
                   <td className="py-2 pr-3 text-[13px] text-ink-soft dark:text-parchment-soft">
-                    {p.keyConfigured ? 'set' : '—'}
+                    {p.keyConfigured ? 'set' : 'unset'}
                   </td>
                   <td className="py-2 pr-3 font-mono text-[13px]">{p.circuitState}</td>
                   <td className="py-2 text-right text-[13px] tnum">{p.aliasReferences}</td>

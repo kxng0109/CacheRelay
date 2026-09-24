@@ -6,6 +6,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router'
 import * as z from 'zod/v4'
 import { resolveNext } from '../../shared/auth/next.js'
 import { login } from '../../shared/auth/session.js'
+import { SsoButtons } from './SsoButtons.js'
 
 const schema = z.object({
   username: z.string().min(1, 'Username is required'),
@@ -155,13 +156,22 @@ export function LoginPage(): React.JSX.Element {
           {isSubmitting ? 'Logging in…' : 'Log in'}
         </button>
       </form>
-      <p className="text-[13px] text-ink-soft dark:text-parchment-soft">First account?</p>
-      <Link
-        to="/redeem"
-        className="block w-full rounded-md border border-ink/15 px-4 py-2 text-center text-sm dark:border-parchment/15"
-      >
-        Redeem an invite instead
-      </Link>
+      <section aria-label="Single sign-on" className="space-y-2">
+        <h2 className="text-[13px] font-medium">Single sign-on</h2>
+        <SsoButtons />
+      </section>
+      <div className="space-y-2 border-t border-ink/10 pt-3 dark:border-parchment/10">
+        <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
+          First account? Fresh backends have no accounts yet. The first redemption becomes its
+          admin.
+        </p>
+        <Link
+          to="/redeem"
+          className="block w-full rounded-md border border-ink/15 px-4 py-2 text-center text-sm dark:border-parchment/15"
+        >
+          Redeem an invite instead
+        </Link>
+      </div>
       <p className="text-center font-mono text-xs text-ink-soft dark:text-parchment-soft">
         session in memory only
       </p>

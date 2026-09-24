@@ -9,6 +9,7 @@ const ROWS: readonly (readonly [string, string])[] = [
   ['Ctrl/⌘ + K', 'Command menu'],
   ['Ctrl/⌘ + Enter', 'Send playground prompt'],
   ['G then O / P / E', 'Overview / Playground / Embeddings'],
+  ['G then U / T', 'Usage / Teams'],
   ['G then B / M', 'Observability / MCP'],
   ['G then C / K / L / A', 'Circuits / Keys / Ledger / Approvals'],
   ['?', 'This shortcut sheet'],

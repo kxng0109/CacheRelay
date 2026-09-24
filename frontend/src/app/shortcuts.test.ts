@@ -12,6 +12,8 @@ describe('targetForChord', () => {
     expect(targetForChord('l')).toBe('/ledger')
     expect(targetForChord('a')).toBe('/approvals')
     expect(targetForChord('m')).toBe('/mcp')
+    expect(targetForChord('u')).toBe('/usage')
+    expect(targetForChord('t')).toBe('/teams')
   })
 
   it('is case-insensitive and rejects unbound keys', () => {

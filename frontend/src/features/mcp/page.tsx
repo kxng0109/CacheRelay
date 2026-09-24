@@ -165,10 +165,10 @@ export function McpPage(): React.JSX.Element {
                         {t.name}
                       </td>
                       <td className="max-w-96 truncate py-2 pr-3 text-[13px]">
-                        {t.description ?? '—'}
+                        {t.description ?? 'n/a'}
                       </td>
                       <td className="py-2 text-right text-[13px]">
-                        {permissionBadges(t.annotations).join(' · ') || '—'}
+                        {permissionBadges(t.annotations).join(' · ') || 'none'}
                       </td>
                     </tr>
                   ))}
@@ -192,7 +192,7 @@ export function McpPage(): React.JSX.Element {
                 {inspected.description ?? 'No description.'}
               </p>
               <p className="text-[13px]">
-                Permissions: {permissionBadges(inspected.annotations).join(' · ') || '—'}
+                Permissions: {permissionBadges(inspected.annotations).join(' · ') || 'none'}
               </p>
               <div>
                 <p className="mb-1 text-[13px] text-ink-soft dark:text-parchment-soft">

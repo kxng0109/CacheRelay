@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form'
 import { Plus } from 'lucide-react'
 import * as z from 'zod/v4'
 import { GatewayClient } from '../../shared/api/client.js'
+import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
 import { Modal } from '../../shared/components/Modal.js'
 import { formatBytes, formatMicros } from '../../shared/utils/format.js'
 import { toErrorMessage } from '../../shared/api/client.js'
@@ -312,21 +313,11 @@ function CacheBoard(): React.JSX.Element {
           {budgets.error.message}
         </p>
       ) : budgets.data === undefined || budgets.data.budgets.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-ink/20 bg-cream p-6 text-center dark:border-parchment/20 dark:bg-parchment/5">
-          <p className="font-display text-xl font-medium tracking-tight">No budgets yet</p>
-          <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-soft dark:text-parchment-soft">
-            Set spending caps per key, team, or org. Zero means no cap. Breaches alert through the
-            webhook.
-          </p>
-          <button
-            type="button"
-            onClick={openCreate}
-            className="mt-3 inline-flex items-center gap-2 rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
-          >
-            <Plus aria-hidden="true" className="size-4" />
-            Create budget
-          </button>
-        </div>
+        <EmptyTrio
+          title="No budgets yet"
+          cue="Set spending caps per key, team, or org. Zero means no cap. Breaches alert through the webhook."
+          action={{ label: 'Create budget', onClick: openCreate }}
+        />
       ) : (
         <table className="w-full text-left text-sm">
           <caption className="sr-only">Spend budgets</caption>
@@ -424,6 +415,7 @@ function CacheBoard(): React.JSX.Element {
               <input
                 id="budget-minute"
                 type="number"
+                min={0}
                 {...register('minuteMicros', { valueAsNumber: true })}
                 className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
               />
@@ -440,6 +432,7 @@ function CacheBoard(): React.JSX.Element {
               <input
                 id="budget-month"
                 type="number"
+                min={0}
                 {...register('monthMicros', { valueAsNumber: true })}
                 className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
               />

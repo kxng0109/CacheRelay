@@ -92,17 +92,17 @@ export function PulseStrip({ pollMs = POLL_MS }: { pollMs?: number }): React.JSX
   const heapUsed = pulse?.heapUsedBytes ?? null
   const heapMax = pulse?.heapMaxBytes ?? null
 
-  const uptime = uptimeSeconds === null ? '—' : formatUptime(uptimeSeconds)
-  const requests = requestsTotal === null ? '—' : requestsTotal.toLocaleString('en-US')
+  const uptime = uptimeSeconds === null ? 'n/a' : formatUptime(uptimeSeconds)
+  const requests = requestsTotal === null ? 'n/a' : requestsTotal.toLocaleString('en-US')
   const errorRate =
     requestsTotal === null || requestsTotal <= 0 || errorsTotal === null
-      ? '—'
+      ? 'n/a'
       : `${((100 * errorsTotal) / requestsTotal).toFixed(2)}%`
   const errorsHot = (errorsTotal ?? 0) > 0
-  const p99 = p99Ms === null ? '—' : `${p99Ms.toFixed(0)} ms`
-  const streams = liveStreams === null ? '—' : String(liveStreams)
+  const p99 = p99Ms === null ? 'n/a' : `${p99Ms.toFixed(0)} ms`
+  const streams = liveStreams === null ? 'n/a' : String(liveStreams)
   const streamsLive = (liveStreams ?? 0) > 0
-  const heap = heapUsed === null ? '—' : formatBytes(heapUsed)
+  const heap = heapUsed === null ? 'n/a' : formatBytes(heapUsed)
   const heapSub = heapMax === null ? 'heap in use' : `of ${formatBytes(heapMax)}`
 
   return (

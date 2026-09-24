@@ -8,6 +8,7 @@ import {
   ChevronsRight,
   Database,
   FlaskConical,
+  Gauge,
   KeyRound,
   Layers,
   LayoutDashboard,
@@ -18,9 +19,10 @@ import {
   ShieldCheck,
   Sun,
   SunMoon,
+  Users,
   Zap,
 } from 'lucide-react'
-import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router'
+import { Link, NavLink, Outlet, useLocation, useNavigate, useSearchParams } from 'react-router'
 import { useShallow } from 'zustand/react/shallow'
 import {
   GatewayClient,
@@ -34,6 +36,7 @@ import { CacheRelayMark } from '../shared/components/CacheRelayMark.js'
 import { RateLimitHeaders } from '../shared/components/RateLimitHeaders.js'
 import { ShortcutSheet } from '../shared/components/ShortcutSheet.js'
 import { Toasts } from '../shared/components/Toasts.js'
+import { SsoCallback } from '../features/auth/SsoCallback.js'
 import { useAuthStore } from '../shared/auth/store.js'
 import { useRateLimitStore } from '../shared/ratelimit/store.js'
 import { useUiStore } from '../shared/store.js'
@@ -130,6 +133,21 @@ export function Layout(): React.JSX.Element {
   const location = useLocation()
   const { pathname } = location
   const navigate = useNavigate()
+  const [params] = useSearchParams()
+  /**
+   * SSO landing: the backend redirects here (`/?sso=1#access_token=…`)
+   * before any session exists, so route guards would bounce and drop the
+   * fragment. The callback screen owns this paint until it completes.
+   */
+  const ssoLanding = params.get('sso') === '1' && session === null
+
+  useEffect(() => {
+    // A stale SSO fragment on a live session is dead weight in the URL bar
+    // (and secrets stay out of shared links): clear it once, keep the page.
+    if (params.get('sso') === '1' && session !== null && window.location.hash !== '') {
+      window.history.replaceState(null, '', window.location.pathname)
+    }
+  }, [params, session])
   const [collapsed, setCollapsed] = useState<boolean>(() => readStoredSidebar() === 'closed')
   const [drawer, setDrawer] = useState(false)
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -205,13 +223,17 @@ export function Layout(): React.JSX.Element {
   const groups: NavGroup[] = [
     {
       label: null,
-      items: [{ to: '/', label: 'Overview', icon: LayoutDashboard, audience: 'session' }],
+      items: [
+        { to: '/', label: 'Overview', icon: LayoutDashboard, audience: 'session' },
+        { to: '/usage', label: 'Usage', icon: Gauge, audience: 'session' },
+      ],
     },
     {
       label: 'Run',
       items: [
         { to: '/playground', label: 'Playground', icon: FlaskConical, audience: 'public' },
         { to: '/embeddings', label: 'Embeddings', icon: Brain, audience: 'public' },
+        { to: '/teams', label: 'Teams', icon: Users, audience: 'session' },
       ],
     },
     {
@@ -436,7 +458,7 @@ export function Layout(): React.JSX.Element {
           onClick={() => {
             setTheme(theme === 'light' ? 'dark' : theme === 'dark' ? 'system' : 'light')
           }}
-          title="Cycle color theme (Ctrl+Shift+L)"
+          title="Cycle color theme"
           aria-label={collapsed ? `Theme: ${theme}` : undefined}
           className="flex w-full items-center gap-2 rounded-md p-2 text-[13px]"
         >
@@ -448,11 +470,6 @@ export function Layout(): React.JSX.Element {
             <SunMoon size={16} aria-hidden="true" />
           )}
           {collapsed ? null : <span className="whitespace-nowrap">Theme: {themeLabel}</span>}
-          {collapsed ? null : (
-            <span className="ml-auto font-mono text-[10px] whitespace-nowrap text-ink-soft dark:text-parchment-soft">
-              [Ctrl+Shift+L]
-            </span>
-          )}
         </button>
       </div>
     </div>
@@ -532,7 +549,7 @@ export function Layout(): React.JSX.Element {
         ) : null}
         <main id="main" className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
           <div key={pathname} className="rise">
-            <Outlet />
+            {ssoLanding ? <SsoCallback /> : <Outlet />}
           </div>
         </main>
         <ShortcutSheet

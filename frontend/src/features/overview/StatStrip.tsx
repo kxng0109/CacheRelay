@@ -55,12 +55,14 @@ export function StatStrip({
                 : `${top.model} · ${String(top.totalRequests)} requests`
             }
           >
-            {top === null ? '—' : top.model}
+            {top === null ? 'none' : top.model}
           </dd>
         </div>
         <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
           <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Live RPS</dt>
-          <dd className="font-mono text-lg tnum">{liveRps === null ? '—' : liveRps.toFixed(1)}</dd>
+          <dd className="font-mono text-lg tnum">
+            {liveRps === null ? 'n/a' : liveRps.toFixed(1)}
+          </dd>
         </div>
       </dl>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">

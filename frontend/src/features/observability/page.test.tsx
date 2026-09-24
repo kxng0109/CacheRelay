@@ -45,7 +45,7 @@ describe('ObservabilityPage', () => {
     await waitFor(() => {
       expect(screen.getByText(/gateway reports down/i)).toBeInTheDocument()
     })
-    expect(screen.getByText(/gateway:down/i)).toBeInTheDocument()
+    expect(screen.getByText(/probes:down/i)).toBeInTheDocument()
   })
 
   it('surfaces probe failures as alerts', async () => {
@@ -54,6 +54,28 @@ describe('ObservabilityPage', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/health probe failed/i)
     })
+    expect(screen.getByRole('alert')).toHaveTextContent(/HTTP 500/)
+  })
+
+  it('keeps answered HTTP failures red', async () => {
+    server.use(http.get('*/actuator/health', () => new HttpResponse('x', { status: 503 })))
+    renderApp(<ObservabilityPage />)
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/health probe failed/i)
+    expect(alert).toHaveTextContent(/HTTP 503/)
+    expect(alert.innerHTML).toContain('text-danger')
+  })
+
+  it('mutes unreachable probes instead of alarming', async () => {
+    server.use(http.get('*/actuator/health', () => HttpResponse.error()))
+    renderApp(<ObservabilityPage />)
+    const alert = await screen.findByRole('alert')
+    await waitFor(() => {
+      expect(alert).toHaveTextContent(/fetch failed|failed to fetch|network|unreachable/i)
+    })
+    expect(alert.innerHTML).toContain('text-ink-soft')
+    expect(alert.innerHTML).not.toContain('text-danger')
+    expect(screen.getByText(/probes:down/i)).toBeInTheDocument()
   })
 
   it('names a missing health content type instead of guessing', async () => {
@@ -112,11 +134,11 @@ describe('ObservabilityPage', () => {
     })
   })
 
-  it('shows metrics scrape state and gateway chip for admins', async () => {
+  it('shows metrics scrape state and probes chip for admins', async () => {
     server.use(http.get('*/actuator/health', () => HttpResponse.json({ status: 'UP' })))
     renderApp(<ObservabilityPage />, { adminSession: true })
     await waitFor(() => {
-      expect(screen.getByText(/gateway:up/i)).toBeInTheDocument()
+      expect(screen.getByText(/probes:up/i)).toBeInTheDocument()
     })
     expect(screen.getByText(/probe:15s/i)).toBeInTheDocument()
     await waitFor(() => {
@@ -159,10 +181,10 @@ describe('ObservabilityPage', () => {
     )
     renderApp(<ObservabilityPage />, { adminSession: true })
     await waitFor(() => {
-      expect(screen.getByText(/gateway:up/i)).toBeInTheDocument()
+      expect(screen.getByText(/probes:up/i)).toBeInTheDocument()
     })
     const rail = await screen.findByRole('region', { name: /signal rail/i })
-    expect(rail).toHaveTextContent(/gateway up/i)
+    expect(rail).toHaveTextContent(/probes up/i)
     expect(rail).toHaveTextContent(/metrics live/i)
   })
 
@@ -173,7 +195,7 @@ describe('ObservabilityPage', () => {
       expect(screen.getByText(/gateway is up/i)).toBeInTheDocument()
     })
     const rail = await screen.findByRole('region', { name: /signal rail/i })
-    expect(rail).toHaveTextContent(/gateway up/i)
+    expect(rail).toHaveTextContent(/probes up/i)
     expect(rail).not.toHaveTextContent(/metrics/i)
   })
 
@@ -183,7 +205,7 @@ describe('ObservabilityPage', () => {
     renderApp(<ObservabilityPage />, { adminSession: true })
     await user.click(await screen.findByRole('button', { name: /metrics.*prometheus/i }))
     const inspector = screen.getByRole('complementary', { name: /endpoint inspector/i })
-    expect(inspector).toHaveTextContent(/do not render secrets/i)
+    expect(inspector).toHaveTextContent(/read by your monitoring scraper/i)
     expect(inspector.querySelector('a')).toHaveAttribute('target', '_blank')
   })
 
@@ -237,12 +259,13 @@ describe('ObservabilityPage', () => {
     expect(healthCalls).toBeGreaterThan(1)
   })
 
-  it('explains cache headers without a backend call', async () => {
-    const user = userEvent.setup()
+  it('keeps header docs out of the endpoint section', async () => {
     server.use(http.get('*/actuator/health', () => HttpResponse.json({ status: 'UP' })))
     renderApp(<ObservabilityPage />)
-    await user.click(screen.getByText(/reading cache headers on a stream/i))
-    expect(screen.getByText(/L0-Memory/i)).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByText(/gateway is up/i)).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/reading cache headers on a stream/i)).not.toBeInTheDocument()
   })
 
   it('reads scrape bodies that fail mid-stream as empty', async () => {
@@ -270,7 +293,7 @@ describe('ObservabilityPage', () => {
     const trigger = await screen.findByRole('button', { name: /metrics.*prometheus/i })
     await user.click(trigger)
     expect(screen.getByRole('complementary', { name: /endpoint inspector/i })).toHaveTextContent(
-      /do not render secrets/i,
+      /read by your monitoring scraper/i,
     )
     await user.click(trigger)
     expect(screen.getByRole('complementary', { name: /endpoint inspector/i })).toHaveTextContent(

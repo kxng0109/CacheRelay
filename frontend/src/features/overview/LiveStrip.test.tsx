@@ -164,4 +164,28 @@ describe('LiveStrip', () => {
     })
     expect(screen.queryByText('State')).not.toBeInTheDocument()
   })
+
+  it('names free requests and a dark cache honestly', async () => {
+    server.use(
+      http.get('*/v1/admin/ledger/entries', () =>
+        entriesPage([
+          {
+            requestId: 'req-free',
+            model: 'local-llama',
+            costUsdMicros: 0,
+            createdAt: '2026-09-21',
+          },
+        ]),
+      ),
+      http.get('*/v1/admin/cache/stats', () =>
+        cacheStats({ enabled: false, l1RedisEnabled: true, l2SemanticEnabled: false }),
+      ),
+    )
+    renderApp(<LiveStrip summary={summary} liveRps={null} />, { adminSession: true })
+    await waitFor(() => {
+      expect(screen.getByText('free')).toBeInTheDocument()
+    })
+    expect(screen.getByText('Off · scope TENANT')).toBeInTheDocument()
+    expect(screen.getByText('Exact on · Semantic off')).toBeInTheDocument()
+  })
 })

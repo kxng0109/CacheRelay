@@ -67,3 +67,8 @@ k6-sse.exe
 
 # Local opencode enforcement wall (machine-local only; never commit)
 .opencode/
+
+# Scratch capture/sweep outputs (never commit; regenerated on demand)
+.tmp/
+frontend/.tmp/
+frontend/.tmp-interact/

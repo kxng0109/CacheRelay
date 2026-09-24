@@ -43,11 +43,11 @@ export function RateLimitHeaders({ snapshot }: RateLimitHeadersProps): React.JSX
   }
   const resetLabel =
     snapshot.reset === null
-      ? '—'
+      ? 'n/a'
       : `${String(Math.max(0, snapshot.reset - Math.floor(now / 1000)))}s`
   const cell = (label: string, value: number | null): React.JSX.Element => (
     <span className="text-[13px] tnum">
-      {label}: {value ?? '—'}
+      {label}: {value ?? 'n/a'}
     </span>
   )
   return (

@@ -346,7 +346,7 @@ function CircuitsBoard(): React.JSX.Element {
             </div>
             <div className="flex justify-between gap-3">
               <dt className="text-ink-soft dark:text-parchment-soft">Half-open probe</dt>
-              <dd className="tnum">{inspected.halfOpenProbe ? 'in flight' : '—'}</dd>
+              <dd className="tnum">{inspected.halfOpenProbe ? 'in flight' : 'n/a'}</dd>
             </div>
           </dl>
           <button

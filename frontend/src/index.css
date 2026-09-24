@@ -70,6 +70,15 @@ body {
   color: var(--color-parchment);
 }
 
+/* Paint the document element itself so overscroll past the app root never
+   flashes an unthemed strip in either canvas. */
+html {
+  background-color: var(--color-paper);
+}
+html.dark {
+  background-color: var(--color-night);
+}
+
 /* Operational data always uses tabular figures; units render lighter. */
 @utility tnum {
   font-variant-numeric: tabular-nums;

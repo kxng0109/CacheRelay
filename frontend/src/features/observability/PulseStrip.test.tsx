@@ -50,11 +50,11 @@ describe('PulseStrip', () => {
     expect(strip).toHaveTextContent('●')
   })
 
-  it('shows em dashes while loading, never zeros', () => {
+  it('shows n/a placeholders while loading, never zeros', () => {
     server.use(http.get('*/actuator/prometheus', () => new HttpResponse(PULSE)))
     renderApp(<PulseStrip />, { adminSession: true })
     const strip = screen.getByLabelText(/gateway pulse/i)
-    expect(strip).toHaveTextContent('—')
+    expect(strip).toHaveTextContent('n/a')
     expect(strip).not.toHaveTextContent('0')
   })
 

@@ -6,6 +6,7 @@ import type {
   ChatCompletionRequest,
   ChatCompletionResponse,
   CircuitSnapshot,
+  DashboardView,
   EmbeddingRequest,
   EmbeddingResponse,
   HitlApproval,
@@ -16,11 +17,14 @@ import type {
   McpTool,
   McpToolAnnotations,
   ModelAliasRecord,
+  OrgTeam,
   ProviderStatus,
   PageResponse,
   ProviderChainStep,
   RateLimitDimension,
   RateLimitSnapshot,
+  SessionIdentity,
+  TeamMembership,
 } from './types.js'
 import { useAuthStore } from '../auth/store.js'
 import { refreshSession } from '../auth/session.js'
@@ -1017,4 +1021,174 @@ export class GatewayClient {
     }
     return { tools }
   }
+
+  /**
+   * Reads the caller's personal usage dashboard (owned keys only).
+   *
+   * @remarks Backend truth (`MeDashboardController`): owner scope derives
+   * server-side from the session — there is no user-id parameter by design.
+   * Trailing 7d when `from`/`to` are absent; 90d max window.
+   *
+   * @param from - Window start (ISO-8601), or undefined for the default.
+   * @param to - Window end (ISO-8601), or undefined for now.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns Summary with freshness coordinates (nulls when absent).
+   */
+  async myUsage(from?: string, to?: string, opts?: RequestOptions): Promise<DashboardView> {
+    const q = new URLSearchParams()
+    if (from !== undefined) q.set('from', from)
+    if (to !== undefined) q.set('to', to)
+    const suffix = q.size === 0 ? '' : `?${q.toString()}`
+    const res = await sendGatewayRequest(
+      this.base,
+      `/v1/me/usage${suffix}`,
+      { headers: this.headers() },
+      opts,
+    )
+    return {
+      summary: (await res.json()) as LedgerSummary,
+      generatedAt: res.headers.get('X-Dashboard-Generated-At'),
+      watermark: res.headers.get('X-Dashboard-Watermark'),
+    }
+  }
+
+  /**
+   * Reads one account's usage dashboard as an admin (audit-logged).
+   *
+   * @remarks Backend truth (`AdminLedgerController.getUserSummary`): same
+   * shape and freshness headers as the personal view. A stealth 404 means
+   * no access or no route — callers render admin-unavailable, never retry.
+   *
+   * @param userId - Viewed account id.
+   * @param from - Window start (ISO-8601), or undefined for the default.
+   * @param to - Window end (ISO-8601), or undefined for now.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns Summary with freshness coordinates.
+   */
+  async userUsage(
+    userId: string,
+    from?: string,
+    to?: string,
+    opts?: RequestOptions,
+  ): Promise<DashboardView> {
+    const q = new URLSearchParams()
+    if (from !== undefined) q.set('from', from)
+    if (to !== undefined) q.set('to', to)
+    const suffix = q.size === 0 ? '' : `?${q.toString()}`
+    const res = await sendGatewayRequest(
+      this.base,
+      `/v1/admin/ledger/user/${encodeURIComponent(userId)}/summary${suffix}`,
+      { headers: this.headers() },
+      opts,
+    )
+    return {
+      summary: (await res.json()) as LedgerSummary,
+      generatedAt: res.headers.get('X-Dashboard-Generated-At'),
+      watermark: res.headers.get('X-Dashboard-Watermark'),
+    }
+  }
+
+  /**
+   * Lists the caller's active team memberships (possibly empty).
+   *
+   * @remarks Backend truth (`MeTeamController`): ACTIVE only; empty is
+   * normal for new SSO users in the holding team.
+   *
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns Owned memberships.
+   */
+  myTeams(opts?: RequestOptions): Promise<TeamMembership[]> {
+    return this.request<TeamMembership[]>('/v1/me/teams', { headers: this.headers() }, opts)
+  }
+
+  /**
+   * Lists every team in one org with live active-member counts.
+   *
+   * @remarks Backend truth (`AdminTeamController`): `org` is required
+   * (400 when missing) and unknown slugs answer 404.
+   *
+   * @param org - Owning org slug.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns Org teams for pickers and inventory.
+   */
+  orgTeams(org: string, opts?: RequestOptions): Promise<OrgTeam[]> {
+    const q = new URLSearchParams({ org })
+    return this.request<OrgTeam[]>(
+      `/v1/admin/teams?${q.toString()}`,
+      { headers: this.headers() },
+      opts,
+    )
+  }
+
+  /**
+   * Reads the session identity for the current bearer token.
+   *
+   * @remarks Used to complete SSO fragment logins: the redirect carries
+   * only the access token plus the admin flag, so the login name comes
+   * from here before the session enters memory.
+   *
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The session identity.
+   */
+  authMe(opts?: RequestOptions): Promise<SessionIdentity> {
+    return this.request<SessionIdentity>('/v1/auth/me', { headers: this.headers() }, opts)
+  }
+}
+
+/**
+ * Decides whether a failed dashboard-family query retries.
+ *
+ * @remarks Client-side backoff for headerless 429s: only rate-limit
+ * rejections retry (at most twice); 400/401/404 surface immediately so
+ * narrow-the-window, session, and stealth states reach the UI instead of
+ * spinning behind the user's back.
+ *
+ * @param failureCount - Consecutive failures so far (starts at 0).
+ * @param error - Thrown value.
+ * @returns True to retry with {@link dashboardRetryDelay}.
+ */
+export function dashboardRetry(failureCount: number, error: unknown): boolean {
+  return error instanceof ApiError && error.status === 429 && failureCount < 2
+}
+
+/**
+ * Computes the dashboard retry delay with an exponential cap.
+ *
+ * @param attempt - Retry attempt index (starts at 0).
+ * @returns Milliseconds to wait (1s, 2s, 4s … capped at 8s).
+ */
+export function dashboardRetryDelay(attempt: number): number {
+  return Math.min(1000 * 2 ** attempt, 8000)
+}
+
+/**
+ * Reads the configured SSO providers from public client config.
+ *
+ * @remarks Non-secret allow-list (`VITE_SSO_PROVIDERS`, comma-separated
+ * Spring registration ids such as `google,github`). Empty when SSO is not
+ * configured — the UI greys SSO out instead of offering a dead button.
+ *
+ * @returns Configured registration ids, trimmed and non-empty.
+ */
+export function resolveSsoProviders(): string[] {
+  const raw: unknown = import.meta.env.VITE_SSO_PROVIDERS
+  if (typeof raw !== 'string') return []
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+}
+
+/**
+ * Builds the SSO entry URL for one provider.
+ *
+ * @remarks Backend truth (`SecurityConfig`): `GET
+ * /oauth2/authorization/{registrationId}` starts the Authorization Code +
+ * PKCE dance; success lands on `/?sso=1#access_token=…&admin=…`.
+ *
+ * @param registrationId - Spring registration id (for example `google`).
+ * @returns Entry URL against the API base.
+ */
+export function ssoAuthorizationUrl(registrationId: string): string {
+  return `${resolveApiBase()}/oauth2/authorization/${encodeURIComponent(registrationId)}`
 }

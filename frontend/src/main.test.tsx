@@ -30,6 +30,8 @@ const PUBLIC_LEGS: [string, string][] = [
 const SESSION_LEGS: [string, string][] = [
   ['/mcp', 'MCP'],
   ['/observability', 'Observability'],
+  ['/usage', 'Usage'],
+  ['/teams', 'Teams'],
 ]
 
 const AUTH_LEGS: [string, RegExp][] = [
@@ -37,7 +39,14 @@ const AUTH_LEGS: [string, RegExp][] = [
   ['/redeem', /redeem invite/i],
 ]
 
-const ADMIN_LEGS = ['/circuits', '/keys', '/ledger', '/cache', '/approvals']
+const ADMIN_LEGS = [
+  '/circuits',
+  '/keys',
+  '/ledger',
+  '/ledger/user/123e4567-e89b-12d3-a456-426614174000',
+  '/cache',
+  '/approvals',
+]
 
 describe('application boot', () => {
   it('renders the shell from #root', async () => {

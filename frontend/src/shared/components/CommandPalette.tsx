@@ -98,6 +98,22 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
       },
     },
     {
+      id: 'nav-usage',
+      label: 'Go to Usage',
+      audience: 'session',
+      run: () => {
+        go('/usage')
+      },
+    },
+    {
+      id: 'nav-teams',
+      label: 'Go to Teams',
+      audience: 'session',
+      run: () => {
+        go('/teams')
+      },
+    },
+    {
       id: 'nav-ledger',
       label: 'Go to Ledger',
       audience: 'admin',
@@ -151,7 +167,6 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
     {
       id: 'op-theme',
       label: dark ? 'Switch to light theme' : 'Switch to dark theme',
-      hint: 'Ctrl+Shift+L',
       audience: 'public',
       run: () => {
         toggleTheme()

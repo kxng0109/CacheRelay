@@ -61,7 +61,10 @@ describe('KeysPage', () => {
       }),
     )
     renderApp(<KeysPage />, { adminSession: true })
-    await user.click(screen.getByRole('button', { name: /new key/i }))
+    const triggers = await screen.findAllByRole('button', { name: /new key/i })
+    const trigger = triggers[0]
+    if (trigger === undefined) throw new Error('New key trigger not found')
+    await user.click(trigger)
     await user.type(screen.getByLabelText(/^owner$/i), 'tenant-corp')
     await user.type(screen.getByLabelText(/owner account uuid/i), 'not-a-uuid')
     await user.type(screen.getByLabelText(/^name$/i), 'bad-owner')
@@ -84,7 +87,10 @@ describe('KeysPage', () => {
       ),
     )
     renderApp(<KeysPage />, { adminSession: true })
-    await user.click(screen.getByRole('button', { name: /new key/i }))
+    const triggers = await screen.findAllByRole('button', { name: /new key/i })
+    const trigger = triggers[0]
+    if (trigger === undefined) throw new Error('New key trigger not found')
+    await user.click(trigger)
     await user.type(screen.getByLabelText(/^owner$/i), 'tenant-corp')
     await user.type(
       screen.getByLabelText(/owner account uuid/i),
@@ -99,7 +105,7 @@ describe('KeysPage', () => {
     })
   })
 
-  it('revokes terminally and never offers un-revoke', async () => {
+  it('revokes terminally with no undo path', async () => {
     const user = userEvent.setup()
     server.use(
       http.get('*/v1/admin/keys', () => HttpResponse.json(KEYS)),
@@ -114,7 +120,7 @@ describe('KeysPage', () => {
     await user.click(within(inspector).getByRole('button', { name: /revoke key/i }))
     await user.click(within(inspector).getByRole('button', { name: /yes, revoke/i }))
     await waitFor(() => {
-      expect(screen.getByText(/terminal\. there is no un-revoke/i)).toBeInTheDocument()
+      expect(screen.getByText(/cannot be undone/i)).toBeInTheDocument()
     })
     expect(screen.queryByRole('button', { name: /enable key/i })).not.toBeInTheDocument()
   })
@@ -189,6 +195,10 @@ describe('KeysPage', () => {
       http.post('*/v1/admin/keys', () => HttpResponse.json({ ...KEYS[0], key: 'gw-secret-once' })),
     )
     renderApp(<KeysPage />, { adminSession: true })
+    const dialogTriggers = await screen.findAllByRole('button', { name: /^new key$/i })
+    const dialogTrigger = dialogTriggers[0]
+    if (dialogTrigger === undefined) throw new Error('New key trigger not found')
+    await user.click(dialogTrigger)
     expect(await screen.findByLabelText(/^owner$/i)).toBeInTheDocument()
     await user.type(screen.getByLabelText(/^owner$/i), 'tenant-corp')
     await user.type(
@@ -210,12 +220,18 @@ describe('KeysPage', () => {
     const user = userEvent.setup()
     server.use(http.get('*/v1/admin/keys', () => HttpResponse.json([])))
     renderApp(<KeysPage />, { adminSession: true })
+    const dialogTriggers = await screen.findAllByRole('button', { name: /^new key$/i })
+    const dialogTrigger = dialogTriggers[0]
+    if (dialogTrigger === undefined) throw new Error('New key trigger not found')
+    await user.click(dialogTrigger)
     await user.click(await screen.findByRole('button', { name: /create key/i }))
     await waitFor(() => {
       expect(screen.getByText(/name is required/i)).toBeInTheDocument()
     })
     expect(screen.getByText(/owner is required/i)).toBeInTheDocument()
     expect(screen.getByText(/must be a valid uuid/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/requests per minute/i)).toHaveAttribute('min', '0')
+    expect(screen.getByLabelText(/tokens per minute/i)).toHaveAttribute('min', '0')
   })
 
   it('deletes a key and refreshes the list', async () => {
@@ -276,6 +292,10 @@ describe('KeysPage', () => {
       http.post('*/v1/admin/keys', () => new HttpResponse('x', { status: 400 })),
     )
     renderApp(<KeysPage />, { adminSession: true })
+    const dialogTriggers = await screen.findAllByRole('button', { name: /^new key$/i })
+    const dialogTrigger = dialogTriggers[0]
+    if (dialogTrigger === undefined) throw new Error('New key trigger not found')
+    await user.click(dialogTrigger)
     await user.type(await screen.findByLabelText(/^owner$/i), 'tenant-corp')
     await user.type(
       screen.getByLabelText(/owner account uuid/i),
@@ -315,7 +335,10 @@ describe('KeysPage', () => {
       ),
     )
     renderApp(<KeysPage />, { adminSession: true })
-    await user.click(screen.getByRole('button', { name: /new key/i }))
+    const triggers = await screen.findAllByRole('button', { name: /new key/i })
+    const trigger = triggers[0]
+    if (trigger === undefined) throw new Error('New key trigger not found')
+    await user.click(trigger)
     await user.click(screen.getByRole('button', { name: /cancel/i }))
     await user.type(screen.getByLabelText(/filter keys/i), 'claude')
     expect(screen.queryByText('ci-key')).not.toBeInTheDocument()
@@ -384,7 +407,7 @@ describe('KeysPage', () => {
     expect(table).toHaveTextContent('a, b')
   })
 
-  it('opens the drawer on demand when keys exist', async () => {
+  it('opens the creation dialog on demand when keys exist', async () => {
     const user = userEvent.setup()
     server.use(http.get('*/v1/admin/keys', () => HttpResponse.json(KEYS)))
     renderApp(<KeysPage />, { adminSession: true })
@@ -392,7 +415,10 @@ describe('KeysPage', () => {
       expect(screen.getByText('ci-key')).toBeInTheDocument()
     })
     expect(screen.queryByLabelText(/^owner$/i)).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: /new key/i }))
+    const triggers = await screen.findAllByRole('button', { name: /new key/i })
+    const trigger = triggers[0]
+    if (trigger === undefined) throw new Error('New key trigger not found')
+    await user.click(trigger)
     expect(screen.getByLabelText(/^owner$/i)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /^cancel$/i }))
     expect(screen.queryByLabelText(/^owner$/i)).not.toBeInTheDocument()
@@ -407,6 +433,10 @@ describe('KeysPage', () => {
       http.post('*/v1/admin/keys', () => HttpResponse.json({ ...KEYS[0], key: 'gw-secret-once' })),
     )
     renderApp(<KeysPage />, { adminSession: true })
+    const dialogTriggers = await screen.findAllByRole('button', { name: /^new key$/i })
+    const dialogTrigger = dialogTriggers[0]
+    if (dialogTrigger === undefined) throw new Error('New key trigger not found')
+    await user.click(dialogTrigger)
     await user.type(await screen.findByLabelText(/^owner$/i), 'tenant-corp')
     await user.type(
       screen.getByLabelText(/owner account uuid/i),
@@ -450,5 +480,39 @@ describe('KeysPage', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/HTTP 500/)
     })
+  })
+
+  it('selects rows from the keyboard', async () => {
+    const user = userEvent.setup()
+    server.use(http.get('*/v1/admin/keys', () => HttpResponse.json(KEYS)))
+    renderApp(<KeysPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    within(table).getByText('ci-key').closest('tr')?.focus()
+    await user.keyboard('{Enter}')
+    expect(await screen.findByRole('complementary', { name: /key inspector/i })).toHaveTextContent(
+      'tenant-corp',
+    )
+    within(table).getByText('ci-key').closest('tr')?.focus()
+    await user.keyboard('{ }')
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('complementary', { name: /key inspector/i }),
+      ).not.toBeInTheDocument()
+    })
+  })
+
+  it('shows non-empty model and provider allow-lists in the inspector', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/keys', () =>
+        HttpResponse.json([{ ...KEYS[0], allowedProviders: ['openai'] }]),
+      ),
+    )
+    renderApp(<KeysPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByText('ci-key'))
+    const inspector = await screen.findByRole('complementary', { name: /key inspector/i })
+    expect(inspector).toHaveTextContent('gpt-4o-mini')
+    expect(inspector).toHaveTextContent('openai')
   })
 })

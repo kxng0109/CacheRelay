@@ -1,7 +1,7 @@
 /**
  * Single-letter destinations after the `g` prefix (Railway-style chords).
  * Keys stay mnemonic: overview, playground, embeddings, observability,
- * circuits, keys, ledger, approvals, mcp.
+ * circuits, keys, ledger, approvals, mcp, usage, teams.
  */
 const CHORDS: Readonly<Record<string, string>> = {
   o: '/',
@@ -13,6 +13,8 @@ const CHORDS: Readonly<Record<string, string>> = {
   l: '/ledger',
   a: '/approvals',
   m: '/mcp',
+  u: '/usage',
+  t: '/teams',
 }
 
 /** Milliseconds the `g` prefix waits for its second key. */

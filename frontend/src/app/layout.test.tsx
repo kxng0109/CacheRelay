@@ -14,6 +14,7 @@ describe('Layout', () => {
   beforeEach(() => {
     useRateLimitStore.getState().clear()
     window.localStorage.removeItem('cacherelay.sidebar')
+    window.history.replaceState(null, '', '/')
     server.use(
       http.get('*/v1/admin/mcp/approvals/pending', () => HttpResponse.json({ approvals: [] })),
     )
@@ -190,15 +191,17 @@ describe('Layout', () => {
     expect(useRateLimitStore.getState().snapshot).toBeNull()
   })
 
-  it('groups all ten routes with Overview pinned first', () => {
+  it('groups all twelve routes with Overview pinned first', () => {
     renderApp(<Layout />, { adminSession: true })
     expect(screen.getByText('Run')).toBeInTheDocument()
     expect(screen.getByText('Guard')).toBeInTheDocument()
     expect(screen.getByText('Inspect')).toBeInTheDocument()
     for (const label of [
       'Overview',
+      'Usage',
       'Playground',
       'Embeddings',
+      'Teams',
       'Circuits',
       'Approvals',
       'Cache & budgets',
@@ -215,11 +218,13 @@ describe('Layout', () => {
     renderApp(<Layout />)
     for (const label of [
       'Overview',
+      'Usage',
       'Circuits',
       'Approvals',
       'Cache & budgets',
       'Keys',
       'Ledger',
+      'Teams',
       'MCP',
       'Observability',
     ]) {
@@ -232,7 +237,7 @@ describe('Layout', () => {
 
   it('shows session routes but not admin routes to non-admin sessions', () => {
     renderApp(<Layout />, { nonAdminSession: true })
-    for (const label of ['Overview', 'MCP', 'Observability']) {
+    for (const label of ['Overview', 'Usage', 'Teams', 'MCP', 'Observability']) {
       expect(screen.getByRole('link', { name: new RegExp(`^${label}$`) })).toBeInTheDocument()
     }
     for (const label of ['Circuits', 'Approvals', 'Cache & budgets', 'Keys', 'Ledger']) {
@@ -446,6 +451,45 @@ describe('Layout', () => {
         'Remaining: 41',
       )
     })
+  })
+})
+
+describe('Layout SSO landing', () => {
+  beforeEach(() => {
+    window.history.replaceState(null, '', '/')
+  })
+
+  it('owns the paint with the callback for sessionless SSO landings', async () => {
+    server.use(
+      http.get('*/v1/auth/me', () =>
+        HttpResponse.json({ userId: 'u1', username: 'sso-op', admin: false }),
+      ),
+    )
+    window.history.replaceState(null, '', '/?sso=1#access_token=sso-jwt&admin=false')
+    renderApp(<Layout />, { route: '/?sso=1' })
+    await waitFor(() => {
+      expect(useAuthStore.getState().session?.username).toBe('sso-op')
+    })
+    expect(window.location.hash).toBe('')
+  })
+
+  it('clears stale SSO fragments on live sessions without navigating', async () => {
+    window.history.replaceState(null, '', '/?sso=1#access_token=stale')
+    renderApp(<Layout />, { route: '/?sso=1', nonAdminSession: true })
+    await waitFor(() => {
+      expect(window.location.hash).toBe('')
+    })
+  })
+})
+
+describe('Layout keyboard', () => {
+  it('ignores bare non-chord keys without navigating', async () => {
+    const user = userEvent.setup()
+    renderApp(<Layout />, { adminSession: true })
+    expect(screen.getByRole('link', { name: /^overview$/i })).toBeInTheDocument()
+    await user.keyboard('t')
+    expect(screen.getByRole('link', { name: /^overview$/i })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })
 

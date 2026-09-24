@@ -360,4 +360,64 @@ describe('RunInspector', () => {
     await user.click(within(inspector).getByText('Raw JSON'))
     expect(within(inspector).getAllByText(/tenant-corp/).length).toBeGreaterThan(1)
   })
+
+  it('renders tierless cached badges without a separator', async () => {
+    const user = userEvent.setup()
+    server.use(
+      summary(),
+      entries(),
+      http.get('*/v1/admin/ledger/entries/:id', () =>
+        HttpResponse.json({
+          requestId: 'r9',
+          ownerId: 'tenant-corp',
+          provider: 'openai',
+          model: 'gpt-4o-mini',
+          promptTokens: 8,
+          completionTokens: 4,
+          totalTokens: 12,
+          costUsdMicros: 12,
+          durationMs: 41,
+          cached: true,
+          cacheTier: null,
+          createdAt: '2026-09-21T00:00:00Z',
+        }),
+      ),
+    )
+    renderApp(<LedgerPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    const cell = within(table).getAllByText('gpt-4o-mini')[0]
+    expect(cell).toBeDefined()
+    if (cell !== undefined) {
+      await user.click(cell)
+    }
+    const inspector = await screen.findByRole('complementary')
+    await waitFor(() => {
+      const badges = within(inspector).getAllByText('Cached', { exact: true })
+      const badge = badges.find((el) => el.tagName === 'SPAN')
+      expect(badge).toBeDefined()
+      if (badge !== undefined) {
+        expect(badge).not.toHaveTextContent('·')
+      }
+    })
+  })
+
+  it('degrades null receipt bodies to an empty inspector instead of crashing', async () => {
+    const user = userEvent.setup()
+    server.use(
+      summary(),
+      entries(),
+      http.get('*/v1/admin/ledger/entries/:id', () => HttpResponse.json(null)),
+    )
+    renderApp(<LedgerPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    const cell = within(table).getAllByText('gpt-4o-mini')[0]
+    expect(cell).toBeDefined()
+    if (cell !== undefined) {
+      await user.click(cell)
+    }
+    await screen.findByRole('complementary')
+    await waitFor(() => {
+      expect(screen.queryByLabelText(/receipt overview/i)).not.toBeInTheDocument()
+    })
+  })
 })

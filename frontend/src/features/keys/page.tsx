@@ -1,12 +1,14 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import * as z from 'zod/v4'
 import { GatewayClient } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 import type { ApiKeyCreated } from '../../shared/api/types.js'
+import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
+import { Modal } from '../../shared/components/Modal.js'
 import { formatCount, formatShortDate } from '../../shared/utils/format.js'
 
 const schema = z.object({
@@ -40,8 +42,8 @@ async function copyText(text: string): Promise<boolean> {
  *
  * @remarks Proof-type: live (real `/v1/admin/keys` CRUD, shapes
  * live-verified). Register layout: header (count + filter + New key),
- * single-exposure reveal, collapsible create drawer, dense table with
- * row-expand inspector, header-docked errors. Row selection and drawer
+ * single-exposure reveal, creation modal, dense table with
+ * row-expand inspector, header-docked errors. Row selection and modal
  * state are local UI state.
  *
  * @param props - The admin key for admin-surface calls.
@@ -52,7 +54,8 @@ function KeysBoard(): React.JSX.Element {
   const [created, setCreated] = useState<ApiKeyCreated | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
-  const [drawerChoice, setDrawerChoice] = useState<boolean | null>(null)
+  const [creating, setCreating] = useState(false)
+  const createOpener = useRef<HTMLElement | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [confirming, setConfirming] = useState<string | null>(null)
   const [confirmingRevoke, setConfirmingRevoke] = useState<string | null>(null)
@@ -90,10 +93,23 @@ function KeysBoard(): React.JSX.Element {
       })
       setCreated(out)
       reset()
+      closeCreate()
       await qc.invalidateQueries({ queryKey: ['keys'] })
     } catch (e) {
       setError(toErrorMessage(e, 'Key creation failed.'))
     }
+  }
+
+  const openCreate = (): void => {
+    setError(null)
+    createOpener.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    setCreating(true)
+  }
+
+  const closeCreate = (): void => {
+    setCreating(false)
+    createOpener.current?.focus()
   }
 
   const onToggleEnabled = async (keyId: string, enabled: boolean): Promise<void> => {
@@ -145,7 +161,6 @@ function KeysBoard(): React.JSX.Element {
       k.allowedModels.some((m) => m.toLowerCase().includes(query)),
   )
   const enabledCount = rows.filter((k) => k.enabled).length
-  const drawerOpen = drawerChoice ?? (keys.data !== undefined && rows.length === 0)
   const inspected = rows.find((k) => k.keyId === selected) ?? null
 
   return (
@@ -183,15 +198,13 @@ function KeysBoard(): React.JSX.Element {
           />
           <button
             type="button"
-            onClick={() => {
-              setDrawerChoice(true)
-            }}
+            onClick={openCreate}
             className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper dark:bg-parchment dark:text-night"
           >
             New key
           </button>
         </div>
-        {error === null ? null : (
+        {error === null || creating ? null : (
           <p role="alert" className="text-sm text-danger dark:text-danger-soft">
             {error}
           </p>
@@ -201,9 +214,7 @@ function KeysBoard(): React.JSX.Element {
             role="alert"
             className="space-y-2 rounded-lg border border-warn/40 bg-cream p-4 dark:bg-transparent"
           >
-            <p className="text-sm font-medium">
-              Copy this plaintext now — it is never shown again.
-            </p>
+            <p className="text-sm font-medium">Copy this plaintext now. It is never shown again.</p>
             <p className="font-mono text-sm break-all tnum">{created.key}</p>
             <div className="flex gap-2">
               <button
@@ -228,130 +239,145 @@ function KeysBoard(): React.JSX.Element {
             </div>
           </div>
         )}
-        {drawerOpen ? (
-          <form
-            onSubmit={(e) => {
-              void handleSubmit(onCreate)(e)
-            }}
-            aria-label="Create key"
-            className="grid gap-3 rounded-lg border border-ink/10 bg-cream p-4 sm:grid-cols-2 dark:border-parchment/10 dark:bg-transparent"
+        {creating ? (
+          <Modal
+            label="New key"
+            title="New key"
+            subtitle="One key per team or service. Plaintext shows once."
+            closeLabel="Close new key"
+            wide
+            onClose={closeCreate}
           >
-            <div>
-              <label htmlFor="key-owner" className="mb-1 block text-[13px] font-medium">
-                Owner
-              </label>
-              <input
-                id="key-owner"
-                {...register('ownerId')}
-                autoComplete="off"
-                className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
-              />
-              {errors.ownerId === undefined ? null : (
-                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
-                  {errors.ownerId.message}
-                </p>
-              )}
-            </div>
-            <div>
-              <label htmlFor="key-owner-user" className="mb-1 block text-[13px] font-medium">
-                Owner account UUID (from the invite flow)
-              </label>
-              <input
-                id="key-owner-user"
-                {...register('ownerUserId')}
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="123e4567-e89b-12d3-a456-426614174000"
-                className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
-              />
-              {errors.ownerUserId === undefined ? null : (
-                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
-                  {errors.ownerUserId.message}
-                </p>
-              )}
-              {error !== null && /owner/i.test(error) ? (
-                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
-                  {error}
-                </p>
-              ) : null}
-            </div>
-            <div>
-              <label htmlFor="key-name" className="mb-1 block text-[13px] font-medium">
-                Name
-              </label>
-              <input
-                id="key-name"
-                {...register('name')}
-                autoComplete="off"
-                className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
-              />
-              {errors.name === undefined ? null : (
-                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
-                  {errors.name.message}
-                </p>
-              )}
-            </div>
-            <div>
-              <label htmlFor="key-models" className="mb-1 block text-[13px] font-medium">
-                Models (comma-separated, empty means all)
-              </label>
-              <input
-                id="key-models"
-                {...register('models')}
-                className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
-              />
-            </div>
-            <div>
-              <label htmlFor="key-rpm" className="mb-1 block text-[13px] font-medium">
-                Requests per minute (0 means unlimited)
-              </label>
-              <input
-                id="key-rpm"
-                type="number"
-                {...register('rpmLimit', { valueAsNumber: true })}
-                className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
-              />
-              {errors.rpmLimit === undefined ? null : (
-                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
-                  {errors.rpmLimit.message}
-                </p>
-              )}
-            </div>
-            <div>
-              <label htmlFor="key-tpm" className="mb-1 block text-[13px] font-medium">
-                Tokens per minute (0 means unlimited)
-              </label>
-              <input
-                id="key-tpm"
-                type="number"
-                {...register('tpmLimit', { valueAsNumber: true })}
-                className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
-              />
-              {errors.tpmLimit === undefined ? null : (
-                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
-                  {errors.tpmLimit.message}
-                </p>
-              )}
-            </div>
-            <div className="flex gap-2 sm:col-span-2">
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper disabled:cursor-not-allowed disabled:bg-ink-soft disabled:text-paper dark:bg-parchment dark:text-night dark:disabled:bg-parchment-soft dark:disabled:text-night"
-              >
-                Create key
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setDrawerChoice(false)
-                }}
-                className="rounded-md border border-ink/15 px-4 py-2 text-sm dark:border-parchment/15"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
+            {error === null ? null : (
+              <p role="alert" className="text-sm text-danger dark:text-danger-soft">
+                {error}
+              </p>
+            )}
+            <form
+              onSubmit={(e) => {
+                void handleSubmit(onCreate)(e)
+              }}
+              aria-label="Create key"
+              className="grid gap-3 sm:grid-cols-2"
+            >
+              <div>
+                <label htmlFor="key-owner" className="mb-1 block text-[13px] font-medium">
+                  Owner
+                </label>
+                <input
+                  id="key-owner"
+                  {...register('ownerId')}
+                  autoComplete="off"
+                  autoFocus
+                  className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
+                />
+                {errors.ownerId === undefined ? null : (
+                  <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                    {errors.ownerId.message}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label htmlFor="key-owner-user" className="mb-1 block text-[13px] font-medium">
+                  Owner account UUID (from the invite flow)
+                </label>
+                <input
+                  id="key-owner-user"
+                  {...register('ownerUserId')}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="123e4567-e89b-12d3-a456-426614174000"
+                  className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
+                />
+                {errors.ownerUserId === undefined ? null : (
+                  <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                    {errors.ownerUserId.message}
+                  </p>
+                )}
+                {error !== null && /owner/i.test(error) ? (
+                  <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                    {error}
+                  </p>
+                ) : null}
+              </div>
+              <div>
+                <label htmlFor="key-name" className="mb-1 block text-[13px] font-medium">
+                  Name
+                </label>
+                <input
+                  id="key-name"
+                  {...register('name')}
+                  autoComplete="off"
+                  className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
+                />
+                {errors.name === undefined ? null : (
+                  <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                    {errors.name.message}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label htmlFor="key-models" className="mb-1 block text-[13px] font-medium">
+                  Models (comma-separated, empty means all)
+                </label>
+                <input
+                  id="key-models"
+                  {...register('models')}
+                  className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
+                />
+              </div>
+              <div>
+                <label htmlFor="key-rpm" className="mb-1 block text-[13px] font-medium">
+                  Requests per minute (0 means unlimited)
+                </label>
+                <input
+                  id="key-rpm"
+                  type="number"
+                  min={0}
+                  {...register('rpmLimit', { valueAsNumber: true })}
+                  className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
+                />
+                {errors.rpmLimit === undefined ? null : (
+                  <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                    {errors.rpmLimit.message}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label htmlFor="key-tpm" className="mb-1 block text-[13px] font-medium">
+                  Tokens per minute (0 means unlimited)
+                </label>
+                <input
+                  id="key-tpm"
+                  type="number"
+                  min={0}
+                  {...register('tpmLimit', { valueAsNumber: true })}
+                  className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
+                />
+                {errors.tpmLimit === undefined ? null : (
+                  <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                    {errors.tpmLimit.message}
+                  </p>
+                )}
+              </div>
+              <div className="flex justify-end gap-2 sm:col-span-2">
+                <button
+                  type="button"
+                  onClick={closeCreate}
+                  className="rounded-md border border-ink/15 px-4 py-2 text-sm dark:border-parchment/15"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper disabled:cursor-not-allowed disabled:bg-ink-soft disabled:text-paper dark:bg-parchment dark:text-night dark:disabled:bg-parchment-soft dark:disabled:text-night"
+                >
+                  Create key
+                </button>
+              </div>
+            </form>
+          </Modal>
         ) : null}
         {keys.isPending ? (
           <p role="status" className="text-sm">
@@ -362,11 +388,17 @@ function KeysBoard(): React.JSX.Element {
             {keys.error.message}
           </p>
         ) : keys.data === undefined || visible.length === 0 ? (
-          <p className="text-sm text-ink-soft dark:text-parchment-soft">
-            {rows.length === 0
-              ? 'No keys yet. Create the first key above.'
-              : 'No keys match this filter.'}
-          </p>
+          rows.length === 0 ? (
+            <EmptyTrio
+              title="No keys yet"
+              cue="One key per team or service. Plaintext shows once at creation only."
+              action={{ label: 'New key', onClick: openCreate }}
+            />
+          ) : (
+            <p className="text-sm text-ink-soft dark:text-parchment-soft">
+              No keys match this filter.
+            </p>
+          )
         ) : (
           <table className="w-full text-left text-sm">
             <caption className="sr-only">Virtual API keys</caption>
@@ -498,7 +530,7 @@ function KeysBoard(): React.JSX.Element {
               </div>
               <div className="flex justify-between gap-3">
                 <dt className="text-ink-soft dark:text-parchment-soft">Account</dt>
-                <dd className="font-mono text-xs break-all">{inspected.ownerUsername ?? '—'}</dd>
+                <dd className="font-mono text-xs break-all">{inspected.ownerUsername ?? 'n/a'}</dd>
               </div>
               <div className="flex justify-between gap-3">
                 <dt className="text-ink-soft dark:text-parchment-soft">RPM / TPM</dt>
@@ -546,7 +578,7 @@ function KeysBoard(): React.JSX.Element {
             </p>
             {revokedIds.has(inspected.keyId) ? (
               <p className="text-[13px] text-danger dark:text-danger-soft">
-                Revoked this session — terminal. There is no un-revoke.
+                Revoked this session. This is terminal and cannot be undone.
               </p>
             ) : (
               <button
