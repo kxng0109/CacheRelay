@@ -16,8 +16,13 @@
     -->
     <script nonce="__CSP_NONCE__">
       try {
-        if (window.localStorage.getItem('cacherelay.theme') === 'light') {
+        var storedTheme = window.localStorage.getItem('cacherelay.theme')
+        if (storedTheme === 'light') {
           document.documentElement.classList.remove('dark')
+        } else if (storedTheme !== 'dark') {
+          if (window.matchMedia('(prefers-color-scheme: light)').matches) {
+            document.documentElement.classList.remove('dark')
+          }
         }
       } catch (e) {}
     </script>
