@@ -1,20 +1,32 @@
 package io.github.kxng0109.cacherelay.a2a.protocol;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpHeaders;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -738,6 +750,450 @@ class A2aProxyControllerTest {
 		assertThat(upstream.takeRequest().getHeader("Authorization")).isNull();
 	}
 
+	@Test
+	@DisplayName("rejects a declared content length over the cap even when the body is small")
+	void rejectsDeclaredContentLengthOverLimit() throws Exception {
+		String smallBody = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tasks/get\",\"params\":{\"id\":\"t-1\"}}";
+
+		ResponseEntity<StreamingResponseBody> response = controller.relay(
+				AGENT, smallBody, null,
+				request("Bearer gw-a2a-test", (long) properties.getMaxRequestBytes() + 1L));
+
+		assertThat(response.getStatusCode()).as("declared length over cap answers 400")
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(errorCode(response)).as("oversize maps to invalid request").isEqualTo(-32600);
+		assertThat(upstream.getRequestCount()).as("oversize never reaches upstream").isZero();
+	}
+
+	@Test
+	@DisplayName("rejects a body that parses to no JSON tree")
+	void rejectsNullParsedBody() throws Exception {
+		ObjectMapper spyMapper = spy(new ObjectMapper());
+		doReturn(null).when(spyMapper).readTree(SEND_BODY);
+		A2aProxyController spyController = controllerWith(newHttpClient(), spyMapper);
+
+		ResponseEntity<StreamingResponseBody> response = spyController.relay(
+				AGENT, SEND_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(response.getStatusCode()).as("null tree answers 400").isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(errorCode(response)).as("null tree maps to invalid request").isEqualTo(-32600);
+		assertThat(upstream.getRequestCount()).as("unparsed body never reaches upstream").isZero();
+	}
+
+	@Test
+	@DisplayName("maps an informational upstream status to a transport error")
+	void mapsInformationalUpstreamStatus() throws Exception {
+		HttpClient stubClient = mock(HttpClient.class);
+		stubSend(stubClient, stringUpstream(150, "warming up"));
+		A2aProxyController stubController = controllerWith(stubClient, objectMapper);
+
+		ResponseEntity<StreamingResponseBody> response = stubController.relay(
+				AGENT, SEND_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(response.getStatusCode()).as("sub-200 upstream answers 200 with an error body")
+				.isEqualTo(HttpStatus.OK);
+		assertThat(errorMessage(response)).as("informational status surfaces as a transport error")
+				.contains("HTTP 150");
+		assertThat(upstream.getRequestCount()).as("stubbed client bypasses the network").isZero();
+	}
+
+	@Test
+	@DisplayName("maps an informational pre-stream status to a JSON-RPC error")
+	void mapsInformationalPreStreamStatus() throws Exception {
+		HttpClient stubClient = mock(HttpClient.class);
+		stubSend(stubClient, streamUpstream(150, "application/json",
+				new ByteArrayInputStream("{\"foo\":1}".getBytes(StandardCharsets.UTF_8))));
+		A2aProxyController stubController = controllerWith(stubClient, objectMapper);
+
+		ResponseEntity<StreamingResponseBody> response = stubController.relay(
+				AGENT, STREAM_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(response.getHeaders().getContentType()).as("pre-stream failure is JSON, not SSE")
+				.isEqualTo(MediaType.APPLICATION_JSON);
+		assertThat(errorMessage(response)).as("informational pre-stream status surfaces as a transport error")
+				.contains("HTTP 150");
+		assertThat(upstream.getRequestCount()).as("stubbed client bypasses the network").isZero();
+	}
+
+	@Test
+	@DisplayName("maps an unreadable pre-stream body to unavailable")
+	void mapsUnreadablePreStreamBody() throws Exception {
+		HttpClient stubClient = mock(HttpClient.class);
+		stubSend(stubClient, streamUpstream(400, "application/json", new InputStream() {
+			@Override
+			public int read() throws IOException {
+				throw new IOException("upstream reset");
+			}
+		}));
+		A2aProxyController stubController = controllerWith(stubClient, objectMapper);
+
+		ResponseEntity<StreamingResponseBody> response = stubController.relay(
+				AGENT, STREAM_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(response.getHeaders().getContentType()).as("unreadable pre-stream body is JSON, not SSE")
+				.isEqualTo(MediaType.APPLICATION_JSON);
+		assertThat(errorMessage(response)).as("unreadable pre-stream body is unavailable")
+				.contains("unavailable");
+		assertThat(upstream.getRequestCount()).as("stubbed client bypasses the network").isZero();
+	}
+
+	@Test
+	@DisplayName("tolerates a close failure after a clean end of stream")
+	void toleratesCloseFailureAfterCleanEof() throws Exception {
+		HttpClient stubClient = mock(HttpClient.class);
+		stubSend(stubClient, streamUpstream(200, "text/event-stream", faultyStream(false, new byte[0], true)));
+		A2aProxyController stubController = controllerWith(stubClient, objectMapper);
+
+		ResponseEntity<StreamingResponseBody> response = stubController.relay(
+				AGENT, STREAM_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(response.getStatusCode()).as("clean EOF still answers 200").isEqualTo(HttpStatus.OK);
+		assertThat(response.getHeaders().getContentType()).as("pass-through stays SSE")
+				.isEqualTo(MediaType.TEXT_EVENT_STREAM);
+		assertThat(body(response)).as("no bytes were streamed").isEmpty();
+	}
+
+	@Test
+	@DisplayName("suppresses a close failure after a mid-stream read failure")
+	void suppressesCloseFailureAfterReadFailure() throws Exception {
+		HttpClient stubClient = mock(HttpClient.class);
+		stubSend(stubClient, streamUpstream(200, "text/event-stream", faultyStream(true, new byte[0], true)));
+		A2aProxyController stubController = controllerWith(stubClient, objectMapper);
+
+		ResponseEntity<StreamingResponseBody> response = stubController.relay(
+				AGENT, STREAM_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(response.getStatusCode()).as("mid-stream failure still answers 200 with truncation")
+				.isEqualTo(HttpStatus.OK);
+		assertThat(body(response)).as("failed stream yields no bytes").isEmpty();
+	}
+
+	@Test
+	@DisplayName("closes cleanly after a mid-stream read failure")
+	void closesCleanlyAfterReadFailure() throws Exception {
+		HttpClient stubClient = mock(HttpClient.class);
+		stubSend(stubClient, streamUpstream(200, "text/event-stream",
+				faultyStream(true, new byte[0], false)));
+		A2aProxyController stubController = controllerWith(stubClient, objectMapper);
+
+		ResponseEntity<StreamingResponseBody> response = stubController.relay(
+				AGENT, STREAM_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(response.getStatusCode()).as("mid-stream failure still answers 200 with truncation")
+				.isEqualTo(HttpStatus.OK);
+		assertThat(body(response)).as("failed stream yields no bytes").isEmpty();
+	}
+
+	@Test
+	@DisplayName("closes cleanly after a client disconnect")
+	void closesCleanlyAfterClientDisconnect() throws Exception {
+		HttpClient stubClient = mock(HttpClient.class);
+		stubSend(stubClient, streamUpstream(200, "text/event-stream",
+				faultyStream(false, "data: {\"x\":1}\n\n".getBytes(StandardCharsets.UTF_8), false)));
+		A2aProxyController stubController = controllerWith(stubClient, objectMapper);
+
+		ResponseEntity<StreamingResponseBody> response = stubController.relay(
+				AGENT, STREAM_BODY, null, request("Bearer gw-a2a-test", -1L));
+		response.getBody().writeTo(goneClient());
+
+		assertThat(response.getHeaders().getContentType()).as("disconnect still answers SSE headers")
+				.isEqualTo(MediaType.TEXT_EVENT_STREAM);
+	}
+
+	@Test
+	@DisplayName("propagates a breaker failure on stream completion with a clean close")
+	void propagatesBreakerFailureOnCleanClose() throws Exception {
+		A2aAgentCircuitBreakerManager failingBreakers = mock(A2aAgentCircuitBreakerManager.class);
+		when(failingBreakers.tryAcquire(any())).thenReturn(true);
+		doThrow(new IllegalStateException("breaker down")).when(failingBreakers).recordSuccess(any());
+		HttpClient stubClient = mock(HttpClient.class);
+		stubSend(stubClient, streamUpstream(200, "text/event-stream",
+				faultyStream(false, new byte[0], false)));
+		A2aProxyController failingController = new A2aProxyController(
+				properties, registry, new A2aRbacPolicyEngine(), failingBreakers,
+				keyManagementService, rateLimitEngine, objectMapper, stubClient);
+
+		ResponseEntity<StreamingResponseBody> response = failingController.relay(
+				AGENT, STREAM_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		assertThatThrownBy(() -> body(response)).as("breaker failure escapes the stream")
+				.isInstanceOf(IllegalStateException.class)
+				.hasMessageContaining("breaker down");
+	}
+
+	@Test
+	@DisplayName("suppresses a close failure behind a breaker failure on stream completion")
+	void suppressesCloseFailureBehindBreakerFailure() throws Exception {
+		A2aAgentCircuitBreakerManager failingBreakers = mock(A2aAgentCircuitBreakerManager.class);
+		when(failingBreakers.tryAcquire(any())).thenReturn(true);
+		doThrow(new IllegalStateException("breaker down")).when(failingBreakers).recordSuccess(any());
+		HttpClient stubClient = mock(HttpClient.class);
+		stubSend(stubClient, streamUpstream(200, "text/event-stream",
+				faultyStream(false, new byte[0], true)));
+		A2aProxyController failingController = new A2aProxyController(
+				properties, registry, new A2aRbacPolicyEngine(), failingBreakers,
+				keyManagementService, rateLimitEngine, objectMapper, stubClient);
+
+		ResponseEntity<StreamingResponseBody> response = failingController.relay(
+				AGENT, STREAM_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		Throwable thrown = catchThrowable(() -> body(response));
+
+		assertThat(thrown).as("breaker failure escapes the stream")
+				.isInstanceOf(IllegalStateException.class)
+				.hasMessageContaining("breaker down");
+		assertThat(thrown.getSuppressed()).as("close failure is suppressed, not lost")
+				.hasSize(1)
+				.allSatisfy(suppressed -> assertThat(suppressed).isInstanceOf(IOException.class));
+	}
+
+	@Test
+	@DisplayName("maps a pre-headers stream failure to unavailable")
+	void mapsPreHeadersStreamFailure() throws Exception {
+		HttpClient stubClient = mock(HttpClient.class);
+		doThrow(new IOException("connect reset")).when(stubClient).send(any(HttpRequest.class), any());
+		A2aProxyController stubController = controllerWith(stubClient, objectMapper);
+
+		ResponseEntity<StreamingResponseBody> response = stubController.relay(
+				AGENT, STREAM_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(errorMessage(response)).as("pre-headers stream failure is unavailable")
+				.contains("unavailable");
+		assertThat(upstream.getRequestCount()).as("stubbed client bypasses the network").isZero();
+	}
+
+	@Test
+	@DisplayName("a null pre-stream body fails fast instead of answering")
+	void nullPreStreamBodyFailsFast() {
+		HttpClient stubClient = mock(HttpClient.class);
+		try {
+			stubSend(stubClient, streamUpstream(400, "application/json", null));
+		} catch (Exception setupFailure) {
+			throw new IllegalStateException("stub setup failed", setupFailure);
+		}
+		A2aProxyController stubController = controllerWith(stubClient, objectMapper);
+
+		assertThatThrownBy(() -> stubController.relay(
+				AGENT, STREAM_BODY, null, request("Bearer gw-a2a-test", -1L)))
+				.as("null pre-stream body fails fast")
+				.isInstanceOf(NullPointerException.class);
+	}
+
+	@Test
+	@DisplayName("suppresses a close failure after a client disconnect")
+	void suppressesCloseFailureAfterClientDisconnect() throws Exception {
+		HttpClient stubClient = mock(HttpClient.class);
+		stubSend(stubClient, streamUpstream(200, "text/event-stream",
+				faultyStream(false, "data: {\"x\":1}\n\n".getBytes(StandardCharsets.UTF_8), true)));
+		A2aProxyController stubController = controllerWith(stubClient, objectMapper);
+
+		ResponseEntity<StreamingResponseBody> response = stubController.relay(
+				AGENT, STREAM_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		response.getBody().writeTo(goneClient());
+
+		assertThat(response.getHeaders().getContentType()).as("disconnect still answers SSE headers")
+				.isEqualTo(MediaType.TEXT_EVENT_STREAM);
+	}
+
+	@Test
+	@DisplayName("a null upstream stream body fails fast instead of streaming")
+	void toleratesNullUpstreamStreamBody() throws Exception {
+		HttpClient stubClient = mock(HttpClient.class);
+		stubSend(stubClient, streamUpstream(200, "text/event-stream", null));
+		A2aProxyController stubController = controllerWith(stubClient, objectMapper);
+
+		ResponseEntity<StreamingResponseBody> response = stubController.relay(
+				AGENT, STREAM_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(response.getStatusCode()).as("null stream body still answers 200 headers")
+				.isEqualTo(HttpStatus.OK);
+		assertThatThrownBy(() -> body(response)).as("null stream body fails fast on first read")
+				.isInstanceOf(NullPointerException.class);
+	}
+
+	@Test
+	@DisplayName("omits the Authorization header for null and blank agent credentials")
+	@SuppressWarnings("DataFlowIssue")
+	void omitsAuthorizationForDegenerateCredentials() throws Exception {
+		Map<String, A2aAgentConfig> nullAgents = new LinkedHashMap<>(properties.getAgents());
+		nullAgents.put(AGENT, new A2aAgentConfig(
+				AGENT, upstream.url("/a2a").uri(), new SensitiveString(null), null, null, null));
+		properties.setAgents(nullAgents);
+		upstream.enqueue(new MockResponse().setResponseCode(200)
+				.setBody("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}"));
+
+		controller.relay(AGENT, SEND_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(upstream.takeRequest().getHeader("Authorization"))
+				.as("null credential sends no Authorization").isNull();
+
+		Map<String, A2aAgentConfig> blankAgents = new LinkedHashMap<>(properties.getAgents());
+		blankAgents.put(AGENT, new A2aAgentConfig(
+				AGENT, upstream.url("/a2a").uri(), new SensitiveString("  "), null, null, null));
+		properties.setAgents(blankAgents);
+		upstream.enqueue(new MockResponse().setResponseCode(200)
+				.setBody("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}"));
+
+		controller.relay(AGENT, SEND_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(upstream.takeRequest().getHeader("Authorization"))
+				.as("blank credential sends no Authorization").isNull();
+	}
+
+	@Test
+	@DisplayName("card omits the Authorization header for null and blank agent credentials")
+	@SuppressWarnings("DataFlowIssue")
+	void cardOmitsAuthorizationForDegenerateCredentials() throws Exception {
+		Map<String, A2aAgentConfig> nullAgents = new LinkedHashMap<>(properties.getAgents());
+		nullAgents.put(AGENT, new A2aAgentConfig(
+				AGENT, upstream.url("/a2a").uri(), new SensitiveString(null), null, null, null));
+		properties.setAgents(nullAgents);
+		upstream.enqueue(new MockResponse().setResponseCode(200)
+				.setBody("{\"protocolVersion\":\"0.3\",\"name\":\"R\",\"url\":\"http://u/a2a\",\"version\":\"1\"}"));
+
+		ResponseEntity<String> nullResponse = controller.agentCard(AGENT, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(nullResponse.getStatusCode()).as("null credential still fetches the card")
+				.isEqualTo(HttpStatus.OK);
+		assertThat(upstream.takeRequest().getHeader("Authorization"))
+				.as("card fetch with null credential sends no Authorization").isNull();
+
+		Map<String, A2aAgentConfig> blankAgents = new LinkedHashMap<>(properties.getAgents());
+		blankAgents.put(AGENT, new A2aAgentConfig(
+				AGENT, upstream.url("/a2a").uri(), new SensitiveString("  "), null, null, null));
+		properties.setAgents(blankAgents);
+		upstream.enqueue(new MockResponse().setResponseCode(200)
+				.setBody("{\"protocolVersion\":\"0.3\",\"name\":\"R\",\"url\":\"http://u/a2a\",\"version\":\"1\"}"));
+
+		ResponseEntity<String> blankResponse = controller.agentCard(AGENT, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(blankResponse.getStatusCode()).as("blank credential still fetches the card")
+				.isEqualTo(HttpStatus.OK);
+		assertThat(upstream.takeRequest().getHeader("Authorization"))
+				.as("card fetch with blank credential sends no Authorization").isNull();
+	}
+
+	@Test
+	@DisplayName("maps an informational card status to 502")
+	void mapsInformationalCardStatus() throws Exception {
+		HttpClient stubClient = mock(HttpClient.class);
+		stubSend(stubClient, stringUpstream(150, "warming up"));
+		A2aProxyController stubController = controllerWith(stubClient, objectMapper);
+
+		ResponseEntity<String> response = stubController.agentCard(AGENT, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(response.getStatusCode()).as("informational card status maps to bad gateway")
+				.isEqualTo(HttpStatus.BAD_GATEWAY);
+		assertThat(upstream.getRequestCount()).as("stubbed client bypasses the network").isZero();
+	}
+
+	@Test
+	@DisplayName("ignores non-object additional interface entries when rewriting the card")
+	void ignoresNonObjectInterfaceEntries() throws Exception {
+		upstream.enqueue(new MockResponse().setResponseCode(200).setBody(
+				"{\"protocolVersion\":\"0.3\",\"name\":\"R\",\"url\":\"http://u/a2a\",\"version\":\"1\","
+						+ "\"additionalInterfaces\":[42,{\"url\":\"http://old\",\"transport\":\"JSONRPC\"}]}"));
+
+		ResponseEntity<String> response = controller.agentCard(AGENT, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(response.getStatusCode()).as("card with mixed interfaces is accepted").isEqualTo(HttpStatus.OK);
+		JsonNode rewritten = objectMapper.readTree(response.getBody());
+		assertThat(rewritten.get("additionalInterfaces").get(1).get("url").asString())
+				.as("object entries are still rewritten")
+				.isEqualTo("https://gateway.example.com/v1/a2a/" + AGENT);
+	}
+
+	@Test
+	@DisplayName("maps an empty upstream success body to an empty-response error")
+	void mapsEmptyUpstreamBody() throws Exception {
+		HttpClient stubClient = mock(HttpClient.class);
+		stubSend(stubClient, stringUpstream(200, null));
+		A2aProxyController stubController = controllerWith(stubClient, objectMapper);
+
+		ResponseEntity<StreamingResponseBody> response = stubController.relay(
+				AGENT, SEND_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(errorMessage(response)).as("empty upstream body is an empty-response error")
+				.contains("empty response");
+		assertThat(upstream.getRequestCount()).as("stubbed client bypasses the network").isZero();
+	}
+
+	@Test
+	@DisplayName("maps a null upstream failure body to a transport error")
+	void mapsNullUpstreamErrorBody() throws Exception {
+		HttpClient stubClient = mock(HttpClient.class);
+		stubSend(stubClient, stringUpstream(500, null));
+		A2aProxyController stubController = controllerWith(stubClient, objectMapper);
+
+		ResponseEntity<StreamingResponseBody> response = stubController.relay(
+				AGENT, SEND_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(errorMessage(response)).as("null failure body surfaces as a transport error")
+				.contains("HTTP 500");
+		assertThat(upstream.getRequestCount()).as("stubbed client bypasses the network").isZero();
+	}
+
+	@Test
+	@DisplayName("maps an unparseable-shaped upstream error body to a transport error")
+	void mapsNullParsedUpstreamError() throws Exception {
+		String opaqueBody = "{\"ping\":1}";
+		ObjectMapper spyMapper = spy(new ObjectMapper());
+		doReturn(null).when(spyMapper).readTree(opaqueBody);
+		A2aProxyController spyController = controllerWith(newHttpClient(), spyMapper);
+		upstream.enqueue(new MockResponse().setResponseCode(500).setBody(opaqueBody));
+
+		ResponseEntity<StreamingResponseBody> response = spyController.relay(
+				AGENT, SEND_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(response.getStatusCode()).as("unparseable error body answers 200 with an error body")
+				.isEqualTo(HttpStatus.OK);
+		assertThat(errorMessage(response)).as("null parsed error surfaces as a transport error")
+				.contains("HTTP 500");
+	}
+
+	@Test
+	@DisplayName("rewrites the card URL even when no public base URL is configured")
+	void rewritesCardWithNullBaseUrl() throws Exception {
+		properties.setPublicBaseUrl(null);
+		upstream.enqueue(new MockResponse().setResponseCode(200)
+				.setBody("{\"protocolVersion\":\"0.3\",\"name\":\"R\",\"url\":\"http://u/a2a\",\"version\":\"1\"}"));
+
+		ResponseEntity<String> response = controller.agentCard(AGENT, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(response.getStatusCode()).as("card without a base URL is still served").isEqualTo(HttpStatus.OK);
+		assertThat(objectMapper.readTree(response.getBody()).get("url").asString())
+				.as("missing base URL degrades to a gateway-relative URL")
+				.isEqualTo("/v1/a2a/" + AGENT);
+	}
+
+	@Test
+	@DisplayName("attribute-bound keys with unusable headers skip the limiter")
+	void skipsLimiterForAttributedKeysWithUnusableHeaders() throws Exception {
+		upstream.enqueue(new MockResponse().setResponseCode(200)
+				.setBody("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}"));
+		upstream.enqueue(new MockResponse().setResponseCode(200)
+				.setBody("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}"));
+		HttpServletRequest basicAttr = mock(HttpServletRequest.class);
+		when(basicAttr.getAttribute("virtualApiKey")).thenReturn(apiKey);
+		when(basicAttr.getHeader("Authorization")).thenReturn("Basic abc");
+		when(basicAttr.getContentLengthLong()).thenReturn(-1L);
+		HttpServletRequest blankBearerAttr = mock(HttpServletRequest.class);
+		when(blankBearerAttr.getAttribute("virtualApiKey")).thenReturn(apiKey);
+		when(blankBearerAttr.getHeader("Authorization")).thenReturn("Bearer   ");
+		when(blankBearerAttr.getContentLengthLong()).thenReturn(-1L);
+
+		ResponseEntity<StreamingResponseBody> basicResponse = controller.relay(AGENT, SEND_BODY, null, basicAttr);
+		ResponseEntity<StreamingResponseBody> blankResponse =
+				controller.relay(AGENT, SEND_BODY, null, blankBearerAttr);
+
+		assertThat(basicResponse.getStatusCode()).as("non-Bearer header on an attributed key still relays")
+				.isEqualTo(HttpStatus.OK);
+		assertThat(blankResponse.getStatusCode()).as("blank Bearer on an attributed key still relays")
+				.isEqualTo(HttpStatus.OK);
+		verify(rateLimitEngine, never()).checkRequestRate(any(), any());
+	}
+
 	private HttpServletRequest request(String authorizationHeader, long contentLength) {
 		HttpServletRequest request = mock(HttpServletRequest.class);
 		if (authorizationHeader != null) {
@@ -762,5 +1218,83 @@ class A2aProxyControllerTest {
 
 	private String errorMessage(ResponseEntity<StreamingResponseBody> response) throws Exception {
 		return objectMapper.readTree(body(response)).get("error").get("message").asString();
+	}
+
+	private A2aProxyController controllerWith(HttpClient httpClient, ObjectMapper mapper) {
+		return new A2aProxyController(
+				properties,
+				registry,
+				new A2aRbacPolicyEngine(),
+				breakers,
+				keyManagementService,
+				rateLimitEngine,
+				mapper,
+				httpClient);
+	}
+
+	private static HttpClient newHttpClient() {
+		return HttpClient.newBuilder()
+				.connectTimeout(Duration.ofSeconds(2))
+				.followRedirects(HttpClient.Redirect.NEVER)
+				.build();
+	}
+
+	private static void stubSend(HttpClient stubClient, HttpResponse<?> response) throws Exception {
+		doReturn(response).when(stubClient).send(any(HttpRequest.class), any());
+	}
+
+	@SuppressWarnings("unchecked")
+	private static HttpResponse<String> stringUpstream(int status, String body) {
+		HttpResponse<String> response = mock(HttpResponse.class);
+		when(response.statusCode()).thenReturn(status);
+		doReturn(body).when(response).body();
+		return response;
+	}
+
+	@SuppressWarnings("unchecked")
+	private static HttpResponse<InputStream> streamUpstream(
+			int status, String contentType, InputStream body) {
+		HttpResponse<InputStream> response = mock(HttpResponse.class);
+		when(response.statusCode()).thenReturn(status);
+		when(response.headers()).thenReturn(contentHeaders(contentType));
+		doReturn(body).when(response).body();
+		return response;
+	}
+
+	private static HttpHeaders contentHeaders(String contentType) {
+		return HttpHeaders.of(Map.of("Content-Type", List.of(contentType)), (name, value) -> true);
+	}
+
+	private static InputStream faultyStream(boolean failOnRead, byte[] content, boolean failOnClose) {
+		return new InputStream() {
+			private int position;
+
+			@Override
+			public int read() throws IOException {
+				if (failOnRead) {
+					throw new IOException("upstream reset");
+				}
+				if (position >= content.length) {
+					return -1;
+				}
+				return content[position++] & 0xFF;
+			}
+
+			@Override
+			public void close() throws IOException {
+				if (failOnClose) {
+					throw new IOException("close failed");
+				}
+			}
+		};
+	}
+
+	private static OutputStream goneClient() {
+		return new OutputStream() {
+			@Override
+			public void write(int value) throws IOException {
+				throw new IOException("client gone");
+			}
+		};
 	}
 }

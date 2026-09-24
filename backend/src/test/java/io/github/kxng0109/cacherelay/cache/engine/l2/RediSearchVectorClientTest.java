@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
 @DisplayName("RediSearchVectorClient")
@@ -908,6 +909,156 @@ class RediSearchVectorClientTest {
 		when(connection.execute(eq("FT.INFO"), any(NestedMultiOutput.class), any(byte[][].class)))
 				.thenThrow(new RuntimeException("Redis unavailable"));
 		assertThat(client.vectorDimensionOf("idx")).isEqualTo(-1);
+	}
+
+	@Test
+	@DisplayName("parseRawResults returns empty on an empty-list FT.SEARCH reply")
+	void parseRawResultsReturnsEmptyOnEmptyListReply() {
+		when(connection.execute(eq("FT.SEARCH"), any(NestedMultiOutput.class), any(byte[][].class)))
+				.thenReturn(new ArrayList<>());
+
+		assertThat(client.searchKnn("idx", "@tag:{1}", new float[]{0.1f}, 1)).as("empty reply").isEmpty();
+	}
+
+	@Test
+	@DisplayName("searchKnn returns empty when the RESP3 results section is not a list")
+	void searchKnnReturnsEmptyWhenResultsSectionIsNotAList() {
+		List<Object> flatMap = new ArrayList<>();
+		flatMap.add("results".getBytes(StandardCharsets.UTF_8));
+		flatMap.add("not-a-row-list".getBytes(StandardCharsets.UTF_8));
+		when(connection.execute(eq("FT.SEARCH"), any(NestedMultiOutput.class), any(byte[][].class)))
+				.thenReturn(flatMap);
+
+		assertThat(client.searchKnn("idx", "@tag:{1}", new float[]{0.1f}, 1)).as("non-list results").isEmpty();
+	}
+
+	@Test
+	@DisplayName("searchKnn treats non-list RESP2 fields as an empty field map")
+	void searchKnnTreatsNonListFieldsAsEmptyMap() {
+		List<Object> reply = new ArrayList<>();
+		reply.add(1L);
+		reply.add("doc-nonlist".getBytes(StandardCharsets.UTF_8));
+		reply.add("0.05".getBytes(StandardCharsets.UTF_8));
+		reply.add("definitely-not-a-list");
+		when(connection.execute(eq("FT.SEARCH"), any(NestedMultiOutput.class), any(byte[][].class)))
+				.thenReturn(reply);
+
+		List<VectorSearchResult> results = client.searchKnn("idx", "@tag:{1}", new float[]{0.1f}, 1);
+		assertThat(results).as("row count").hasSize(1);
+		assertThat(results.getFirst().fields()).as("non-list fields").isEmpty();
+	}
+
+	@Test
+	@DisplayName("searchKnn skips a canonical NaN score that parses to double NaN")
+	void searchKnnSkipsCanonicalNaNScore() {
+		Map<String, String> fields = new HashMap<>();
+		fields.put("prompt_text", "How to reset password");
+		when(connection.execute(eq("FT.SEARCH"), any(NestedMultiOutput.class), any(byte[][].class)))
+				.thenReturn(searchReply(1L, docRow("cacherelay:cache:doc:canon-nan", "NaN", fields)));
+
+		assertThat(client.searchKnn("idx", "@tag:{1}", new float[]{0.1f}, 1)).as("parsed-NaN row").isEmpty();
+	}
+
+	@Test
+	@DisplayName("searchKnn does not retry when a nested cause carries a deterministic failure")
+	void searchKnnDoesNotRetryNestedDeterministicCause() {
+		when(connection.execute(eq("FT.SEARCH"), any(NestedMultiOutput.class), any(byte[][].class)))
+				.thenThrow(new RuntimeException("Unknown redis exception",
+						new RuntimeException("no such index: idx")));
+
+		assertThat(client.searchKnn("idx", "@tag:{1}", new float[]{0.1f}, 1)).as("nested deterministic").isEmpty();
+		verify(connection, times(1))
+				.execute(eq("FT.SEARCH"), any(NestedMultiOutput.class), any(byte[][].class));
+	}
+
+	@Test
+	@DisplayName("saveVectorDocument lets unexpected runtime failures propagate")
+	void saveVectorDocumentPropagatesUnexpectedFailures() {
+		doThrow(new IllegalStateException("boom")).when(hashCommands).hMSet(any(), any());
+		Map<byte[], byte[]> fields = new HashMap<>();
+		fields.put("owner_id".getBytes(StandardCharsets.UTF_8), "t".getBytes(StandardCharsets.UTF_8));
+
+		assertThatThrownBy(() -> client.saveVectorDocument(
+				"cacherelay:cache:doc:prop", fields, Duration.ofMinutes(1)))
+				.as("non-DataAccessException")
+				.isInstanceOf(IllegalStateException.class);
+	}
+
+	@Test
+	@DisplayName("saveVectorDocument refuses null and empty embedding blobs without touching Redis")
+	@SuppressWarnings("DataFlowIssue")
+	void saveVectorDocumentRejectsNullAndEmptyBlobs() {
+		Map<byte[], byte[]> nullBlob = new HashMap<>();
+		nullBlob.put("embedding".getBytes(StandardCharsets.UTF_8), null);
+		client.saveVectorDocument("cacherelay:cache:doc:nullblob", nullBlob, Duration.ofMinutes(10));
+
+		Map<byte[], byte[]> emptyBlob = new HashMap<>();
+		emptyBlob.put("embedding".getBytes(StandardCharsets.UTF_8), new byte[0]);
+		client.saveVectorDocument("cacherelay:cache:doc:emptyblob", emptyBlob, Duration.ofMinutes(10));
+
+		verify(connection, never()).hashCommands();
+		verify(hashCommands, never()).hMSet(any(), any());
+	}
+
+	@Test
+	@DisplayName("indexSchemaFields returns empty on null, empty and key-less FT.INFO replies")
+	@SuppressWarnings("DataFlowIssue")
+	void indexSchemaFieldsHandlesUnreadableReplies() {
+		when(connection.execute(eq("FT.INFO"), any(NestedMultiOutput.class), any(byte[][].class)))
+				.thenReturn(null);
+		assertThat(client.indexSchemaFields("idx")).as("null reply").isEmpty();
+
+		when(connection.execute(eq("FT.INFO"), any(NestedMultiOutput.class), any(byte[][].class)))
+				.thenReturn(new ArrayList<>());
+		assertThat(client.indexSchemaFields("idx")).as("empty reply").isEmpty();
+
+		List<Object> keyLess = new ArrayList<>();
+		keyLess.add("index_name".getBytes(StandardCharsets.UTF_8));
+		when(connection.execute(eq("FT.INFO"), any(NestedMultiOutput.class), any(byte[][].class)))
+				.thenReturn(keyLess);
+		assertThat(client.indexSchemaFields("idx")).as("reply without attributes").isEmpty();
+	}
+
+	@Test
+	@DisplayName("indexSchemaFields skips blank attribute names while keeping valid ones")
+	void indexSchemaFieldsSkipsBlankAttributeNames() {
+		List<Object> attributes = List.of(
+				"identifier".getBytes(StandardCharsets.UTF_8),
+				new byte[0],
+				"attribute".getBytes(StandardCharsets.UTF_8),
+				"owner_id".getBytes(StandardCharsets.UTF_8)
+		);
+		List<Object> info = List.of(
+				"index_name".getBytes(StandardCharsets.UTF_8),
+				"attributes".getBytes(StandardCharsets.UTF_8),
+				attributes
+		);
+		when(connection.execute(eq("FT.INFO"), any(NestedMultiOutput.class), any(byte[][].class)))
+				.thenReturn(info);
+
+		assertThat(client.indexSchemaFields("idx")).as("fields with blank name").containsExactly("owner_id");
+	}
+
+	@Test
+	@DisplayName("vectorDimensionOf reads dim nested inside a per-field attribute list")
+	void vectorDimensionOfReadsNestedAttributeDim() {
+		List<Object> vectorField = List.of(
+				"identifier".getBytes(StandardCharsets.UTF_8),
+				"embedding".getBytes(StandardCharsets.UTF_8),
+				"type".getBytes(StandardCharsets.UTF_8),
+				"VECTOR".getBytes(StandardCharsets.UTF_8),
+				"dim".getBytes(StandardCharsets.UTF_8),
+				1536L
+		);
+		List<Object> info = List.of(
+				"index_name".getBytes(StandardCharsets.UTF_8),
+				"attributes".getBytes(StandardCharsets.UTF_8),
+				List.of(vectorField)
+		);
+		when(connection.execute(eq("FT.INFO"), any(NestedMultiOutput.class), any(byte[][].class)))
+				.thenReturn(info);
+
+		assertThat(client.vectorDimensionOf("idx")).as("nested dim").isEqualTo(1536);
 	}
 
 }

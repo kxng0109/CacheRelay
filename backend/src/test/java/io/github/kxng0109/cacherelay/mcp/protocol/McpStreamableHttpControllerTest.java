@@ -966,13 +966,40 @@ class McpStreamableHttpControllerTest {
 	}
 
 	@Test
-	@DisplayName("tools/call surfaces upstream HTTP errors without executing")
-	void toolsCallUpstreamServerError() throws Exception {
+	@DisplayName("blank body protocol versions are rejected with -32602")
+	void blankBodyVersionRejected() {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
 		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
 
-		String rawRpc = "{\"jsonrpc\":\"2.0\",\"id\":\"e-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"postgres__run_query\",\"arguments\":{\"sql\":\"SELECT 1\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{\"tools\":{}}}}}";
+		ResponseEntity<String> emptyVersion = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"bv-1\",\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"\",\"io.modelcontextprotocol/clientCapabilities\":{\"tools\":{}}}}}",
+				null,
+				null,
+				request
+		);
+		assertThat(emptyVersion.getStatusCode()).as("empty body version status").isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(emptyVersion.getBody()).as("empty body version code").contains("-32602");
+
+		ResponseEntity<String> whitespaceVersion = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"bv-2\",\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"   \",\"io.modelcontextprotocol/clientCapabilities\":{\"tools\":{}}}}}",
+				null,
+				null,
+				request
+		);
+		assertThat(whitespaceVersion.getStatusCode()).as("whitespace body version status")
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(whitespaceVersion.getBody()).as("whitespace body version code").contains("-32602");
+	}
+
+	@Test
+	@DisplayName("tools/call surfaces upstream informational status without executing")
+	void toolsCallUpstreamInformationalStatus() throws Exception {
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
+
+		String rawRpc = "{\"jsonrpc\":\"2.0\",\"id\":\"e-150\",\"method\":\"tools/call\",\"params\":{\"name\":\"postgres__run_query\",\"arguments\":{\"sql\":\"SELECT 1\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{\"tools\":{}}}}}";
 		McpResolvedRoute route = new McpResolvedRoute(postgresServer, "run_query", "postgres__run_query");
 		when(router.resolveToolRoute("postgres__run_query")).thenReturn(Optional.of(route));
 		when(rbacPolicyEngine.isToolAllowed("postgres__run_query", validApiKey)).thenReturn(true);
@@ -984,7 +1011,7 @@ class McpStreamableHttpControllerTest {
 						objectMapper.createObjectNode(), null)),
 				List.of(), List.of(), Instant.now()));
 		when(jsonSchemaValidator.validate(any(), any())).thenReturn(McpJsonSchemaValidator.ValidationResult.success());
-		when(mockHttpResponse.statusCode()).thenReturn(500);
+		when(mockHttpResponse.statusCode()).thenReturn(150);
 		when(httpClient.send(
 				any(HttpRequest.class),
 				ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
@@ -992,8 +1019,8 @@ class McpStreamableHttpControllerTest {
 
 		ResponseEntity<String> response = controller.handleStreamableHttp(rawRpc, null, null, request);
 
-		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-		assertThat(response.getBody()).contains("Upstream server returned HTTP 500");
+		assertThat(response.getStatusCode()).as("informational status envelope").isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody()).as("informational status code").contains("Upstream server returned HTTP 150");
 		verify(circuitBreakerManager).recordFailure("postgres");
 	}
 }

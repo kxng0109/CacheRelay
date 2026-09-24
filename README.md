@@ -898,7 +898,8 @@ tracking, syntax highlighting, and live Try-It-Out execution:
 - Client supplied headers that could spoof identity are stripped before forwarding.
 - Error responses carry only generic messages. Internal details never reach the client.
 - No CORS in production: the operator SPA is served same-origin, and cross-origin browser traffic stays
-  default-denied. Local UI development uses a `dev`-profile-only allow-list for `http://localhost:5173`.
+  default-denied. Local UI development uses a `dev`-profile-only allow-list for `http://localhost:5173`
+  (`/v1/**` fully, actuator health/prometheus read-only so the UI probes report truthfully).
 - Operator SPA shell (`/`, `/index.html`, `/assets/**` + extensionless deep links) is served with immutable
   caching on versioned assets and `no-store` on the shell; unknown `/v1/**` routes still refuse with 403.
 - Human sessions are hybrid: short-lived Bearer JWTs plus rotating `__Host-` refresh cookies with reuse

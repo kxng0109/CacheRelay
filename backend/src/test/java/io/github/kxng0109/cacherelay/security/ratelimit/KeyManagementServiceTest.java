@@ -1,5 +1,9 @@
 package io.github.kxng0109.cacherelay.security.ratelimit;
 
+import io.github.kxng0109.cacherelay.auth.JwtService;
+import io.github.kxng0109.cacherelay.auth.UserAccount;
+import io.github.kxng0109.cacherelay.auth.UserAccountRepository;
+import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
 import io.github.kxng0109.cacherelay.contracts.BootstrapKey;
 import io.github.kxng0109.cacherelay.contracts.GatewayProperties;
 import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
@@ -10,9 +14,13 @@ import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.SetOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.security.oauth2.jwt.Jwt;
 
 import java.time.Instant;
 import java.util.*;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -703,5 +711,229 @@ class KeyManagementServiceTest {
 		assertEquals("[\"review_*\"]", written.get("allowedPrompts"));
 		assertEquals("[\"admin_*\"]", written.get("deniedPrompts"));
 		assertEquals("true", written.get("injectionBlock"));
+	}
+
+	@Test
+	void jsonNullElementLoadsAsEmptySet() {
+		KeyManagementService service = newService();
+		SHA256Hash hash = hashOf("gw-nullelem00000000000000000000001");
+		Map<String, String> stored = fields("owner", "name", "5", "50", "true", "", "", CREATED_AT, "gw-");
+		stored.put("allowedResources", "[null]");
+		stubPresent(hash, stored);
+
+		Optional<VirtualApiKey> loaded = service.findByHash(hash);
+
+		assertThat(loaded).as("key with JSON null element loads").isPresent();
+		assertThat(loaded.get().allowedResources()).as("null JSON element is dropped").isEmpty();
+	}
+
+	@Test
+	void emptyCacheScopesStoreAsEmptyCsv() {
+		KeyManagementService service = newService();
+
+		KeyManagementService.CreatedKey created = service.createKey(
+				"owner", "name", 5, 50, Set.of(), Set.of(), Set.of(), Set.of(),
+				Set.of(), Set.of(), Set.of(), Set.of(), null, Set.of(), Set.of(), Set.of(), UUID.randomUUID());
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
+		verify(hashOps).putAll(eq(redisKey(created.hash())), fieldsCaptor.capture());
+		assertThat(fieldsCaptor.getValue().get("allowedCacheScopes"))
+				.as("empty scope set persists as empty CSV").isEmpty();
+	}
+
+	@Test
+	void allUnknownCacheScopesDefaultToTenant() {
+		KeyManagementService service = newService();
+		SHA256Hash hash = hashOf("gw-bogusscope000000000000000000001");
+		Map<String, String> stored = fields("owner", "name", "5", "50", "true", "", "", CREATED_AT, "gw-");
+		stored.put("allowedCacheScopes", "BOGUS_SCOPE,NOPE");
+		stubPresent(hash, stored);
+
+		Optional<VirtualApiKey> loaded = service.findByHash(hash);
+
+		assertThat(loaded).as("key with unknown scopes loads").isPresent();
+		assertThat(loaded.get().allowedCacheScopes())
+				.as("unrecognized scopes fail closed to TENANT").containsExactly(CacheScope.TENANT);
+	}
+
+	@Test
+	@SuppressWarnings("DataFlowIssue")
+	void generateKeyRejectsNullOwnerUsernameWhenWired() {
+		UserAccountRepository users = mock(UserAccountRepository.class);
+		KeyManagementService service = newService();
+		service.setUserAccountRepository(users);
+
+		assertThatThrownBy(() -> service.generateKey(fullTemplate(null)))
+				.as("null owner username fails fast")
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessageContaining("required");
+		verify(hashOps, never()).putAll(anyString(), anyMap());
+	}
+
+	@Test
+	void generateKeyRejectsDisabledOwnerWhenWired() {
+		UserAccountRepository users = mock(UserAccountRepository.class);
+		KeyManagementService service = newService();
+		service.setUserAccountRepository(users);
+		UserAccount disabled = mock(UserAccount.class);
+		when(disabled.isDisabled()).thenReturn(true);
+		when(users.findByUsernameIgnoreCase("local")).thenReturn(Optional.of(disabled));
+
+		assertThatThrownBy(() -> service.generateKey(fullTemplate("local")))
+				.as("disabled owner fails fast")
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessageContaining("unknown or disabled");
+		verify(hashOps, never()).putAll(anyString(), anyMap());
+	}
+
+	@Test
+	void updateRevokedKeyWithoutReenablingProceeds() {
+		KeyManagementService service = newService();
+		SHA256Hash hash = hashOf("gw-revoked000000000000000000000001");
+		Map<String, String> revoked = fields("owner", "name", "5", "50", "false", "", "", CREATED_AT, "gw-");
+		revoked.put("revoked", "true");
+		stubPresent(hash, revoked);
+
+		Optional<VirtualApiKey> updated = service.updateKey(
+				hash, null, null, null, null, null, null, null, null, null,
+				null, null, null, null, null, null, Boolean.FALSE);
+
+		assertThat(updated).as("revoked key accepts a non-reenabling update").isPresent();
+		assertThat(updated.get().revoked()).as("tombstone survives the update").isTrue();
+		assertThat(updated.get().enabled()).as("enabled stays cleared").isFalse();
+	}
+
+	@Test
+	@SuppressWarnings("DataFlowIssue")
+	void isOwnerActiveReadsActiveWhenUnwired() {
+		KeyManagementService service = newService();
+
+		assertThat(service.isOwnerActive(UUID.randomUUID())).as("unwired owners read active").isTrue();
+		assertThat(service.isOwnerActive(null)).as("null owner reads inactive").isFalse();
+	}
+
+	@Test
+	@SuppressWarnings("DataFlowIssue")
+	void invalidateOwnerCacheRefreshesVerdicts() {
+		UserAccountRepository users = mock(UserAccountRepository.class);
+		KeyManagementService service = newService();
+		service.setUserAccountRepository(users);
+		UUID id = UUID.randomUUID();
+		when(users.findById(id)).thenReturn(Optional.of(new UserAccount("seeduser", null, null, false)));
+
+		assertThat(service.isOwnerActive(id)).as("first lookup resolves active").isTrue();
+
+		UserAccount disabled = mock(UserAccount.class);
+		when(disabled.isDisabled()).thenReturn(true);
+		when(users.findById(id)).thenReturn(Optional.of(disabled));
+		assertThat(service.isOwnerActive(id)).as("cached verdict survives repository change").isTrue();
+
+		service.invalidateOwnerCache(id);
+		assertThat(service.isOwnerActive(id)).as("invalidated verdict refreshes").isFalse();
+		verify(users, times(2)).findById(id);
+
+		service.invalidateOwnerCache(null);
+	}
+
+	@Test
+	@SuppressWarnings("DataFlowIssue")
+	void listKeysByUserReadsEmptyWhenIndexIsNull() {
+		KeyManagementService service = newService();
+		when(setOps.members("admin:keys")).thenReturn(null);
+
+		assertThat(service.listKeysByUser(UUID.randomUUID())).as("null index reads empty").isEmpty();
+	}
+
+	@Test
+	@SuppressWarnings("DataFlowIssue")
+	void resolveActAsSelfReadsEmptyWithoutSessions() {
+		KeyManagementService unwired = newService();
+
+		assertThat(unwired.resolveActAsSelf("session-jwt", "default"))
+				.as("unwired session service resolves empty").isEmpty();
+
+		JwtService sessions = mock(JwtService.class);
+		KeyManagementService service = newService();
+		service.setJwtService(sessions);
+
+		assertThat(service.resolveActAsSelf(null, "default")).as("null token resolves empty").isEmpty();
+		assertThat(service.resolveActAsSelf("   ", "default")).as("blank token resolves empty").isEmpty();
+		verifyNoInteractions(sessions);
+	}
+
+	@Test
+	void resolveActAsSelfReadsEmptyForUnknownKey() {
+		JwtService sessions = mock(JwtService.class);
+		KeyManagementService service = newService();
+		service.setJwtService(sessions);
+		UUID userId = UUID.randomUUID();
+		Instant now = Instant.now();
+		Jwt jwt = new Jwt("session", now, now.plusSeconds(600),
+				Map.of("alg", "HS256"), Map.of("sub", userId.toString()));
+		when(sessions.validate("session-jwt")).thenReturn(jwt);
+		SHA256Hash unknown = hashOf("gw-unknown00000000000000000000001");
+		when(redisTemplate.hasKey(redisKey(unknown))).thenReturn(Boolean.FALSE);
+
+		assertThat(service.resolveActAsSelf("session-jwt", unknown.hex()))
+				.as("well-formed but unknown key resolves empty").isEmpty();
+	}
+
+	@Test
+	void seedSkipsBlankOwnerUsernameWhenWired() {
+		UserAccountRepository users = mock(UserAccountRepository.class);
+		KeyManagementService service = newService();
+		service.setUserAccountRepository(users);
+		GatewayProperties properties = new GatewayProperties();
+		properties.setBootstrapKeys(List.of(fullTemplate("  ")));
+
+		service.seedBootstrapKeys(properties);
+
+		verify(redisTemplate, never()).execute(any(), anyList(), any(Object[].class));
+	}
+
+	@Test
+	void seedPersistsWiredOwnerLookup() {
+		UserAccountRepository users = mock(UserAccountRepository.class);
+		KeyManagementService service = newService();
+		service.setUserAccountRepository(users);
+		UUID seedOwner = UUID.randomUUID();
+		UserAccount account = mock(UserAccount.class);
+		when(account.isDisabled()).thenReturn(false);
+		when(account.getId()).thenReturn(seedOwner);
+		when(users.findByUsernameIgnoreCase("seeduser")).thenReturn(Optional.of(account));
+		when(redisTemplate.execute(any(), anyList(), any(Object[].class))).thenReturn(1L);
+		GatewayProperties properties = new GatewayProperties();
+		properties.setBootstrapKeys(List.of(fullTemplate("seeduser")));
+
+		service.seedBootstrapKeys(properties);
+
+		ArgumentCaptor<Object[]> argsCaptor = ArgumentCaptor.forClass(Object[].class);
+		verify(redisTemplate).execute(any(), anyList(), argsCaptor.capture());
+		assertThat(Arrays.asList(argsCaptor.getValue()))
+				.as("seed carries the resolved owner").contains(seedOwner.toString());
+	}
+
+	@Test
+	void seedSkipsDisabledOwnerWhenWired() {
+		UserAccountRepository users = mock(UserAccountRepository.class);
+		KeyManagementService service = newService();
+		service.setUserAccountRepository(users);
+		UserAccount disabled = mock(UserAccount.class);
+		when(disabled.isDisabled()).thenReturn(true);
+		when(users.findByUsernameIgnoreCase("seeduser")).thenReturn(Optional.of(disabled));
+		GatewayProperties properties = new GatewayProperties();
+		properties.setBootstrapKeys(List.of(fullTemplate("seeduser")));
+
+		service.seedBootstrapKeys(properties);
+
+		verify(redisTemplate, never()).execute(any(), anyList(), any(Object[].class));
+	}
+
+	private static BootstrapKey fullTemplate(String ownerUsername) {
+		return new BootstrapKey(
+				"tenant-a", "seed", "gw-seed-key-00000000000000000001", 5, 50,
+				Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(),
+				null, ownerUsername);
 	}
 }

@@ -3099,6 +3099,420 @@ class ProxyControllerTest {
 		return out.toString(StandardCharsets.UTF_8);
 	}
 	@Test
+	@DisplayName("empty tried walk renders the winner alone")
+	void triedEmptyWalkFallsBackToWinner() throws Exception {
+		String upstream = "{\"id\":\"chatcmpl-t1\",\"object\":\"chat.completion\",\"created\":1700000000,"
+				+ "\"model\":\"gpt-5.6-luna\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+				+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
+				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
+		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(),
+				Stream.of(upstream), List.of());
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+
+		assertEquals(200, entity.getStatusCode().value());
+		assertEquals("openai", entity.getHeaders().getFirst("X-CacheRelay-Tried"));
+	}
+
+	@Test
+	@DisplayName("null tried walk renders the winner alone")
+	@SuppressWarnings("DataFlowIssue")
+	void triedNullWalkFallsBackToWinner() throws Exception {
+		String upstream = "{\"id\":\"chatcmpl-t2\",\"object\":\"chat.completion\",\"created\":1700000000,"
+				+ "\"model\":\"gpt-5.6-luna\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+				+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
+				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
+		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(),
+				Stream.of(upstream), null);
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+
+		assertEquals(200, entity.getStatusCode().value());
+		assertEquals("openai", entity.getHeaders().getFirst("X-CacheRelay-Tried"));
+	}
+
+	@Test
+	@DisplayName("replay service without a flight claim skips the store")
+	void replayServiceWithoutFlightSkipsStore() throws Exception {
+		ReplayService mockReplay = mock(ReplayService.class);
+		controller.setReplayService(mockReplay);
+		try {
+			String upstream = "{\"id\":\"chatcmpl-r1\",\"object\":\"chat.completion\",\"created\":1700000000,"
+					+ "\"model\":\"gpt-5.6-luna\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+					+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
+					+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
+			ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
+			when(orchestrator.execute(any(), anyString()))
+					.thenReturn(CompletableFuture.completedFuture(response));
+
+			ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+
+			assertEquals(200, entity.getStatusCode().value());
+			verify(mockReplay, never()).store(anyString(), anyString(), any(byte[].class), anyBoolean());
+		} finally {
+			controller.setReplayService(null);
+		}
+	}
+
+	@Test
+	@DisplayName("comment lines inside a stream are tolerated")
+	void commentLinesInStreamAreTolerated() throws Exception {
+		ProviderResponse response = providerResponse(
+				"openai", 200, sseHeaders(),
+				Stream.of(": keep-alive",
+						"data: {\"choices\":[{\"delta\":{\"content\":\"hey\"}}]}",
+						"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7}}",
+						"data: [DONE]")
+		);
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+		ByteArrayOutputStream out = new ByteArrayOutputStream();
+		entity.getBody().writeTo(out);
+
+		assertEquals(200, entity.getStatusCode().value());
+		assertTrue(out.toString(StandardCharsets.UTF_8).contains("hey"));
+	}
+
+	@Test
+	@DisplayName("empty choices array normalizes to an empty assistant message")
+	void emptyChoicesArrayNormalizesToEmptyMessage() throws Exception {
+		String upstream = "{\"id\":\"chatcmpl-e1\",\"object\":\"chat.completion\",\"created\":1700000000,"
+				+ "\"model\":\"gpt-5.6-luna\",\"choices\":[],"
+				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
+		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+
+		assertEquals(200, entity.getStatusCode().value());
+		JsonNode normalized = new ObjectMapper().readTree(body(entity));
+		assertEquals("", normalized.path("choices").get(0).path("message").path("content").asString());
+	}
+
+	@Test
+	@DisplayName("choice without content normalizes to an empty string")
+	void missingContentNormalizesToEmptyString() throws Exception {
+		String upstream = "{\"id\":\"chatcmpl-e2\",\"object\":\"chat.completion\",\"created\":1700000000,"
+				+ "\"model\":\"gpt-5.6-luna\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\"},"
+				+ "\"finish_reason\":\"stop\"}],"
+				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
+		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+
+		assertEquals(200, entity.getStatusCode().value());
+		JsonNode normalized = new ObjectMapper().readTree(body(entity));
+		assertEquals("", normalized.path("choices").get(0).path("message").path("content").asString());
+	}
+
+	@Test
+	@DisplayName("unbindable request body skips the cache store")
+	void unbindableBodyWithCacheWiredSkipsCacheStore() throws Exception {
+		CacheRelayCacheService cacheService = mock(CacheRelayCacheService.class);
+		CachedStreamReconstitution streamReconstitution = new CachedStreamReconstitution(
+				objectMapper);
+		ProtocolAdapterResolver resolver = new ProtocolAdapterResolver(
+				new OpenAiPassthroughAdapter(objectMapper),
+				new AnthropicAdapter(objectMapper),
+				new GeminiAdapter(objectMapper),
+				new DeepSeekAdapter(objectMapper),
+				new OllamaAdapter(objectMapper)
+		);
+		ProxyController cachedController = new ProxyController(
+				orchestrator, gatewayProperties, objectMapper,
+				resolver, costCalculator, eventPublisher, flushStrategy, lineGuardFactory,
+				cacheService, streamReconstitution
+		);
+		String upstream = "{\"id\":\"chatcmpl-e3\",\"object\":\"chat.completion\",\"created\":1700000000,"
+				+ "\"model\":\"gpt-5.6-luna\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+				+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
+				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
+		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = cachedController.proxyChatCompletions(
+				"{\"model\":\"gpt-5.6-luna\",\"messages\":\"nope\"}", request());
+
+		assertEquals(200, entity.getStatusCode().value());
+		assertTrue(body(entity).contains("hi"));
+		verify(cacheService, never()).storeResponse(any(), any(), any(), any(), any(), anyInt(), anyInt());
+	}
+
+	@Test
+	@DisplayName("unknown winning provider skips the price lookup without rates")
+	void unknownProviderSkipsPriceLookup() throws Exception {
+		RoutingDecisionRepository decisions = mock(RoutingDecisionRepository.class);
+		when(decisions.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		controller.setDecisionLogWriter(new DecisionLogWriter(decisions, objectMapper, 1000));
+		try {
+			ProviderResponse response = providerResponse("groq", 200, sseHeaders(),
+					Stream.of("data: [DONE]"), List.of("groq"));
+			when(orchestrator.execute(any(), anyString()))
+					.thenReturn(CompletableFuture.completedFuture(response));
+
+			ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+
+			assertEquals(200, entity.getStatusCode().value());
+			ArgumentCaptor<RoutingDecisionEntity> saved = ArgumentCaptor.forClass(RoutingDecisionEntity.class);
+			verify(decisions).save(saved.capture());
+			assertEquals("groq", saved.getValue().getWinner());
+			assertNull(saved.getValue().getInputRate());
+		} finally {
+			controller.setDecisionLogWriter(null);
+		}
+	}
+
+	@Test
+	@DisplayName("model override chain prices the served model")
+	void modelOverrideChainPricesServedModel() throws Exception {
+		gatewayProperties.setAliases(Map.of(
+				"gpt-5.6-luna", new ModelAlias(
+						List.of(new ProviderRef("openai", "gpt-4o-mini")), FailoverStrategy.SEQUENTIAL)));
+		RoutingDecisionRepository decisions = mock(RoutingDecisionRepository.class);
+		when(decisions.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		controller.setDecisionLogWriter(new DecisionLogWriter(decisions, objectMapper, 1000));
+		ModelPriceCatalog prices = mock(ModelPriceCatalog.class);
+		when(prices.lookup(eq(ProviderType.OPENAI), eq("gpt-4o-mini"))).thenReturn(Optional.of(
+				new ModelPricingEntry("gpt-4o-mini", "openai", "chat",
+						new BigDecimal("0.0000025"), new BigDecimal("0.00001"))));
+		controller.setModelPriceCatalog(prices);
+		try {
+			ProviderResponse response = providerResponse("openai", 200, sseHeaders(),
+					Stream.of("data: [DONE]"), List.of("openai"));
+			when(orchestrator.execute(any(), anyString()))
+					.thenReturn(CompletableFuture.completedFuture(response));
+
+			ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+
+			assertEquals(200, entity.getStatusCode().value());
+			ArgumentCaptor<RoutingDecisionEntity> saved = ArgumentCaptor.forClass(RoutingDecisionEntity.class);
+			verify(decisions).save(saved.capture());
+			assertEquals(0, new BigDecimal("0.0000025").compareTo(saved.getValue().getInputRate()));
+		} finally {
+			controller.setDecisionLogWriter(null);
+			controller.setModelPriceCatalog(null);
+		}
+	}
+
+	@Test
+	@DisplayName("cache hit serves requested usage blocks")
+	void cacheHitWithUsageServesUsage() throws Exception {
+		CacheRelayCacheService cacheService = mock(CacheRelayCacheService.class);
+		CachedStreamReconstitution streamReconstitution = new CachedStreamReconstitution(
+				objectMapper);
+		ProtocolAdapterResolver resolver = new ProtocolAdapterResolver(
+				new OpenAiPassthroughAdapter(objectMapper),
+				new AnthropicAdapter(objectMapper),
+				new GeminiAdapter(objectMapper),
+				new DeepSeekAdapter(objectMapper),
+				new OllamaAdapter(objectMapper)
+		);
+		ProxyController cachedController = new ProxyController(
+				orchestrator, gatewayProperties, objectMapper,
+				resolver, costCalculator, eventPublisher, flushStrategy, lineGuardFactory,
+				cacheService, streamReconstitution
+		);
+		CacheEntry entry = new CacheEntry(
+				"id1", "owner-1", CacheScope.TENANT, "gpt-5.6-luna",
+				"Hi", "", "", "{\"choices\":[{\"message\":{\"content\":\"Cached greeting!\"}}]}", 5, 10, 15,
+				java.time.Instant.now(), 0.96f, null
+		);
+		CacheLookupResult hit = CacheLookupResult.hit(
+				CacheStatus.HIT_L2, entry, 0.96f, 15L
+		);
+		when(cacheService.evaluateCache(any(), any(), eq("owner-1"), any())).thenReturn(hit);
+
+		ResponseEntity<StreamingResponseBody> res = cachedController.proxyChatCompletions(
+				USAGE_BODY, request()
+		);
+
+		assertEquals(200, res.getStatusCode().value());
+		ByteArrayOutputStream out = new ByteArrayOutputStream();
+		res.getBody().writeTo(out);
+		assertTrue(out.toString(StandardCharsets.UTF_8).contains("Cached greeting!"));
+		verify(orchestrator, never()).execute(any(), anyString());
+	}
+
+	@Test
+	@DisplayName("non-streaming cache miss stores the upstream response")
+	void nonStreamingCacheMissStoresResponse() throws Exception {
+		CacheRelayCacheService cacheService = mock(CacheRelayCacheService.class);
+		CachedStreamReconstitution streamReconstitution = new CachedStreamReconstitution(
+				objectMapper);
+		ProtocolAdapterResolver resolver = new ProtocolAdapterResolver(
+				new OpenAiPassthroughAdapter(objectMapper),
+				new AnthropicAdapter(objectMapper),
+				new GeminiAdapter(objectMapper),
+				new DeepSeekAdapter(objectMapper),
+				new OllamaAdapter(objectMapper)
+		);
+		ProxyController cachedController = new ProxyController(
+				orchestrator, gatewayProperties, objectMapper,
+				resolver, costCalculator, eventPublisher, flushStrategy, lineGuardFactory,
+				cacheService, streamReconstitution
+		);
+		when(cacheService.evaluateCache(any(), any(), eq("owner-1"), any())).thenReturn(
+				CacheLookupResult.miss(5L)
+		);
+		String upstream = "{\"id\":\"chatcmpl-ns1\",\"object\":\"chat.completion\",\"created\":1700000000,"
+				+ "\"model\":\"gpt-5.6-luna\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+				+ "\"content\":\"fresh\"},\"finish_reason\":\"stop\"}],"
+				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
+		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = cachedController.proxyChatCompletions(PATH_BODY, request());
+
+		assertEquals(200, entity.getStatusCode().value());
+		assertTrue(body(entity).contains("fresh"));
+		verify(cacheService).storeResponse(any(), any(), eq("owner-1"), any(), contains("fresh"), eq(5), eq(7));
+	}
+
+	@Test
+	@DisplayName("unknown winning provider records the decision without rates")
+	void unknownWinnerRecordsDecisionWithoutRates() throws Exception {
+		RoutingDecisionRepository decisions = mock(RoutingDecisionRepository.class);
+		when(decisions.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		controller.setDecisionLogWriter(new DecisionLogWriter(decisions, objectMapper, 1000));
+		ModelPriceCatalog prices = mock(ModelPriceCatalog.class);
+		when(prices.lookup(any(), anyString())).thenReturn(Optional.empty());
+		controller.setModelPriceCatalog(prices);
+		try {
+			ProviderResponse response = providerResponse("groq", 200, sseHeaders(),
+					Stream.of("data: [DONE]"), List.of("groq"));
+			when(orchestrator.execute(any(), anyString()))
+					.thenReturn(CompletableFuture.completedFuture(response));
+
+			ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+
+			assertEquals(200, entity.getStatusCode().value());
+			ArgumentCaptor<RoutingDecisionEntity> saved = ArgumentCaptor.forClass(RoutingDecisionEntity.class);
+			verify(decisions).save(saved.capture());
+			assertEquals("groq", saved.getValue().getWinner());
+			assertNull(saved.getValue().getInputRate());
+			assertNull(saved.getValue().getOutputRate());
+		} finally {
+			controller.setDecisionLogWriter(null);
+			controller.setModelPriceCatalog(null);
+		}
+	}
+
+	@Test
+	@DisplayName("upstream without choices normalizes to an empty assistant message")
+	void missingChoicesKeyNormalizesToEmptyMessage() throws Exception {
+		String upstream = "{\"id\":\"chatcmpl-e4\",\"object\":\"chat.completion\",\"created\":1700000000,"
+				+ "\"model\":\"gpt-5.6-luna\","
+				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
+		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+
+		assertEquals(200, entity.getStatusCode().value());
+		JsonNode normalized = new ObjectMapper().readTree(body(entity));
+		assertEquals("", normalized.path("choices").get(0).path("message").path("content").asString());
+	}
+
+	@Test
+	@DisplayName("non-string content normalizes to an empty string")
+	void numericContentNormalizesToEmptyString() throws Exception {
+		String upstream = "{\"id\":\"chatcmpl-e5\",\"object\":\"chat.completion\",\"created\":1700000000,"
+				+ "\"model\":\"gpt-5.6-luna\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+				+ "\"content\":42},\"finish_reason\":\"stop\"}],"
+				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
+		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
+
+		assertEquals(200, entity.getStatusCode().value());
+		JsonNode normalized = new ObjectMapper().readTree(body(entity));
+		assertEquals("", normalized.path("choices").get(0).path("message").path("content").asString());
+	}
+
+	@Test
+	@DisplayName("streaming unbindable body still completes without cache interaction")
+	void streamingUnbindableBodyCompletes() throws Exception {
+		CacheRelayCacheService cacheService = mock(CacheRelayCacheService.class);
+		CachedStreamReconstitution streamReconstitution = new CachedStreamReconstitution(
+				objectMapper);
+		ProtocolAdapterResolver resolver = new ProtocolAdapterResolver(
+				new OpenAiPassthroughAdapter(objectMapper),
+				new AnthropicAdapter(objectMapper),
+				new GeminiAdapter(objectMapper),
+				new DeepSeekAdapter(objectMapper),
+				new OllamaAdapter(objectMapper)
+		);
+		ProxyController cachedController = new ProxyController(
+				orchestrator, gatewayProperties, objectMapper,
+				resolver, costCalculator, eventPublisher, flushStrategy, lineGuardFactory,
+				cacheService, streamReconstitution
+		);
+		when(cacheService.evaluateCache(any(), any(), eq("owner-1"), any())).thenReturn(
+				CacheLookupResult.miss(5L)
+		);
+		ProviderResponse response = providerResponse(
+				"openai", 200, sseHeaders(),
+				Stream.of("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}",
+						"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7}}",
+						"data: [DONE]")
+		);
+		when(orchestrator.execute(any(), anyString()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = cachedController.proxyChatCompletions(
+				"{\"model\":\"gpt-5.6-luna\",\"messages\":\"nope\", \"stream\":true}", request());
+		ByteArrayOutputStream out = new ByteArrayOutputStream();
+		entity.getBody().writeTo(out);
+
+		assertEquals(200, entity.getStatusCode().value());
+		assertTrue(out.toString(StandardCharsets.UTF_8).contains("hi"));
+	}
+
+	@Test
+	@DisplayName("store failure releases the flight and still serves the response")
+	void storeFailureReleasesFlightAndServes() throws Exception {
+		ReplayService mockReplay = mock(ReplayService.class);
+		when(mockReplay.lookup(anyString(), anyString())).thenReturn(new ReplayService.Miss());
+		when(mockReplay.beginFill(anyString())).thenReturn(true);
+		when(mockReplay.store(anyString(), anyString(), any(byte[].class), anyBoolean()))
+				.thenThrow(new RuntimeException("disk gone"));
+		controller.setReplayService(mockReplay);
+		try {
+			String upstream = "{\"id\":\"chatcmpl-r2\",\"object\":\"chat.completion\",\"created\":1700000000,"
+					+ "\"model\":\"gpt-5.6-luna\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+					+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
+					+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
+			ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
+			when(orchestrator.execute(any(), anyString()))
+					.thenReturn(CompletableFuture.completedFuture(response));
+			MockHttpServletRequest req = request();
+			req.addHeader("Idempotency-Key", "rk-store-fail-1");
+
+			ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, req);
+
+			assertEquals(200, entity.getStatusCode().value());
+			assertTrue(body(entity).contains("hi"));
+			verify(mockReplay).store(anyString(), anyString(), any(byte[].class), eq(false));
+		} finally {
+			controller.setReplayService(null);
+		}
+	}
+
+	@Test
 	@DisplayName("records the routing decision with rates on success")
 	void recordsRoutingDecisionOnSuccess() throws Exception {
 		RoutingDecisionRepository decisions = mock(RoutingDecisionRepository.class);

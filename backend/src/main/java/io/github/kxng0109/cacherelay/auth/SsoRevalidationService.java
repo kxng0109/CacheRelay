@@ -14,6 +14,7 @@ import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * IdP revalidation sweep: re-checks known SSO accounts at the IdP on two
@@ -104,9 +105,15 @@ public class SsoRevalidationService {
 	 * Revalidates one overdue batch: self-seeds missing watermarks, claims due
 	 * rows, and checks each at the IdP.
 	 *
+	 * <p>Runs in its own transaction: the {@code @Scheduled} entry points have
+	 * no ambient transaction, and paged JPA reads refuse to run without one.
+	 * The batch holds one connection across its IdP checks by design (bounded
+	 * by {@code batchSize}, single-holder via ShedLock).</p>
+	 *
 	 * @param cutoff    staleness bound, never {@code null}
 	 * @param batchSize users claimed per tick
 	 */
+	@Transactional
 	public void revalidateBatch(Instant cutoff, int batchSize) {
 		if (!properties.enabled()) {
 			return;

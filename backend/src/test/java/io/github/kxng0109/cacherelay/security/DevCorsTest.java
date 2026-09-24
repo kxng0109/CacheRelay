@@ -4,6 +4,7 @@ import io.github.kxng0109.cacherelay.SharedContainersBase;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.server.LocalManagementPort;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -13,6 +14,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -42,6 +44,44 @@ class DevCorsTest extends SharedContainersBase {
 
 	@LocalServerPort
 	private int port;
+
+	@LocalManagementPort
+	private int managementPort;
+
+	@Test
+	@DisplayName("management actuator preflight from the dev origin succeeds read-only")
+	void managementActuatorPreflightFromDevOriginSucceeds() throws Exception {
+		for (String path : List.of("/actuator/health", "/actuator/prometheus")) {
+			HttpRequest request = HttpRequest.newBuilder()
+					.uri(URI.create("http://localhost:" + managementPort + path))
+					.header("Origin", DEV_ORIGIN)
+					.header("Access-Control-Request-Method", "GET")
+					.method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+					.build();
+			HttpResponse<Void> response = HttpClient.newHttpClient().send(request,
+					HttpResponse.BodyHandlers.discarding());
+
+			assertThat(response.statusCode()).as("mgmt preflight status for " + path).isEqualTo(200);
+			assertThat(response.headers().firstValue("Access-Control-Allow-Origin"))
+					.as("echoed origin for " + path)
+					.hasValue(DEV_ORIGIN);
+		}
+	}
+
+	@Test
+	@DisplayName("management actuator preflight refuses non-GET methods")
+	void managementActuatorPreflightRefusesPost() throws Exception {
+		HttpRequest request = HttpRequest.newBuilder()
+				.uri(URI.create("http://localhost:" + managementPort + "/actuator/health"))
+				.header("Origin", DEV_ORIGIN)
+				.header("Access-Control-Request-Method", "POST")
+				.method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+				.build();
+		HttpResponse<Void> response = HttpClient.newHttpClient().send(request,
+				HttpResponse.BodyHandlers.discarding());
+
+		assertThat(response.statusCode()).as("mgmt POST preflight status").isEqualTo(403);
+	}
 
 	@Test
 	@DisplayName("preflight from the dev origin succeeds with credentials headers")
@@ -90,9 +130,11 @@ class DevCorsTest extends SharedContainersBase {
 	@Test
 	@DisplayName("actuator is no longer reachable from the app port (SEC-15)")
 	void actuatorIsNotOnTheAppPort() throws Exception {
-		// Since SEC-15 the actuator moved to the loopback-published management port and
-		// the dev CORS allow-list no longer covers /actuator/**: the app port serves no
-		// actuator route, and the Vite origin receives no CORS grant to scrape it.
+		// Since SEC-15 the actuator moved to the loopback-published management port:
+		// the app port serves no actuator route (404, no content), and the dev CORS
+		// grant for actuator paths is consumed on the management port
+		// (see managementActuatorPreflight*). The path-based grant echoes the dev
+		// origin even on this 404; that header alone exposes nothing.
 		HttpRequest request = HttpRequest.newBuilder()
 				.uri(URI.create("http://localhost:" + port + "/actuator/prometheus"))
 				.header("Origin", DEV_ORIGIN)
@@ -102,9 +144,21 @@ class DevCorsTest extends SharedContainersBase {
 				HttpResponse.BodyHandlers.discarding());
 
 		assertThat(response.statusCode()).as("actuator on the app port").isEqualTo(404);
-		assertThat(response.headers().firstValue("Access-Control-Allow-Origin"))
-				.as("no CORS grant for actuator on the app port")
-				.isEmpty();
+	}
+
+	@Test
+	@DisplayName("management actuator preflight refuses unlisted origins")
+	void managementActuatorPreflightRefusesUnlistedOrigin() throws Exception {
+		HttpRequest request = HttpRequest.newBuilder()
+				.uri(URI.create("http://localhost:" + managementPort + "/actuator/health"))
+				.header("Origin", "http://evil.example:9999")
+				.header("Access-Control-Request-Method", "GET")
+				.method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+				.build();
+		HttpResponse<Void> response = HttpClient.newHttpClient().send(request,
+				HttpResponse.BodyHandlers.discarding());
+
+		assertThat(response.statusCode()).as("evil-origin mgmt preflight status").isEqualTo(403);
 	}
 
 	@Test

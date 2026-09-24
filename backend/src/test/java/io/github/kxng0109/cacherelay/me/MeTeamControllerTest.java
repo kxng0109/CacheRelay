@@ -161,6 +161,55 @@ class MeTeamControllerTest {
 		assertThat(response.getBody().getFirst().teamId()).isEqualTo(teamA);
 	}
 	@Test
+	@DisplayName("teams sharing one org resolve its slug once")
+	void sharedOrgSlugResolvedOnce() {
+		stubSession();
+		UUID teamA = UUID.randomUUID();
+		UUID teamB = UUID.randomUUID();
+		UUID orgId = UUID.randomUUID();
+		SsoTeam first = new SsoTeam(orgId, "iss", "group-1", "Eng");
+		setId(first, teamA);
+		SsoTeam second = new SsoTeam(orgId, "iss", "group-2", "Ops");
+		setId(second, teamB);
+		SsoOrg org = new SsoOrg("acme", "Acme");
+		setId(org, orgId);
+		when(memberships.findByUserId(userId)).thenReturn(List.of(
+				new SsoMembership(userId, teamA, TeamRole.MEMBER, MembershipStatus.ACTIVE),
+				new SsoMembership(userId, teamB, TeamRole.LEAD, MembershipStatus.ACTIVE)));
+		when(teams.findAllById(any())).thenReturn(List.of(first, second));
+		when(orgs.findAllById(List.of(orgId))).thenReturn(List.of(org));
+
+		ResponseEntity<List<TeamMembershipResponse>> response = controller.myTeams(bearer());
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody()).isNotNull();
+		assertThat(response.getBody()).hasSize(2);
+		assertThat(response.getBody()).extracting(TeamMembershipResponse::orgSlug)
+				.containsOnly("acme");
+	}
+
+	@Test
+	@DisplayName("null authorization answers 401")
+	@SuppressWarnings("DataFlowIssue")
+	void nullAuthorizationAnswers401() {
+		assertThatThrownBy(() -> controller.myTeams(null))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.UNAUTHORIZED);
+		verify(memberships, never()).findByUserId(any());
+	}
+
+	@Test
+	@DisplayName("non-bearer authorization answers 401")
+	void nonBearerAuthorizationAnswers401() {
+		assertThatThrownBy(() -> controller.myTeams("Token " + SESSION))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.UNAUTHORIZED);
+		verify(memberships, never()).findByUserId(any());
+	}
+
+	@Test
 	@DisplayName("disabled accounts answer 401")
 	void disabledAccountAnswers401() {
 		when(sessions.validate(SESSION)).thenReturn(sessionFor(userId));

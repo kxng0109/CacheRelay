@@ -22,6 +22,11 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
  * applies to exposed headers: with credentials the browser treats {@code *} as a literal name, so the
  * rate-limit, cache and budget families the UI reads are listed explicitly instead.
  *
+ * <p>Security posture of the actuator grant below: the management port is published on host loopback only and
+ * exposes exactly {@code health} and {@code prometheus} (no {@code env}, {@code configprops}, dumps, or mappings),
+ * neither of which carries secrets, credentials, or tenant identifiers. The dev grant is therefore readable by the
+ * local operator UI but unreachable from the network; it changes nothing about who can reach the port.
+ *
  * @since 1.8.0
  */
 @Configuration
@@ -32,10 +37,15 @@ public class DevCorsConfig {
 	 * CORS policy for the local Vite dev server.
 	 *
 	 * <p>Covers the versioned API surface ({@code /v1/**}), which is same-origin
-	 * ({@code http://localhost:5173}) in dev only. Actuator endpoints are deliberately
-	 * not registered: since SEC-15 they are served exclusively on the loopback-published
-	 * management port, which browsers must not scrape. Production keeps no CORS
-	 * configuration and stays default-deny for cross-origin browser traffic.</p>
+	 * ({@code http://localhost:5173}) in dev only. The actuator liveness surface
+	 * ({@code /actuator/health}, {@code /actuator/health/**},
+	 * {@code /actuator/prometheus}) is additionally readable cross-origin so the
+	 * operator UI's probes report truthfully instead of failing closed on CORS:
+	 * since SEC-15 those paths exist only on the loopback-published management
+	 * port, whose only other readers are host-local scrapers. The grant is
+	 * read-only ({@code GET}) and carries no extra allowed or exposed headers;
+	 * production keeps no CORS configuration and stays default-deny for
+	 * cross-origin browser traffic.</p>
 	 *
 	 * @return source mapping dev paths to the dev policy
 	 */
@@ -79,6 +89,14 @@ public class DevCorsConfig {
 				"Idempotent-Replayed"));
 		UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
 		source.registerCorsConfiguration("/v1/**", config);
+		CorsConfiguration actuator = new CorsConfiguration();
+		actuator.setAllowedOrigins(List.of("http://localhost:5173"));
+		actuator.setAllowCredentials(true);
+		actuator.setAllowedMethods(List.of("GET"));
+		actuator.setMaxAge(3600L);
+		source.registerCorsConfiguration("/actuator/health", actuator);
+		source.registerCorsConfiguration("/actuator/health/**", actuator);
+		source.registerCorsConfiguration("/actuator/prometheus", actuator);
 		return source;
 	}
 }

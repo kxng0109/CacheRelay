@@ -93,7 +93,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   /v1/admin/capture/owner/{ownerId}`, `CAPTURE_READ` audit) is deleted. Rationale:
   local JSONL segments are instance-local (invisible across replicas without shared
   storage) and the writer's eager directory creation failed startup while disabled.
-  Frontend Capture screens need a frontend-session follow-up (endpoints 404).
+  Frontend Capture screens removed in the follow-up session (route, nav, chord,
+  client methods, types, tests, palette — no placeholder).
+
+### Changed
+
+- **Console: probes honesty + empty-state + models/login consistency:** header
+  chip and signal rail read `probes:up/down` (actuator reachability alone never
+  proved gateway liveness); unreachable probes render muted with retry while
+  answered HTTP failures stay red; Models drops the Actions column with no
+  database-managed rows visible (file cells read muted `read-only`); login
+  orders form → SSO → first-account/redeem (the pointer stays: no
+  enumeration-safe hide signal exists); shortcut sheet lists the new chords.
+
+### Fixed
+
+- **SSO revalidation sweep transaction:** `SsoRevalidationService.revalidateBatch`
+  now opens its own transaction. The `@Scheduled` entry points have no ambient
+  transaction, so every hot sweep died with `No active transaction` on its first
+  paged JPA read; unit tests (mocked repositories) and the IT (explicit
+  transactions) both masked it. Locked by a no-ambient-transaction regression
+  test against real PostgreSQL.
+- **Dev actuator probe readability:** the dev CORS allow-list now grants
+  read-only (`GET`) access to `/actuator/health[/**]` and `/actuator/prometheus`
+  for the Vite origin, so the operator UI's probes report truthfully instead of
+  failing closed on CORS. Dev profile only; the management port stays
+  loopback-published with exactly `health` + `prometheus` exposed (no secrets
+  or tenant data in either payload); evil origins still 403; the app port still
+  serves no actuator route.
 
 ## [1.8.0] - 2026-09-22
 
@@ -392,6 +419,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dev CORS expose list (`DevCorsConfig`):** the 14 rate-limit/cache/budget header names the operator
   strip reads are now exposed to browsers (a wildcard is a silent no-op under credentials, so the list
   is explicit); prod chain still byte-identical with zero CORS surface.
+- **Console: usage dashboards (Phase 1) + SSO teams (Phase 2) + SSO login UI:**
+  `/usage` personal dashboard and `/ledger/user/:userId` admin drill-down
+  (shared board, freshness headers, stealth-404 screen, client 429 backoff);
+  `/teams` memberships + admin org picker (member lists only — no team-usage
+  route exists); login SSO buttons (`VITE_SSO_PROVIDERS`, greyed when
+  unconfigured) with fragment-callback completion (`GET /v1/auth/me`, 30s
+  pending copy, IdP-disablement hint). Shared `EmptyTrio` across collection
+  screens; `G then U / T` chords. Frontend: 54 suites / 609 tests, branch 96.0.
 
 ### Fixed
 
