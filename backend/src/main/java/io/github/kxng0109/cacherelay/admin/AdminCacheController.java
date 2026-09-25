@@ -2,6 +2,7 @@ package io.github.kxng0109.cacherelay.admin;
 
 import io.github.kxng0109.cacherelay.admin.dto.CachePurgeResponse;
 import io.github.kxng0109.cacherelay.admin.dto.CacheStatsResponse;
+import io.github.kxng0109.cacherelay.admin.dto.CacheTierStatsResponse;
 import io.github.kxng0109.cacherelay.cache.config.CacheRelayCacheProperties;
 import io.github.kxng0109.cacherelay.cache.engine.CacheRelayCacheService;
 import io.github.kxng0109.cacherelay.cache.engine.l2.RediSearchVectorClient;
@@ -44,6 +45,7 @@ public class AdminCacheController {
 	private final CacheRelayCacheProperties properties;
 	private final StringRedisTemplate stringRedisTemplate;
 	private final RediSearchVectorClient vectorClient;
+	private final RedisTierProbe tierProbe;
 
 	/**
 	 * Returns active cache configuration and status metrics.
@@ -101,6 +103,35 @@ public class AdminCacheController {
 				properties.getSemantic().isEntityGuardEnabled()
 		);
 		return ResponseEntity.ok(response);
+	}
+
+	/**
+	 * Returns live point-in-time telemetry for both Redis tiers.
+	 *
+	 * @return HTTP 200 OK with the tier snapshot (unreachable tiers read as absent metrics, never an error)
+	 */
+	@Operation(
+			summary = "Inspect live Redis tier telemetry",
+			description = "Reads INFO memory plus INFO stats from the accounting (noeviction) and cache (allkeys-lru) tiers behind a ten-second memo. A dead tier degrades to absent metrics.",
+			security = {
+					@SecurityRequirement(name = OpenApiConfig.SCHEME_ADMIN_KEY_HEADER),
+					@SecurityRequirement(name = OpenApiConfig.SCHEME_ADMIN_BEARER)
+			}
+	)
+	@ApiResponses(value = {
+			@ApiResponse(
+					responseCode = "200",
+					description = "Tier telemetry snapshot",
+					content = @Content(
+							mediaType = "application/json",
+							schema = @Schema(implementation = CacheTierStatsResponse.class)
+					)
+			),
+			@ApiResponse(responseCode = "401", description = "Unauthorized: Master Admin key missing or incorrect")
+	})
+	@GetMapping("/tiers")
+	public ResponseEntity<CacheTierStatsResponse> getTierStats() {
+		return ResponseEntity.ok(tierProbe.tiers());
 	}
 
 	/**

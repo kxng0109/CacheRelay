@@ -308,7 +308,10 @@
                             <goal>prepare-agent</goal>
                         </goals>
                         <configuration>
-                            <append>false</append>
+                            <!-- append: surefire and failsafe forks share one
+                                 exec file; last-writer-wins (false) would drop
+                                 unit coverage once ITs run. -->
+                            <append>true</append>
                         </configuration>
                     </execution>
                     <execution>
@@ -363,6 +366,36 @@
                                 </rule>
                             </rules>
                         </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <!-- Version from the Spring Boot BOM (same line as surefire):
+                     integration tests (*IT) run in the verify phase so unit
+                     (`mvn test`) and integration (`mvn verify`) stays split. -->
+                <configuration>
+                    <!-- Same test-only maps as surefire above: failsafe forks
+                         are separate JVMs and do not inherit them. -->
+                    <environmentVariables>
+                        <GATEWAY_MCP_HITL_SECRET>test-only-hitl-secret-32-bytes-minimum!!</GATEWAY_MCP_HITL_SECRET>
+                        <GATEWAY_ADMIN_MASTERKEY>test-only-admin-master-key-32b-min!!</GATEWAY_ADMIN_MASTERKEY>
+                        <GATEWAY_AUTH_JWT_SECRET>test-only-jwt-secret-32-bytes-minimum!!</GATEWAY_AUTH_JWT_SECRET>
+                    </environmentVariables>
+                    <systemPropertyVariables>
+                        <gateway.scheduling.pool-size>1</gateway.scheduling.pool-size>
+                        <gateway.scheduling.await-termination-seconds>1</gateway.scheduling.await-termination-seconds>
+                        <management.server.port>0</management.server.port>
+                        <spring.test.context.cache.maxSize>2</spring.test.context.cache.maxSize>
+                    </systemPropertyVariables>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
                     </execution>
                 </executions>
             </plugin>

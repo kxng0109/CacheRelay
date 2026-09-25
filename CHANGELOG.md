@@ -114,13 +114,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   paged JPA read; unit tests (mocked repositories) and the IT (explicit
   transactions) both masked it. Locked by a no-ambient-transaction regression
   test against real PostgreSQL.
-- **Dev actuator probe readability:** the dev CORS allow-list now grants
-  read-only (`GET`) access to `/actuator/health[/**]` and `/actuator/prometheus`
+- **Dev actuator probe readability:** the dev CORS allow-list now grants  read-only (`GET`) access to `/actuator/health[/**]` and `/actuator/prometheus`
   for the Vite origin, so the operator UI's probes report truthfully instead of
   failing closed on CORS. Dev profile only; the management port stays
   loopback-published with exactly `health` + `prometheus` exposed (no secrets
   or tenant data in either payload); evil origins still 403; the app port still
   serves no actuator route.
+- **Redis tier telemetry for the console:** new admin read `GET
+  /v1/admin/cache/tiers` reports live `INFO memory` + `INFO stats` per tier
+  (used/max/percent, live policy, evictions, hits/misses) behind a ten-second
+  memo with per-read freshness stamp; dead tiers degrade to absent metrics,
+  never an error. Same admin auth as `/stats`; no new route surface beyond the
+  read.
 
 ## [1.8.0] - 2026-09-22
 

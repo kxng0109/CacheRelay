@@ -2,6 +2,8 @@ package io.github.kxng0109.cacherelay.admin;
 
 import io.github.kxng0109.cacherelay.admin.dto.CachePurgeResponse;
 import io.github.kxng0109.cacherelay.admin.dto.CacheStatsResponse;
+import io.github.kxng0109.cacherelay.admin.dto.CacheTierStatsResponse;
+import io.github.kxng0109.cacherelay.admin.dto.TierStats;
 import io.github.kxng0109.cacherelay.cache.config.CacheRelayCacheProperties;
 import io.github.kxng0109.cacherelay.cache.engine.CacheRelayCacheService;
 import io.github.kxng0109.cacherelay.cache.engine.l2.RediSearchVectorClient;
@@ -16,6 +18,7 @@ import org.springframework.http.ResponseEntity;
 
 import java.util.Arrays;
 import java.util.Set;
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
@@ -27,11 +30,12 @@ class AdminCacheControllerTest {
 	private final CacheRelayCacheProperties properties = new CacheRelayCacheProperties();
 	private final StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
 	private final RediSearchVectorClient vectorClient = mock(RediSearchVectorClient.class);
+	private final RedisTierProbe tierProbe = mock(RedisTierProbe.class);
 	private AdminCacheController controller;
 
 	@BeforeEach
 	void setUp() {
-		controller = new AdminCacheController(cacheService, properties, redisTemplate, vectorClient);
+		controller = new AdminCacheController(cacheService, properties, redisTemplate, vectorClient, tierProbe);
 	}
 
 	@Test
@@ -44,6 +48,20 @@ class AdminCacheControllerTest {
 		assertThat(stats.enabled()).isTrue();
 		assertThat(stats.similarityThreshold()).isEqualTo(0.80);
 		assertThat(stats.embeddingModel()).isEqualTo("text-embedding-3-small");
+	}
+
+	@Test
+	@DisplayName("getTierStats serves the probe snapshot")
+	void getTierStats() {
+		CacheTierStatsResponse snapshot = new CacheTierStatsResponse(java.time.Instant.EPOCH,
+				TierStats.unreachable(), TierStats.unreachable());
+		when(tierProbe.tiers()).thenReturn(snapshot);
+
+		ResponseEntity<CacheTierStatsResponse> response = controller.getTierStats();
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody()).isSameAs(snapshot);
+		verify(tierProbe).tiers();
 	}
 
 	@Test

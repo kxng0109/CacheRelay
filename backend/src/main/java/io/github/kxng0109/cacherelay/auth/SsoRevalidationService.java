@@ -3,6 +3,7 @@ package io.github.kxng0109.cacherelay.auth;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -11,6 +12,9 @@ import io.github.kxng0109.cacherelay.auth.backfill.BackfillResult;
 import io.github.kxng0109.cacherelay.auth.backfill.SsoBackfillOrchestrator;
 import io.github.kxng0109.cacherelay.security.ratelimit.KeyManagementService;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
+import org.jspecify.annotations.Nullable;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -51,8 +55,46 @@ public class SsoRevalidationService {
 
 	private final Clock clock;
 
+	private final @Nullable SsoRevalidationService self;
+
 	/**
 	 * Creates the service.
+	 *
+	 * @param watermarks         watermark persistence, never {@code null}
+	 * @param links              SSO link reads, never {@code null}
+	 * @param users              account persistence, never {@code null}
+	 * @param keys               key revocation, never {@code null}
+	 * @param refresh            session revocation, never {@code null}
+	 * @param backfillProperties per-registration backfill entries, never {@code null}
+	 * @param orchestrator       IdP fetch dispatcher, never {@code null}
+	 * @param audit              audit log, never {@code null}
+	 * @param properties         sweep ceilings, never {@code null}
+	 * @param clock              clock for cutoffs and stamps, never {@code null}
+	 * @param self               transactional self-proxy, or {@code null} for direct
+	 *                           calls in unit tests (mocks need no transaction)
+	 */
+	@Autowired
+	public SsoRevalidationService(SsoRevalidationRepository watermarks, SsoLinkRepository links,
+			UserAccountRepository users, KeyManagementService keys, RefreshService refresh,
+			SsoBackfillProperties backfillProperties, SsoBackfillOrchestrator orchestrator,
+			AuthAuditService audit, SsoRevalidationProperties properties, Clock clock,
+			@Lazy SsoRevalidationService self) {
+		this.watermarks = watermarks;
+		this.links = links;
+		this.users = users;
+		this.keys = keys;
+		this.refresh = refresh;
+		this.backfillProperties = backfillProperties;
+		this.orchestrator = orchestrator;
+		this.audit = audit;
+		this.properties = properties;
+		this.clock = clock;
+		this.self = self;
+	}
+
+	/**
+	 * Creates the service with direct (non-transactional) internal calls, for
+	 * unit tests whose repositories are mocks.
 	 *
 	 * @param watermarks         watermark persistence, never {@code null}
 	 * @param links              SSO link reads, never {@code null}
@@ -69,16 +111,8 @@ public class SsoRevalidationService {
 			UserAccountRepository users, KeyManagementService keys, RefreshService refresh,
 			SsoBackfillProperties backfillProperties, SsoBackfillOrchestrator orchestrator,
 			AuthAuditService audit, SsoRevalidationProperties properties, Clock clock) {
-		this.watermarks = watermarks;
-		this.links = links;
-		this.users = users;
-		this.keys = keys;
-		this.refresh = refresh;
-		this.backfillProperties = backfillProperties;
-		this.orchestrator = orchestrator;
-		this.audit = audit;
-		this.properties = properties;
-		this.clock = clock;
+		this(watermarks, links, users, keys, refresh, backfillProperties, orchestrator,
+				audit, properties, clock, null);
 	}
 
 	/**
@@ -105,53 +139,111 @@ public class SsoRevalidationService {
 	 * Revalidates one overdue batch: self-seeds missing watermarks, claims due
 	 * rows, and checks each at the IdP.
 	 *
-	 * <p>Runs in its own transaction: the {@code @Scheduled} entry points have
-	 * no ambient transaction, and paged JPA reads refuse to run without one.
-	 * The batch holds one connection across its IdP checks by design (bounded
-	 * by {@code batchSize}, single-holder via ShedLock).</p>
+	 * <p>Transaction boundaries are deliberately narrow: the claim phase runs in
+	 * one short transaction, every IdP call runs outside any transaction, and
+	 * each verdict persists in its own short transaction. Transactions must
+	 * never span the remote IdP reads, or one sweep holds a pool connection
+	 * for minutes. Internal steps route through the transactional self-proxy
+	 * when present, so unit tests with mocked repositories keep working with
+	 * direct calls.</p>
 	 *
 	 * @param cutoff    staleness bound, never {@code null}
 	 * @param batchSize users claimed per tick
 	 */
-	@Transactional
 	public void revalidateBatch(Instant cutoff, int batchSize) {
 		if (!properties.enabled()) {
 			return;
 		}
+		List<Claim> claimed = target().claimBatch(cutoff, batchSize);
+		for (Claim claim : claimed) {
+			revalidateOne(claim);
+		}
+	}
+
+	private SsoRevalidationService target() {
+		return self != null ? self : this;
+	}
+
+	/**
+	 * One claimed watermark plus its checkable IdP link, if any.
+	 *
+	 * @param watermark claimed watermark, never {@code null}
+	 * @param link      checkable link, or {@code null} when the account has none
+	 */
+	private record Claim(SsoRevalidation watermark, @Nullable SsoLink link) {
+	}
+
+	/**
+	 * Seeds missing watermarks and claims due rows in one short transaction.
+	 *
+	 * @param cutoff    staleness bound, never {@code null}
+	 * @param batchSize users claimed per tick
+	 * @return claimed watermarks with resolved links, never {@code null}
+	 */
+	@Transactional
+	public List<Claim> claimBatch(Instant cutoff, int batchSize) {
 		List<UUID> missing =
 				watermarks.findUserIdsMissingWatermark(PageRequest.of(0, batchSize));
 		for (UUID userId : missing) {
 			watermarks.save(new SsoRevalidation(userId, Instant.EPOCH, null));
 		}
-		List<SsoRevalidation> claimed =
-				watermarks.findDueForRevalidation(cutoff, PageRequest.of(0, batchSize));
-		for (SsoRevalidation watermark : claimed) {
-			revalidateOne(watermark);
+		List<Claim> claimed = new ArrayList<>();
+		for (SsoRevalidation watermark :
+				watermarks.findDueForRevalidation(cutoff, PageRequest.of(0, batchSize))) {
+			SsoLink link = null;
+			for (SsoLink candidate : links.findByUserId(watermark.getUserId())) {
+				if (checkable(candidate.getRegistrationId())) {
+					link = candidate;
+					break;
+				}
+			}
+			claimed.add(new Claim(watermark, link));
 		}
+		return claimed;
 	}
 
-	private void revalidateOne(SsoRevalidation watermark) {
+	private void revalidateOne(Claim claim) {
 		Instant now = clock.instant();
-		SsoLink link = null;
-		for (SsoLink candidate : links.findByUserId(watermark.getUserId())) {
-			if (checkable(candidate.getRegistrationId())) {
-				link = candidate;
-				break;
-			}
-		}
+		SsoLink link = claim.link();
 		if (link == null) {
-			watermark.mark(now, null);
-			watermarks.save(watermark);
+			target().noteSkipped(claim.watermark(), now);
 			return;
 		}
+		// Remote IdP read: deliberately outside any transaction, so a slow or
+		// hung provider never holds a pool connection.
 		Optional<BackfillResult> result =
 				orchestrator.revalidate(link.getRegistrationId(), link.getSubject());
-		if (result.isEmpty()) {
+		target().applyVerdict(claim.watermark(), result, now);
+	}
+
+	/**
+	 * Marks a link-less watermark without a verdict in its own short transaction.
+	 *
+	 * @param watermark claimed watermark, never {@code null}
+	 * @param now       decision instant, never {@code null}
+	 */
+	@Transactional
+	public void noteSkipped(SsoRevalidation watermark, Instant now) {
+		watermark.mark(now, null);
+		watermarks.save(watermark);
+	}
+
+	/**
+	 * Persists one IdP verdict in its own short transaction.
+	 *
+	 * @param watermark claimed watermark, never {@code null}
+	 * @param verdict   IdP outcome, empty when the check produced none
+	 * @param now       decision instant, never {@code null}
+	 */
+	@Transactional
+	public void applyVerdict(SsoRevalidation watermark, Optional<BackfillResult> verdict,
+			Instant now) {
+		if (verdict.isEmpty()) {
 			watermark.mark(now, null);
 			watermarks.save(watermark);
 			return;
 		}
-		if (result.get().disabled()) {
+		if (verdict.get().disabled()) {
 			revoke(watermark.getUserId());
 			watermark.mark(now, RevalidationStatus.INACTIVE);
 		} else {
