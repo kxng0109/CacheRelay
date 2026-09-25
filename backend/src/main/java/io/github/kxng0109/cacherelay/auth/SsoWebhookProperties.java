@@ -25,7 +25,7 @@ import org.springframework.validation.annotation.Validated;
 @ConfigurationProperties("gateway.sso.webhooks")
 @Validated
 public record SsoWebhookProperties(
-		@Valid List<RegistrationWebhook> registrations
+		List<@Valid RegistrationWebhook> registrations
 ) {
 
 	/**

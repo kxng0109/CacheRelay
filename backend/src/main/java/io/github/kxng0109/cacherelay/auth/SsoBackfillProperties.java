@@ -23,7 +23,7 @@ import org.springframework.validation.annotation.Validated;
 @ConfigurationProperties("gateway.sso.backfill")
 @Validated
 public record SsoBackfillProperties(
-		@Valid List<RegistrationBackfill> registrations
+		List<@Valid RegistrationBackfill> registrations
 ) {
 
 	/**

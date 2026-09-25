@@ -33,7 +33,6 @@ public class GatewayProperties {
 
 	private Map<String, ModelAlias> aliases = new LinkedHashMap<>();
 
-	@Valid
 	private List<@Valid BootstrapKey> bootstrapKeys = new ArrayList<>();
 
 	/**
