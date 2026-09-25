@@ -120,6 +120,22 @@ describe('ObservabilityPage', () => {
     })
   })
 
+  it('accepts Spring Boot vendor JSON suffixes as JSON', async () => {
+    server.use(
+      http.get('*/actuator/health', () =>
+        HttpResponse.json(
+          { status: 'UP' },
+          { headers: { 'Content-Type': 'application/vnd.spring-boot.actuator.v3+json' } },
+        ),
+      ),
+    )
+    renderApp(<ObservabilityPage />)
+    await waitFor(() => {
+      expect(screen.getByText(/gateway is up/i)).toBeInTheDocument()
+    })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   it('names a non-text metrics answer instead of claiming a clean scrape', async () => {
     server.use(
       http.get('*/actuator/health', () => HttpResponse.json({ status: 'UP' })),

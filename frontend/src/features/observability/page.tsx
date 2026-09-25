@@ -99,7 +99,8 @@ export function ObservabilityPage(): React.JSX.Element {
       if (!res.ok)
         throw new Error(`Health probe failed: HTTP ${String(res.status)}. Retry shortly.`)
       const contentType = res.headers.get('content-type') ?? ''
-      if (!contentType.includes('application/json')) {
+      const isJson = contentType.includes('application/json') || /\+json(\s|;|$)/.test(contentType)
+      if (!isJson) {
         throw new Error(
           `Health endpoint answered ${contentType === '' ? 'without a content type' : contentType}, not JSON. Check the management base URL.`,
         )
