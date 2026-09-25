@@ -1,0 +1,250 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "CacheRelay streaming engine: SSE connections, flush health, downstream backpressure, line-guard defense, and stream lifetime. Legends are explicit; missing series render as No data, never fabricated zeros.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "panels": [],
+      "title": "Live Streaming State",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Currently open SSE streams. Zero at idle is expected; absence renders as No data.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] },
+          "unit": "short", "decimals": 0, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
+      "id": 1,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value", "noValue": "No data" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "max without (instance) (sse_connection_active)", "instant": true, "range": false, "refId": "A" }],
+      "title": "Active SSE Connections",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Unflushed bytes currently buffered across all streams.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] },
+          "unit": "bytes", "decimals": 0, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
+      "id": 2,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value", "noValue": "No data" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "max without (instance) (sse_buffer_bytes)", "instant": true, "range": false, "refId": "A" }],
+      "title": "In-Flight Buffered Bytes",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Streams terminated because the downstream client's read buffer stayed slow past the backpressure threshold.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.001 }, { "color": "red", "value": 1 }] },
+          "unit": "ops", "decimals": 3, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 },
+      "id": 3,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value", "noValue": "No data" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "sum(rate(sse_flush_backpressure_count_total[$__rate_interval]))", "instant": true, "range": false, "refId": "A" }],
+      "title": "Backpressure Aborts/s",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Upstream streaming exchanges cancelled before completion (client disconnect or provider abort).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] },
+          "unit": "ops", "decimals": 3, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
+      "id": 4,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value", "noValue": "No data" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "sum(rate(sse_upstream_cancelled_count_total[$__rate_interval]))", "instant": true, "range": false, "refId": "A" }],
+      "title": "Upstream Cancellations/s",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Maximum observed flush lag in milliseconds (hot-reloadable tuning). Matches the SseFlushLagSpike alert at 250ms.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 150 }, { "color": "red", "value": 250 }] },
+          "unit": "ms", "decimals": 1, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "id": 10,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "max without (instance) (sse_flush_lag_max_ms)", "legendFormat": "Max flush lag (ms)", "range": true, "refId": "A" }],
+      "title": "SSE Flush Lag",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Flush durations as percentiles from the flush histogram, over 10m windows for a stable tail at low traffic.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "lineWidth": 2, "fillOpacity": 6, "showPoints": "never", "spanNulls": true },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.1 }, { "color": "red", "value": 0.25 }] },
+          "unit": "s", "min": 0, "decimals": 4, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "id": 11,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "histogram_quantile(0.50, sum by (le) (rate(sse_flush_duration_seconds_bucket[10m])))", "legendFormat": "Flush P50", "range": true, "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le) (rate(sse_flush_duration_seconds_bucket[10m])))", "legendFormat": "Flush P95", "range": true, "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "histogram_quantile(0.99, sum by (le) (rate(sse_flush_duration_seconds_bucket[10m])))", "legendFormat": "Flush P99", "range": true, "refId": "C" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le) (rate(sse_stream_duration_seconds_bucket[10m])))", "legendFormat": "Stream lifetime P95", "range": true, "refId": "D" }
+      ],
+      "title": "Flush & Stream Duration Percentiles",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Average SSE line length written per flush. The line guard rejects oversized lines; this shows the live distribution against that boundary.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 2, "fillOpacity": 6, "showPoints": "never", "spanNulls": true },
+          "mappings": [], "unit": "bytes", "min": 0, "decimals": 1, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 14 },
+      "id": 12,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "sum(rate(sse_line_length_bytes_sum[$__rate_interval])) / clamp_min(sum(rate(sse_line_length_bytes_count[$__rate_interval])), 1)", "legendFormat": "Avg line length", "range": true, "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "max without (instance) (sse_line_length_bytes_max)", "legendFormat": "Max line length", "range": true, "refId": "B" }
+      ],
+      "title": "SSE Line Length Distribution",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Line-guard rejections per second by provider and reason, split by the guard action taken. Reasons are the enforcement boundaries: byte-rate, line-rate, and line length.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 2, "fillOpacity": 8, "showPoints": "never", "spanNulls": false },
+          "mappings": [], "unit": "ops", "min": 0, "decimals": 4, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 14 },
+      "id": 13,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "sum by (provider, reason, action) (rate(sse_line_rejected_count_total[$__rate_interval]))", "legendFormat": "{{provider}} · {{reason}} · {{action}}", "range": true, "refId": "A" }
+      ],
+      "title": "Line Guard Rejections by Reason & Action",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 },
+      "id": 101,
+      "panels": [],
+      "title": "Scheduled Work (per Stream / Ledger Cadence)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Scheduled task execution durations per task (namespace.function). 12 tasks are registered; the largest live max is the Ollama keep-warm call (~34ms) alongside ledger drain and budget detection.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never", "spanNulls": true },
+          "mappings": [], "unit": "s", "min": 0, "decimals": 4, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 23 },
+      "id": 20,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "sum(rate(tasks_scheduled_execution_seconds_sum[$__rate_interval])) / clamp_min(sum(rate(tasks_scheduled_execution_seconds_count[$__rate_interval])), 1)", "legendFormat": "Avg (all tasks)", "range": true, "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "tasks_scheduled_execution_seconds_max", "legendFormat": "max · {{code_namespace}}.{{code_function}}", "range": true, "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "tasks_scheduled_execution_active_seconds_max", "legendFormat": "active max · {{code_namespace}}.{{code_function}}", "range": true, "refId": "C" }
+      ],
+      "title": "Scheduled Task Durations",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "In-flight buffered bytes over time; correlate with flush lag to see backpressure accumulating.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 2, "fillOpacity": 8, "showPoints": "never", "spanNulls": true },
+          "mappings": [], "unit": "bytes", "min": 0, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 23 },
+      "id": 21,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "max without (instance) (sse_buffer_bytes)", "legendFormat": "Buffered bytes", "range": true, "refId": "A" }],
+      "title": "Buffered Bytes Over Time",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 39,
+  "tags": ["cacherelay", "sse", "streaming"],
+  "templating": { "list": [] },
+  "time": { "from": "now-3h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "CacheRelay — SSE Streaming & Line Defense",
+  "uid": "cacherelay-sse",
+  "version": 1,
+  "weekStart": ""
+}

@@ -1,0 +1,292 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "CacheRelay runtime: JVM memory, ZGC pauses, virtual vs platform threads, direct-buffer headroom (256 MB cap), and HikariCP pool truth. Every series is explicitly named; nothing unexplained is drawn.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "panels": [],
+      "title": "JVM Health",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "JVM process uptime since last start.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] },
+          "unit": "s", "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
+      "id": 1,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value", "noValue": "No data" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "max without (instance) (process_uptime_seconds)", "instant": true, "range": false, "refId": "A" }],
+      "title": "Uptime",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Heap used as a percentage of max heap (Xmx 1152m). Yellow at 70%, red at 80% per the ZGC allocation-pacing risk band.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 70 }, { "color": "red", "value": 80 }] },
+          "unit": "percent", "decimals": 1, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
+      "id": 2,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value", "noValue": "No data" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "100 * max without (instance) (jvm_memory_used_bytes{area=\"heap\"}) / max without (instance) (jvm_memory_max_bytes{area=\"heap\"})", "instant": true, "range": false, "refId": "A" }],
+      "title": "Heap Used %",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Direct buffer memory against the 256 MB MaxDirectMemorySize cap (Dockerfile). Red at 80% per the JvmDirectMemoryHigh alert.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 60 }, { "color": "red", "value": 80 }] },
+          "unit": "percent", "decimals": 2, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 },
+      "id": 3,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value", "noValue": "No data" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "100 * sum(jvm_buffer_memory_used_bytes{id=\"direct\"}) / (256 * 1024 * 1024)", "instant": true, "range": false, "refId": "A" }],
+      "title": "Direct Memory % of 256 MB",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "The machine's system load average and CPU utilization as observed by the JVM.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] },
+          "unit": "short", "decimals": 2, "noValue": "No data"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Load avg (1m)" }, "properties": [{ "id": "unit", "value": "short" }] },
+          { "matcher": { "id": "byName", "options": "CPU usage" }, "properties": [{ "id": "unit", "value": "percentunit" }] }
+        ]
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
+      "id": 4,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "vertical", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name", "noValue": "No data" },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "max without (instance) (system_load_average_1m)", "legendFormat": "Load avg (1m)", "instant": true, "range": false, "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "max without (instance) (system_cpu_usage)", "legendFormat": "CPU usage", "instant": true, "range": false, "refId": "B" }
+      ],
+      "title": "System Load & CPU",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Heap and non-heap pool usage over time, one series per memory pool.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 4, "showPoints": "never", "spanNulls": true },
+          "mappings": [], "unit": "bytes", "min": 0, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 6 },
+      "id": 10,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "jvm_memory_used_bytes{area=\"heap\"}", "legendFormat": "Heap · {{id}}", "range": true, "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "jvm_memory_used_bytes{area=\"nonheap\", id=\"Metaspace\"}", "legendFormat": "Non-heap · Metaspace", "range": true, "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "jvm_memory_used_bytes{area=\"nonheap\", id=\"Code Cache\"}", "legendFormat": "Non-heap · Code Cache", "range": true, "refId": "C" }
+      ],
+      "title": "Memory Pools",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "ZGC pause duration percentiles (p50 and p99 for major pauses), computed from the pause histogram over 10m windows. Measured live: pauses cluster at p50 0.5ms / p99 1ms with ~0.36 major pauses/s and no minor pauses in the current JVM; a missing Minor line means the JVM reports none.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "lineWidth": 2, "fillOpacity": 6, "showPoints": "never", "spanNulls": true },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.05 }, { "color": "red", "value": 0.2 }] },
+          "unit": "s", "min": 0, "decimals": 3, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 6 },
+      "id": 11,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "histogram_quantile(0.50, sum by (le) (rate(jvm_gc_pause_seconds_bucket{gc=~\".*Major.*\"}[10m])))", "legendFormat": "ZGC Major p50", "range": true, "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "histogram_quantile(0.99, sum by (le) (rate(jvm_gc_pause_seconds_bucket{gc=~\".*Major.*\"}[10m])))", "legendFormat": "ZGC Major p99", "range": true, "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "histogram_quantile(0.99, sum by (le) (rate(jvm_gc_pause_seconds_bucket{gc=~\".*Minor.*\"}[10m])))", "legendFormat": "ZGC Minor p99", "range": true, "refId": "C" }
+      ],
+      "title": "ZGC Pause Percentiles",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
+      "id": 101,
+      "panels": [],
+      "title": "Threads & Executors",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Thread counts by class. Platform live excludes daemon threads; virtual threads are demand-driven so zero at idle is correct. Platform peak is a lifetime high-water mark.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never", "spanNulls": true },
+          "mappings": [], "unit": "short", "min": 0, "noValue": "No data"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Platform live" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] },
+          { "matcher": { "id": "byName", "options": "Platform daemon" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "super-light-blue" } }] },
+          { "matcher": { "id": "byName", "options": "Virtual live" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] },
+          { "matcher": { "id": "byName", "options": "Virtual pool size" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }] }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "id": 20,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "jvm_threads_live_threads - jvm_threads_daemon_threads", "legendFormat": "Platform live", "range": true, "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "jvm_threads_daemon_threads", "legendFormat": "Platform daemon", "range": true, "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "jvm_threads_virtual_live_threads", "legendFormat": "Virtual live", "range": true, "refId": "C" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "jvm_threads_virtual_pool_size_threads", "legendFormat": "Virtual pool size", "range": true, "refId": "D" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "jvm_threads_peak_threads", "legendFormat": "Platform peak", "range": true, "refId": "E" }
+      ],
+      "title": "Thread Counts",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Executor pools: queue depth, live worker count, pool size, and completion rate. At idle, flat queued lines are correct.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never", "spanNulls": true },
+          "mappings": [], "unit": "short", "min": 0, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "id": 21,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "executor_queued_tasks", "legendFormat": "Queued · {{name}}", "range": true, "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "executor_active_threads", "legendFormat": "Active · {{name}}", "range": true, "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "executor_pool_size_threads", "legendFormat": "Pool size · {{name}}", "range": true, "refId": "C" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "rate(executor_completed_tasks_total[$__rate_interval])", "legendFormat": "Completed/s · {{name}}", "range": true, "refId": "D" }
+      ],
+      "title": "Executor Pools",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 },
+      "id": 102,
+      "panels": [],
+      "title": "Database Pool (HikariCP)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Pool occupancy by state with max/min bounds, all series named. The Max line is a dashed reference, not filled area.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never", "spanNulls": true },
+          "mappings": [], "unit": "short", "min": 0, "noValue": "No data"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Max (pool limit)" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }, { "id": "custom.lineStyle", "value": { "dash": [8, 4], "fill": "dash" } }] },
+          { "matcher": { "id": "byName", "options": "Active" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] },
+          { "matcher": { "id": "byName", "options": "Idle" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] },
+          { "matcher": { "id": "byName", "options": "Pending (waiting)" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }] },
+          { "matcher": { "id": "byName", "options": "Min (pool floor)" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "super-light-blue" } }, { "id": "custom.lineStyle", "value": { "dash": [4, 4], "fill": "dash" } }] }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
+      "id": 30,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "max by (pool) (hikaricp_connections_active)", "legendFormat": "Active", "range": true, "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "max by (pool) (hikaricp_connections_idle)", "legendFormat": "Idle", "range": true, "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "max by (pool) (hikaricp_connections_pending)", "legendFormat": "Pending (waiting)", "range": true, "refId": "C" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "max by (pool) (hikaricp_connections_max)", "legendFormat": "Max (pool limit)", "range": true, "refId": "D" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "max by (pool) (hikaricp_connections_min)", "legendFormat": "Min (pool floor)", "range": true, "refId": "E" }
+      ],
+      "title": "HikariCP Connections by State",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Connection acquisition wait time percentiles. Any sustained P95 growth means the pool is the bottleneck.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "lineWidth": 2, "fillOpacity": 6, "showPoints": "never", "spanNulls": true },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.05 }, { "color": "red", "value": 0.2 }] },
+          "unit": "s", "min": 0, "decimals": 3, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
+      "id": 31,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "histogram_quantile(0.50, sum by (le) (rate(hikaricp_connections_acquire_seconds_bucket[10m])))", "legendFormat": "Acquire P50", "range": true, "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le) (rate(hikaricp_connections_acquire_seconds_bucket[10m])))", "legendFormat": "Acquire P95", "range": true, "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "histogram_quantile(0.99, sum by (le) (rate(hikaricp_connections_acquire_seconds_bucket[10m])))", "legendFormat": "Acquire P99", "range": true, "refId": "C" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "sum(rate(hikaricp_connections_timeout_total[$__rate_interval]))", "legendFormat": "Timeouts/s", "range": true, "refId": "D" }
+      ],
+      "title": "HikariCP Acquisition Latency & Timeouts",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 39,
+  "tags": ["cacherelay", "jvm", "runtime"],
+  "templating": { "list": [] },
+  "time": { "from": "now-3h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "CacheRelay — JVM, Threads & Pools",
+  "uid": "cacherelay-jvm",
+  "version": 1,
+  "weekStart": ""
+}

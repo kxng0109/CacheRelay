@@ -15,7 +15,7 @@ route:
 receivers:
   - name: ops-webhook
     webhook_configs:
-      - url: http://localhost:8080/v1/admin/alerts/webhook
+      - url: http://cacherelay:8080/v1/admin/alerts/webhook
         send_resolved: true
 
 templates: []

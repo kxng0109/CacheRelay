@@ -1,0 +1,243 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Prometheus self-health: freshness of its own data, scrape duration by pool, ingest rate, storage growth, rule evaluation cost, and alerting pipeline. Legends name the pool they describe; missing series render as No data.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "panels": [],
+      "title": "Prometheus Health",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Prometheus readiness for queries (prometheus_ready).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "options": { "0": { "color": "red", "index": 0, "text": "NOT READY" } }, "type": "value" },
+            { "options": { "1": { "color": "green", "index": 1, "text": "READY" } }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "unit": "short", "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 1 },
+      "id": 1,
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value", "noValue": "No data" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "prometheus_ready", "instant": true, "range": false, "refId": "A" }],
+      "title": "Ready",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Whether the last configuration reload succeeded (1 = success).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "options": { "0": { "color": "red", "index": 0, "text": "FAILED" } }, "type": "value" },
+            { "options": { "1": { "color": "green", "index": 1, "text": "OK" } }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "unit": "short", "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 4, "x": 4, "y": 1 },
+      "id": 2,
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value", "noValue": "No data" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "prometheus_config_last_reload_successful", "instant": true, "range": false, "refId": "A" }],
+      "title": "Config Reload",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Stable Prometheus uptime since last start.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] },
+          "unit": "s", "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 4, "x": 8, "y": 1 },
+      "id": 3,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value", "noValue": "No data" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "time() - process_start_time_seconds{job=\"prometheus\"}", "instant": true, "range": false, "refId": "A" }],
+      "title": "Uptime",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Healthy scrape targets as a fraction of all targets across every pool.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 60 }, { "color": "green", "value": 90 }] },
+          "unit": "percent", "min": 0, "max": 100, "decimals": 1, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 4, "x": 12, "y": 1 },
+      "id": 4,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value", "noValue": "No data" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "100 * count(up == 1) / count(up)", "instant": true, "range": false, "refId": "A" }],
+      "title": "Targets Healthy %",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Total active series Prometheus is currently storing (head + blocks).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] },
+          "unit": "short", "decimals": 0, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 4, "x": 16, "y": 1 },
+      "id": 5,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value", "noValue": "No data" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "prometheus_tsdb_head_series", "instant": true, "range": false, "refId": "A" }],
+      "title": "Head Series",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "WAL replay status after a restart. Green idle = 0 replay in progress (normal). The series only exists while replay runs, so No data with a green base also means idle.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }] },
+          "unit": "short", "decimals": 0, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 4, "x": 20, "y": 1 },
+      "id": 6,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value", "noValue": "No data" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "prometheus_tsdb_wal_replay_replay_in_progress", "instant": true, "range": false, "refId": "A" }],
+      "title": "WAL Replay In Progress",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Actual scrape duration per target, one series per scrape job. The postgres job sits at the 3s scrape timeout — if it reaches it, the scrape fails. Any series approaching 3s needs its target investigated.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 2, "fillOpacity": 6, "showPoints": "never", "spanNulls": true },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 2.5 }] },
+          "unit": "s", "min": 0, "decimals": 4, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "id": 10,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "max by (job) (scrape_duration_seconds)", "legendFormat": "{{job}} scrape duration", "range": true, "refId": "A" }],
+      "title": "Scrape Duration by Job",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Samples ingested per second via appends (rate of prometheus_tsdb_head_samples_appended_total).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 2, "fillOpacity": 8, "showPoints": "never", "spanNulls": true },
+          "mappings": [], "unit": "ops", "min": 0, "decimals": 1, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "id": 11,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "rate(prometheus_tsdb_head_samples_appended_total[$__rate_interval])", "legendFormat": "Samples appended/s", "range": true, "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "rate(prometheus_tsdb_head_chunks_created_total[$__rate_interval])", "legendFormat": "Chunks created/s", "range": true, "refId": "B" }
+      ],
+      "title": "Ingest Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "How many series each scrape pool contributes, and how many samples each pool delivers per scrape.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 2, "fillOpacity": 6, "showPoints": "never", "spanNulls": true },
+          "mappings": [], "unit": "short", "min": 0, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "id": 12,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "scrape_samples_scraped", "legendFormat": "{{job}} samples scraped", "range": true, "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "scrape_samples_post_metric_relabeling", "legendFormat": "{{job}} samples after relabel", "range": true, "refId": "B" }
+      ],
+      "title": "Series & Samples by Scrape Job",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Rule group evaluation duration by group and rule file, plus active alerts and pending notifications. Flat lines mean rules are cheap; spikes show expensive rules.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "lineWidth": 2, "fillOpacity": 6, "showPoints": "never", "spanNulls": true },
+          "mappings": [], "unit": "s", "min": 0, "decimals": 5, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "id": 13,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "prometheus_rule_group_last_duration_seconds", "legendFormat": "{{rule_group}} last eval", "range": true, "refId": "A" }
+      ],
+      "title": "Rule Group Evaluation Cost",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["cacherelay", "prometheus", "self-health"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "CacheRelay — Prometheus Self-Health",
+  "uid": "cacherelay-prometheus-health",
+  "version": 1,
+  "weekStart": ""
+}

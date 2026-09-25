@@ -1,0 +1,357 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "CacheRelay data tier: Redis accounting and cache instances side by side, and Postgres ledger truth. Tier and database labels are always explicit; exporting errors render as DOWN/No data and are never painted green.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "panels": [],
+      "title": "Redis Tiers (Accounting vs Cache)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Redis per-tier reachability as reported by redis_up. Absence renders as No data — never a fake green zero.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "options": { "0": { "color": "red", "index": 0, "text": "DOWN" } }, "type": "value" },
+            { "options": { "1": { "color": "green", "index": 1, "text": "UP" } }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "unit": "short", "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
+      "id": 1,
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "vertical", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name", "noValue": "No data" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "max by (tier) (redis_up)", "legendFormat": "{{tier}}", "instant": true, "range": false, "refId": "A" }],
+      "title": "Redis Up by Tier",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Memory used as a percentage of maxmemory, per tier. Accounting must stay under 80%: under noeviction a full tier fails writes. Cache is allkeys-lru and may sit higher.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 70 }, { "color": "red", "value": 80 }] },
+          "unit": "percent", "decimals": 2, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
+      "id": 2,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "vertical", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name", "noValue": "No data" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "100 * max by (tier) (redis_memory_used_bytes) / max by (tier) (redis_memory_max_bytes)", "legendFormat": "{{tier}}", "instant": true, "range": false, "refId": "A" }],
+      "title": "Redis Memory % of Max by Tier",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Key evictions in the last hour per tier. On the accounting tier ANY eviction is a critical condition; on the cache tier it is normal pressure relief. Renders No data until evictions actually occur.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "text" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] },
+          "unit": "short", "decimals": 0, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 },
+      "id": 3,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "vertical", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name", "noValue": "No data" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "increase(redis_evicted_keys_total[1h])", "legendFormat": "{{tier}}", "instant": true, "range": false, "refId": "A" }],
+      "title": "Redis Evicted Keys (1h) by Tier",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Main-thread CPU utilization per tier as a fraction of one core (0.9 = the RedisMainThreadSaturation alert).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] },
+          "unit": "percentunit", "decimals": 3, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
+      "id": 4,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "vertical", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name", "noValue": "No data" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "sum by (tier) (rate(redis_cpu_user_main_thread_seconds_total[$__rate_interval])) + sum by (tier) (rate(redis_cpu_sys_main_thread_seconds_total[$__rate_interval]))", "legendFormat": "{{tier}}", "instant": true, "range": false, "refId": "A" }],
+      "title": "Redis Main-Thread CPU by Tier",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Commands processed per second per tier. Accounting carries rate limits, budgets, holds, dedupe, and breakers; cache carries lookups and vectors.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 2, "fillOpacity": 8, "showPoints": "never", "spanNulls": true },
+          "mappings": [], "unit": "ops", "min": 0, "decimals": 3, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "id": 10,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "sum by (tier) (rate(redis_commands_processed_total[$__rate_interval]))", "legendFormat": "{{tier}} ops/s", "range": true, "refId": "A" }],
+      "title": "Redis Command Throughput by Tier",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Keyspace hit ratio per tier over 15m windows, with a minimum-sample guard so idle tiers render No data instead of a meaningless 0%.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 50 }, { "color": "green", "value": 80 }] },
+          "unit": "percent", "min": 0, "max": 100, "decimals": 1, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "id": 11,
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Redis memory used over time per tier alongside the cap line for each.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 2, "fillOpacity": 6, "showPoints": "never", "spanNulls": true },
+          "mappings": [], "unit": "bytes", "min": 0, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "id": 12,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "max by (tier) (redis_memory_used_bytes)", "legendFormat": "{{tier}} used", "range": true, "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "max by (tier) (redis_memory_max_bytes)", "legendFormat": "{{tier}} max", "range": true, "refId": "B" }
+      ],
+      "title": "Redis Memory vs Cap by Tier",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Memory fragmentation ratio per tier. Above 1.5 on the accounting tier means allocator overhead is eating the maxmemory budget. Display clamps the plot at 3.0; the stat/legend text shows the raw value (live cache tier reports ~13.6 with tiny resident memory — the ratio is mathematical, not a fault).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never", "spanNulls": true },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1.5 }, { "color": "red", "value": 2 }] },
+          "unit": "short", "min": 0, "max": 3, "decimals": 2, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "id": 13,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "max by (tier) (redis_mem_fragmentation_ratio)", "legendFormat": "{{tier}} frag ratio", "range": true, "refId": "A" }],
+      "title": "Redis Fragmentation Ratio by Tier",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 },
+      "id": 101,
+      "panels": [],
+      "title": "Postgres Ledger",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Postgres exporter reachability. pg_up=0 or a missing series renders red/No data — never a green zero.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "options": { "0": { "color": "red", "index": 0, "text": "DOWN" } }, "type": "value" },
+            { "options": { "1": { "color": "green", "index": 1, "text": "UP" } }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "unit": "short", "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 23 },
+      "id": 20,
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name", "noValue": "No data" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "pg_up", "instant": true, "range": false, "refId": "A" }],
+      "title": "Postgres Exporter Up",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Buffer cache hit ratio per database. Below 99% means the working set outgrew shared_buffers (PostgresBufferHitLow alert). Red base: absence means the exporter is blind, not healthy.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 95 }, { "color": "green", "value": 99 }] },
+          "unit": "percent", "min": 0, "max": 100, "decimals": 3, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 5, "x": 4, "y": 23 },
+      "id": 21,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value", "noValue": "No data" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "100 * sum(pg_stat_database_blks_hit{datname=\"cacherelay\"}) / clamp_min(sum(pg_stat_database_blks_hit{datname=\"cacherelay\"}) + sum(pg_stat_database_blks_read{datname=\"cacherelay\"}), 1)", "instant": true, "range": false, "refId": "A" }],
+      "title": "PG Buffer Hit % (cacherelay)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Active backends across all databases against the configured max_connections ceiling (200). Red base: absence means the exporter is blind, not healthy.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 60 }, { "color": "green", "value": 80 }] },
+          "unit": "percent", "decimals": 1, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 5, "x": 9, "y": 23 },
+      "id": 22,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value", "noValue": "No data" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "100 * sum(pg_stat_database_numbackends) / max(pg_settings_max_connections)", "instant": true, "range": false, "refId": "A" }],
+      "title": "PG Connections % of Max",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Deadlocks in the last hour per database (PostgresDeadlocks alert fires above zero). Red base: absence here means the exporter is blind, not that the database is healthy.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 0.5 }] },
+          "unit": "short", "decimals": 0, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 5, "x": 14, "y": 23 },
+      "id": 23,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "vertical", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name", "noValue": "No data" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "increase(pg_stat_database_deadlocks{datname=\"cacherelay\"}[1h])", "legendFormat": "{{datname}}", "instant": true, "range": false, "refId": "A" }],
+      "title": "PG Deadlocks (1h)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Lock counts by mode and database. Spikes here precede deadlocks.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 6, "showPoints": "never", "spanNulls": true },
+          "mappings": [], "unit": "short", "min": 0, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "id": 30,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "sum by (mode) (pg_locks_count)", "legendFormat": "{{mode}}", "range": true, "refId": "A" }],
+      "title": "PG Locks by Mode",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Transaction commit and rollback rates per database.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 2, "fillOpacity": 8, "showPoints": "never", "spanNulls": true },
+          "mappings": [], "unit": "ops", "min": 0, "decimals": 4, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "id": 31,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "sum by (datname) (rate(pg_stat_database_xact_commit{datname=\"cacherelay\"}[$__rate_interval]))", "legendFormat": "{{datname}} commits/s", "range": true, "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "sum by (datname) (rate(pg_stat_database_xact_rollback{datname=\"cacherelay\"}[$__rate_interval]))", "legendFormat": "{{datname}} rollbacks/s", "range": true, "refId": "B" }
+      ],
+      "title": "PG Transaction Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "On-disk database size per database. Growth here is the ledger's storage trajectory.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 2, "fillOpacity": 6, "showPoints": "never", "spanNulls": true },
+          "mappings": [], "unit": "bytes", "min": 0, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 36 },
+      "id": 32,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["min", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "pg_database_size_bytes{datname=\"cacherelay\"}", "legendFormat": "{{datname}} size", "range": true, "refId": "A" }],
+      "title": "PG Database Size",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" },
+      "description": "Autovacuum staleness: tables whose last autovacuum is older than 24h (PostgresVacuumStale alert). Empty means healthy.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "bars", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 60, "showPoints": "never" },
+          "mappings": [], "unit": "s", "min": 0, "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 36 },
+      "id": 33,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "time() - pg_stat_user_tables_last_autovacuum{datname=\"cacherelay\"} and pg_stat_user_tables_last_autovacuum{datname=\"cacherelay\"} > 0", "legendFormat": "{{schemaname}}.{{relname}}", "range": true, "refId": "A" }],
+      "title": "PG Autovacuum Age by Table",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["cacherelay", "redis", "postgres", "data-tier"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "CacheRelay — Redis & Postgres Data Tier",
+  "uid": "cacherelay-data-tier",
+  "version": 1,
+  "weekStart": ""
+}
