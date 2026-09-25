@@ -332,6 +332,20 @@ describe('PlaygroundPage', () => {
     expect(document.body.textContent).not.toContain('gw-')
   })
 
+  it('guides account sessions to owned keys instead of pasting', async () => {
+    server.use(
+      http.get('*/v1/me/keys', () =>
+        HttpResponse.json([
+          { keyId: 'a'.repeat(64), name: 'dev', allowedModels: [], enabled: true },
+        ]),
+      ),
+      catalog(),
+    )
+    renderApp(<PlaygroundPage />, { nonAdminSession: true })
+    await screen.findByRole('combobox', { name: /owned key/i })
+    expect(screen.getByText(/choose an owned key or paste one/i)).toBeInTheDocument()
+  })
+
   it('streams through act-as-self with the session bearer', async () => {
     const user = userEvent.setup()
     let seenAuth = ''

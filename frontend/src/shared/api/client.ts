@@ -448,6 +448,19 @@ function isOwnedKey(r: unknown): r is OwnedKey {
 }
 
 /**
+ * Type guard for provider rows. Unknown backend fields are ignored;
+ * rows missing required fields are dropped, never crash.
+ *
+ * @param r - Unknown decoded row.
+ * @returns True when the row carries the provider fields.
+ */
+function isProviderStatus(r: unknown): r is ProviderStatus {
+  if (typeof r !== 'object' || r === null) return false
+  const record = r as Record<string, unknown>
+  return typeof record.name === 'string' && typeof record.circuitState === 'string'
+}
+
+/**
  * Minimal typed gateway client over `fetch`.
  *
  * @remarks
@@ -675,20 +688,27 @@ export class GatewayClient {
    * Reads configured upstream providers with live routing health.
    *
    * @remarks Backend truth (DTO-verified): `GET /v1/admin/providers`
-   * returns a bare array of `ProviderStatusResponse`. Key material never
-   * crosses; only the `keyConfigured` boolean. Unknown validation strings
-   * degrade to grey at the call site.
+   * returns a `{ providers }` envelope of `ProviderStatusResponse` rows.
+   * A bare array is also accepted for backward compatibility with older
+   * mocks. Key material never crosses; only the `keyConfigured` boolean.
+   * Unknown validation strings degrade to grey at the call site. Rows
+   * missing required fields are dropped, never crash.
    *
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns One status row per provider.
    */
   async listProviders(opts?: RequestOptions): Promise<{ providers: ProviderStatus[] }> {
-    const rows = await this.request<ProviderStatus[]>(
+    const body: unknown = await this.request<unknown>(
       '/v1/admin/providers',
       { headers: this.headers() },
       opts,
     )
-    return { providers: Array.isArray(rows) ? rows : [] }
+    const rows: unknown =
+      typeof body === 'object' && body !== null && 'providers' in body
+        ? (body as Record<string, unknown>).providers
+        : body
+    if (!Array.isArray(rows)) return { providers: [] }
+    return { providers: rows.filter(isProviderStatus) }
   }
 
   /**

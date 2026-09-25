@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react'
+import { fireEvent, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { renderApp } from '../../test/utils.js'
@@ -102,5 +102,62 @@ describe('Select', () => {
   it('marks invalid controls for assistive tech', () => {
     picker({ invalid: true })
     expect(screen.getByRole('combobox', { name: /range/i })).toHaveAttribute('aria-invalid', 'true')
+  })
+
+  it('opens downward when space below fits', async () => {
+    const user = userEvent.setup()
+    picker()
+    await user.click(screen.getByRole('combobox', { name: /range/i }))
+    const menu = screen.getByRole('listbox')
+    expect(menu.style.position).toBe('fixed')
+    expect(menu.style.top).toBe('4px')
+  })
+
+  it('opens upward when the trigger sits near the viewport bottom', async () => {
+    const user = userEvent.setup()
+    const rect = {
+      top: 700,
+      bottom: 740,
+      left: 0,
+      right: 200,
+      width: 200,
+      height: 40,
+      x: 0,
+      y: 700,
+      toJSON: () => ({}),
+    } as DOMRect
+    const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(rect)
+    try {
+      picker()
+      await user.click(screen.getByRole('combobox', { name: /range/i }))
+      expect(screen.getByRole('listbox').style.top).toBe('576px')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('portals the menu to the body so dialog scroll never clips it', async () => {
+    const user = userEvent.setup()
+    picker()
+    await user.click(screen.getByRole('combobox', { name: /range/i }))
+    expect(screen.getByRole('listbox').parentElement).toBe(document.body)
+  })
+
+  it('dismisses the menu on viewport scroll so it never detaches', async () => {
+    const user = userEvent.setup()
+    picker()
+    await user.click(screen.getByRole('combobox', { name: /range/i }))
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+    fireEvent.scroll(window)
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+  })
+
+  it('keeps the menu open while scrolling inside it', async () => {
+    const user = userEvent.setup()
+    picker()
+    await user.click(screen.getByRole('combobox', { name: /range/i }))
+    const menu = screen.getByRole('listbox')
+    fireEvent.scroll(menu)
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
   })
 })

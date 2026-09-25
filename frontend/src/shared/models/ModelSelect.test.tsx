@@ -73,6 +73,14 @@ describe('ModelSelect', () => {
     expect(screen.getByRole('combobox', { name: /model/i })).toBeDisabled()
   })
 
+  it('names credential rejections with a paste fallback', async () => {
+    server.use(http.get('*/v1/models', () => new HttpResponse('x', { status: 401 })))
+    renderApp(<Harness token="gw-test" />)
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/rejected this credential \(401\)/i)
+    expect(alert).toHaveTextContent(/paste a key instead/i)
+  })
+
   it('lists models through act-as-self with the session bearer', async () => {
     const user = userEvent.setup()
     let seenActAs: string | null = null

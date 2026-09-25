@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Check, ChevronDown } from 'lucide-react'
 
 /**
@@ -56,14 +57,21 @@ export function Select({
 }: SelectProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
+  const [dropUp, setDropUp] = useState(false)
+  const [anchor, setAnchor] = useState<DOMRect | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const menuRef = useRef<HTMLUListElement | null>(null)
   const listId = useId()
   const selected = options.find((o) => o.value === value) ?? null
 
   useEffect(() => {
     if (!open) return
     const onPointerDown = (e: PointerEvent): void => {
-      if (rootRef.current !== null && !rootRef.current.contains(e.target as Node)) {
+      const target = e.target as Node
+      if (
+        rootRef.current?.contains(target) === false &&
+        menuRef.current?.contains(target) === false
+      ) {
         setOpen(false)
       }
     }
@@ -73,8 +81,44 @@ export function Select({
     }
   }, [open])
 
+  useEffect(() => {
+    if (!open) return
+    // The menu is fixed to the viewport, so scrolls outside it (dialog
+    // panels, the page) or resizes would detach it: dismiss instead of
+    // chasing layout. Scrolls inside the menu itself keep it open.
+    const close = (e: Event): void => {
+      const inside =
+        e.target instanceof Node &&
+        (menuRef.current?.contains(e.target) === true ||
+          rootRef.current?.contains(e.target) === true)
+      if (!inside) {
+        setOpen(false)
+      }
+    }
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => {
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+    }
+  }, [open])
+
+  const menuHeight = Math.min(options.length * 40, 256)
+  const menuWidth = Math.min(Math.max(anchor?.width ?? 160, 160), 384)
+  const menuStyle: React.CSSProperties =
+    anchor === null
+      ? {}
+      : {
+          position: 'fixed',
+          top: dropUp ? Math.max(8, anchor.top - menuHeight - 4) : anchor.bottom + 4,
+          left: Math.max(8, Math.min(anchor.left, window.innerWidth - menuWidth - 8)),
+          minWidth: anchor.width,
+        }
+
   /**
-   * Opens the menu with the selected (or first) option active.
+   * Opens the menu with the selected (or first) option active. Flips
+   * upward when the viewport space below the trigger cannot fit the
+   * menu, so dialogs with edge scrolling never clip the list.
    */
   const openMenu = (): void => {
     if (disabled || options.length === 0) return
@@ -83,6 +127,15 @@ export function Select({
       options.findIndex((o) => o.value === value),
     )
     setActive(index)
+    const rect = rootRef.current?.getBoundingClientRect() ?? null
+    setAnchor(rect)
+    if (rect === null) {
+      setDropUp(false)
+    } else {
+      const needed = Math.min(options.length * 40, 256)
+      const below = window.innerHeight - rect.bottom
+      setDropUp(below < needed && rect.top > below)
+    }
     setOpen(true)
   }
 
@@ -156,43 +209,52 @@ export function Select({
           invalid ? 'border-danger dark:border-danger-soft' : ''
         }`}
       >
-        <span className={selected === null ? 'text-ink-soft dark:text-parchment-soft' : ''}>
+        <span
+          className={`min-w-0 flex-1 truncate text-left ${selected === null ? 'text-ink-soft dark:text-parchment-soft' : ''}`}
+        >
           {selected === null ? placeholder : selected.label}
         </span>
         <ChevronDown size={16} aria-hidden="true" className="shrink-0 text-ember" />
       </button>
-      {open && !disabled ? (
-        <ul
-          role="listbox"
-          id={listId}
-          aria-label={label}
-          className="absolute inset-x-0 top-full z-30 mt-1 max-h-64 overflow-y-auto rounded-md border border-ink/15 bg-cream py-1 dark:border-parchment/15 dark:bg-night"
-        >
-          {options.map((o, i) => (
-            <li
-              key={o.value}
-              id={`${listId}-option-${String(i)}`}
-              role="option"
-              aria-selected={o.value === value}
-              onMouseEnter={() => {
-                setActive(i)
-              }}
-              onClick={() => {
-                onChange(o.value)
-                setOpen(false)
-              }}
-              className={`flex cursor-pointer items-center gap-2 px-3 py-2 font-mono text-sm ${
-                i === active ? 'bg-ink/6 dark:bg-parchment/8' : ''
-              }`}
+      {open && !disabled && anchor !== null
+        ? createPortal(
+            <ul
+              ref={menuRef}
+              role="listbox"
+              id={listId}
+              aria-label={label}
+              style={menuStyle}
+              className="z-60 max-h-64 w-max max-w-[min(24rem,calc(100vw-3rem))] overflow-y-auto rounded-md border border-ink/15 bg-cream py-1 dark:border-parchment/15 dark:bg-night"
             >
-              <span aria-hidden="true" className="w-4 shrink-0 text-ember">
-                {i === active ? <Check size={14} /> : null}
-              </span>
-              {o.label}
-            </li>
-          ))}
-        </ul>
-      ) : null}
+              {options.map((o, i) => (
+                <li
+                  key={o.value}
+                  id={`${listId}-option-${String(i)}`}
+                  role="option"
+                  aria-selected={o.value === value}
+                  onMouseEnter={() => {
+                    setActive(i)
+                  }}
+                  onClick={() => {
+                    onChange(o.value)
+                    setOpen(false)
+                  }}
+                  className={`flex cursor-pointer items-center gap-2 overflow-hidden px-3 py-2 font-mono text-sm whitespace-nowrap ${
+                    i === active ? 'bg-ink/6 dark:bg-parchment/8' : ''
+                  }`}
+                >
+                  <span aria-hidden="true" className="w-4 shrink-0 text-ember">
+                    {i === active ? <Check size={14} /> : null}
+                  </span>
+                  <span className="truncate" title={o.label}>
+                    {o.label}
+                  </span>
+                </li>
+              ))}
+            </ul>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }

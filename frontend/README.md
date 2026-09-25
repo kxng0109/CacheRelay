@@ -148,7 +148,22 @@ EmptyTrio.tsx`: status line + learning cue + optional link/button
   input-matching chrome, ember chevron (native arrows render OS chrome
   that breaks both themes), flat hairline menu, full keyboard contract
   (open/move/pick/close, Esc, click-outside, focus return), ARIA
-  `listbox` semantics. No native `<select>` remains in the console.
+  `listbox` semantics. The menu portals to the body so dialog scroll
+  never clips it, flips upward near viewport edges, and dismisses on
+  outside scroll while menu-internal scroll keeps it open. Console
+  scrollbars are thin themed thumbs on transparent tracks in both
+  canvases. No native `<select>` remains in the console.
+- Model aliases are administered against the live provider inventory
+  (`GET /v1/admin/providers` envelope): chain steps pick providers from
+  the shared listbox with circuit state in each label, never free text.
+  Loading, failure, or empty inventory disables the dropdowns and blocks
+  Create alias plus Replace plan; failure carries Retry. A stored step
+  whose provider retired stays visible as `name (removed)` until picked
+  again. Model catalog failures name the cause: credential rejections
+  (401) point at Reload or pasting a key, anything else stays muted.
+- Usage windows use a preset picker defaulting to the past 7 days
+  (Today, Yesterday, Past 3/7/30/90 days, This month, Custom range);
+  presets apply immediately, custom dates validate before applying.
 - Mutation feedback is toasts (`shared/toast` store + `Toasts` viewport):
   success `role="status"`, errors `role="alert"`, 4s auto-dismiss, `Esc`
   clears all, stack capped at five. Approvals decisions hold their buttons

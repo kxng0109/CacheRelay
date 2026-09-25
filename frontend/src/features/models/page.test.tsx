@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it, beforeEach } from 'vitest'
 import { server } from '../../test/setup.js'
-import { renderApp } from '../../test/utils.js'
+import { renderApp, selectOption } from '../../test/utils.js'
 import { ModelsPage } from './page.js'
 
 const ALIASES = {
@@ -30,10 +30,44 @@ function listOk() {
   return http.get('*/v1/admin/models', () => HttpResponse.json(ALIASES))
 }
 
-// ProviderBoard fires on every ModelsPage render; the empty default keeps
-// alias-focused tests isolated (scenario tests override with data).
+// Provider inventory fires on every ModelsPage render; the envelope default
+// keeps alias-focused tests isolated (scenario tests override with data).
+// Shape mirrors the backend `{ providers }` envelope, never a bare array.
+function providersOk() {
+  return http.get('*/v1/admin/providers', () =>
+    HttpResponse.json({
+      providers: [
+        {
+          name: 'anthropic',
+          type: 'ANTHROPIC',
+          baseUrl: null,
+          keyConfigured: true,
+          connectTimeoutSeconds: 5,
+          requestTimeoutSeconds: 60,
+          embeddingSingleAsString: false,
+          circuitState: 'CLOSED',
+          aliasReferences: 0,
+          validationStatus: 'AUTH_REACHABLE',
+        },
+        {
+          name: 'openai',
+          type: 'OPENAI',
+          baseUrl: null,
+          keyConfigured: true,
+          connectTimeoutSeconds: 5,
+          requestTimeoutSeconds: 60,
+          embeddingSingleAsString: false,
+          circuitState: 'CLOSED',
+          aliasReferences: 0,
+          validationStatus: 'LIVE_VERIFIED',
+        },
+      ],
+    }),
+  )
+}
+
 beforeEach(() => {
-  server.use(http.get('*/v1/admin/providers', () => HttpResponse.json([])))
+  server.use(providersOk())
 })
 
 describe('ModelsPage', () => {
@@ -69,7 +103,7 @@ describe('ModelsPage', () => {
     await screen.findByRole('table')
     await user.click(screen.getByRole('button', { name: /new alias/i }))
     await user.type(screen.getByLabelText(/name \(lowercase slug\)/i), 'new-one')
-    await user.type(screen.getByLabelText(/provider 1/i), 'openai')
+    await selectOption(user, /provider 1/i, 'openai · CLOSED')
     await user.click(screen.getByRole('button', { name: /create alias/i }))
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent(/new-one created/i)
@@ -112,7 +146,7 @@ describe('ModelsPage', () => {
     await screen.findByRole('table')
     await user.click(screen.getByRole('button', { name: /new alias/i }))
     await user.type(screen.getByLabelText(/name \(lowercase slug\)/i), 'db-fast')
-    await user.type(screen.getByLabelText(/provider 1/i), 'openai')
+    await selectOption(user, /provider 1/i, 'openai · CLOSED')
     await user.click(screen.getByRole('button', { name: /create alias/i }))
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeInTheDocument()
@@ -384,7 +418,7 @@ describe('ModelsPage', () => {
       await user.type(firstOverride, 'gpt-x')
     }
     await user.click(editorScope.getByRole('combobox', { name: /^strategy$/i }))
-    await user.click(editorScope.getByRole('option', { name: 'SEQUENTIAL' }))
+    await user.click(screen.getByRole('option', { name: 'SEQUENTIAL' }))
     await user.click(editorScope.getByRole('button', { name: /^replace plan$/i }))
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent(/db-fast replaced/i)
@@ -392,7 +426,18 @@ describe('ModelsPage', () => {
     expect(body).toMatchObject({ strategy: 'SEQUENTIAL' })
   })
 
-  it('requires a provider step when replacing', async () => {
+  it('requires a provider choice when creating', async () => {
+    const user = userEvent.setup()
+    server.use(listOk())
+    renderApp(<ModelsPage />, { adminSession: true })
+    await screen.findByRole('table')
+    await user.click(screen.getByRole('button', { name: /new alias/i }))
+    await user.type(screen.getByLabelText(/name \(lowercase slug\)/i), 'no-provider')
+    await user.click(screen.getByRole('button', { name: /create alias/i }))
+    expect(screen.getByRole('alert')).toHaveTextContent(/name and at least one/i)
+  })
+
+  it('keeps stored providers selected in the replace editor', async () => {
     const user = userEvent.setup()
     server.use(listOk())
     renderApp(<ModelsPage />, { adminSession: true })
@@ -400,15 +445,9 @@ describe('ModelsPage', () => {
     await user.click(within(table).getByText('db-fast'))
     const inspector = screen.getByRole('complementary', { name: /alias inspector/i })
     await user.click(within(inspector).getByRole('button', { name: /^replace plan$/i }))
-    const editor = await screen.findByRole('heading', { name: /replace plan:/i })
-    const editorCard = editor.closest('div')
-    expect(editorCard).not.toBeNull()
-    if (!(editorCard instanceof HTMLElement)) return
-    const editorScope = within(editorCard)
-    await user.clear(editorScope.getByLabelText(/provider 1/i))
-    await user.clear(editorScope.getByLabelText(/provider 2/i))
-    await user.click(editorScope.getByRole('button', { name: /^replace plan$/i }))
-    expect(screen.getByRole('alert')).toHaveTextContent(/at least one provider step/i)
+    await screen.findByRole('heading', { name: /replace plan:/i })
+    expect(screen.getByRole('combobox', { name: /provider 1/i })).toHaveTextContent(/openai/)
+    expect(screen.getByRole('combobox', { name: /provider 2/i })).toHaveTextContent(/anthropic/)
   })
 
   it('reports deletion failures honestly', async () => {
@@ -445,7 +484,7 @@ describe('ModelsPage', () => {
     await user.type(screen.getByLabelText(/name \(lowercase slug\)/i), 'strat-one')
     await user.click(screen.getByRole('combobox', { name: /^strategy$/i }))
     await user.click(screen.getByRole('option', { name: 'RACE' }))
-    await user.type(screen.getByLabelText(/provider 1/i), 'openai')
+    await selectOption(user, /provider 1/i, 'openai · CLOSED')
     await user.click(screen.getByRole('button', { name: /create alias/i }))
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent(/strat-one created/i)
@@ -516,7 +555,9 @@ describe('ModelsPage', () => {
     await waitFor(() => {
       expect(screen.getByText(/replace plan:/i)).toHaveTextContent('empty-db')
     })
-    expect(screen.getByLabelText(/provider 1/i)).toHaveValue('')
+    expect(screen.getByRole('combobox', { name: /provider 1/i })).toHaveTextContent(
+      /select provider/i,
+    )
   })
 
   it('omits the actions column when no database alias is visible', async () => {
@@ -550,7 +591,7 @@ describe('ModelsPage', () => {
     await screen.findByRole('table')
     await user.click(screen.getByRole('button', { name: /new alias/i }))
     await user.type(screen.getByLabelText(/name \(lowercase slug\)/i), 'null-override')
-    await user.type(screen.getByLabelText(/provider 1/i), 'openai')
+    await selectOption(user, /provider 1/i, 'openai · CLOSED')
     await user.type(screen.getByLabelText(/model override/i), 'claude-x')
     await user.clear(screen.getByLabelText(/model override/i))
     await user.click(screen.getByRole('button', { name: /create alias/i }))
@@ -558,5 +599,82 @@ describe('ModelsPage', () => {
       expect(screen.getByRole('status')).toHaveTextContent(/null-override created/i)
     })
     expect(body).toMatchObject({ chain: [{ providerName: 'openai', modelOverride: null }] })
+  })
+
+  it('lists live providers with circuit state and picks without typing', async () => {
+    const user = userEvent.setup()
+    server.use(listOk())
+    renderApp(<ModelsPage />, { adminSession: true })
+    await screen.findByRole('table')
+    await user.click(screen.getByRole('button', { name: /new alias/i }))
+    await user.click(screen.getByRole('combobox', { name: /provider 1/i }))
+    expect(screen.getByRole('option', { name: 'openai · CLOSED' })).toBeInTheDocument()
+    await user.click(screen.getByRole('option', { name: 'anthropic · CLOSED' }))
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: /provider 1/i })).toHaveTextContent('anthropic')
+    })
+    expect(document.body.textContent).not.toContain('Select provideranthropic')
+  })
+
+  it('blocks submit with Retry when the provider inventory fails', async () => {
+    const user = userEvent.setup()
+    server.use(
+      listOk(),
+      http.get('*/v1/admin/providers', () => new HttpResponse('x', { status: 500 })),
+    )
+    renderApp(<ModelsPage />, { adminSession: true })
+    await screen.findByRole('table')
+    await user.click(screen.getByRole('button', { name: /new alias/i }))
+    const dialog = await screen.findByRole('dialog', { name: /new alias/i })
+    const scope = within(dialog)
+    expect(scope.getByRole('alert')).toHaveTextContent(/providers unavailable/i)
+    expect(scope.getByRole('combobox', { name: /provider 1/i })).toBeDisabled()
+    expect(scope.getByRole('button', { name: /create alias/i })).toBeDisabled()
+    expect(scope.queryByRole('textbox', { name: /provider 1/i })).not.toBeInTheDocument()
+    await user.click(scope.getByRole('button', { name: /^retry$/i }))
+    expect(scope.getByRole('combobox', { name: /provider 1/i })).toBeDisabled()
+  })
+
+  it('blocks submit when no providers are configured', async () => {
+    const user = userEvent.setup()
+    server.use(
+      listOk(),
+      http.get('*/v1/admin/providers', () => HttpResponse.json({ providers: [] })),
+    )
+    renderApp(<ModelsPage />, { adminSession: true })
+    await screen.findByRole('table')
+    await user.click(screen.getByRole('button', { name: /new alias/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/no providers configured/i)).toBeInTheDocument()
+    })
+    expect(screen.getByRole('combobox', { name: /provider 1/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /create alias/i })).toBeDisabled()
+  })
+
+  it('keeps a retired stored provider visible as removed', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/models', () =>
+        HttpResponse.json({
+          models: [
+            {
+              name: 'legacy',
+              chain: [{ providerName: 'retired', modelOverride: null }],
+              strategy: 'SEQUENTIAL',
+              source: 'database',
+            },
+          ],
+        }),
+      ),
+    )
+    renderApp(<ModelsPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByText('legacy'))
+    const inspector = screen.getByRole('complementary', { name: /alias inspector/i })
+    await user.click(within(inspector).getByRole('button', { name: /^replace plan$/i }))
+    await screen.findByRole('heading', { name: /replace plan:/i })
+    expect(screen.getByRole('combobox', { name: /provider 1/i })).toHaveTextContent(
+      /retired \(removed\)/i,
+    )
   })
 })

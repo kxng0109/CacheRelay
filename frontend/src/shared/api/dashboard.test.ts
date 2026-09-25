@@ -236,6 +236,47 @@ describe('sso providers', () => {
   })
 })
 
+describe('listProviders', () => {
+  it('reads the envelope shape the backend serves', async () => {
+    server.use(
+      http.get('*/v1/admin/providers', () =>
+        HttpResponse.json({
+          providers: [
+            { name: 'openai', circuitState: 'CLOSED' },
+            { name: 'groq', circuitState: 'OPEN' },
+          ],
+        }),
+      ),
+    )
+    const { providers } = await new GatewayClient({ token: 'session-jwt' }).listProviders()
+    expect(providers.map((p) => p.name)).toEqual(['openai', 'groq'])
+  })
+
+  it('accepts a bare array for backward compatibility', async () => {
+    server.use(
+      http.get('*/v1/admin/providers', () =>
+        HttpResponse.json([{ name: 'openai', circuitState: 'CLOSED' }]),
+      ),
+    )
+    const { providers } = await new GatewayClient({ token: 'x' }).listProviders()
+    expect(providers).toHaveLength(1)
+  })
+
+  it('drops rows missing required fields and degrades shapes to empty', async () => {
+    server.use(
+      http.get('*/v1/admin/providers', () =>
+        HttpResponse.json({ providers: [{ name: 'ok', circuitState: 'CLOSED' }, { nope: 1 }] }),
+      ),
+    )
+    const { providers } = await new GatewayClient({ token: 'x' }).listProviders()
+    expect(providers.map((p) => p.name)).toEqual(['ok'])
+    server.use(http.get('*/v1/admin/providers', () => HttpResponse.json({ nope: true })))
+    await expect(new GatewayClient({ token: 'x' }).listProviders()).resolves.toEqual({
+      providers: [],
+    })
+  })
+})
+
 describe('myKeys', () => {
   it('lists owned keys without secrets', async () => {
     server.use(

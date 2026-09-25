@@ -110,6 +110,33 @@ html.dark {
   outline-color: var(--color-parchment);
 }
 
+/* Console scrollbars: thin themed thumb on a transparent track in both
+   canvases. No OS-chrome grey blocks anywhere in the console. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-ink-soft) transparent;
+}
+html.dark *,
+html.dark {
+  scrollbar-color: var(--color-parchment-soft) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-ink-soft);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+html.dark ::-webkit-scrollbar-thumb {
+  background-color: var(--color-parchment-soft);
+}
+
 /* WCAG 2.2 AA pointer target floor: 24px minimum (44px preferred). */
 button,
 a,

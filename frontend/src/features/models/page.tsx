@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRef, useState } from 'react'
 import { GatewayClient } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
-import type { ModelAliasRecord, ProviderChainStep } from '../../shared/api/types.js'
+import type { ModelAliasRecord, ProviderChainStep, ProviderStatus } from '../../shared/api/types.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
 import { Modal } from '../../shared/components/Modal.js'
 import { Select } from '../../shared/components/Select.js'
@@ -20,83 +20,143 @@ function blankStep(): ProviderChainStep {
 }
 
 /**
- * Chain step editor rows: provider name plus optional override, with
- * add and remove capped at the backend maximum of 8 steps.
+ * Provider inventory state for the chain editors. A single query in
+ * `ModelsBoard` feeds both editors, so create and replace never diverge.
+ */
+type ProvidersState = 'loading' | 'error' | 'empty' | 'ready'
+
+/**
+ * Chain step editor rows: provider picked from the live inventory plus
+ * optional override, with add and remove capped at the backend maximum
+ * of 8 steps.
  *
- * @param props - Steps, change callback, and id prefix.
+ * @remarks There is no free text path: every provider comes from
+ * `GET /v1/admin/providers`, so a mistyped name cannot be submitted.
+ * When the inventory is loading, failed, or empty the dropdowns stay
+ * disabled and the parent keeps submit blocked. A stored value the
+ * inventory no longer lists (replace flow over a retired provider) is
+ * kept as a labeled option so the stored choice stays visible; picking
+ * a new value is still inventory only.
+ *
+ * @param props - Steps, change callback, id prefix, and inventory state.
  * @returns The editable step list.
  */
 function ChainEditor({
   steps,
   onChange,
   idPrefix,
+  providers,
+  providersState,
+  providersError,
+  onProvidersRetry,
 }: {
   steps: ProviderChainStep[]
   onChange: (steps: ProviderChainStep[]) => void
   idPrefix: string
+  providers: ProviderStatus[]
+  providersState: ProvidersState
+  providersError: string | null
+  onProvidersRetry: () => void
 }): React.JSX.Element {
+  const names = providers.map((p) => p.name)
+  const liveOptions = providers.map((p) => ({
+    value: p.name,
+    label: `${p.name} · ${p.circuitState}`,
+  }))
+  const placeholder =
+    providersState === 'loading'
+      ? 'Loading providers…'
+      : providersState === 'error'
+        ? 'Providers unavailable'
+        : providersState === 'empty'
+          ? 'No providers'
+          : 'Select provider'
   return (
     <div className="space-y-2">
-      {steps.map((step, i) => (
-        <div key={i} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
-          <div>
-            <label
-              htmlFor={`${idPrefix}-provider-${String(i)}`}
-              className="mb-1 block text-[13px] font-medium"
-            >
-              Provider {i + 1}
-            </label>
-            <input
-              id={`${idPrefix}-provider-${String(i)}`}
-              value={step.providerName}
-              autoComplete="off"
-              onChange={(e) => {
-                onChange(
-                  steps.map((s, j) => (j === i ? { ...s, providerName: e.target.value } : s)),
-                )
-              }}
-              placeholder="openai"
-              className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
-            />
+      {providersState === 'loading' ? (
+        <p role="status" className="text-[13px] text-ink-soft dark:text-parchment-soft">
+          Loading providers…
+        </p>
+      ) : null}
+      {providersState === 'error' ? (
+        <p role="alert" className="text-[13px] text-danger dark:text-danger-soft">
+          Providers unavailable{providersError === null ? '' : ` (${providersError})`}. Pick Retry,
+          then choose again.
+        </p>
+      ) : null}
+      {providersState === 'empty' ? (
+        <p role="status" className="text-[13px] text-ink-soft dark:text-parchment-soft">
+          No providers configured. Configure providers in the backend, then retry.
+        </p>
+      ) : null}
+      {providersState === 'ready' ? null : (
+        <button
+          type="button"
+          onClick={onProvidersRetry}
+          className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+        >
+          Retry
+        </button>
+      )}
+      {steps.map((step, i) => {
+        const storedUnknown = step.providerName !== '' && !names.includes(step.providerName)
+        const options = storedUnknown
+          ? [{ value: step.providerName, label: `${step.providerName} (removed)` }, ...liveOptions]
+          : liveOptions
+        return (
+          <div key={i} className="grid gap-2 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto]">
+            <div>
+              <Select
+                id={`${idPrefix}-provider-${String(i)}`}
+                label={`Provider ${String(i + 1)}`}
+                value={step.providerName}
+                options={options}
+                onChange={(v) => {
+                  onChange(steps.map((s, j) => (j === i ? { ...s, providerName: v } : s)))
+                }}
+                placeholder={placeholder}
+                disabled={providersState !== 'ready'}
+              />
+            </div>
+            <div>
+              <label
+                htmlFor={`${idPrefix}-override-${String(i)}`}
+                className="mb-1 block text-[13px] font-medium"
+              >
+                Model override (optional)
+              </label>
+              <input
+                id={`${idPrefix}-override-${String(i)}`}
+                value={step.modelOverride ?? ''}
+                autoComplete="off"
+                onChange={(e) => {
+                  const v = e.target.value.trim()
+                  onChange(
+                    steps.map((s, j) =>
+                      j === i ? { ...s, modelOverride: v.length === 0 ? null : v } : s,
+                    ),
+                  )
+                }}
+                placeholder="e.g. claude-x"
+                className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
+              />
+            </div>
+            <div className="flex items-end">
+              <button
+                type="button"
+                disabled={steps.length <= 1}
+                onClick={() => {
+                  onChange(steps.filter((_, j) => j !== i))
+                }}
+                aria-label={`Remove step ${String(i + 1)}`}
+                className="rounded-md border border-ink/15 px-3 py-2 text-[13px] disabled:cursor-not-allowed disabled:border-ink-soft disabled:text-ink-soft dark:border-parchment/15 dark:disabled:border-parchment-soft dark:disabled:text-parchment-soft"
+              >
+                Remove
+              </button>
+            </div>
           </div>
-          <div>
-            <label
-              htmlFor={`${idPrefix}-override-${String(i)}`}
-              className="mb-1 block text-[13px] font-medium"
-            >
-              Model override (optional)
-            </label>
-            <input
-              id={`${idPrefix}-override-${String(i)}`}
-              value={step.modelOverride ?? ''}
-              autoComplete="off"
-              onChange={(e) => {
-                const v = e.target.value.trim()
-                onChange(
-                  steps.map((s, j) =>
-                    j === i ? { ...s, modelOverride: v.length === 0 ? null : v } : s,
-                  ),
-                )
-              }}
-              placeholder="e.g. claude-x"
-              className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
-            />
-          </div>
-          <div className="flex items-end">
-            <button
-              type="button"
-              disabled={steps.length <= 1}
-              onClick={() => {
-                onChange(steps.filter((_, j) => j !== i))
-              }}
-              aria-label={`Remove step ${String(i + 1)}`}
-              className="rounded-md border border-ink/15 px-3 py-2 text-[13px] disabled:cursor-not-allowed disabled:border-ink-soft disabled:text-ink-soft dark:border-parchment/15 dark:disabled:border-parchment-soft dark:disabled:text-parchment-soft"
-            >
-              Remove
-            </button>
-          </div>
-        </div>
-      ))}
+        )
+      })}
       {steps.length < MAX_STEPS ? (
         <button
           type="button"
@@ -145,8 +205,28 @@ function ModelsBoard(): React.JSX.Element {
     queryFn: ({ signal }) => new GatewayClient().listModelAliases({ signal }),
   })
 
+  const providersQuery = useQuery({
+    queryKey: ['providers'],
+    queryFn: ({ signal }) => new GatewayClient().listProviders({ signal }),
+    staleTime: 60_000,
+    retry: false,
+  })
+  const providers = providersQuery.data?.providers ?? []
+  const providersState: ProvidersState = providersQuery.isPending
+    ? 'loading'
+    : providersQuery.error instanceof Error
+      ? 'error'
+      : providers.length === 0
+        ? 'empty'
+        : 'ready'
+  const providersReady = providersState === 'ready'
+
   const refresh = (): void => {
     void qc.invalidateQueries({ queryKey: ['model-aliases'] })
+  }
+
+  const retryProviders = (): void => {
+    void qc.invalidateQueries({ queryKey: ['providers'] })
   }
 
   const aliases = query.data?.models ?? []
@@ -314,6 +394,7 @@ function ModelsBoard(): React.JSX.Element {
             title="New alias"
             subtitle="Map a client name to a provider chain."
             closeLabel="Close new alias"
+            wide
             onClose={closeCreate}
           >
             {error === null ? null : (
@@ -349,7 +430,17 @@ function ModelsBoard(): React.JSX.Element {
                   />
                 </div>
               </div>
-              <ChainEditor steps={newChain} onChange={setNewChain} idPrefix="model-new" />
+              <ChainEditor
+                steps={newChain}
+                onChange={setNewChain}
+                idPrefix="model-new"
+                providers={providers}
+                providersState={providersState}
+                providersError={
+                  providersQuery.error instanceof Error ? providersQuery.error.message : null
+                }
+                onProvidersRetry={retryProviders}
+              />
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
@@ -361,7 +452,8 @@ function ModelsBoard(): React.JSX.Element {
                 <button
                   type="button"
                   onClick={onCreate}
-                  className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper dark:bg-parchment dark:text-night"
+                  disabled={!providersReady}
+                  className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper disabled:cursor-not-allowed disabled:opacity-50 dark:bg-parchment dark:text-night"
                 >
                   Create alias
                 </button>
@@ -519,12 +611,23 @@ function ModelsBoard(): React.JSX.Element {
                 onChange={setEditStrategy}
               />
             </div>
-            <ChainEditor steps={editChain} onChange={setEditChain} idPrefix="model-edit" />
+            <ChainEditor
+              steps={editChain}
+              onChange={setEditChain}
+              idPrefix="model-edit"
+              providers={providers}
+              providersState={providersState}
+              providersError={
+                providersQuery.error instanceof Error ? providersQuery.error.message : null
+              }
+              onProvidersRetry={retryProviders}
+            />
             <div className="flex gap-2">
               <button
                 type="button"
                 onClick={onReplace}
-                className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper dark:bg-parchment dark:text-night"
+                disabled={!providersReady}
+                className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper disabled:cursor-not-allowed disabled:opacity-50 dark:bg-parchment dark:text-night"
               >
                 Replace plan
               </button>

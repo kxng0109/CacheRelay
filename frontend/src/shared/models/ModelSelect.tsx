@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { GatewayClient } from '../api/client.js'
+import { ApiError, GatewayClient } from '../api/client.js'
 import { Select } from '../components/Select.js'
 
 /**
@@ -95,6 +95,17 @@ export function ModelSelect({
         <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
           Models list here once a key is pasted.
         </p>
+      ) : null}
+      {catalog.error instanceof Error ? (
+        catalog.error instanceof ApiError && catalog.error.status === 401 ? (
+          <p role="alert" className="text-[13px] text-danger dark:text-danger-soft">
+            The gateway rejected this credential (401). Reload, or paste a key instead.
+          </p>
+        ) : (
+          <p role="alert" className="text-[13px] text-ink-soft dark:text-parchment-soft">
+            {catalog.error.message}
+          </p>
+        )
       ) : null}
     </div>
   )

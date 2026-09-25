@@ -77,7 +77,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={label}
-        className={`max-h-[calc(100vh-2rem)] w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} space-y-4 overflow-y-auto rounded-xl border border-ink/10 bg-paper p-5 shadow-lift transition-[translate,opacity] duration-(--dur-panel) ease-enter motion-reduce:transition-none dark:border-parchment/10 dark:bg-night ${
+        className={`max-h-[calc(100vh-2rem)] w-full ${wide ? 'min-h-96 max-w-2xl' : 'max-w-lg'} space-y-4 overflow-y-auto rounded-xl border border-ink/10 bg-paper p-5 shadow-lift transition-[translate,opacity] duration-(--dur-panel) ease-enter motion-reduce:transition-none dark:border-parchment/10 dark:bg-night ${
           show ? 'translate-y-0 opacity-100' : 'translate-y-2 opacity-0'
         }`}
       >

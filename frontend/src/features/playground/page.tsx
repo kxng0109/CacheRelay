@@ -477,7 +477,11 @@ export function PlaygroundPage(): React.JSX.Element {
             <div className="rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">
               <ul className="space-y-2 text-[13px] text-ink-soft dark:text-parchment-soft">
                 <li>Fill the prompt, pick a model, send.</li>
-                <li>Paste a key once. It lives in memory only.</li>
+                <li>
+                  {accountMode
+                    ? 'Choose an owned key or paste one. Nothing is stored.'
+                    : 'Paste a key once. It lives in memory only.'}
+                </li>
                 <li>Press Ctrl+K to jump anywhere.</li>
                 <li>Past runs land here for one-click reload.</li>
               </ul>
