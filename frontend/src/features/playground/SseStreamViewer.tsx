@@ -29,6 +29,8 @@ export interface StreamSummary {
 
 interface SseStreamViewerProps {
   token: string
+  /** Owned key hash for act-as-self streams (session JWT supplies auth). */
+  actAsKey?: string
   model: string
   messages: ChatMessage[]
   /**
@@ -86,6 +88,7 @@ function extractPiece(data: string): string {
  */
 export function SseStreamViewer({
   token,
+  actAsKey,
   model,
   messages,
   streamOptions,
@@ -189,7 +192,11 @@ export function SseStreamViewer({
     void openSseStream({
       url: `${resolveApiBase()}/v1/chat/completions`,
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        ...(actAsKey === undefined || actAsKey.length === 0 ? {} : { 'X-Act-As-Key': actAsKey }),
+      },
       body: { model, messages, stream: true },
       signal: ctrl.signal,
       readerSlot: readerRef,
@@ -257,7 +264,7 @@ export function SseStreamViewer({
       ctrl.abort()
       cancelAnimationFrame(rafRef.current)
     }
-  }, [token, model, messages, maxRetries, heartbeatMs])
+  }, [token, actAsKey, model, messages, maxRetries, heartbeatMs])
 
   return (
     <section

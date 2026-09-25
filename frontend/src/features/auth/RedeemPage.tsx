@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
-import { useNavigate, useSearchParams } from 'react-router'
+import { Link, useNavigate, useSearchParams } from 'react-router'
 import * as z from 'zod/v4'
 import { redeemInvite } from '../../shared/auth/session.js'
 
@@ -154,6 +154,12 @@ export function RedeemPage(): React.JSX.Element {
           {isSubmitting ? 'Redeeming…' : 'Create account'}
         </button>
       </form>
+      <Link
+        to="/login"
+        className="block w-full rounded-md border border-ink/15 px-4 py-2 text-center text-sm dark:border-parchment/15"
+      >
+        Back to log in
+      </Link>
     </div>
   )
 }

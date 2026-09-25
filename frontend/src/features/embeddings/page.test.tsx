@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { server } from '../../test/setup.js'
-import { renderApp } from '../../test/utils.js'
+import { renderApp, selectOption } from '../../test/utils.js'
 import { EmbeddingsPage } from './page.js'
 
 describe('EmbeddingsPage', () => {
@@ -26,9 +26,9 @@ describe('EmbeddingsPage', () => {
     id = 'text-embedding-3-small',
   ): Promise<void> {
     await waitFor(() => {
-      expect(screen.getByRole('option', { name: id })).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /model/i })).toHaveTextContent(/select a model/i)
     })
-    await user.selectOptions(screen.getByLabelText(/^model$/i), id)
+    await selectOption(user, /^model$/i, id)
   }
 
   it('fills the sanctioned sample without submitting', async () => {
@@ -157,12 +157,12 @@ describe('EmbeddingsPage', () => {
     renderApp(<EmbeddingsPage />)
     await user.type(screen.getByLabelText(/api key/i), 'gw-test')
     await waitFor(() => {
-      expect(screen.getByRole('option', { name: 'm-a' })).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /model/i })).toHaveTextContent(/select a model/i)
     })
-    await user.selectOptions(screen.getByLabelText(/^model$/i), 'm-a')
+    await selectOption(user, /^model$/i, 'm-a')
     await user.type(screen.getByLabelText(/input text/i), 'one')
     await user.click(screen.getByRole('button', { name: /create embeddings/i }))
-    await user.selectOptions(screen.getByLabelText(/^model$/i), 'm-b')
+    await selectOption(user, /^model$/i, 'm-b')
     await user.clear(screen.getByLabelText(/input text/i))
     await user.type(screen.getByLabelText(/input text/i), 'two')
     await user.click(screen.getByRole('button', { name: /create embeddings/i }))
@@ -190,9 +190,9 @@ describe('EmbeddingsPage', () => {
     renderApp(<EmbeddingsPage />)
     await user.type(screen.getByLabelText(/api key/i), 'gw-test')
     await waitFor(() => {
-      expect(screen.getByRole('option', { name: 'm' })).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /model/i })).toHaveTextContent(/select a model/i)
     })
-    await user.selectOptions(screen.getByLabelText(/^model$/i), 'm')
+    await selectOption(user, /^model$/i, 'm')
     await user.type(screen.getByLabelText(/input text/i), 'one')
     await user.click(screen.getByRole('button', { name: /create embeddings/i }))
     const table = await screen.findByRole('table')
@@ -246,6 +246,18 @@ describe('EmbeddingsPage', () => {
   it('names an empty usage table honestly before any run', () => {
     renderApp(<EmbeddingsPage />)
     expect(screen.getByText(/no runs yet/i)).toBeInTheDocument()
+  })
+
+  it('requires a pasted key when the field is cleared', async () => {
+    const user = userEvent.setup()
+    server.use(catalog())
+    renderApp(<EmbeddingsPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
+    await user.clear(screen.getByLabelText(/api key/i))
+    await user.type(screen.getByLabelText(/input text/i), 'hello')
+    await user.click(screen.getByRole('button', { name: /create embeddings/i }))
+    expect(await screen.findByText(/api key is required/i)).toBeInTheDocument()
   })
 
   it('names a filter with zero matches honestly', async () => {
@@ -310,5 +322,35 @@ describe('EmbeddingsPage', () => {
     within(table).getByText('● ok').closest('tr')?.focus()
     await user.keyboard('{ }')
     expect(screen.getByRole('complementary', { name: /run inspector/i })).toHaveTextContent('m')
+  })
+
+  it('embeds through act-as-self with the session bearer', async () => {
+    const user = userEvent.setup()
+    let seenAuth = ''
+    let seenActAs: string | null = null
+    server.use(
+      http.get('*/v1/me/keys', () =>
+        HttpResponse.json([
+          { keyId: 'e'.repeat(64), name: 'dev', allowedModels: [], enabled: true },
+        ]),
+      ),
+      catalog(),
+      http.post('*/v1/embeddings', ({ request }) => {
+        seenAuth = request.headers.get('Authorization') ?? ''
+        seenActAs = request.headers.get('X-Act-As-Key')
+        return HttpResponse.json({ data: [{ embedding: [0.1], index: 0 }], model: 'm' })
+      }),
+    )
+    renderApp(<EmbeddingsPage />, { nonAdminSession: true })
+    await screen.findByRole('combobox', { name: /owned key/i })
+    await pickModel(user)
+    await user.type(screen.getByLabelText(/input text/i), 'hi')
+    await user.click(screen.getByRole('button', { name: /create embeddings/i }))
+    await waitFor(() => {
+      expect(screen.getByText('● ok')).toBeInTheDocument()
+    })
+    expect(seenAuth).toBe('Bearer test-user-jwt')
+    expect(seenActAs).toBe('e'.repeat(64))
+    expect(document.body.textContent).not.toContain('gw-')
   })
 })

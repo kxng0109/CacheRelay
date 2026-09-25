@@ -5,28 +5,17 @@ import { resolveSsoProviders, ssoAuthorizationUrl } from '../../shared/api/clien
  *
  * @remarks Providers come from the non-secret `VITE_SSO_PROVIDERS`
  * allow-list (Spring registration ids). SSO cannot run when nothing is
- * configured: the control renders greyed-out and disabled with the
- * hover message, never a dead link.
+ * configured: a single muted line says so, never a dead button.
  *
- * @returns Provider links, or the disabled not-enabled control.
+ * @returns Provider links, or the muted not-enabled line.
  */
 export function SsoButtons(): React.JSX.Element {
   const providers = resolveSsoProviders()
   if (providers.length === 0) {
     return (
-      <div className="space-y-1">
-        <button
-          type="button"
-          disabled
-          title="SSO not enabled"
-          className="w-full cursor-not-allowed rounded-md border border-ink/15 px-4 py-2 text-sm text-ink-soft dark:border-parchment/15 dark:text-parchment-soft"
-        >
-          Continue with SSO
-        </button>
-        <p className="text-center font-mono text-xs text-ink-soft dark:text-parchment-soft">
-          SSO not enabled
-        </p>
-      </div>
+      <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
+        Single sign-on is not enabled on this gateway.
+      </p>
     )
   }
   return (

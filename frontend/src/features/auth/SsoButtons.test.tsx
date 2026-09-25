@@ -22,15 +22,13 @@ describe('SsoButtons', () => {
     }
   })
 
-  it('greys out with the hover message when SSO is not configured', () => {
+  it('renders one muted line when SSO is not configured', () => {
     vi.stubEnv('VITE_SSO_PROVIDERS', '')
     try {
       renderApp(<SsoButtons />)
-      const button = screen.getByRole('button', { name: /continue with sso/i })
-      expect(button).toBeDisabled()
-      expect(button).toHaveAttribute('title', 'SSO not enabled')
-      expect(screen.getByText('SSO not enabled')).toBeInTheDocument()
+      expect(screen.getByText(/single sign-on is not enabled/i)).toBeInTheDocument()
       expect(screen.queryByRole('link')).not.toBeInTheDocument()
+      expect(screen.queryByRole('button')).not.toBeInTheDocument()
     } finally {
       vi.unstubAllEnvs()
     }

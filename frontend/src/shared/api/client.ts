@@ -18,6 +18,7 @@ import type {
   McpToolAnnotations,
   ModelAliasRecord,
   OrgTeam,
+  OwnedKey,
   ProviderStatus,
   PageResponse,
   ProviderChainStep,
@@ -311,6 +312,18 @@ export function safeErrorMessage(status: number, body: string): string {
 export interface RequestOptions {
   signal?: AbortSignal
   /**
+   * Act-as-self key selector (owned key hash hex or `default`).
+   * Sent as `X-Act-As-Key` alongside the session JWT; never logged.
+   */
+  actAsKey?: string
+  /**
+   * Ignore the in-memory session and send the constructor token verbatim.
+   * Gateway endpoints (`/v1/chat`, `/v1/embeddings`, `/v1/models`) need
+   * this for pasted-key flows: the session JWT is not a virtual key, so
+   * session precedence would turn every logged-in paste into a 401.
+   */
+  ignoreSession?: boolean
+  /**
    * Receives raw response headers on every settled gateway response
    * (success and failure), plus the gateway `error.code` on deny paths
    * (null elsewhere). Lets the shell mirror operational headers into
@@ -418,6 +431,23 @@ async function sendGatewayRequest(
 }
 
 /**
+ * Type guard for owned-key rows. Unknown backend fields are ignored;
+ * rows missing required fields are dropped, never crash.
+ *
+ * @param r - Unknown decoded row.
+ * @returns True when the row carries the picker fields.
+ */
+function isOwnedKey(r: unknown): r is OwnedKey {
+  if (typeof r !== 'object' || r === null) return false
+  const record = r as Record<string, unknown>
+  return (
+    typeof record.keyId === 'string' &&
+    typeof record.name === 'string' &&
+    Array.isArray(record.allowedModels)
+  )
+}
+
+/**
  * Minimal typed gateway client over `fetch`.
  *
  * @remarks
@@ -437,13 +467,20 @@ export class GatewayClient {
     this.token = args.token ?? ''
   }
 
-  private headers(extra?: Record<string, string>): Record<string, string> {
+  private headers(
+    extra?: Record<string, string>,
+    actAsKey?: string,
+    ignoreSession?: boolean,
+  ): Record<string, string> {
     const h: Record<string, string> = {
       Accept: 'application/json',
       ...(extra ?? {}),
     }
-    const session = useAuthStore.getState().session
+    const session = ignoreSession === true ? null : useAuthStore.getState().session
     h.Authorization = `Bearer ${session?.accessToken ?? this.token}`
+    if (actAsKey !== undefined && actAsKey.length > 0) {
+      h['X-Act-As-Key'] = actAsKey
+    }
     return h
   }
 
@@ -480,7 +517,11 @@ export class GatewayClient {
       '/v1/chat/completions',
       {
         method: 'POST',
-        headers: this.headers({ 'Content-Type': 'application/json' }),
+        headers: this.headers(
+          { 'Content-Type': 'application/json' },
+          opts?.actAsKey,
+          opts?.ignoreSession,
+        ),
         body: JSON.stringify({ ...body, stream: false }),
       },
       opts,
@@ -499,7 +540,11 @@ export class GatewayClient {
       '/v1/embeddings',
       {
         method: 'POST',
-        headers: this.headers({ 'Content-Type': 'application/json' }),
+        headers: this.headers(
+          { 'Content-Type': 'application/json' },
+          opts?.actAsKey,
+          opts?.ignoreSession,
+        ),
         body: JSON.stringify(body),
       },
       opts,
@@ -509,11 +554,38 @@ export class GatewayClient {
   /**
    * Lists public models.
    *
+   * @remarks Act-as-self aware (backend `ModelController`): pass the owned
+   * key hash via `opts.actAsKey` with a session to list without pasting
+   * key material.
+   *
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns Model identifiers the gateway accepts.
    */
   models(opts?: RequestOptions): Promise<{ data: { id: string }[] }> {
-    return this.request<{ data: { id: string }[] }>('/v1/models', { headers: this.headers() }, opts)
+    return this.request<{ data: { id: string }[] }>(
+      '/v1/models',
+      { headers: this.headers(undefined, opts?.actAsKey, opts?.ignoreSession) },
+      opts,
+    )
+  }
+
+  /**
+   * Lists the caller's owned keys as metadata (never secrets).
+   *
+   * @remarks Backend truth (`MeKeyController`): session-owned `KeyResponse`
+   * rows; unknown shapes degrade to empty, never throw.
+   *
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns Owned key metadata.
+   */
+  async myKeys(opts?: RequestOptions): Promise<{ keys: OwnedKey[] }> {
+    const rows: unknown = await this.request<unknown>(
+      '/v1/me/keys',
+      { headers: this.headers(undefined, opts?.actAsKey) },
+      opts,
+    )
+    if (!Array.isArray(rows)) return { keys: [] }
+    return { keys: rows.filter(isOwnedKey) }
   }
 
   /**

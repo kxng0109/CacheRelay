@@ -4,7 +4,7 @@ import { http, HttpResponse } from 'msw'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { server } from '../../test/setup.js'
 import { scrolledIntoView } from '../../test/setup.js'
-import { renderApp } from '../../test/utils.js'
+import { renderApp, selectOption } from '../../test/utils.js'
 import { PlaygroundPage } from './page.js'
 
 const STREAM = 'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\ndata: [DONE]\n\n'
@@ -34,9 +34,9 @@ describe('PlaygroundPage', () => {
     id = 'gpt-56-luna',
   ): Promise<void> {
     await waitFor(() => {
-      expect(screen.getByRole('option', { name: id })).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /model/i })).toHaveTextContent(/select a model/i)
     })
-    await user.selectOptions(screen.getByLabelText(/model/i), id)
+    await selectOption(user, /model/i, id)
   }
 
   it('prefills the key from the memory store', () => {
@@ -163,13 +163,15 @@ describe('PlaygroundPage', () => {
       ),
     )
     renderApp(<PlaygroundPage />)
-    expect(screen.getByRole('option', { name: /paste a key/i })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: /model/i })).toHaveTextContent(/paste a key/i)
     await user.type(screen.getByLabelText(/api key/i), 'gw-test')
     await waitFor(() => {
-      expect(screen.getByRole('option', { name: 'other-model' })).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /model/i })).toHaveTextContent(/select a model/i)
     })
-    await user.selectOptions(screen.getByLabelText(/model/i), 'other-model')
-    expect(screen.getByLabelText(/model/i)).toHaveValue('other-model')
+    await selectOption(user, /model/i, 'other-model')
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: /model/i })).toHaveTextContent('other-model')
+    })
   })
 
   it('records runs and reloads them into the prompt', async () => {
@@ -310,5 +312,115 @@ describe('PlaygroundPage', () => {
     await waitFor(() => {
       expect(screen.getByRole('region', { name: /run 2: gpt-56-luna/i })).toBeInTheDocument()
     })
+  })
+
+  it('offers account keys to sessions without displaying secrets', async () => {
+    server.use(
+      http.get('*/v1/me/keys', () =>
+        HttpResponse.json([
+          { keyId: 'a'.repeat(64), name: 'dev', allowedModels: [], enabled: true },
+        ]),
+      ),
+      catalog(),
+    )
+    renderApp(<PlaygroundPage />, { nonAdminSession: true })
+    expect(await screen.findByText(/key source/i)).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: /owned key/i })).toHaveTextContent('dev')
+    })
+    expect(screen.queryByLabelText(/api key/i)).not.toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('gw-')
+  })
+
+  it('streams through act-as-self with the session bearer', async () => {
+    const user = userEvent.setup()
+    let seenAuth = ''
+    let seenActAs: string | null = null
+    server.use(
+      http.get('*/v1/me/keys', () =>
+        HttpResponse.json([
+          { keyId: 'a'.repeat(64), name: 'dev', allowedModels: [], enabled: true },
+        ]),
+      ),
+      catalog(),
+      http.post('*/v1/chat/completions', ({ request }) => {
+        seenAuth = request.headers.get('Authorization') ?? ''
+        seenActAs = request.headers.get('X-Act-As-Key')
+        const stream = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            ctrl.enqueue(new TextEncoder().encode(STREAM))
+            ctrl.close()
+          },
+        })
+        return new HttpResponse(stream, { headers: { 'content-type': 'text/event-stream' } })
+      }),
+    )
+    renderApp(<PlaygroundPage />, { nonAdminSession: true })
+    await screen.findByRole('combobox', { name: /owned key/i })
+    await pickModel(user)
+    await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
+    await user.click(screen.getByRole('button', { name: /stream completion/i }))
+    await waitFor(
+      () => {
+        expect(screen.getByRole('log')).toHaveTextContent('Hello')
+      },
+      { timeout: 5000 },
+    )
+    expect(seenAuth).toBe('Bearer test-user-jwt')
+    expect(seenActAs).toBe('a'.repeat(64))
+  })
+
+  it('falls back to pasted keys when toggled', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/me/keys', () => HttpResponse.json([])),
+      catalog(),
+    )
+    renderApp(<PlaygroundPage />, { nonAdminSession: true })
+    await user.click(screen.getByLabelText(/paste a key/i))
+    expect(screen.getByLabelText(/api key/i)).toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: /owned key/i })).not.toBeInTheDocument()
+  })
+
+  it('requires a pasted key when the field is cleared', async () => {
+    const user = userEvent.setup()
+    server.use(catalog())
+    renderApp(<PlaygroundPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
+    await user.clear(screen.getByLabelText(/api key/i))
+    await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
+    await user.click(screen.getByRole('button', { name: /stream completion/i }))
+    expect(await screen.findByText(/api key is required/i)).toBeInTheDocument()
+  })
+
+  it('sends static completions through act-as-self', async () => {
+    vi.stubEnv('VITE_FEATURE_STREAMING', 'false')
+    const user = userEvent.setup()
+    let seenActAs: string | null = null
+    server.use(
+      http.get('*/v1/me/keys', () =>
+        HttpResponse.json([
+          { keyId: 'f'.repeat(64), name: 'dev', allowedModels: [], enabled: true },
+        ]),
+      ),
+      catalog(),
+      http.post('*/v1/chat/completions', ({ request }) => {
+        seenActAs = request.headers.get('X-Act-As-Key')
+        return HttpResponse.json({
+          choices: [{ message: { role: 'assistant', content: 'static hi' } }],
+          model: 'gpt-56-luna',
+        })
+      }),
+    )
+    renderApp(<PlaygroundPage />, { nonAdminSession: true })
+    await screen.findByRole('combobox', { name: /owned key/i })
+    await pickModel(user)
+    await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
+    await user.click(screen.getByRole('button', { name: /send completion/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('log')).toHaveTextContent('static hi')
+    })
+    expect(seenActAs).toBe('f'.repeat(64))
   })
 })

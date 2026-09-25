@@ -10,7 +10,8 @@ import {
 import { AdminUnavailable } from '../../shared/components/AdminUnavailable.js'
 import { DashboardError } from '../usage/DashboardError.js'
 import { SummaryBoard } from '../usage/SummaryBoard.js'
-import { validateWindow } from '../usage/window.js'
+import { WindowPicker } from '../usage/WindowPicker.js'
+import { presetBounds } from '../usage/window.js'
 
 /**
  * Admin user drill-down: one account's usage, audit-logged server-side.
@@ -24,11 +25,27 @@ import { validateWindow } from '../usage/window.js'
 export function UserLedgerPage(): React.JSX.Element {
   const params = useParams()
   const [userId, setUserId] = useState(params.userId ?? '')
-  const [from, setFrom] = useState('')
-  const [to, setTo] = useState('')
-  const [applied, setApplied] = useState<{ userId: string; from?: string; to?: string } | null>(
-    params.userId === undefined || params.userId === '' ? null : { userId: params.userId },
-  )
+  const [initial] = useState(() => {
+    const week = presetBounds('past-7d')
+    const paramId = (params.userId ?? '').trim()
+    return {
+      window: { from: week.fromIso, to: week.toIso },
+      applied:
+        paramId === ''
+          ? null
+          : {
+              userId: paramId,
+              from: week.fromIso,
+              to: week.toIso,
+            },
+    }
+  })
+  const [window, setWindow] = useState<{ from?: string; to?: string }>(initial.window)
+  const [applied, setApplied] = useState<{
+    userId: string
+    from?: string
+    to?: string
+  } | null>(initial.applied)
   const [localError, setLocalError] = useState<string | null>(null)
 
   const drilldown = useQuery({
@@ -48,22 +65,19 @@ export function UserLedgerPage(): React.JSX.Element {
   })
 
   /**
-   * Validates the account plus window and applies them to the query.
+   * Validates the account and commits the window to the query.
+   *
+   * @param bounds - Validated window from the picker.
    */
-  const apply = (): void => {
+  const commitScope = (bounds: { from?: string; to?: string }): void => {
     const id = userId.trim()
     if (id === '') {
       setLocalError('Enter an account id to inspect.')
       return
     }
-    const checked = validateWindow(from, to)
-    setLocalError(checked.error)
-    if (checked.error !== null) return
-    setApplied({
-      userId: id,
-      ...(checked.fromIso === undefined ? {} : { from: checked.fromIso }),
-      ...(checked.toIso === undefined ? {} : { to: checked.toIso }),
-    })
+    setLocalError(null)
+    setWindow(bounds)
+    setApplied({ userId: id, ...bounds })
   }
 
   const error = drilldown.error
@@ -83,13 +97,7 @@ export function UserLedgerPage(): React.JSX.Element {
           Admin drill-down. Every access is audit-logged server-side.
         </p>
       </div>
-      <form
-        className="flex flex-wrap items-end gap-2"
-        onSubmit={(e) => {
-          e.preventDefault()
-          apply()
-        }}
-      >
+      <div className="flex flex-wrap items-end gap-2">
         <div>
           <label htmlFor="drilldown-user" className="mb-1 block text-[13px] font-medium">
             Account id
@@ -101,46 +109,22 @@ export function UserLedgerPage(): React.JSX.Element {
             onChange={(e) => {
               setUserId(e.target.value)
             }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitScope(window)
+            }}
             placeholder="UUID"
             autoComplete="off"
             className="w-72 rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-[13px] tnum dark:border-parchment/15"
           />
         </div>
-        <div>
-          <label htmlFor="drilldown-from" className="mb-1 block text-[13px] font-medium">
-            From
-          </label>
-          <input
-            id="drilldown-from"
-            type="date"
-            value={from}
-            onChange={(e) => {
-              setFrom(e.target.value)
-            }}
-            className="rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-[13px] tnum dark:border-parchment/15"
-          />
-        </div>
-        <div>
-          <label htmlFor="drilldown-to" className="mb-1 block text-[13px] font-medium">
-            To
-          </label>
-          <input
-            id="drilldown-to"
-            type="date"
-            value={to}
-            onChange={(e) => {
-              setTo(e.target.value)
-            }}
-            className="rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-[13px] tnum dark:border-parchment/15"
-          />
-        </div>
-        <button
-          type="submit"
-          className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
-        >
-          Inspect
-        </button>
-      </form>
+        <WindowPicker
+          idPrefix="drilldown"
+          submitLabel="Inspect"
+          onApply={(bounds) => {
+            commitScope(bounds)
+          }}
+        />
+      </div>
       {localError === null ? null : (
         <p role="alert" className="text-sm text-danger dark:text-danger-soft">
           {localError}

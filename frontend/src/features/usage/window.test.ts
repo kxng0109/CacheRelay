@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dateToIso, validateWindow } from './window.js'
+import { dateToIso, presetBounds, validateWindow } from './window.js'
 
 describe('dateToIso', () => {
   it('bounds start and end of day', () => {
@@ -38,5 +38,37 @@ describe('validateWindow', () => {
     expect(result.error).toBeNull()
     expect(result.fromIso).toBe('2026-06-27T00:00:00Z')
     expect(result.toIso).toBe('2026-09-24T23:59:59Z')
+  })
+})
+
+describe('presetBounds', () => {
+  const now = new Date('2026-09-24T15:30:00Z')
+
+  it('resolves single-day presets to day bounds', () => {
+    expect(presetBounds('today', now)).toEqual({
+      fromIso: '2026-09-24T00:00:00Z',
+      toIso: '2026-09-24T23:59:59Z',
+    })
+    expect(presetBounds('yesterday', now)).toEqual({
+      fromIso: '2026-09-23T00:00:00Z',
+      toIso: '2026-09-23T23:59:59Z',
+    })
+  })
+
+  it('resolves trailing presets to inclusive spans', () => {
+    expect(presetBounds('past-3d', now).fromIso).toBe('2026-09-22T00:00:00Z')
+    expect(presetBounds('past-7d', now).fromIso).toBe('2026-09-18T00:00:00Z')
+    expect(presetBounds('past-30d', now).fromIso).toBe('2026-08-26T00:00:00Z')
+    const ninety = presetBounds('past-90d', now)
+    expect(ninety.fromIso).toBe('2026-06-27T00:00:00Z')
+    expect(Date.parse(ninety.toIso) - Date.parse(ninety.fromIso)).toBeLessThan(90 * 86_400_000)
+  })
+
+  it('resolves this month from the first', () => {
+    expect(presetBounds('this-month', now).fromIso).toBe('2026-09-01T00:00:00Z')
+    expect(presetBounds('this-month', new Date('2026-09-01T00:00:01Z'))).toEqual({
+      fromIso: '2026-09-01T00:00:00Z',
+      toIso: '2026-09-01T23:59:59Z',
+    })
   })
 })

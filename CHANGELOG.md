@@ -432,6 +432,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unconfigured) with fragment-callback completion (`GET /v1/auth/me`, 30s
   pending copy, IdP-disablement hint). Shared `EmptyTrio` across collection
   screens; `G then U / T` chords. Frontend: 54 suites / 609 tests, branch 96.0.
+- **Console: account-key mode + shared dropdowns:** Playground and Embeddings
+  offer owned account keys (picked by name via `GET /v1/me/keys`, never
+  displayed, sent as `X-Act-As-Key` with the session JWT) alongside pasted
+  keys (pasted sends ignore the session so logged-in pastes never 401s);
+  `GET /v1/models` learned the same act-as language. Every native select
+  is now the shared terminal-styled listbox (ember chevron, full keyboard
+  contract, ARIA listbox semantics).
 
 ### Fixed
 

@@ -8,16 +8,17 @@ import { toErrorMessage } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { ModelSelect } from '../../shared/models/ModelSelect.js'
 import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
+import { KeySourcePicker, type KeySource } from '../../shared/components/KeySourcePicker.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
 import { formatShortDate } from '../../shared/utils/format.js'
 
 const schema = z.object({
   model: z.string().min(1, 'Model is required'),
   input: z.string().min(1, 'Input text is required').max(8000, 'Input is too long'),
-  key: z.string().min(1, 'API key is required'),
+  key: z.string().optional().default(''),
 })
 
-type FormData = z.infer<typeof schema>
+type FormData = z.input<typeof schema>
 
 /** Sanctioned sample: fills the input box only, never fabricates vectors. */
 const SAMPLE_INPUT = 'CacheRelay routes every request through admission, cache, and router stages.'
@@ -45,8 +46,12 @@ interface UsageRecord {
  * @returns The embeddings screen.
  */
 export function EmbeddingsPage(): React.JSX.Element {
-  const { gatewayKey, setGatewayKey } = useAuthStore(
-    useShallow((s) => ({ gatewayKey: s.gatewayKey, setGatewayKey: s.setGatewayKey })),
+  const { gatewayKey, setGatewayKey, session } = useAuthStore(
+    useShallow((s) => ({
+      gatewayKey: s.gatewayKey,
+      setGatewayKey: s.setGatewayKey,
+      session: s.session,
+    })),
   )
   const [error, setError] = useState<string | null>(null)
   const [runs, setRuns] = useState<UsageRecord[]>([])
@@ -64,6 +69,7 @@ export function EmbeddingsPage(): React.JSX.Element {
     register,
     handleSubmit,
     setValue,
+    setError: setFieldError,
     control,
     formState: { errors, isSubmitting },
   } = useForm<FormData>({
@@ -75,15 +81,31 @@ export function EmbeddingsPage(): React.JSX.Element {
   const keyValue = useWatch({ control, name: 'key' })
   const modelValue = useWatch({ control, name: 'model' })
   const overLimit = inputLength > 8000
+  const [keySource, setKeySource] = useState<KeySource>(session === null ? 'paste' : 'account')
+  const [ownedKeyId, setOwnedKeyId] = useState('')
+  const accountMode = session !== null && keySource === 'account'
 
   const onSubmit = async (d: FormData): Promise<void> => {
-    setGatewayKey(d.key)
+    if (accountMode && ownedKeyId === '') {
+      setFieldError('model', { type: 'manual', message: 'Select an owned key first.' })
+      return
+    }
+    const pastedKey = (d.key ?? '').trim()
+    if (!accountMode && pastedKey === '') {
+      setFieldError('key', { type: 'manual', message: 'API key is required' })
+      return
+    }
+    if (!accountMode) setGatewayKey(pastedKey)
     setError(null)
     try {
-      const out = await new GatewayClient({ token: d.key }).embeddings({
-        model: d.model,
-        input: d.input,
-      })
+      const client = accountMode ? new GatewayClient() : new GatewayClient({ token: pastedKey })
+      const out = await client.embeddings(
+        {
+          model: d.model,
+          input: d.input,
+        },
+        accountMode ? { actAsKey: ownedKeyId } : { ignoreSession: true },
+      )
       const first = out.data[0]
       setLastModel(d.model)
       setRuns((prev) =>
@@ -196,16 +218,23 @@ export function EmbeddingsPage(): React.JSX.Element {
             aria-label="Embed"
             className="space-y-3 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent"
           >
+            <KeySourcePicker
+              source={session === null ? 'paste' : keySource}
+              onSourceChange={setKeySource}
+              selectedKeyId={ownedKeyId}
+              onSelectKeyId={setOwnedKeyId}
+              idPrefix="emb"
+            />
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <label htmlFor="emb-model" className="mb-1 block text-[13px] font-medium">
-                  Model
-                </label>
                 <ModelSelect
-                  token={keyValue}
+                  token={accountMode ? '' : (keyValue ?? '')}
+                  {...(accountMode && ownedKeyId !== '' ? { actAsKey: ownedKeyId } : {})}
                   id="emb-model"
-                  registration={register('model')}
                   value={modelValue}
+                  onSelect={(v) => {
+                    setValue('model', v, { shouldValidate: true, shouldDirty: true })
+                  }}
                   invalid={errors.model !== undefined}
                 />
                 {errors.model === undefined ? null : (
@@ -214,31 +243,33 @@ export function EmbeddingsPage(): React.JSX.Element {
                   </p>
                 )}
               </div>
-              <div>
-                <label htmlFor="emb-key" className="mb-1 block text-[13px] font-medium">
-                  API key (memory only, never stored)
-                </label>
-                <input
-                  id="emb-key"
-                  type="password"
-                  autoComplete="new-password"
-                  data-1p-ignore="true"
-                  data-lpignore="true"
-                  data-bwignore="true"
-                  readOnly={!keyArmed}
-                  onFocus={() => {
-                    setKeyArmed(true)
-                  }}
-                  {...register('key')}
-                  aria-invalid={errors.key !== undefined}
-                  className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
-                />
-                {errors.key === undefined ? null : (
-                  <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
-                    {errors.key.message}
-                  </p>
-                )}
-              </div>
+              {accountMode ? null : (
+                <div>
+                  <label htmlFor="emb-key" className="mb-1 block text-[13px] font-medium">
+                    API key (memory only, never stored)
+                  </label>
+                  <input
+                    id="emb-key"
+                    type="password"
+                    autoComplete="new-password"
+                    data-1p-ignore="true"
+                    data-lpignore="true"
+                    data-bwignore="true"
+                    readOnly={!keyArmed}
+                    onFocus={() => {
+                      setKeyArmed(true)
+                    }}
+                    {...register('key')}
+                    aria-invalid={errors.key !== undefined}
+                    className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
+                  />
+                  {errors.key === undefined ? null : (
+                    <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                      {errors.key.message}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
             <div>
               <div className="mb-1 flex items-baseline justify-between gap-3">
@@ -304,7 +335,7 @@ export function EmbeddingsPage(): React.JSX.Element {
           {runs.length === 0 ? (
             <EmptyTrio
               title="No runs yet"
-              cue="Paste a key, pick a model, submit text. Vectors and usage land here."
+              cue="Choose a key, pick a model, submit text. Vectors and usage land here."
               action={{ label: 'Fill sample text', onClick: fillSample }}
             />
           ) : visible.length === 0 ? (

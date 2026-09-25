@@ -139,7 +139,16 @@ EmptyTrio.tsx`: status line + learning cue + optional link/button
   section (Rerun resubmits as a fresh run) around the `SseStreamViewer`
   (`role="log"`, static `▍` caret while live, Copy with inline confirmation,
   Stop settles the budget hold). History rail reloads past prompts; new runs
-  scroll into view instantly.
+  scroll into view instantly. Sessions choose per run between an owned
+  account key (picked by name, never displayed, sent as `X-Act-As-Key`
+  with the session JWT) and a pasted key (memory only); guests paste.
+  Pasted sends ignore the session so a logged-in paste never 401s.
+  Embeddings offers the same two key sources.
+- Every dropdown is the shared listbox (`shared/components/Select.tsx`):
+  input-matching chrome, ember chevron (native arrows render OS chrome
+  that breaks both themes), flat hairline menu, full keyboard contract
+  (open/move/pick/close, Esc, click-outside, focus return), ARIA
+  `listbox` semantics. No native `<select>` remains in the console.
 - Mutation feedback is toasts (`shared/toast` store + `Toasts` viewport):
   success `role="status"`, errors `role="alert"`, 4s auto-dismiss, `Esc`
   clears all, stack capped at five. Approvals decisions hold their buttons

@@ -139,6 +139,21 @@ export interface ApiKeyCreated {
   name: string
 }
 
+/**
+ * One owned key for act-as-self flows. Mirrors the backend `KeyResponse`
+ * record narrowly: only fields the picker reads. Plaintext never crosses.
+ */
+export interface OwnedKey {
+  /** 64-character SHA-256 hex digest identifying the key. */
+  keyId: string
+  /** Human-readable label. */
+  name: string
+  /** Permitted model aliases (empty means all allowed). */
+  allowedModels: string[]
+  /** Whether the key is enabled. */
+  enabled: boolean
+}
+
 /** Upstream provider validation depth. Unknown strings degrade to grey. */
 export type ProviderValidationStatus =
   'CONTRACT_CHECKED' | 'AUTH_REACHABLE' | 'LIVE_VERIFIED' | 'UNVERIFIED'

@@ -94,4 +94,9 @@ describe('RedeemPage', () => {
       vi.unstubAllEnvs()
     }
   })
+
+  it('offers a way back to log in', () => {
+    renderApp(<RedeemPage />, { route: '/redeem?token=back1' })
+    expect(screen.getByRole('link', { name: /back to log in/i })).toHaveAttribute('href', '/login')
+  })
 })

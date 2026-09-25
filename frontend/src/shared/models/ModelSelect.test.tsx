@@ -1,38 +1,41 @@
 import { screen, waitFor } from '@testing-library/react'
+import { useState } from 'react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { useState } from 'react'
-import { useForm } from 'react-hook-form'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { server } from '../../test/setup.js'
-import { renderApp } from '../../test/utils.js'
+import { renderApp, selectOption } from '../../test/utils.js'
 import { ModelSelect } from './ModelSelect.js'
 
-function Harness({ token, initial }: { token: string; initial?: string }) {
-  const { register } = useForm<{ model: string }>({ defaultValues: { model: initial ?? '' } })
+function Harness({
+  token,
+  actAsKey,
+  initial,
+}: {
+  token: string
+  actAsKey?: string
+  initial?: string
+}) {
   const [value, setValue] = useState(initial ?? '')
+  const onSelect = vi.fn((v: string) => {
+    setValue(v)
+  })
   return (
-    <>
-      <label htmlFor="model-probe">Model</label>
-      <ModelSelect
-        token={token}
-        id="model-probe"
-        registration={register('model', {
-          onChange: (e: React.ChangeEvent<HTMLSelectElement>) => {
-            setValue(e.target.value)
-          },
-        })}
-        value={value}
-        invalid={false}
-      />
-    </>
+    <ModelSelect
+      token={token}
+      {...(actAsKey === undefined ? {} : { actAsKey })}
+      id="model-probe"
+      value={value}
+      onSelect={onSelect}
+      invalid={false}
+    />
   )
 }
 
 describe('ModelSelect', () => {
   it('stays disabled with a guide until a key exists', () => {
     renderApp(<Harness token="" />)
-    const select = screen.getByLabelText(/model/i)
+    const select = screen.getByRole('combobox', { name: /model/i })
     expect(select).toBeDisabled()
     expect(screen.getByText(/paste a key to list models/i)).toBeInTheDocument()
   })
@@ -44,17 +47,19 @@ describe('ModelSelect', () => {
     )
     renderApp(<Harness token="gw-test" />)
     await waitFor(() => {
-      expect(screen.getByRole('option', { name: 'beta' })).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /model/i })).toHaveTextContent(/select a model/i)
     })
-    await user.selectOptions(screen.getByLabelText(/model/i), 'beta')
-    expect(screen.getByLabelText(/model/i)).toHaveValue('beta')
+    await selectOption(user, /model/i, 'beta')
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: /model/i })).toHaveTextContent('beta')
+    })
   })
 
   it('keeps a saved choice visible when the catalog no longer lists it', async () => {
     server.use(http.get('*/v1/models', () => HttpResponse.json({ data: [{ id: 'alpha' }] })))
     renderApp(<Harness token="gw-test" initial="retired-model" />)
     await waitFor(() => {
-      expect(screen.getByRole('option', { name: /retired-model \(saved\)/i })).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /model/i })).toHaveTextContent(/retired-model/)
     })
   })
 
@@ -63,8 +68,30 @@ describe('ModelSelect', () => {
     server.use(http.get('*/v1/models', () => new HttpResponse('x', { status: 500 })))
     renderApp(<Harness token="gw-test" />)
     const reload = await screen.findByRole('button', { name: /reload/i })
-    expect(screen.getByLabelText(/model/i)).toBeDisabled()
+    expect(screen.getByRole('combobox', { name: /model/i })).toBeDisabled()
     await user.click(reload)
-    expect(screen.getByLabelText(/model/i)).toBeDisabled()
+    expect(screen.getByRole('combobox', { name: /model/i })).toBeDisabled()
+  })
+
+  it('lists models through act-as-self with the session bearer', async () => {
+    const user = userEvent.setup()
+    let seenActAs: string | null = null
+    let seenAuth = ''
+    server.use(
+      http.get('*/v1/models', ({ request }) => {
+        seenActAs = request.headers.get('X-Act-As-Key')
+        seenAuth = request.headers.get('Authorization') ?? ''
+        return HttpResponse.json({ data: [{ id: 'alpha' }] })
+      }),
+    )
+    renderApp(<Harness token="" actAsKey={'k'.repeat(64)} />, { nonAdminSession: true })
+    await waitFor(() => {
+      expect(seenActAs).toBe('k'.repeat(64))
+    })
+    expect(seenAuth).toBe('Bearer test-user-jwt')
+    await selectOption(user, /model/i, 'alpha')
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: /model/i })).toHaveTextContent('alpha')
+    })
   })
 })

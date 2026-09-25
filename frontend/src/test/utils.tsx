@@ -1,9 +1,26 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
+import type { UserEvent } from '@testing-library/user-event'
 import type { ReactElement } from 'react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, beforeEach } from 'vitest'
 import { useAuthStore } from '../shared/auth/store.js'
+
+/**
+ * Picks an option from the shared listbox by visible labels.
+ *
+ * @param user - Initialized user-event instance.
+ * @param comboboxName - Accessible name of the dropdown trigger.
+ * @param optionName - Visible label of the option to pick.
+ */
+export async function selectOption(
+  user: UserEvent,
+  comboboxName: string | RegExp,
+  optionName: string,
+): Promise<void> {
+  await user.click(screen.getByRole('combobox', { name: comboboxName }))
+  await user.click(screen.getByRole('option', { name: optionName }))
+}
 
 /**
  * Creates an isolated query client per test: no retries (failures surface

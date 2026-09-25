@@ -5,6 +5,7 @@ import { toErrorMessage } from '../../shared/api/client.js'
 import type { ModelAliasRecord, ProviderChainStep } from '../../shared/api/types.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
 import { Modal } from '../../shared/components/Modal.js'
+import { Select } from '../../shared/components/Select.js'
 import { ProviderBoard } from './ProviderBoard.js'
 
 const STRATEGIES = ['SEQUENTIAL', 'RACE'] as const
@@ -339,26 +340,13 @@ function ModelsBoard(): React.JSX.Element {
                   />
                 </div>
                 <div>
-                  <label
-                    htmlFor="model-new-strategy"
-                    className="mb-1 block text-[13px] font-medium"
-                  >
-                    Strategy
-                  </label>
-                  <select
+                  <Select
                     id="model-new-strategy"
+                    label="Strategy"
                     value={newStrategy}
-                    onChange={(e) => {
-                      setNewStrategy(e.target.value)
-                    }}
-                    className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
-                  >
-                    {STRATEGIES.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </select>
+                    options={STRATEGIES.map((s) => ({ value: s, label: s }))}
+                    onChange={setNewStrategy}
+                  />
                 </div>
               </div>
               <ChainEditor steps={newChain} onChange={setNewChain} idPrefix="model-new" />
@@ -523,23 +511,13 @@ function ModelsBoard(): React.JSX.Element {
               Replace plan: <span className="font-semibold">{replacing}</span>
             </h2>
             <div>
-              <label htmlFor="model-edit-strategy" className="mb-1 block text-[13px] font-medium">
-                Strategy
-              </label>
-              <select
+              <Select
                 id="model-edit-strategy"
+                label="Strategy"
                 value={editStrategy}
-                onChange={(e) => {
-                  setEditStrategy(e.target.value)
-                }}
-                className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
-              >
-                {STRATEGIES.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
+                options={STRATEGIES.map((s) => ({ value: s, label: s }))}
+                onChange={setEditStrategy}
+              />
             </div>
             <ChainEditor steps={editChain} onChange={setEditChain} idPrefix="model-edit" />
             <div className="flex gap-2">

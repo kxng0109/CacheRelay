@@ -179,4 +179,11 @@ describe('LoginPage', () => {
       expect(screen.getByText('at:/')).toBeInTheDocument()
     })
   })
+
+  it('collapses unconfigured SSO to one muted line', () => {
+    renderApp(<LoginPage />, { route: '/login' })
+    expect(screen.getByText(/single sign-on is not enabled/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /continue with/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /redeem an invite/i })).toBeInTheDocument()
+  })
 })

@@ -9,6 +9,7 @@ import { isStreamingEnabled } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
+import { KeySourcePicker, type KeySource } from '../../shared/components/KeySourcePicker.js'
 import { RunDetailPanel } from './RunDetailPanel.js'
 import { RequestCard } from './RequestCard.js'
 import type { StreamSummary } from './SseStreamViewer.js'
@@ -18,7 +19,7 @@ import { ModelSelect } from '../../shared/models/ModelSelect.js'
 const schema = z.object({
   model: z.string().min(1, 'Model is required'),
   prompt: z.string().min(1, 'Prompt is required').max(8000, 'Prompt is too long'),
-  key: z.string().min(1, 'API key is required'),
+  key: z.string().optional().default(''),
 })
 
 /** Sanctioned samples: each fills the prompt box only, never fabricates output. */
@@ -37,7 +38,7 @@ const SAMPLES = [
   },
 ] as const
 
-type FormData = z.infer<typeof schema>
+type FormData = z.input<typeof schema>
 
 interface RunRecord {
   id: number
@@ -54,11 +55,26 @@ interface RunRecord {
  * @returns The playground screen.
  */
 export function PlaygroundPage(): React.JSX.Element {
-  const { gatewayKey, setGatewayKey } = useAuthStore(
-    useShallow((s) => ({ gatewayKey: s.gatewayKey, setGatewayKey: s.setGatewayKey })),
+  const { gatewayKey, setGatewayKey, session } = useAuthStore(
+    useShallow((s) => ({
+      gatewayKey: s.gatewayKey,
+      setGatewayKey: s.setGatewayKey,
+      session: s.session,
+    })),
   )
   const [runId, setRunId] = useState(0)
   const [submitted, setSubmitted] = useState<FormData | null>(null)
+  /**
+   * Act-as-self key hash for the submitted run (account mode only).
+   * Paste mode sends the pasted key verbatim with no header.
+   */
+  const [submittedActAsKey, setSubmittedActAsKey] = useState<string | null>(null)
+  /**
+   * Key source toggle. Sessions default to owned keys (never displayed);
+   * guests only ever see the paste input.
+   */
+  const [keySource, setKeySource] = useState<KeySource>(session === null ? 'paste' : 'account')
+  const [ownedKeyId, setOwnedKeyId] = useState('')
   const [staticText, setStaticText] = useState<string | null>(null)
   const [staticError, setStaticError] = useState<string | null>(null)
   /**
@@ -85,6 +101,7 @@ export function PlaygroundPage(): React.JSX.Element {
     register,
     handleSubmit,
     setValue,
+    setError,
     control,
     formState: { errors, isSubmitting },
   } = useForm<FormData>({
@@ -96,6 +113,9 @@ export function PlaygroundPage(): React.JSX.Element {
   const modelValue = useWatch({ control, name: 'model' })
   const keyValue = useWatch({ control, name: 'key' })
   const overLimit = promptLength > 8000
+  const accountMode = session !== null && keySource === 'account'
+  const effectiveModelToken = accountMode ? '' : (keyValue ?? '')
+  const effectiveModelActAs = accountMode ? ownedKeyId : undefined
   /**
    * Password managers key off focusable password fields. The key input
    * stays readonly until first focus, which keeps managers from claiming
@@ -109,8 +129,18 @@ export function PlaygroundPage(): React.JSX.Element {
   )
 
   const onSubmit = (d: FormData): void => {
-    setGatewayKey(d.key)
+    if (accountMode && ownedKeyId === '') {
+      setError('model', { type: 'manual', message: 'Select an owned key first.' })
+      return
+    }
+    const pastedKey = (d.key ?? '').trim()
+    if (!accountMode && pastedKey === '') {
+      setError('key', { type: 'manual', message: 'API key is required' })
+      return
+    }
+    if (!accountMode) setGatewayKey(pastedKey)
     setSubmitted(d)
+    setSubmittedActAsKey(accountMode ? ownedKeyId : null)
     runCounter.current += 1
     const id = runCounter.current
     setRunId(id)
@@ -121,8 +151,12 @@ export function PlaygroundPage(): React.JSX.Element {
     setStreamSummary(null)
     if (!streaming) {
       const started = performance.now()
-      void new GatewayClient({ token: d.key })
-        .chat({ model: d.model, messages: [{ role: 'user', content: d.prompt }] })
+      const client = accountMode ? new GatewayClient() : new GatewayClient({ token: pastedKey })
+      void client
+        .chat(
+          { model: d.model, messages: [{ role: 'user', content: d.prompt }] },
+          accountMode ? { actAsKey: ownedKeyId } : { ignoreSession: true },
+        )
         .then((out) => {
           const first = out.choices[0]
           setStaticText(first === undefined ? '(empty completion)' : first.message.content)
@@ -181,7 +215,8 @@ export function PlaygroundPage(): React.JSX.Element {
           <h1 className="font-display text-3xl font-medium tracking-tight">Playground</h1>
           <span className="flex-1" />
           <p className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft">
-            model {modelValue || 'unset'} · key {keyValue ? 'set' : 'missing'} ·{' '}
+            model {modelValue || 'unset'} · key{' '}
+            {accountMode ? (ownedKeyId ? 'account' : 'missing') : keyValue ? 'set' : 'missing'} ·{' '}
             {streaming ? 'streaming' : 'static'} · {promptLength}/8000
           </p>
         </div>
@@ -215,16 +250,25 @@ export function PlaygroundPage(): React.JSX.Element {
                 {promptLength}/8000{overLimit ? ' over limit' : null}
               </p>
             </div>
+            <KeySourcePicker
+              source={session === null ? 'paste' : keySource}
+              onSourceChange={setKeySource}
+              selectedKeyId={ownedKeyId}
+              onSelectKeyId={setOwnedKeyId}
+              idPrefix="pg"
+            />
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <label htmlFor="pg-model" className="mb-1 block text-[13px] font-medium">
-                  Model
-                </label>
                 <ModelSelect
-                  token={keyValue}
+                  token={effectiveModelToken}
+                  {...(effectiveModelActAs !== undefined && effectiveModelActAs !== ''
+                    ? { actAsKey: effectiveModelActAs }
+                    : {})}
                   id="pg-model"
-                  registration={register('model')}
                   value={modelValue}
+                  onSelect={(v) => {
+                    setValue('model', v, { shouldValidate: true, shouldDirty: true })
+                  }}
                   invalid={errors.model !== undefined}
                 />
                 {errors.model === undefined ? null : (
@@ -233,31 +277,33 @@ export function PlaygroundPage(): React.JSX.Element {
                   </p>
                 )}
               </div>
-              <div>
-                <label htmlFor="pg-key" className="mb-1 block text-[13px] font-medium">
-                  API key (memory only, never stored)
-                </label>
-                <input
-                  id="pg-key"
-                  type="password"
-                  autoComplete="new-password"
-                  data-1p-ignore="true"
-                  data-lpignore="true"
-                  data-bwignore="true"
-                  readOnly={!keyArmed}
-                  onFocus={() => {
-                    setKeyArmed(true)
-                  }}
-                  {...register('key')}
-                  aria-invalid={errors.key !== undefined}
-                  className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
-                />
-                {errors.key === undefined ? null : (
-                  <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
-                    {errors.key.message}
-                  </p>
-                )}
-              </div>
+              {accountMode ? null : (
+                <div>
+                  <label htmlFor="pg-key" className="mb-1 block text-[13px] font-medium">
+                    API key (memory only, never stored)
+                  </label>
+                  <input
+                    id="pg-key"
+                    type="password"
+                    autoComplete="new-password"
+                    data-1p-ignore="true"
+                    data-lpignore="true"
+                    data-bwignore="true"
+                    readOnly={!keyArmed}
+                    onFocus={() => {
+                      setKeyArmed(true)
+                    }}
+                    {...register('key')}
+                    aria-invalid={errors.key !== undefined}
+                    className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
+                  />
+                  {errors.key === undefined ? null : (
+                    <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                      {errors.key.message}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
             <div>
               <label htmlFor="pg-prompt" className="mb-1 block text-[13px] font-medium">
@@ -323,7 +369,7 @@ export function PlaygroundPage(): React.JSX.Element {
           {submitted === null ? (
             <EmptyTrio
               title="No output yet"
-              cue="Pick a model, paste a key, write a prompt. Then send. Tokens, cost, and phase show here as the stream flows. Recipes live under Start from a recipe instead above."
+              cue="Pick a model, choose a key, write a prompt. Then send. Tokens, cost, and phase show here as the stream flows. Recipes live under Start from a recipe instead above."
             />
           ) : (
             <section
@@ -351,7 +397,10 @@ export function PlaygroundPage(): React.JSX.Element {
               {streaming ? (
                 <SseStreamViewer
                   key={runId}
-                  token={submitted.key}
+                  token={accountMode ? session.accessToken : (submitted.key ?? '')}
+                  {...(submittedActAsKey !== null && submittedActAsKey !== ''
+                    ? { actAsKey: submittedActAsKey }
+                    : {})}
                   model={submitted.model}
                   messages={messages}
                   onSummary={setStreamSummary}

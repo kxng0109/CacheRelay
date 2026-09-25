@@ -235,3 +235,86 @@ describe('sso providers', () => {
     expect(ssoAuthorizationUrl('google')).toContain('/oauth2/authorization/google')
   })
 })
+
+describe('myKeys', () => {
+  it('lists owned keys without secrets', async () => {
+    server.use(
+      http.get('*/v1/me/keys', () =>
+        HttpResponse.json([
+          { keyId: 'a'.repeat(64), name: 'dev', allowedModels: [], enabled: true },
+          { keyId: 'b'.repeat(64), name: 'prod', allowedModels: ['gpt-56-luna'], enabled: true },
+        ]),
+      ),
+    )
+    const { keys } = await new GatewayClient({ token: 'session-jwt' }).myKeys()
+    expect(keys).toHaveLength(2)
+    expect(keys[0]?.name).toBe('dev')
+    expect(keys[1]?.allowedModels).toEqual(['gpt-56-luna'])
+  })
+
+  it('degrades malformed rows to an empty list', async () => {
+    server.use(http.get('*/v1/me/keys', () => HttpResponse.json({ nope: true })))
+    await expect(new GatewayClient({ token: 'x' }).myKeys()).resolves.toEqual({ keys: [] })
+  })
+
+  it('skips rows missing required fields', async () => {
+    server.use(
+      http.get('*/v1/me/keys', () =>
+        HttpResponse.json([
+          { keyId: 'c'.repeat(64), name: 'ok', allowedModels: [] },
+          { keyId: 42, name: null },
+        ]),
+      ),
+    )
+    const { keys } = await new GatewayClient({ token: 'x' }).myKeys()
+    expect(keys).toHaveLength(1)
+    expect(keys[0]?.name).toBe('ok')
+  })
+})
+
+describe('act-as-self headers', () => {
+  it('sends X-Act-As-Key on models reads', async () => {
+    let seenActAs: string | null = null
+    server.use(
+      http.get('*/v1/models', ({ request }) => {
+        seenActAs = request.headers.get('X-Act-As-Key')
+        return HttpResponse.json({ data: [{ id: 'fast' }] })
+      }),
+    )
+    await new GatewayClient({ token: 'session-jwt' }).models({ actAsKey: 'd'.repeat(64) })
+    expect(seenActAs).toBe('d'.repeat(64))
+  })
+
+  it('omits X-Act-As-Key for pasted-key flows', async () => {
+    let seenActAs: string | null = 'unset'
+    server.use(
+      http.get('*/v1/models', ({ request }) => {
+        seenActAs = request.headers.get('X-Act-As-Key')
+        return HttpResponse.json({ data: [] })
+      }),
+    )
+    await new GatewayClient({ token: 'gw-test' }).models()
+    expect(seenActAs).toBeNull()
+  })
+
+  it('sends the pasted key verbatim when a session exists', async () => {
+    let seenAuth = ''
+    server.use(
+      http.get('*/v1/models', ({ request }) => {
+        seenAuth = request.headers.get('Authorization') ?? ''
+        return HttpResponse.json({ data: [] })
+      }),
+    )
+    const { useAuthStore } = await import('../auth/store.js')
+    useAuthStore.getState().clear()
+    useAuthStore
+      .getState()
+      .setSession({ accessToken: 'test-user-jwt', admin: false, username: 'test-user' })
+    try {
+      await new GatewayClient({ token: 'gw-pasted' }).models({ ignoreSession: true })
+      expect(seenAuth).toBe('Bearer gw-pasted')
+    } finally {
+      useAuthStore.getState().clear()
+    }
+  })
+})

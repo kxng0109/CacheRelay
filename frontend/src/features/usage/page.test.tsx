@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { HttpResponse, http } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { server } from '../../test/setup.js'
-import { renderApp } from '../../test/utils.js'
+import { renderApp, selectOption } from '../../test/utils.js'
 import { UsagePage } from './page.js'
 
 function summary(overrides: Record<string, unknown> = {}) {
@@ -31,12 +31,23 @@ function usageOk(body: Record<string, unknown> = {}) {
 }
 
 describe('UsagePage', () => {
-  it('loads the personal summary on open with freshness', async () => {
-    server.use(usageOk())
+  it('loads the past week by default', async () => {
+    let seenUrl = ''
+    server.use(
+      http.get('*/v1/me/usage', ({ request }) => {
+        seenUrl = request.url
+        return HttpResponse.json(summary(), {
+          headers: { 'X-Dashboard-Generated-At': '2026-09-24T10:00:00Z' },
+        })
+      }),
+    )
     renderApp(<UsagePage />, { route: '/usage', nonAdminSession: true })
     await waitFor(() => {
       expect(screen.getByText('7')).toBeInTheDocument()
     })
+    expect(screen.getByRole('combobox', { name: /range/i })).toHaveTextContent('Past 7 days')
+    expect(seenUrl).toContain('from=')
+    expect(seenUrl).toContain('to=')
     expect(screen.getByText(/updated .* ago/i)).toBeInTheDocument()
   })
 
@@ -46,6 +57,24 @@ describe('UsagePage', () => {
     await waitFor(() => {
       expect(screen.getByText(/no usage in range/i)).toBeInTheDocument()
     })
+  })
+
+  it('switches presets without a submit click', async () => {
+    const user = userEvent.setup()
+    let seenUrl = ''
+    server.use(
+      http.get('*/v1/me/usage', ({ request }) => {
+        seenUrl = request.url
+        return HttpResponse.json(summary())
+      }),
+    )
+    renderApp(<UsagePage />, { route: '/usage', nonAdminSession: true })
+    await screen.findByText('7')
+    await selectOption(user, /range/i, 'Today')
+    await waitFor(() => {
+      expect(seenUrl).toContain('from=')
+    })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('rejects reversed windows client-side without fetching', async () => {
@@ -59,8 +88,9 @@ describe('UsagePage', () => {
     )
     renderApp(<UsagePage />, { route: '/usage', nonAdminSession: true })
     await screen.findByText('7')
-    fireEvent.change(screen.getByLabelText(/from/i), { target: { value: '2026-09-24' } })
-    fireEvent.change(screen.getByLabelText(/to/i), { target: { value: '2026-09-01' } })
+    await selectOption(user, /range/i, 'Custom range')
+    fireEvent.change(screen.getByLabelText(/^from$/i), { target: { value: '2026-09-24' } })
+    fireEvent.change(screen.getByLabelText(/^to$/i), { target: { value: '2026-09-01' } })
     await user.click(screen.getByRole('button', { name: /^apply$/i }))
     expect(await screen.findByRole('alert')).toHaveTextContent(/cannot be after/i)
     expect(calls).toBe(1)
@@ -71,13 +101,14 @@ describe('UsagePage', () => {
     server.use(usageOk())
     renderApp(<UsagePage />, { route: '/usage', nonAdminSession: true })
     await screen.findByText('7')
-    fireEvent.change(screen.getByLabelText(/from/i), { target: { value: '2026-01-01' } })
-    fireEvent.change(screen.getByLabelText(/to/i), { target: { value: '2026-09-24' } })
+    await selectOption(user, /range/i, 'Custom range')
+    fireEvent.change(screen.getByLabelText(/^from$/i), { target: { value: '2026-01-01' } })
+    fireEvent.change(screen.getByLabelText(/^to$/i), { target: { value: '2026-09-24' } })
     await user.click(screen.getByRole('button', { name: /^apply$/i }))
     expect(await screen.findByRole('alert')).toHaveTextContent(/narrow the window/i)
   })
 
-  it('applies valid windows to the query', async () => {
+  it('applies valid custom windows to the query', async () => {
     const user = userEvent.setup()
     let seenUrl = ''
     server.use(
@@ -88,8 +119,9 @@ describe('UsagePage', () => {
     )
     renderApp(<UsagePage />, { route: '/usage', nonAdminSession: true })
     await screen.findByText('7')
-    fireEvent.change(screen.getByLabelText(/from/i), { target: { value: '2026-09-20' } })
-    fireEvent.change(screen.getByLabelText(/to/i), { target: { value: '2026-09-24' } })
+    await selectOption(user, /range/i, 'Custom range')
+    fireEvent.change(screen.getByLabelText(/^from$/i), { target: { value: '2026-09-20' } })
+    fireEvent.change(screen.getByLabelText(/^to$/i), { target: { value: '2026-09-24' } })
     await user.click(screen.getByRole('button', { name: /^apply$/i }))
     await waitFor(() => {
       expect(seenUrl).toContain('from=2026-09-20')
@@ -125,18 +157,30 @@ describe('UsagePage', () => {
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
   })
 
-  it('reapplies defaults on blank submit', async () => {
+  it('hides custom dates until the custom range is picked', async () => {
+    server.use(usageOk())
+    renderApp(<UsagePage />, { route: '/usage', nonAdminSession: true })
+    await screen.findByText('7')
+    expect(screen.queryByLabelText(/^from$/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^apply$/i })).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('submits blank custom dates as backend defaults', async () => {
     const user = userEvent.setup()
+    let seenUrl = ''
     server.use(
-      http.get('*/v1/me/usage', () => {
+      http.get('*/v1/me/usage', ({ request }) => {
+        seenUrl = request.url
         return HttpResponse.json(summary())
       }),
     )
     renderApp(<UsagePage />, { route: '/usage', nonAdminSession: true })
     await screen.findByText('7')
+    await selectOption(user, /range/i, 'Custom range')
     await user.click(screen.getByRole('button', { name: /^apply$/i }))
     await waitFor(() => {
-      expect(screen.getByText('7')).toBeInTheDocument()
+      expect(seenUrl.endsWith('/v1/me/usage')).toBe(true)
     })
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })

@@ -383,7 +383,8 @@ describe('ModelsPage', () => {
       await user.clear(firstOverride)
       await user.type(firstOverride, 'gpt-x')
     }
-    await user.selectOptions(editorScope.getByLabelText(/^strategy$/i), 'SEQUENTIAL')
+    await user.click(editorScope.getByRole('combobox', { name: /^strategy$/i }))
+    await user.click(editorScope.getByRole('option', { name: 'SEQUENTIAL' }))
     await user.click(editorScope.getByRole('button', { name: /^replace plan$/i }))
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent(/db-fast replaced/i)
@@ -442,7 +443,8 @@ describe('ModelsPage', () => {
     await screen.findByRole('table')
     await user.click(screen.getByRole('button', { name: /new alias/i }))
     await user.type(screen.getByLabelText(/name \(lowercase slug\)/i), 'strat-one')
-    await user.selectOptions(screen.getByLabelText(/^strategy$/i), 'RACE')
+    await user.click(screen.getByRole('combobox', { name: /^strategy$/i }))
+    await user.click(screen.getByRole('option', { name: 'RACE' }))
     await user.type(screen.getByLabelText(/provider 1/i), 'openai')
     await user.click(screen.getByRole('button', { name: /create alias/i }))
     await waitFor(() => {
