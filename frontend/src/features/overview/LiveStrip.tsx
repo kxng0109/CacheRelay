@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { GatewayClient } from '../../shared/api/client.js'
 import type { LedgerSummary } from '../../shared/api/types.js'
+import { TableScroll } from '../../shared/components/TableScroll.js'
 import { formatBytes, formatMicros } from '../../shared/utils/format.js'
 
 const TAIL_SIZE = 5
@@ -46,7 +47,7 @@ export function LiveStrip({
 
   return (
     <section aria-label="Live gateway activity" className="space-y-4">
-      <p role="status" className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft">
+      <p className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft">
         <span aria-hidden="true" className="mr-1 text-ember">
           ●
         </span>
@@ -92,44 +93,49 @@ export function LiveStrip({
               </Link>
             </div>
           ) : (
-            <table className="mt-2 w-full text-left text-sm">
-              <caption className="sr-only">Latest billed requests</caption>
-              <thead>
-                <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
-                  <th scope="col" className="py-1 pr-3 font-medium">
-                    Request
-                  </th>
-                  <th scope="col" className="py-1 pr-3 font-medium">
-                    Model
-                  </th>
-                  <th scope="col" className="py-1 text-right font-medium">
-                    Cost (µ$)
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {entries.map((e) => (
-                  <tr key={e.requestId} className="border-t border-ink/10 dark:border-parchment/10">
-                    <td
-                      className="max-w-36 truncate py-1 pr-3 font-mono text-[13px]"
-                      title={e.requestId}
-                    >
-                      {e.requestId}
-                    </td>
-                    <td className="max-w-32 truncate py-1 pr-3 text-[13px]" title={e.model}>
-                      {e.model}
-                    </td>
-                    <td className="py-1 text-right font-mono text-[13px] tnum">
-                      {e.costUsdMicros === 0 ? (
-                        <span className="text-ink-soft dark:text-parchment-soft">free</span>
-                      ) : (
-                        formatMicros(e.costUsdMicros)
-                      )}
-                    </td>
+            <TableScroll>
+              <table className="mt-2 w-full text-left text-sm">
+                <caption className="sr-only">Latest billed requests</caption>
+                <thead>
+                  <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+                    <th scope="col" className="py-1 pr-3 font-medium">
+                      Request
+                    </th>
+                    <th scope="col" className="py-1 pr-3 font-medium">
+                      Model
+                    </th>
+                    <th scope="col" className="py-1 text-right font-medium">
+                      Cost (µ$)
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {entries.map((e) => (
+                    <tr
+                      key={e.requestId}
+                      className="border-t border-ink/10 dark:border-parchment/10"
+                    >
+                      <td
+                        className="max-w-36 truncate py-1 pr-3 font-mono text-[13px]"
+                        title={e.requestId}
+                      >
+                        {e.requestId}
+                      </td>
+                      <td className="max-w-32 truncate py-1 pr-3 text-[13px]" title={e.model}>
+                        {e.model}
+                      </td>
+                      <td className="py-1 text-right font-mono text-[13px] tnum">
+                        {e.costUsdMicros === 0 ? (
+                          <span className="text-ink-soft dark:text-parchment-soft">free</span>
+                        ) : (
+                          formatMicros(e.costUsdMicros)
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableScroll>
           )}
         </div>
         <div className="rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">

@@ -110,8 +110,8 @@ describe('CommandPalette', () => {
     await waitFor(() => {
       expect(screen.getByText('Go to Playground')).toBeInTheDocument()
     })
+    expect(screen.getByText('Go to MCP')).toBeInTheDocument()
     expect(screen.queryByText('Go to Overview')).not.toBeInTheDocument()
-    expect(screen.queryByText('Go to MCP')).not.toBeInTheDocument()
     expect(screen.queryByText('Go to Observability')).not.toBeInTheDocument()
     expect(screen.getByText(/public console/i)).toBeInTheDocument()
   })

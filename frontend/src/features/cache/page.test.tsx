@@ -371,6 +371,43 @@ describe('CachePage', () => {
     expect(screen.getAllByText(/expected number, received NaN/i)).toHaveLength(2)
     expect(screen.getByLabelText(/minute cap/i)).toHaveAttribute('min', '0')
     expect(screen.getByLabelText(/month cap/i)).toHaveAttribute('min', '0')
+    // FE-30: errors are linked, not just broadcast.
+    expect(screen.getByLabelText(/^level$/i)).toHaveAttribute(
+      'aria-describedby',
+      'budget-level-error',
+    )
+    expect(screen.getByLabelText(/minute cap/i)).toHaveAttribute(
+      'aria-describedby',
+      'budget-minute-error',
+    )
+    expect(screen.getByLabelText(/webhook url/i)).not.toHaveAttribute('aria-describedby')
+  })
+
+  it('rejects non-https and local webhooks before submitting', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/cache/stats', () => HttpResponse.json(STATS)),
+      http.get('*/v1/admin/budgets', () => HttpResponse.json([])),
+    )
+    renderApp(<CachePage />, { adminSession: true })
+    const triggers = await screen.findAllByRole('button', { name: /create budget/i })
+    const trigger = triggers[0]
+    if (trigger === undefined) throw new Error('Create budget trigger not found')
+    await user.click(trigger)
+    await screen.findByRole('dialog', { name: /create budget/i })
+    await user.type(screen.getByLabelText(/^level$/i), 'KEY')
+    await user.type(screen.getByLabelText(/subject/i), 'tenant-corp')
+    for (const bad of ['file:///etc/passwd', 'http://127.0.0.1:9000/hook', 'not-a-url']) {
+      await user.clear(screen.getByLabelText(/webhook url/i))
+      await user.type(screen.getByLabelText(/webhook url/i), bad)
+      const submits = screen.getAllByRole('button', { name: /create budget/i })
+      const submit = submits[submits.length - 1]
+      if (submit === undefined) throw new Error('Create budget submit not found')
+      await user.click(submit)
+      await waitFor(() => {
+        expect(screen.getByText(/non-local host/i)).toBeInTheDocument()
+      })
+    }
   })
 
   it('copies visible budgets as a markdown table', async () => {

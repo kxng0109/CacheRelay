@@ -10,6 +10,7 @@ import { ModelSelect } from '../../shared/models/ModelSelect.js'
 import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
 import { KeySourcePicker, type KeySource } from '../../shared/components/KeySourcePicker.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
+import { TableScroll } from '../../shared/components/TableScroll.js'
 import { formatShortDate } from '../../shared/utils/format.js'
 
 const schema = z.object({
@@ -225,8 +226,10 @@ export function EmbeddingsPage(): React.JSX.Element {
               onSelectKeyId={setOwnedKeyId}
               idPrefix="emb"
             />
+            {/* Grid items default to min-width:auto (min-content): without
+                min-w-0 the model/key cells force the page past 320 px. */}
             <div className="grid gap-3 sm:grid-cols-2">
-              <div>
+              <div className="min-w-0">
                 <ModelSelect
                   token={accountMode ? '' : (keyValue ?? '')}
                   {...(accountMode && ownedKeyId !== '' ? { actAsKey: ownedKeyId } : {})}
@@ -236,15 +239,20 @@ export function EmbeddingsPage(): React.JSX.Element {
                     setValue('model', v, { shouldValidate: true, shouldDirty: true })
                   }}
                   invalid={errors.model !== undefined}
+                  {...(errors.model === undefined ? {} : { describedBy: 'emb-model-error' })}
                 />
                 {errors.model === undefined ? null : (
-                  <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                  <p
+                    id="emb-model-error"
+                    role="alert"
+                    className="mt-1 text-[13px] text-danger dark:text-danger-soft"
+                  >
                     {errors.model.message}
                   </p>
                 )}
               </div>
               {accountMode ? null : (
-                <div>
+                <div className="min-w-0">
                   <label htmlFor="emb-key" className="mb-1 block text-[13px] font-medium">
                     API key (memory only, never stored)
                   </label>
@@ -261,10 +269,15 @@ export function EmbeddingsPage(): React.JSX.Element {
                     }}
                     {...register('key')}
                     aria-invalid={errors.key !== undefined}
+                    aria-describedby={errors.key === undefined ? undefined : 'emb-key-error'}
                     className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
                   />
                   {errors.key === undefined ? null : (
-                    <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                    <p
+                      id="emb-key-error"
+                      role="alert"
+                      className="mt-1 text-[13px] text-danger dark:text-danger-soft"
+                    >
                       {errors.key.message}
                     </p>
                   )}
@@ -291,15 +304,31 @@ export function EmbeddingsPage(): React.JSX.Element {
                 rows={4}
                 {...register('input')}
                 aria-invalid={errors.input !== undefined || overLimit}
+                aria-describedby={
+                  [
+                    overLimit ? 'emb-input-limit-error' : null,
+                    errors.input === undefined ? null : 'emb-input-error',
+                  ]
+                    .filter((v) => v !== null)
+                    .join(' ') || undefined
+                }
                 className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
               />
               {overLimit ? (
-                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                <p
+                  id="emb-input-limit-error"
+                  role="alert"
+                  className="mt-1 text-[13px] text-danger dark:text-danger-soft"
+                >
                   Input is over the 8000 character limit. Shorten it to send.
                 </p>
               ) : null}
               {errors.input === undefined ? null : (
-                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                <p
+                  id="emb-input-error"
+                  role="alert"
+                  className="mt-1 text-[13px] text-danger dark:text-danger-soft"
+                >
                   {errors.input.message}
                 </p>
               )}
@@ -343,63 +372,71 @@ export function EmbeddingsPage(): React.JSX.Element {
               No runs match this filter.
             </p>
           ) : (
-            <table className="w-full text-left text-sm">
-              <caption className="sr-only">Session embedding usage</caption>
-              <thead className="sticky top-0 bg-paper dark:bg-night">
-                <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
-                  <th scope="col" className="py-2 pr-3 font-medium">
-                    Time
-                  </th>
-                  <th scope="col" className="py-2 pr-3 font-medium">
-                    Model
-                  </th>
-                  <th scope="col" className="py-2 pr-3 text-right font-medium">
-                    Chars
-                  </th>
-                  <th scope="col" className="py-2 pr-3 text-right font-medium">
-                    Vectors
-                  </th>
-                  <th scope="col" className="py-2 pr-3 text-right font-medium">
-                    Dims
-                  </th>
-                  <th scope="col" className="py-2 text-right font-medium">
-                    Status
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((r) => (
-                  <tr
-                    key={r.id}
-                    tabIndex={0}
-                    aria-selected={r.id === selected}
-                    onClick={() => {
-                      setSelected(r.id === selected ? null : r.id)
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault()
-                        setSelected(r.id === selected ? null : r.id)
-                      }
-                    }}
-                    className={`cursor-pointer border-t border-ink/10 dark:border-parchment/10 ${
-                      r.id === selected ? 'bg-ink/4 dark:bg-parchment/6' : ''
-                    }`}
-                  >
-                    <td className="py-2 pr-3 font-mono text-[13px] tnum" title={r.at}>
-                      {formatShortDate(r.at)}
-                    </td>
-                    <td className="max-w-44 truncate py-2 pr-3 font-mono text-[13px]">{r.model}</td>
-                    <td className="py-2 pr-3 text-right text-[13px] tnum">{r.chars}</td>
-                    <td className="py-2 pr-3 text-right text-[13px] tnum">{r.vecs ?? 'n/a'}</td>
-                    <td className="py-2 pr-3 text-right text-[13px] tnum">{r.dims ?? 'n/a'}</td>
-                    <td className="py-2 text-right text-[13px]">
-                      {r.status === 'ok' ? '● ok' : '■ fail'}
-                    </td>
+            <TableScroll>
+              <table className="w-full text-left text-sm">
+                <caption className="sr-only">Session embedding usage</caption>
+                <thead className="sticky top-0 bg-paper dark:bg-night">
+                  <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+                    <th scope="col" className="py-2 pr-3 font-medium">
+                      Time
+                    </th>
+                    <th scope="col" className="py-2 pr-3 font-medium">
+                      Model
+                    </th>
+                    <th scope="col" className="py-2 pr-3 text-right font-medium">
+                      Chars
+                    </th>
+                    <th scope="col" className="py-2 pr-3 text-right font-medium">
+                      Vectors
+                    </th>
+                    <th scope="col" className="py-2 pr-3 text-right font-medium">
+                      Dims
+                    </th>
+                    <th scope="col" className="py-2 text-right font-medium">
+                      Status
+                    </th>
+                    <th scope="col" className="py-2 pl-1 font-medium">
+                      <span className="sr-only">Open run</span>
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {visible.map((r) => (
+                    <tr
+                      key={r.id}
+                      className={`border-t border-ink/10 dark:border-parchment/10 ${
+                        r.id === selected ? 'bg-ink/4 dark:bg-parchment/6' : ''
+                      }`}
+                    >
+                      <td className="py-2 pr-3 font-mono text-[13px] tnum" title={r.at}>
+                        {formatShortDate(r.at)}
+                      </td>
+                      <td className="max-w-44 truncate py-2 pr-3 font-mono text-[13px]">
+                        {r.model}
+                      </td>
+                      <td className="py-2 pr-3 text-right text-[13px] tnum">{r.chars}</td>
+                      <td className="py-2 pr-3 text-right text-[13px] tnum">{r.vecs ?? 'n/a'}</td>
+                      <td className="py-2 pr-3 text-right text-[13px] tnum">{r.dims ?? 'n/a'}</td>
+                      <td className="py-2 text-right text-[13px]">
+                        {r.status === 'ok' ? '● ok' : '■ fail'}
+                      </td>
+                      <td className="py-2 pl-1 text-right">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelected(r.id === selected ? null : r.id)
+                          }}
+                          aria-label={`Inspect run ${r.model} ${formatShortDate(r.at)}`}
+                          className="rounded px-1 text-ink-soft dark:text-parchment-soft"
+                        >
+                          <span aria-hidden="true">›</span>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableScroll>
           )}
         </div>
         {inspected === null ? (

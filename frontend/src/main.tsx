@@ -7,7 +7,7 @@ import '@fontsource-variable/martian-mono/wght.css'
 import './index.css'
 import { Providers } from './app/providers.tsx'
 import { router } from './app/router.tsx'
-import { restoreSession, shouldDeferRestore } from './shared/auth/session.js'
+import { isTestSeedPath, restoreSession, shouldDeferRestore } from './shared/auth/session.js'
 
 const root = document.getElementById('root')
 // Boot guard: index.html always provides #root; the throw is unreachable by construction.
@@ -25,7 +25,11 @@ createRoot(root).render(
 // Restores a cookie-backed session without blocking first paint. Public
 // routes wait for first input so cold loads stay clean when the gateway is
 // unreachable; authed deep links restore immediately to avoid a login bounce.
-if (shouldDeferRestore(window.location.pathname)) {
+// The DEV-only Playwright seed route (FE-05) is exempt entirely: its session
+// is injected, not cookie-backed, so any restore (immediate or on first
+// input) would wipe it with a cookie-less 401 and bounce to login.
+const isTestSeed = isTestSeedPath(window.location.pathname)
+if (!isTestSeed && shouldDeferRestore(window.location.pathname)) {
   const restoreOnce = (): void => {
     window.removeEventListener('pointerdown', restoreOnce)
     window.removeEventListener('keydown', restoreOnce)
@@ -33,6 +37,6 @@ if (shouldDeferRestore(window.location.pathname)) {
   }
   window.addEventListener('pointerdown', restoreOnce, { once: true })
   window.addEventListener('keydown', restoreOnce, { once: true })
-} else {
+} else if (!isTestSeed) {
   void restoreSession()
 }

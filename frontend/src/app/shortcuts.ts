@@ -3,19 +3,19 @@
  * Keys stay mnemonic: overview, playground, embeddings, observability,
  * circuits, keys, ledger, approvals, mcp, usage, teams.
  */
-const CHORDS: Readonly<Record<string, string>> = {
-  o: '/',
-  p: '/playground',
-  e: '/embeddings',
-  b: '/observability',
-  c: '/circuits',
-  k: '/keys',
-  l: '/ledger',
-  a: '/approvals',
-  m: '/mcp',
-  u: '/usage',
-  t: '/teams',
-}
+const CHORDS = new Map<string, string>([
+  ['o', '/'],
+  ['p', '/playground'],
+  ['e', '/embeddings'],
+  ['b', '/observability'],
+  ['c', '/circuits'],
+  ['k', '/keys'],
+  ['l', '/ledger'],
+  ['a', '/approvals'],
+  ['m', '/mcp'],
+  ['u', '/usage'],
+  ['t', '/teams'],
+])
 
 /** Milliseconds the `g` prefix waits for its second key. */
 export const CHORD_WINDOW_MS = 800
@@ -27,7 +27,8 @@ export const CHORD_WINDOW_MS = 800
  * @returns Destination path, or null for unbound keys.
  */
 export function targetForChord(key: string): string | null {
-  return CHORDS[key.toLowerCase()] ?? null
+  // A Map (never a bare object): prototype-chain names can never resolve.
+  return CHORDS.get(key.toLowerCase()) ?? null
 }
 
 /**

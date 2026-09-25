@@ -1,3 +1,7 @@
+import { useRef } from 'react'
+import { createPortal } from 'react-dom'
+import { useOverlayFocus } from './useOverlayFocus.js'
+
 interface ShortcutSheetProps {
   /** Visibility flag owned by the shell. */
   open: boolean
@@ -27,8 +31,12 @@ const ROWS: readonly (readonly [string, string])[] = [
  * @returns The sheet dialog, or nothing when closed.
  */
 export function ShortcutSheet({ open, onClose }: ShortcutSheetProps): React.JSX.Element | null {
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  // Shared overlay contract (FE-09). Conditional render means unmount is
+  // the close path, so the hook's unmount fallback returns focus.
+  useOverlayFocus(panelRef)
   if (!open) return null
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-night/60 p-4"
       onClick={(e) => {
@@ -39,6 +47,7 @@ export function ShortcutSheet({ open, onClose }: ShortcutSheetProps): React.JSX.
       }}
     >
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label="Keyboard shortcuts"
@@ -48,7 +57,6 @@ export function ShortcutSheet({ open, onClose }: ShortcutSheetProps): React.JSX.
           <h2 className="font-display text-lg font-medium tracking-tight">Keyboard shortcuts</h2>
           <button
             type="button"
-            autoFocus
             onClick={onClose}
             aria-label="Close shortcuts"
             className="rounded-md border border-ink/15 px-3 py-1 text-[13px] dark:border-parchment/15"
@@ -65,6 +73,7 @@ export function ShortcutSheet({ open, onClose }: ShortcutSheetProps): React.JSX.
           ))}
         </dl>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

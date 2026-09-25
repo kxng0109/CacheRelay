@@ -7,15 +7,45 @@ import * as z from 'zod/v4'
 import { GatewayClient } from '../../shared/api/client.js'
 import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
 import { Modal } from '../../shared/components/Modal.js'
+import { TableScroll } from '../../shared/components/TableScroll.js'
 import { formatBytes, formatMicros } from '../../shared/utils/format.js'
 import { toErrorMessage } from '../../shared/api/client.js'
+
+/**
+ * Client-side webhook guard (defence in depth; the server is the control).
+ * Only `https:` URLs with non-local hosts pass: `file:`, plain `http:`,
+ * and loopback targets are rejected before submit.
+ *
+ * @param value - Raw webhook field value.
+ * @returns True when empty (optional) or an acceptable https URL.
+ */
+function isAllowedWebhook(value: string): boolean {
+  const trimmed = value.trim()
+  if (trimmed.length === 0) return true
+  let url: URL
+  try {
+    url = new URL(trimmed)
+  } catch {
+    return false
+  }
+  if (url.protocol !== 'https:') return false
+  const host = url.hostname.toLowerCase()
+  // NOTE: WHATWG strips IPv6 brackets, so `http://[::1]/` arrives as
+  // `::1` — there is no bracketed variant to check.
+  return host !== 'localhost' && host !== '127.0.0.1' && host !== '::1'
+}
 
 const schema = z.object({
   level: z.string().min(1, 'Level is required'),
   subjectId: z.string().min(1, 'Subject is required'),
   minuteMicros: z.number().min(0),
   monthMicros: z.number().min(0),
-  webhookUrl: z.string().optional(),
+  webhookUrl: z
+    .string()
+    .optional()
+    .refine((v) => v === undefined || isAllowedWebhook(v), {
+      message: 'Webhook must be an https URL with a non-local host.',
+    }),
 })
 
 type FormData = z.infer<typeof schema>
@@ -209,7 +239,7 @@ function CacheBoard(): React.JSX.Element {
           {stats.error.message}
         </p>
       ) : stats.data === undefined ? null : (
-        <dl className="grid grid-cols-3 gap-3">
+        <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
             <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Status</dt>
             <dd className="font-mono text-lg tnum">{stats.data.enabled ? 'On' : 'Off'}</dd>
@@ -319,47 +349,49 @@ function CacheBoard(): React.JSX.Element {
           action={{ label: 'Create budget', onClick: openCreate }}
         />
       ) : (
-        <table className="w-full text-left text-sm">
-          <caption className="sr-only">Spend budgets</caption>
-          <thead className="sticky top-0 bg-paper dark:bg-night">
-            <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
-              <th scope="col" className="py-2 pr-3 font-medium">
-                Subject
-              </th>
-              <th scope="col" className="py-2 pr-3 font-medium">
-                Level
-              </th>
-              <th scope="col" className="py-2 pr-3 text-right font-medium">
-                Minute (µ$)
-              </th>
-              <th scope="col" className="py-2 text-right font-medium">
-                Month (µ$)
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {budgets.data.budgets.map((b) => (
-              <tr key={b.id} className="border-t border-ink/10 dark:border-parchment/10">
-                <td className="py-2 pr-3 font-mono text-[13px]">{b.subjectId}</td>
-                <td className="py-2 pr-3 text-[13px]">{b.level}</td>
-                <td className="py-2 pr-3 text-right text-[13px] tnum">
-                  {b.minuteMicros === 0 ? (
-                    <span className="text-ink-soft dark:text-parchment-soft">no cap</span>
-                  ) : (
-                    formatMicros(b.minuteMicros)
-                  )}
-                </td>
-                <td className="py-2 text-right text-[13px] tnum">
-                  {b.monthMicros === 0 ? (
-                    <span className="text-ink-soft dark:text-parchment-soft">no cap</span>
-                  ) : (
-                    formatMicros(b.monthMicros)
-                  )}
-                </td>
+        <TableScroll>
+          <table className="w-full text-left text-sm">
+            <caption className="sr-only">Spend budgets</caption>
+            <thead className="sticky top-0 bg-paper dark:bg-night">
+              <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+                <th scope="col" className="py-2 pr-3 font-medium">
+                  Subject
+                </th>
+                <th scope="col" className="py-2 pr-3 font-medium">
+                  Level
+                </th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">
+                  Minute (µ$)
+                </th>
+                <th scope="col" className="py-2 text-right font-medium">
+                  Month (µ$)
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {budgets.data.budgets.map((b) => (
+                <tr key={b.id} className="border-t border-ink/10 dark:border-parchment/10">
+                  <td className="py-2 pr-3 font-mono text-[13px]">{b.subjectId}</td>
+                  <td className="py-2 pr-3 text-[13px]">{b.level}</td>
+                  <td className="py-2 pr-3 text-right text-[13px] tnum">
+                    {b.minuteMicros === 0 ? (
+                      <span className="text-ink-soft dark:text-parchment-soft">no cap</span>
+                    ) : (
+                      formatMicros(b.minuteMicros)
+                    )}
+                  </td>
+                  <td className="py-2 text-right text-[13px] tnum">
+                    {b.monthMicros === 0 ? (
+                      <span className="text-ink-soft dark:text-parchment-soft">no cap</span>
+                    ) : (
+                      formatMicros(b.monthMicros)
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableScroll>
       )}
       {creatingBudget ? (
         <Modal
@@ -384,10 +416,16 @@ function CacheBoard(): React.JSX.Element {
                 autoFocus
                 {...register('level')}
                 placeholder="KEY, TEAM, or ORG"
+                aria-invalid={errors.level !== undefined}
+                aria-describedby={errors.level === undefined ? undefined : 'budget-level-error'}
                 className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
               />
               {errors.level === undefined ? null : (
-                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                <p
+                  id="budget-level-error"
+                  role="alert"
+                  className="mt-1 text-[13px] text-danger dark:text-danger-soft"
+                >
                   {errors.level.message}
                 </p>
               )}
@@ -400,10 +438,18 @@ function CacheBoard(): React.JSX.Element {
                 id="budget-subject"
                 {...register('subjectId')}
                 placeholder="Key hex, owner, or scope"
+                aria-invalid={errors.subjectId !== undefined}
+                aria-describedby={
+                  errors.subjectId === undefined ? undefined : 'budget-subject-error'
+                }
                 className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
               />
               {errors.subjectId === undefined ? null : (
-                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                <p
+                  id="budget-subject-error"
+                  role="alert"
+                  className="mt-1 text-[13px] text-danger dark:text-danger-soft"
+                >
                   {errors.subjectId.message}
                 </p>
               )}
@@ -417,10 +463,18 @@ function CacheBoard(): React.JSX.Element {
                 type="number"
                 min={0}
                 {...register('minuteMicros', { valueAsNumber: true })}
+                aria-invalid={errors.minuteMicros !== undefined}
+                aria-describedby={
+                  errors.minuteMicros === undefined ? undefined : 'budget-minute-error'
+                }
                 className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
               />
               {errors.minuteMicros === undefined ? null : (
-                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                <p
+                  id="budget-minute-error"
+                  role="alert"
+                  className="mt-1 text-[13px] text-danger dark:text-danger-soft"
+                >
                   {errors.minuteMicros.message}
                 </p>
               )}
@@ -434,10 +488,18 @@ function CacheBoard(): React.JSX.Element {
                 type="number"
                 min={0}
                 {...register('monthMicros', { valueAsNumber: true })}
+                aria-invalid={errors.monthMicros !== undefined}
+                aria-describedby={
+                  errors.monthMicros === undefined ? undefined : 'budget-month-error'
+                }
                 className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
               />
               {errors.monthMicros === undefined ? null : (
-                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                <p
+                  id="budget-month-error"
+                  role="alert"
+                  className="mt-1 text-[13px] text-danger dark:text-danger-soft"
+                >
                   {errors.monthMicros.message}
                 </p>
               )}
@@ -451,10 +513,18 @@ function CacheBoard(): React.JSX.Element {
                 type="url"
                 {...register('webhookUrl')}
                 placeholder="https://ops.example.com/hook"
+                aria-invalid={errors.webhookUrl !== undefined}
+                aria-describedby={
+                  errors.webhookUrl === undefined ? undefined : 'budget-webhook-error'
+                }
                 className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
               />
               {errors.webhookUrl === undefined ? null : (
-                <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                <p
+                  id="budget-webhook-error"
+                  role="alert"
+                  className="mt-1 text-[13px] text-danger dark:text-danger-soft"
+                >
                   {errors.webhookUrl.message}
                 </p>
               )}

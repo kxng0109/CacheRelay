@@ -28,9 +28,20 @@ describe('RateLimitHeaders', () => {
         snapshot={{ dimension: 'RPM', limit: 60, remaining: 59, reset: null, retryAfter: null }}
       />,
     )
-    const status = screen.getByRole('status')
-    expect(status).toHaveTextContent('Limit: 60')
-    expect(status).toHaveTextContent('Remaining: 59')
+    const strip = screen.getByLabelText('Rate limit status')
+    expect(strip).toHaveTextContent('Limit: 60')
+    expect(strip).toHaveTextContent('Remaining: 59')
+  })
+
+  it('keeps the ticking countdown out of live regions', () => {
+    const reset = Math.floor(Date.now() / 1000) + 41
+    renderApp(
+      <RateLimitHeaders
+        snapshot={{ dimension: 'RPM', limit: 60, remaining: 3, reset, retryAfter: null }}
+      />,
+    )
+    expect(screen.getByLabelText('Rate limit status')).toHaveTextContent('Resets in: 41s')
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
   it('captions the binding dimension words carry, not color alone', () => {
@@ -45,14 +56,14 @@ describe('RateLimitHeaders', () => {
         }}
       />,
     )
-    expect(screen.getByRole('status')).toHaveTextContent('Token quota')
+    expect(screen.getByLabelText('Rate limit status')).toHaveTextContent('Token quota')
     unmount()
     renderApp(
       <RateLimitHeaders
         snapshot={{ dimension: 'RPM', limit: 60, remaining: 59, reset: null, retryAfter: null }}
       />,
     )
-    expect(screen.getByRole('status')).toHaveTextContent('Request quota')
+    expect(screen.getByLabelText('Rate limit status')).toHaveTextContent('Request quota')
   })
 
   it('counts down live from the reset epoch', () => {
@@ -62,11 +73,11 @@ describe('RateLimitHeaders', () => {
         snapshot={{ dimension: 'RPM', limit: 60, remaining: 3, reset, retryAfter: null }}
       />,
     )
-    expect(screen.getByRole('status')).toHaveTextContent('Resets in: 41s')
+    expect(screen.getByLabelText('Rate limit status')).toHaveTextContent('Resets in: 41s')
     act(() => {
       vi.advanceTimersByTime(1000)
     })
-    expect(screen.getByRole('status')).toHaveTextContent('Resets in: 40s')
+    expect(screen.getByLabelText('Rate limit status')).toHaveTextContent('Resets in: 40s')
   })
 
   it('floors the countdown at zero once the window passes', () => {
@@ -79,8 +90,8 @@ describe('RateLimitHeaders', () => {
     act(() => {
       vi.advanceTimersByTime(5000)
     })
-    expect(screen.getByRole('status')).toHaveTextContent('Resets in: 0s')
-    expect(screen.getByRole('status')).toHaveTextContent('Retry after (s): 9')
+    expect(screen.getByLabelText('Rate limit status')).toHaveTextContent('Resets in: 0s')
+    expect(screen.getByLabelText('Rate limit status')).toHaveTextContent('Retry after (s): 9')
   })
 
   it('renders an em-dash when the reset epoch is absent', () => {
@@ -89,6 +100,6 @@ describe('RateLimitHeaders', () => {
         snapshot={{ dimension: 'RPM', limit: 60, remaining: 59, reset: null, retryAfter: null }}
       />,
     )
-    expect(screen.getByRole('status')).toHaveTextContent('Resets in: n/a')
+    expect(screen.getByLabelText('Rate limit status')).toHaveTextContent('Resets in: n/a')
   })
 })

@@ -27,6 +27,7 @@ import type {
   SessionIdentity,
   TeamMembership,
 } from './types.js'
+import * as z from 'zod/v4'
 import { useAuthStore } from '../auth/store.js'
 import { refreshSession } from '../auth/session.js'
 
@@ -461,6 +462,363 @@ function isProviderStatus(r: unknown): r is ProviderStatus {
 }
 
 /**
+ * Derives a non-secret cache identity for a credential.
+ *
+ * @remarks Query keys must refetch when the credential changes, but must
+ * never carry key material (query state is inspectable). FNV-1a is a
+ * non-cryptographic mixer: it discriminates keys without being reversible
+ * to them. Collisions only risk a stale catalog entry, never auth.
+ *
+ * @param key - Credential text (never stored or logged by the caller).
+ * @returns Length-prefixed hex digest identifying the credential.
+ */
+export function keyFingerprint(key: string): string {
+  let hash = 0x811c9dc5
+  for (let i = 0; i < key.length; i += 1) {
+    hash ^= key.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return `${String(key.length)}:${(hash >>> 0).toString(16)}`
+}
+
+/**
+ * Wire-drift reporter: notified with the endpoint name whenever a gateway
+ * response fails transport-boundary validation and is hidden instead of
+ * crashing the screen. The shell mirrors it into the drift store.
+ */
+let driftReporter: ((endpoint: string) => void) | null = null
+
+/**
+ * Registers the process-wide wire-drift reporter.
+ *
+ * @param reporter - Receiver for hidden-payload endpoint names, or null
+ * to clear.
+ */
+export function setDriftReporter(reporter: ((endpoint: string) => void) | null): void {
+  driftReporter = reporter
+}
+
+/**
+ * Records one hidden payload with the shell.
+ *
+ * @param endpoint - Endpoint name whose body failed validation.
+ */
+function noteDrift(endpoint: string): void {
+  if (driftReporter !== null) driftReporter(endpoint)
+}
+
+const circuitRowSchema = z.object({
+  provider: z.string(),
+  // Open string by design: backend states added tomorrow must render via
+  // the Unknown chip, never be dropped by validation.
+  state: z.string(),
+  failures: z.number(),
+  cooldownMsRemaining: z.number(),
+  halfOpenProbe: z.boolean(),
+})
+
+const apiKeyRowSchema = z.object({
+  keyId: z.string(),
+  keyPrefix: z.string(),
+  ownerId: z.string(),
+  name: z.string(),
+  rpmLimit: z.number(),
+  tpmLimit: z.number(),
+  allowedModels: z.array(z.string()),
+  allowedProviders: z.array(z.string()),
+  enabled: z.boolean(),
+  createdAt: z.string(),
+  // Legacy rows may omit these entirely; absence reads as unresolvable.
+  ownerUserId: z.string().nullable().default(null),
+  ownerUsername: z.string().nullable().default(null),
+})
+
+const ownerSummaryRowSchema = z.object({
+  ownerId: z.string(),
+  totalRequests: z.number(),
+  totalPromptTokens: z.number(),
+  totalCompletionTokens: z.number(),
+  totalTokens: z.number(),
+  totalCostUsdMicros: z.number(),
+  totalCostUsd: z.string(),
+  averageDurationMs: z.number(),
+})
+
+const modelSummaryRowSchema = z.object({
+  provider: z.string(),
+  model: z.string(),
+  totalRequests: z.number(),
+  totalPromptTokens: z.number(),
+  totalCompletionTokens: z.number(),
+  totalTokens: z.number(),
+  totalCostUsdMicros: z.number(),
+  totalCostUsd: z.string(),
+  averageDurationMs: z.number(),
+})
+
+const providerSummaryRowSchema = z.object({
+  provider: z.string(),
+  totalRequests: z.number(),
+  totalPromptTokens: z.number(),
+  totalCompletionTokens: z.number(),
+  totalTokens: z.number(),
+  totalCostUsdMicros: z.number(),
+  totalCostUsd: z.string(),
+  averageDurationMs: z.number(),
+})
+
+const ledgerSummarySchema = z.object({
+  totalRequests: z.number(),
+  totalPromptTokens: z.number(),
+  totalCompletionTokens: z.number(),
+  totalTokens: z.number(),
+  totalCostUsdMicros: z.number(),
+  totalCostUsd: z.string(),
+  averageDurationMs: z.number(),
+  byOwner: z.array(ownerSummaryRowSchema),
+  byModel: z.array(modelSummaryRowSchema),
+  byProvider: z.array(providerSummaryRowSchema),
+})
+
+/** Zeroed summary shown with a drift notice when the wire shape changes. */
+const EMPTY_LEDGER_SUMMARY: LedgerSummary = {
+  totalRequests: 0,
+  totalPromptTokens: 0,
+  totalCompletionTokens: 0,
+  totalTokens: 0,
+  totalCostUsdMicros: 0,
+  totalCostUsd: '0.000000',
+  averageDurationMs: 0,
+  byOwner: [],
+  byModel: [],
+  byProvider: [],
+}
+
+const ledgerRowSchema = z.object({
+  requestId: z.string(),
+  model: z.string(),
+  costUsdMicros: z.number(),
+  createdAt: z.string(),
+})
+
+const ledgerPageSchema = z.object({
+  content: z.array(z.unknown()),
+  page: z.number(),
+  size: z.number(),
+  totalElements: z.number(),
+  totalPages: z.number(),
+  hasNext: z.boolean(),
+})
+
+/** Empty page shown with a drift notice when the wire shape changes. */
+const EMPTY_LEDGER_PAGE: PageResponse<LedgerLogEntry> = {
+  content: [],
+  page: 0,
+  size: 0,
+  totalElements: 0,
+  totalPages: 0,
+  hasNext: false,
+}
+
+const ledgerReceiptSchema = z.object({
+  requestId: z.string(),
+  ownerId: z.string(),
+  provider: z.string(),
+  model: z.string(),
+  promptTokens: z.number().nullable(),
+  completionTokens: z.number().nullable(),
+  totalTokens: z.number(),
+  costUsdMicros: z.number(),
+  durationMs: z.number(),
+  cached: z.boolean(),
+  cacheTier: z.string().nullable(),
+  createdAt: z.string(),
+})
+
+const budgetRowSchema = z.object({
+  id: z.string(),
+  level: z.string(),
+  subjectId: z.string(),
+  minuteMicros: z.number(),
+  monthMicros: z.number(),
+  webhookUrl: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+})
+
+const hitlRowSchema = z.object({
+  approvalId: z.string(),
+  toolName: z.string(),
+  requestedAt: z.string(),
+  requestedBy: z.string(),
+})
+
+const hitlEnvelopeSchema = z.object({ approvals: z.array(z.unknown()) })
+
+const modelIdRowSchema = z.object({ id: z.string() })
+
+const modelEnvelopeSchema = z.object({ data: z.array(z.unknown()) })
+
+/**
+ * Mutation/creation response shapes. Read paths degrade to empty states,
+ * but a mutation has no honest empty: the server may have applied the
+ * change (a key may exist, a budget may be live), so a drifted body
+ * surfaces as a safe error through the caller's existing error UI —
+ * never a silent empty, never fabricated state, never a raw downstream
+ * `TypeError` (DEF-09).
+ */
+const apiKeyCreatedSchema = z.object({
+  keyId: z.string(),
+  key: z.string(),
+  keyPrefix: z.string(),
+  ownerId: z.string(),
+  name: z.string(),
+})
+
+const providerChainStepSchema = z.object({
+  providerName: z.string(),
+  modelOverride: z.string().nullable(),
+})
+
+const modelAliasSchema = z.object({
+  name: z.string(),
+  chain: z.array(providerChainStepSchema),
+  strategy: z.string(),
+  source: z.string(),
+})
+
+const resetCircuitSchema = z.object({
+  provider: z.string(),
+  state: z.string(),
+})
+
+const cacheStatsSchema = z.object({
+  enabled: z.boolean(),
+  defaultScope: z.string(),
+  similarityThreshold: z.number(),
+  embeddingModel: z.string(),
+  l0MaxBytes: z.number(),
+  l0InMemoryTtlSeconds: z.number(),
+  l1RedisEnabled: z.boolean(),
+  l2SemanticEnabled: z.boolean(),
+  polarityGuardEnabled: z.boolean(),
+  entityGuardEnabled: z.boolean(),
+})
+
+const purgeCacheSchema = z.object({
+  success: z.boolean(),
+  evictedScope: z.string(),
+})
+
+/**
+ * Top-level guards for completion payloads. The mandate is the crash
+ * vector (a missing or non-array `choices`/`data` breaks every consumer
+ * below); nested chunk shapes stay backend-truth and flow through the
+ * existing error UI on mismatch (DEF-09).
+ */
+const chatTopSchema = z.object({
+  choices: z.array(z.unknown()),
+  model: z.string(),
+})
+
+const embeddingsTopSchema = z.object({
+  data: z.array(z.unknown()),
+  model: z.string(),
+})
+
+const teamRowSchema = z.object({
+  teamId: z.string(),
+  teamName: z.string(),
+  orgSlug: z.string(),
+  role: z.string(),
+  status: z.string(),
+})
+
+const orgTeamRowSchema = z.object({
+  teamId: z.string(),
+  orgSlug: z.string(),
+  name: z.string(),
+  idpGroupId: z.string(),
+  activeMembers: z.number(),
+})
+
+const identitySchema = z.object({
+  userId: z.string(),
+  username: z.string(),
+  admin: z.boolean(),
+})
+
+/**
+ * Validates row arrays: non-arrays degrade to empty, malformed rows are
+ * dropped with a drift note. Never throws, never fabricates.
+ *
+ * @remarks `undefined` arrives only from empty `204` bodies (see
+ * `request`): it degrades silently to empty — no content is not drift.
+ *
+ * @param rowSchema - Per-row shape.
+ * @param value - Unknown decoded rows.
+ * @param endpoint - Drift notice name.
+ * @returns Valid rows only.
+ */
+function rowsOrEmpty<T>(rowSchema: z.ZodType<T>, value: unknown, endpoint: string): T[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) {
+    noteDrift(endpoint)
+    return []
+  }
+  const out: T[] = []
+  for (const row of value) {
+    const parsed = rowSchema.safeParse(row)
+    if (parsed.success) out.push(parsed.data)
+    else noteDrift(endpoint)
+  }
+  return out
+}
+
+/**
+ * Validates one value with a fallback: mismatches degrade to the fallback
+ * with a drift note instead of throwing into the render tree. Empty `204`
+ * bodies (`undefined`) degrade silently — no content is not drift.
+ *
+ * @param schema - Expected shape.
+ * @param value - Unknown decoded body.
+ * @param endpoint - Drift notice name.
+ * @param fallback - Degraded value.
+ * @returns The parsed body, or the fallback.
+ */
+function valueOr<T>(schema: z.ZodType<T>, value: unknown, endpoint: string, fallback: T): T {
+  if (value === undefined) return fallback
+  const parsed = schema.safeParse(value)
+  if (parsed.success) return parsed.data
+  noteDrift(endpoint)
+  return fallback
+}
+
+/**
+ * Validates one mutation/creation response: mismatches note drift and
+ * reject with a safe error instead of flowing an unvalidated cast into
+ * the render tree. Follows the `authMe` precedent (`auth-me`).
+ *
+ * @param schema - Expected body shape.
+ * @param value - Unknown decoded body.
+ * @param endpoint - Drift notice name.
+ * @param label - Human subject for the safe error.
+ * @returns The parsed body.
+ */
+function valueOrThrow<T>(schema: z.ZodType<T>, value: unknown, endpoint: string, label: string): T {
+  if (value === undefined) {
+    noteDrift(endpoint)
+    throw new Error(`${label} changed shape. Try again.`)
+  }
+  const parsed = schema.safeParse(value)
+  if (!parsed.success) {
+    noteDrift(endpoint)
+    throw new Error(`${label} changed shape. Try again.`)
+  }
+  return parsed.data
+}
+
+/**
  * Minimal typed gateway client over `fetch`.
  *
  * @remarks
@@ -490,7 +848,10 @@ export class GatewayClient {
       ...(extra ?? {}),
     }
     const session = ignoreSession === true ? null : useAuthStore.getState().session
-    h.Authorization = `Bearer ${session?.accessToken ?? this.token}`
+    const bearer = session?.accessToken ?? this.token
+    // No credential, no header: an empty `Bearer ` line confuses gateway
+    // logs and suggests an authenticated call that never was.
+    if (bearer.length > 0) h.Authorization = `Bearer ${bearer}`
     if (actAsKey !== undefined && actAsKey.length > 0) {
       h['X-Act-As-Key'] = actAsKey
     }
@@ -521,12 +882,15 @@ export class GatewayClient {
   /**
    * Sends a non-streaming chat completion.
    *
+   * @remarks The top-level shape (`choices` array) is validated before
+   * consumption; nested chunk shapes stay backend-truth (DEF-09).
+   *
    * @param body - Chat request (stream is forced to false here; use the SSE client for streams).
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns The completion payload.
    */
-  chat(body: ChatCompletionRequest, opts?: RequestOptions): Promise<ChatCompletionResponse> {
-    return this.request<ChatCompletionResponse>(
+  async chat(body: ChatCompletionRequest, opts?: RequestOptions): Promise<ChatCompletionResponse> {
+    const raw: unknown = await this.request<unknown>(
       '/v1/chat/completions',
       {
         method: 'POST',
@@ -539,17 +903,22 @@ export class GatewayClient {
       },
       opts,
     )
+    valueOrThrow(chatTopSchema, raw, 'chat-completion', 'Completion')
+    return raw as ChatCompletionResponse
   }
 
   /**
    * Creates embeddings for the given input.
    *
+   * @remarks The top-level shape (`data` array) is validated before
+   * consumption; nested vector shapes stay backend-truth (DEF-09).
+   *
    * @param body - Embedding request.
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns Embedding vectors with index positions preserved.
    */
-  embeddings(body: EmbeddingRequest, opts?: RequestOptions): Promise<EmbeddingResponse> {
-    return this.request<EmbeddingResponse>(
+  async embeddings(body: EmbeddingRequest, opts?: RequestOptions): Promise<EmbeddingResponse> {
+    const raw: unknown = await this.request<unknown>(
       '/v1/embeddings',
       {
         method: 'POST',
@@ -562,6 +931,8 @@ export class GatewayClient {
       },
       opts,
     )
+    valueOrThrow(embeddingsTopSchema, raw, 'embeddings', 'Embedding')
+    return raw as EmbeddingResponse
   }
 
   /**
@@ -574,12 +945,14 @@ export class GatewayClient {
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns Model identifiers the gateway accepts.
    */
-  models(opts?: RequestOptions): Promise<{ data: { id: string }[] }> {
-    return this.request<{ data: { id: string }[] }>(
+  async models(opts?: RequestOptions): Promise<{ data: { id: string }[] }> {
+    const body: unknown = await this.request<unknown>(
       '/v1/models',
       { headers: this.headers(undefined, opts?.actAsKey, opts?.ignoreSession) },
       opts,
     )
+    const envelope = valueOr(modelEnvelopeSchema, body, 'models', { data: [] })
+    return { data: rowsOrEmpty(modelIdRowSchema, envelope.data, 'models') }
   }
 
   /**
@@ -625,15 +998,18 @@ export class GatewayClient {
    * Creates a database-managed model alias. Responds 201; 400 on invalid
    * payload, 409 on duplicate or file-bound name.
    *
+   * @remarks The created record is validated: a drifted body rejects with
+   * a safe error instead of flowing into the alias list (DEF-09).
+   *
    * @param body - Alias name, provider chain, and strategy.
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns The created alias.
    */
-  createModelAlias(
+  async createModelAlias(
     body: { name: string; chain: ProviderChainStep[]; strategy: string },
     opts?: RequestOptions,
   ): Promise<ModelAliasRecord> {
-    return this.request<ModelAliasRecord>(
+    const raw: unknown = await this.request<unknown>(
       '/v1/admin/models',
       {
         method: 'POST',
@@ -642,23 +1018,26 @@ export class GatewayClient {
       },
       opts,
     )
+    return valueOrThrow(modelAliasSchema, raw, 'models-create', 'Alias creation')
   }
 
   /**
    * Replaces the routing plan of a database-managed alias. File-bound
    * aliases answer 409 and stay read-only.
    *
+   * @remarks The replaced record is validated like creation (DEF-09).
+   *
    * @param name - Client facing model name (path, cannot rename).
    * @param body - Replacement chain and strategy.
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns The replaced alias.
    */
-  updateModelAlias(
+  async updateModelAlias(
     name: string,
     body: { chain: ProviderChainStep[]; strategy: string },
     opts?: RequestOptions,
   ): Promise<ModelAliasRecord> {
-    return this.request<ModelAliasRecord>(
+    const raw: unknown = await this.request<unknown>(
       `/v1/admin/models/${encodeURIComponent(name)}`,
       {
         method: 'PUT',
@@ -667,6 +1046,7 @@ export class GatewayClient {
       },
       opts,
     )
+    return valueOrThrow(modelAliasSchema, raw, 'models-update', 'Alias update')
   }
 
   /**
@@ -723,25 +1103,33 @@ export class GatewayClient {
    * @returns One snapshot per provider.
    */
   async circuitState(opts?: RequestOptions): Promise<{ circuits: CircuitSnapshot[] }> {
-    const rows = await this.request<CircuitSnapshot[]>(
+    const body: unknown = await this.request<unknown>(
       '/v1/admin/circuits',
       { headers: this.headers() },
       opts,
     )
-    return { circuits: rows }
+    // The state union is narrower than the wire on purpose: unknown future
+    // states validate as strings and render via the Unknown chip.
+    const rows = rowsOrEmpty(circuitRowSchema, body, 'circuits')
+    return {
+      circuits: rows.map((r) => ({ ...r, state: r.state as CircuitSnapshot['state'] })),
+    }
   }
 
   /**
    * Force-resets a provider circuit. Live-verified against the gateway.
    *
+   * @remarks The reset receipt is validated before the toast reads it
+   * (DEF-09).
+   *
    * @param provider - Provider name (for example `openai`).
    * @param opts - Optional request options (abort signal, headers listener).
    */
-  resetCircuit(
+  async resetCircuit(
     provider: string,
     opts?: RequestOptions,
   ): Promise<{ provider: string; state: string }> {
-    return this.request<{ provider: string; state: string }>(
+    const raw: unknown = await this.request<unknown>(
       `/v1/admin/circuits/${encodeURIComponent(provider)}/reset`,
       {
         method: 'POST',
@@ -749,6 +1137,7 @@ export class GatewayClient {
       },
       opts,
     )
+    return valueOrThrow(resetCircuitSchema, raw, 'circuits-reset', 'Circuit reset')
   }
 
   /**
@@ -758,14 +1147,14 @@ export class GatewayClient {
    * @returns Key metadata records.
    */
   async listKeys(opts?: RequestOptions): Promise<{ keys: ApiKeyRecord[] }> {
-    const rows = await this.request<ApiKeyRecord[]>(
+    const body: unknown = await this.request<unknown>(
       '/v1/admin/keys',
       {
         headers: this.headers(),
       },
       opts,
     )
-    return { keys: rows }
+    return { keys: rowsOrEmpty(apiKeyRowSchema, body, 'keys') }
   }
 
   /**
@@ -780,7 +1169,7 @@ export class GatewayClient {
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns Metadata plus the single-exposure plaintext.
    */
-  createKey(
+  async createKey(
     body: {
       ownerId: string
       ownerUserId: string
@@ -791,7 +1180,7 @@ export class GatewayClient {
     },
     opts?: RequestOptions,
   ): Promise<ApiKeyCreated> {
-    return this.request<ApiKeyCreated>(
+    const raw: unknown = await this.request<unknown>(
       '/v1/admin/keys',
       {
         method: 'POST',
@@ -800,6 +1189,7 @@ export class GatewayClient {
       },
       opts,
     )
+    return valueOrThrow(apiKeyCreatedSchema, raw, 'keys-create', 'Key creation')
   }
 
   /**
@@ -813,8 +1203,8 @@ export class GatewayClient {
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns Updated metadata.
    */
-  setKeyEnabled(id: string, enabled: boolean, opts?: RequestOptions): Promise<ApiKeyRecord> {
-    return this.request<ApiKeyRecord>(
+  async setKeyEnabled(id: string, enabled: boolean, opts?: RequestOptions): Promise<ApiKeyRecord> {
+    const raw: unknown = await this.request<unknown>(
       `/v1/admin/keys/${encodeURIComponent(id)}`,
       {
         method: 'PATCH',
@@ -823,6 +1213,7 @@ export class GatewayClient {
       },
       opts,
     )
+    return valueOrThrow(apiKeyRowSchema, raw, 'keys-update', 'Key update')
   }
 
   /**
@@ -832,12 +1223,13 @@ export class GatewayClient {
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns Tombstoned metadata.
    */
-  revokeKey(id: string, opts?: RequestOptions): Promise<ApiKeyRecord> {
-    return this.request<ApiKeyRecord>(
+  async revokeKey(id: string, opts?: RequestOptions): Promise<ApiKeyRecord> {
+    const raw: unknown = await this.request<unknown>(
       `/v1/admin/keys/${encodeURIComponent(id)}/revoke`,
       { method: 'POST', headers: this.headers() },
       opts,
     )
+    return valueOrThrow(apiKeyRowSchema, raw, 'keys-revoke', 'Key revocation')
   }
 
   /**
@@ -860,12 +1252,13 @@ export class GatewayClient {
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns Totals across tenants.
    */
-  ledgerSummary(opts?: RequestOptions): Promise<LedgerSummary> {
-    return this.request<LedgerSummary>(
+  async ledgerSummary(opts?: RequestOptions): Promise<LedgerSummary> {
+    const body: unknown = await this.request<unknown>(
       '/v1/admin/ledger/summary',
       { headers: this.headers() },
       opts,
     )
+    return valueOr(ledgerSummarySchema, body, 'ledger-summary', EMPTY_LEDGER_SUMMARY)
   }
 
   /**
@@ -880,17 +1273,22 @@ export class GatewayClient {
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns The page envelope with entry rows.
    */
-  ledgerLogs(
+  async ledgerLogs(
     page: number,
     size: number,
     opts?: RequestOptions,
   ): Promise<PageResponse<LedgerLogEntry>> {
     const q = new URLSearchParams({ page: String(page), size: String(size) })
-    return this.request<PageResponse<LedgerLogEntry>>(
+    const body: unknown = await this.request<unknown>(
       `/v1/admin/ledger/entries?${q.toString()}`,
       { headers: this.headers() },
       opts,
     )
+    const envelope = valueOr(ledgerPageSchema, body, 'ledger-entries', EMPTY_LEDGER_PAGE)
+    return {
+      ...envelope,
+      content: rowsOrEmpty(ledgerRowSchema, envelope.content, 'ledger-entries'),
+    }
   }
 
   /**
@@ -904,22 +1302,37 @@ export class GatewayClient {
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns The twelve-field receipt.
    */
-  ledgerReceipt(requestId: string, opts?: RequestOptions): Promise<LedgerReceipt> {
-    return this.request<LedgerReceipt>(
+  async ledgerReceipt(requestId: string, opts?: RequestOptions): Promise<LedgerReceipt | null> {
+    const body: unknown = await this.request<unknown>(
       `/v1/admin/ledger/entries/${encodeURIComponent(requestId)}`,
       { headers: this.headers() },
       opts,
     )
+    // Null reads as a gone receipt in the inspector (same as empty 404),
+    // never a blank screen. Money is never fabricated: no zeroed fallback.
+    const parsed = ledgerReceiptSchema.safeParse(body)
+    if (parsed.success) return parsed.data
+    noteDrift('ledger-receipt')
+    return null
   }
 
   /**
    * Reads cache configuration flags.
    *
+   * @remarks The tier flags render as live config, so a drifted body
+   * rejects with a safe error instead of rendering fabricated toggles
+   * (DEF-09).
+   *
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns Tier configuration (scopes, caps, tier and guard flags).
    */
-  cacheStats(opts?: RequestOptions): Promise<CacheStats> {
-    return this.request<CacheStats>('/v1/admin/cache/stats', { headers: this.headers() }, opts)
+  async cacheStats(opts?: RequestOptions): Promise<CacheStats> {
+    const raw: unknown = await this.request<unknown>(
+      '/v1/admin/cache/stats',
+      { headers: this.headers() },
+      opts,
+    )
+    return valueOrThrow(cacheStatsSchema, raw, 'cache-stats', 'Cache stats')
   }
 
   /**
@@ -932,16 +1345,17 @@ export class GatewayClient {
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns Purge outcome with the evicted scope.
    */
-  purgeCache(
+  async purgeCache(
     ownerId?: string,
     opts?: RequestOptions,
   ): Promise<{ success: boolean; evictedScope: string }> {
     const q = ownerId === undefined ? '' : `?${new URLSearchParams({ ownerId }).toString()}`
-    return this.request<{ success: boolean; evictedScope: string }>(
+    const raw: unknown = await this.request<unknown>(
       `/v1/admin/cache${q}`,
       { method: 'DELETE', headers: this.headers() },
       opts,
     )
+    return valueOrThrow(purgeCacheSchema, raw, 'cache-purge', 'Cache purge')
   }
 
   /**
@@ -956,12 +1370,12 @@ export class GatewayClient {
    * @returns Budget records.
    */
   async listBudgets(opts?: RequestOptions): Promise<{ budgets: BudgetRecord[] }> {
-    const rows = await this.request<BudgetRecord[]>(
+    const body: unknown = await this.request<unknown>(
       '/v1/admin/budgets',
       { headers: this.headers() },
       opts,
     )
-    return { budgets: rows }
+    return { budgets: rowsOrEmpty(budgetRowSchema, body, 'budgets') }
   }
 
   /**
@@ -975,7 +1389,7 @@ export class GatewayClient {
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns The created record.
    */
-  createBudget(
+  async createBudget(
     body: {
       level: string
       subjectId: string
@@ -985,7 +1399,7 @@ export class GatewayClient {
     },
     opts?: RequestOptions,
   ): Promise<BudgetRecord> {
-    return this.request<BudgetRecord>(
+    const raw: unknown = await this.request<unknown>(
       '/v1/admin/budgets',
       {
         method: 'POST',
@@ -994,6 +1408,7 @@ export class GatewayClient {
       },
       opts,
     )
+    return valueOrThrow(budgetRowSchema, raw, 'budgets-create', 'Budget creation')
   }
 
   /**
@@ -1002,12 +1417,18 @@ export class GatewayClient {
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns Pending approval queue.
    */
-  hitlPending(opts?: RequestOptions): Promise<{ approvals: HitlApproval[] }> {
-    return this.request<{ approvals: HitlApproval[] }>(
+  async hitlPending(opts?: RequestOptions): Promise<{ approvals: HitlApproval[] }> {
+    const body: unknown = await this.request<unknown>(
       '/v1/admin/mcp/approvals/pending',
       { headers: this.headers() },
       opts,
     )
+    // The live gateway answers a bare array; the contract promises an
+    // envelope. Both validate row by row, never crash.
+    const envelope = Array.isArray(body)
+      ? { approvals: body }
+      : valueOr(hitlEnvelopeSchema, body, 'hitl-pending', { approvals: [] })
+    return { approvals: rowsOrEmpty(hitlRowSchema, envelope.approvals, 'hitl-pending') }
   }
 
   /**
@@ -1050,7 +1471,11 @@ export class GatewayClient {
   async mcpTools(opts?: RequestOptions): Promise<{ tools: McpTool[] } | McpSuspended> {
     const init: RequestInit = {
       method: 'POST',
-      headers: this.headers({ 'Content-Type': 'application/json' }),
+      headers: this.headers(
+        { 'Content-Type': 'application/json' },
+        opts?.actAsKey,
+        opts?.ignoreSession,
+      ),
       body: JSON.stringify({ jsonrpc: '2.0', id: 'tools-list', method: 'tools/list' }),
     }
     if (opts?.signal !== undefined) init.signal = opts.signal
@@ -1138,7 +1563,7 @@ export class GatewayClient {
       opts,
     )
     return {
-      summary: (await res.json()) as LedgerSummary,
+      summary: valueOr(ledgerSummarySchema, await res.json(), 'my-usage', EMPTY_LEDGER_SUMMARY),
       generatedAt: res.headers.get('X-Dashboard-Generated-At'),
       watermark: res.headers.get('X-Dashboard-Watermark'),
     }
@@ -1174,7 +1599,7 @@ export class GatewayClient {
       opts,
     )
     return {
-      summary: (await res.json()) as LedgerSummary,
+      summary: valueOr(ledgerSummarySchema, await res.json(), 'user-usage', EMPTY_LEDGER_SUMMARY),
       generatedAt: res.headers.get('X-Dashboard-Generated-At'),
       watermark: res.headers.get('X-Dashboard-Watermark'),
     }
@@ -1189,8 +1614,13 @@ export class GatewayClient {
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns Owned memberships.
    */
-  myTeams(opts?: RequestOptions): Promise<TeamMembership[]> {
-    return this.request<TeamMembership[]>('/v1/me/teams', { headers: this.headers() }, opts)
+  async myTeams(opts?: RequestOptions): Promise<TeamMembership[]> {
+    const body: unknown = await this.request<unknown>(
+      '/v1/me/teams',
+      { headers: this.headers() },
+      opts,
+    )
+    return rowsOrEmpty(teamRowSchema, body, 'my-teams')
   }
 
   /**
@@ -1203,13 +1633,14 @@ export class GatewayClient {
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns Org teams for pickers and inventory.
    */
-  orgTeams(org: string, opts?: RequestOptions): Promise<OrgTeam[]> {
+  async orgTeams(org: string, opts?: RequestOptions): Promise<OrgTeam[]> {
     const q = new URLSearchParams({ org })
-    return this.request<OrgTeam[]>(
+    const body: unknown = await this.request<unknown>(
       `/v1/admin/teams?${q.toString()}`,
       { headers: this.headers() },
       opts,
     )
+    return rowsOrEmpty(orgTeamRowSchema, body, 'org-teams')
   }
 
   /**
@@ -1222,8 +1653,16 @@ export class GatewayClient {
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns The session identity.
    */
-  authMe(opts?: RequestOptions): Promise<SessionIdentity> {
-    return this.request<SessionIdentity>('/v1/auth/me', { headers: this.headers() }, opts)
+  async authMe(opts?: RequestOptions): Promise<SessionIdentity> {
+    const body: unknown = await this.request<unknown>(
+      '/v1/auth/me',
+      { headers: this.headers() },
+      opts,
+    )
+    const parsed = identitySchema.safeParse(body)
+    if (parsed.success) return parsed.data
+    noteDrift('auth-me')
+    throw new Error('Session identity changed shape. Try again.')
   }
 }
 

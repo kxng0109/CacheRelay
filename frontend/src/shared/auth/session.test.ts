@@ -5,6 +5,7 @@ import { useAuthStore } from './store.js'
 import {
   login,
   logout,
+  isTestSeedPath,
   redeemInvite,
   refreshSession,
   restoreSession,
@@ -164,6 +165,27 @@ describe('refreshSession', () => {
     expect(b?.accessToken).toBe('jwt-3')
   })
 
+  it('rejects refresh bodies with a non-boolean admin flag', async () => {
+    useAuthStore.getState().setSession({ accessToken: 'stale', admin: true, username: 'op' })
+    server.use(
+      http.post('*/v1/auth/refresh', () =>
+        HttpResponse.json({ accessToken: 'jwt-x', expiresInSeconds: 300, admin: 'yes' }),
+      ),
+    )
+    expect(await refreshSession()).toBeNull()
+    expect(useAuthStore.getState().session).toBeNull()
+  })
+
+  it('keeps the previous username on restore instead of fabricating one', async () => {
+    useAuthStore.getState().setSession({ accessToken: 'stale', admin: true, username: 'op' })
+    server.use(
+      http.post('*/v1/auth/refresh', () =>
+        HttpResponse.json({ accessToken: 'jwt-new', expiresInSeconds: 300, admin: false }),
+      ),
+    )
+    expect(await refreshSession()).toEqual({ accessToken: 'jwt-new', admin: false, username: 'op' })
+  })
+
   it('clears the session when rotation fails', async () => {
     useAuthStore.getState().setSession({ accessToken: 'stale', admin: true, username: 'op' })
     server.use(http.post('*/v1/auth/refresh', () => new HttpResponse('x', { status: 401 })))
@@ -181,13 +203,21 @@ describe('refreshSession', () => {
 
 describe('shouldDeferRestore', () => {
   it('defers on public routes and restores immediately on authed routes', () => {
-    expect(shouldDeferRestore('/')).toBe(true)
+    expect(shouldDeferRestore('/')).toBe(false)
     expect(shouldDeferRestore('/login')).toBe(true)
     expect(shouldDeferRestore('/playground')).toBe(true)
     expect(shouldDeferRestore('/embeddings')).toBe(true)
     expect(shouldDeferRestore('/redeem')).toBe(true)
     expect(shouldDeferRestore('/observability')).toBe(false)
     expect(shouldDeferRestore('/ledger')).toBe(false)
+  })
+
+  it('defers the DEV-only Playwright seed route so boot never wipes it', () => {
+    expect(isTestSeedPath('/__test/session/admin')).toBe(true)
+    expect(isTestSeedPath('/__test/session/user')).toBe(true)
+    expect(isTestSeedPath('/circuits')).toBe(false)
+    expect(shouldDeferRestore('/__test/session/admin')).toBe(true)
+    expect(shouldDeferRestore('/__test/session/user')).toBe(true)
   })
 })
 

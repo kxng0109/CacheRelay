@@ -7,15 +7,6 @@ import type { Session } from './store.js'
  * (Shape asserted field-by-field in `toSession`; never trusted blindly.)
  */
 
-/**
- * Refresh response body: fresh access token, rotated cookie server-side.
- */
-interface RefreshResponse {
-  accessToken: string
-  expiresInSeconds: number
-  admin: boolean
-}
-
 let refreshFlight: Promise<Session | null> | null = null
 
 /**
@@ -147,20 +138,14 @@ export function refreshSession(): Promise<Session | null> {
         return null
       }
       const body: unknown = await res.json().catch(() => null)
-      if (
-        typeof body !== 'object' ||
-        body === null ||
-        typeof (body as Record<string, unknown>).accessToken !== 'string'
-      ) {
+      const prev = useAuthStore.getState().session
+      // Same shape gate as login/redeem: a non-boolean `admin` (or a
+      // missing token) clears instead of entering memory half-trusted.
+      // The previous username is kept, never fabricated.
+      const session = toSession(body, prev?.username ?? '')
+      if (session === null) {
         useAuthStore.getState().setSession(null)
         return null
-      }
-      const record = body as RefreshResponse
-      const prev = useAuthStore.getState().session
-      const session: Session = {
-        accessToken: record.accessToken,
-        admin: record.admin,
-        username: prev?.username ?? '',
       }
       useAuthStore.getState().setSession(session)
       return session
@@ -196,21 +181,38 @@ export function startSessionHeartbeat(): () => void {
 }
 
 /**
+ * Reports whether a pathname is the DEV-only Playwright seed route.
+ *
+ * @remarks Named concept (not an inline prefix check) because two owners
+ * depend on it: boot restore selection and the restore exemption in
+ * `main.tsx`.
+ *
+ * @param pathname - Current location pathname.
+ * @returns True for `/__test/session/...` paths.
+ */
+export function isTestSeedPath(pathname: string): boolean {
+  return pathname.startsWith('/__test/session/')
+}
+
+/**
  * Public routes that never need a session on first paint. Restoring here
  * can wait for the first interaction, which keeps cold loads clean when the
- * gateway is unreachable. Authed routes restore immediately so deep links
- * do not bounce to login before the cookie is tried.
+ * gateway is unreachable. The console home restores immediately so a valid
+ * session never bounces through login on cold reload; authed deep links
+ * restore immediately so they do not bounce either. The DEV-only
+ * Playwright seed route (`/__test/session/...`, FE-05) always defers: a
+ * boot restore would wipe the seeded session before the seed navigates.
  *
  * @param pathname - Current location pathname.
  * @returns True when the restore may wait for first input.
  */
 export function shouldDeferRestore(pathname: string): boolean {
   return (
-    pathname === '/' ||
     pathname === '/login' ||
     pathname === '/redeem' ||
     pathname === '/playground' ||
-    pathname === '/embeddings'
+    pathname === '/embeddings' ||
+    isTestSeedPath(pathname)
   )
 }
 

@@ -56,6 +56,10 @@ export function SsoCallback({
   useEffect(() => {
     if (!landing.ok) return
     const { token } = landing
+    // Scrub the fragment before any network call: the token already lives
+    // in state, and timeout/401 paths must never leave a live JWT in the
+    // address bar or history.
+    window.history.replaceState(null, '', window.location.pathname + window.location.search)
     const controller = new AbortController()
     // Local flag (never error-shape sniffing): abort rejections cross
     // realms as plain Errors, so `instanceof DOMException` cannot tell a

@@ -1,7 +1,7 @@
 # CacheRelay Frontend — Enterprise Console
 
-Vite 8.3.0 + React 19.3.0 + TypeScript 6.0.2 + Tailwind CSS 4.3.3.
-Fifteen lazy routes mapped to real gateway surfaces (`backend/docs/BACKEND_API_REFERENCE.md`):
+Vite 8.3.1 + React 19.3.0 + TypeScript 6.0.2 + Tailwind CSS 4.3.3.
+Sixteen lazy routes mapped to real gateway surfaces (`backend/docs/BACKEND_API_REFERENCE.md`):
 Overview, Usage (personal dashboard), Teams, Playground (live SSE), Circuits, Keys,
 Ledger (+ admin user drill-down `/ledger/user/:userId`), Cache & budgets,
 Embeddings, Approvals (HITL), MCP, Observability, Login (password + SSO),
@@ -11,16 +11,17 @@ Redeem. Product name resolves at runtime from `/v3/api-docs` `info.title`
 
 ## Scripts
 
-| Command                       | Purpose                                              |
-| ----------------------------- | ---------------------------------------------------- |
-| `npm.cmd run dev`             | Vite dev server (`http://localhost:5173`)            |
-| `npm.cmd run typecheck`       | `tsc -b`, strict, zero errors (the real gate)        |
-| `npm.cmd run build`           | `tsc -b` + `vite build` (production, sourcemaps off) |
-| `npm.cmd run test`            | Vitest 5 unit run (jsdom)                            |
-| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate on all metrics          |
-| `npm.cmd run test:e2e`        | Playwright 1.63 smoke (`e2e/smoke.spec.ts`)          |
-| `npm.cmd run storybook`       | Storybook 10.6.0 gallery on `:6006`                  |
-| `npm.cmd run build-storybook` | Static Storybook build (`storybook-static/`)         |
+| Command                       | Purpose                                                                                                                                                                                                                                                      |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `npm.cmd run dev`             | Vite dev server (`http://localhost:5173`)                                                                                                                                                                                                                    |
+| `npm.cmd run typecheck`       | `tsc -b`, strict, zero errors (the real gate)                                                                                                                                                                                                                |
+| `npm.cmd run build`           | `tsc -b` + `vite build` (production, sourcemaps off)                                                                                                                                                                                                         |
+| `npm.cmd run test`            | Vitest 5 unit run (jsdom)                                                                                                                                                                                                                                    |
+| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate on all metrics                                                                                                                                                                                                                  |
+| `npm.cmd run test:e2e`        | Playwright 1.63 smoke (`e2e/smoke.spec.ts`)                                                                                                                                                                                                                  |
+| `npm.cmd run size`            | Production build + size-limit gate, gzip (`"gzip": true` per entry — the plugin defaults to brotli-11): entry JS ≤160 kB, shared preload chunk ≤40 kB, CSS ≤50 kB; the JS entries sum to the 150–200 KB first-load gzip budget (currently ≈133.3 + ≈31.6 kB) |
+| `npm.cmd run storybook`       | Storybook 10.6.0 gallery on `:6006`                                                                                                                                                                                                                          |
+| `npm.cmd run build-storybook` | Static Storybook build (`storybook-static/`)                                                                                                                                                                                                                 |
 
 ## Env (non-secret only — `VITE_*` is bundle-inlined)
 
@@ -40,9 +41,10 @@ Never commit tokens, keys, or credentials.
   (`html.cspNonce`) and `__CSP_NONCE__` (script-tag placeholder) with a
   random value per request and serves the matching `Content-Security-Policy`
   header. Never serve `dist/index.html` with placeholders intact.
-- `build.assetsInlineLimit: 0` (no `data:` inlining). ECharts is set up
-  tree-shaken (`shared/echarts/setup.ts`) but no screen charts yet — import it
-  lazily per route when the first chart lands, never globally.
+- `build.assetsInlineLimit: 0` (no `data:` inlining). ECharts is
+  tree-shaken (`shared/echarts/setup.ts`) and lands per route only: the
+  Observability latency chart (`LatencyChart`, `React.lazy` + `Suspense`)
+  keeps the `echarts-vendor` chunk out of the initial bundle, never global.
 - Auth model: the gateway `gw-` key (user-pasted per form) and the human
   session (short-lived access JWT) live in JS memory only (zustand, never
   `localStorage`/cookies/IndexedDB). The refresh token lives in an httpOnly
@@ -50,10 +52,12 @@ Never commit tokens, keys, or credentials.
   `X-CacheRelay-Refresh: 1` CSRF marker (dev also needs the backend to
   allow-list it for CORS — flagged, prod same-origin is unaffected). The
   master secret has no UI path by design (terminal/curl-only). Route tiers:
-  public (Playground, Embeddings, Login, Redeem), session
-  (`RequireAuth`: Overview, Usage, Teams, MCP, Observability), admin
+  public (Playground, Embeddings, MCP, Login, Redeem), session
+  (`RequireAuth`: Overview, Usage, Teams, Observability), admin
   (`RequireAdmin` stealth 404: Circuits, Keys, Ledger, drill-down, Cache,
-  Approvals). Guests hitting `/` land on `/login?next=<original>` and return
+  Approvals). The MCP catalog is paste-key first like the Run screens, so
+  guests may open it; pasted sends ignore the session so a logged-in paste
+  never 401s. Guests hitting `/` land on `/login?next=<original>` and return
   after signing in; authed visits to `/login`/`/redeem` bounce home. Sidebar,
   palette, and G-chords all hide what the session may not see — no hints. See
   `backend/docs/BACKEND_API_REFERENCE.md` §1–§3.
@@ -175,15 +179,62 @@ EmptyTrio.tsx`: status line + learning cue + optional link/button
   while keeping all state changes. Motion orients only — state is never
   conveyed by animation.
 
+## Audit remediation (FE-01…FE-40, frontend halves)
+
+- Transport validates, never casts: zod schemas at the client boundary
+  degrade drifted read payloads to empty states with a muted drift notice
+  (`shared/drift` store + shell notice) instead of blanking the console;
+  drifted mutation bodies (keys, aliases, circuits, budgets, cache,
+  completions) reject with a safe "changed shape" error through the
+  caller's existing error UI — mutations have no honest empty, so they
+  never degrade silently and never fabricate records. A route-level error
+  boundary (`RouteError`) with reload covers render throws. Bare 204s
+  read as empty, never undefined.
+- Streams bill once: one `Idempotency-Key` per run reused across retries,
+  retries only before the first frame, terminal `incomplete` phase with a
+  manual Retry (fresh key) afterwards, visible retry count, 2 MB transcript
+  cap with truncation notice, CRLF/CR framing, 1 MiB frame and 8 MiB stream
+  budgets, and handshake retries only for 408/429/5xx and network errors.
+  Pressing Stop settles neutrally (`stopped`, "Stopped by user" status —
+  never red, never an error); genuine failures still alert.
+- Credentials stay scoped: MCP and paste-mode catalogs send `ignoreSession`
+  with the pasted key; query keys carry a non-secret key fingerprint so key
+  switches refetch; no credential means no `Authorization` header at all.
+  Prototypes cannot smuggle through chord or circuit lookups (`Map` /
+  `Object.hasOwn`); refresh bodies re-validate `admin` and keep (never
+  invent) the username; `?next=` rejects control characters and resolves
+  against the origin, then guards the returned string itself (dot-segment
+  shortening can yield a `//host` pathname while staying same-origin);
+  SSO fragments scrub before any network call; curl
+  snippets build from `JSON.stringify` plus shell quoting against the
+  configured base; budget webhooks require `https:` with non-local hosts.
+- Overlays share one focus contract (`useOverlayFocus`, all portalled):
+  origin capture, initial focus, Tab trap, background `inert`, focus return
+  on close start; each overlay tracks exactly the elements it marked, so
+  stacked overlays restore only their own marks. Inspector drawers are real dialogs; table rows are static
+  with named Inspect controls; every table scrolls in its own region and
+  stat grids collapse below `sm`. Toasts clear on global Esc with per-toast
+  timers; the rate strip and live eyebrow are plain text, never live
+  regions; forms link errors via `aria-describedby`; routes set titles and
+  move focus on navigation; the Select ticks the value (with type-ahead)
+  and stops Esc at an open menu.
+- One Prometheus scrape (`useScrape`, 8 MB byte budget, incremental line
+  scan) feeds pulse, chart, and probe via `select`. A CSP-violation
+  listener toasts each distinct block once (the `connect-src` decision
+  itself is backend-owned). Dynamic links render through
+  `SafeOutboundLink`; the env types declare `VITE_SSO_PROVIDERS` with
+  strict import-meta env. Dependencies track the audited pins
+  (react-router 8 and TypeScript 7 stay separate migrations).
+
 ## Quality gates
 
 | Command                       | Gate                                                         |
 | ----------------------------- | ------------------------------------------------------------ |
 | `npm.cmd run lint`            | ESLint 10 flat, zero warnings (`--max-warnings=0`)           |
-| `npm.cmd run format:check`    | Prettier 3.9.7 exact, check only                             |
+| `npm.cmd run format:check`    | Prettier 3.9.9 exact, check only                             |
 | `npm.cmd run typecheck`       | `tsc -b` (solution build; bare `--noEmit` is vacuous here)   |
 | `npm.cmd run test`            | Vitest 5 unit run (jsdom)                                    |
-| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently 97.7/96.1/97.3/98.3) |
+| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently 97.0/96.1/96.0/97.5) |
 | `npm.cmd run test:e2e`        | Playwright 1.63 smoke, chromium, Vite dev reuse              |
 | `npm.cmd run build-storybook` | Storybook 10.6.0 static build                                |
 
@@ -240,7 +291,7 @@ reporter for CI step summaries.
 `cleanup()` after each test, and closes the server at the end.
 `src/test/utils.tsx` renders UI with a fresh query client (no retries),
 memory router, and seeded memory-only credentials.
-54 suites / 609 tests: pure-unit (formatters, SSE parser, rate-limit parser/selector/store,
+67 suites / 764 tests: pure-unit (formatters, SSE parser, rate-limit parser/selector/store,
 Prometheus histogram parser/quantiles, ECharts registration, app boot,
 error mapping, URL allow-list, `?next=` validation, chord map, toast store)
 plus MSW integration per screen (happy/error/empty/adversarial).
@@ -254,7 +305,15 @@ plus MSW integration per screen (happy/error/empty/adversarial).
 (`Desktop Safari`) — locally all three, in CI one per matrix leg
 (`--project=<browser>`, `fail-fast: false`). `e2e/a11y.ts` exports `scanForA11yViolations(page,
 selector?)`, which injects the pinned `axe-core` bundle (no new
-dependency) and fails on any violation.
+dependency) and fails on any violation **plus** any unreviewed `incomplete`
+result. The only reviewed incomplete is `color-contrast/nonBmp` (aria-hidden
+decoration glyphs; real text contrast is pinned by the flattened-pair unit
+test) — anything else fails until a human allow-lists it with a reason.
+`e2e/a11y.spec.ts` seeds a DEV-only in-memory session per tier
+(`/__test/session/<role>`, eliminated from production builds, and the boot
+restore path is exempt so it never wipes the seed) and asserts the target
+`h1` before scanning, so the gate can never pass by scanning the login
+page again.
 `PLAYWRIGHT_CHANNEL=chrome` runs specs against the installed branded
 browser (local escape hatch when the Playwright CDN is unreachable; CI
 always uses the version-pinned bundled Chromium).
@@ -279,9 +338,11 @@ it as invalid, see codecov-action#1487).
 
 Separate frontend workflow (backend `ci.yml` untouched): typecheck, lint,
 coverage-gate test (+ Codecov when configured), static build artifact,
-`npm audit` (any severity fails — it reads the same GitHub Advisory DB as
-OSV.dev for npm, so no second scanner runs; see the workflow comment),
-Playwright on Chromium, token-gated Chromatic.
+`npm audit` (any severity fails — npm audit and OSV.dev draw on the same
+underlying advisory data for npm packages, namely the GitHub Advisory
+Database, so a second scanner would re-check the same source rather than
+add coverage; see the workflow comment), Playwright on Chromium,
+token-gated Chromatic.
 All actions SHA-pinned (the repo's SHA-sweep covers the file); `act`
 verifies locally with an empty env file because the repo-root Docker
 `.env` (BOM) breaks act's dotenv parser:
@@ -295,11 +356,13 @@ Syft, CycloneDX) with SLSA attestations and checksums next to the jar.
 `src/index.css` defines the `@theme` baseline (paper `#F7F5F0` / ink
 `#16130E`, night `#0E0D0B` / parchment `#F5F1E8`, ember `#C7431F`, status
 success `#2E7D32` / warn `#8A5E14` / danger `#C0392B` with `-soft` variants
-for dark-mode text, muted `ink-soft`/`parchment-soft`, motion
+for dark-mode text and `-deep` variants for light-mode badge text on
+translucent tints (5.6–6.0:1 measured), muted `ink-soft`/`parchment-soft`
+(also the explicit placeholder color in both themes, 7.0:1/7.5:1), motion
 `--dur-micro/ui/panel/shimmer` + enter/exit easings), `@custom-variant dark`,
 `.tnum` tabular figures, `.lift` hover, `.stream-caret` blink,
 `.skeleton` shimmer, `.toast-stack`/`.toast-enter`, a 3:1 `:focus-visible`
 ring, 24px minimum pointer targets, and the `prefers-reduced-motion`
 kill-switch. Every text/background pair holds WCAG 2.2 AA 4.5:1 in both
-themes (verified by computation; the Playwright axe suite re-proves it on
-every run). No global margin/padding reset.
+themes (flattened badge pairs pinned by `shared/a11y/contrast.test.ts`;
+the Playwright axe suite re-proves it on every run). No global margin/padding reset.

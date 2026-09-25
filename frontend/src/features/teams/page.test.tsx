@@ -30,6 +30,10 @@ describe('TeamsPage', () => {
     })
     expect(screen.getByText('MEMBER')).toBeInTheDocument()
     expect(screen.getByText('ACTIVE')).toBeInTheDocument()
+    // FE-22: narrow viewports scroll the table region, never the page.
+    for (const table of screen.getAllByRole('table')) {
+      expect(table.closest('.overflow-x-auto')).not.toBeNull()
+    }
   })
 
   it('renders the empty trio for holding-team users, not an error', async () => {

@@ -43,19 +43,47 @@ describe('Toasts viewport', () => {
     expect(screen.getByText('second notice.')).toBeInTheDocument()
   })
 
-  it('clears every toast on Escape', async () => {
+  it('clears every toast on Escape from anywhere on the page', async () => {
     const user = userEvent.setup()
-    renderApp(<Toasts />)
+    renderApp(
+      <>
+        <button type="button">outside action</button>
+        <Toasts />
+      </>,
+    )
     act(() => {
       useToastStore.getState().push('success', 'first notice.')
       useToastStore.getState().push('error', 'second notice.')
     })
-    // Focus inside the stack so Escape reaches the stack handler.
-    screen.getByRole('button', { name: /dismiss: second notice/i }).focus()
+    // Focus stays outside the stack: the global ladder entry still clears.
+    screen.getByRole('button', { name: /outside action/i }).focus()
     await user.keyboard('{Escape}')
     await waitFor(() => {
       expect(screen.queryByLabelText('Notifications')).not.toBeInTheDocument()
     })
+  })
+
+  it('times each toast from its own push, never starving early ones', async () => {
+    vi.useFakeTimers()
+    try {
+      renderApp(<Toasts />)
+      act(() => {
+        useToastStore.getState().push('success', 'first notice.')
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000)
+      })
+      act(() => {
+        useToastStore.getState().push('success', 'second notice.')
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2100)
+      })
+      expect(screen.queryByText('first notice.')).not.toBeInTheDocument()
+      expect(screen.getByText('second notice.')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('auto-dismisses the oldest toast after four seconds', async () => {

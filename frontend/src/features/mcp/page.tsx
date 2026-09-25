@@ -1,9 +1,10 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { GatewayClient } from '../../shared/api/client.js'
+import { GatewayClient, keyFingerprint } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
+import { TableScroll } from '../../shared/components/TableScroll.js'
 
 function permissionBadges(
   annotations: {
@@ -38,8 +39,9 @@ export function McpPage(): React.JSX.Element {
   const qc = useQueryClient()
 
   const catalog = useQuery({
-    queryKey: ['mcp-tools'],
-    queryFn: ({ signal }) => new GatewayClient({ token: gatewayKey ?? '' }).mcpTools({ signal }),
+    queryKey: ['mcp-tools', gatewayKey === null ? null : keyFingerprint(gatewayKey)],
+    queryFn: ({ signal }) =>
+      new GatewayClient({ token: gatewayKey ?? '' }).mcpTools({ signal, ignoreSession: true }),
     enabled: gatewayKey !== null,
   })
 
@@ -127,53 +129,59 @@ export function McpPage(): React.JSX.Element {
                   : 'No tools match this filter.'}
               </p>
             ) : (
-              <table className="w-full text-left text-sm">
-                <caption className="sr-only">MCP tool catalog</caption>
-                <thead>
-                  <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
-                    <th scope="col" className="py-2 pr-3 font-medium">
-                      Tool
-                    </th>
-                    <th scope="col" className="py-2 pr-3 font-medium">
-                      Description
-                    </th>
-                    <th scope="col" className="py-2 text-right font-medium">
-                      Permissions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visible.map((t) => (
-                    <tr
-                      key={t.name}
-                      tabIndex={0}
-                      aria-selected={t.name === selected}
-                      onClick={() => {
-                        setSelected(t.name === selected ? null : t.name)
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault()
-                          setSelected(t.name === selected ? null : t.name)
-                        }
-                      }}
-                      className={`cursor-pointer border-t border-ink/10 dark:border-parchment/10 ${
-                        t.name === selected ? 'bg-ink/4 dark:bg-parchment/6' : ''
-                      }`}
-                    >
-                      <td className="max-w-48 truncate py-2 pr-3 font-mono text-[13px]">
-                        {t.name}
-                      </td>
-                      <td className="max-w-96 truncate py-2 pr-3 text-[13px]">
-                        {t.description ?? 'n/a'}
-                      </td>
-                      <td className="py-2 text-right text-[13px]">
-                        {permissionBadges(t.annotations).join(' · ') || 'none'}
-                      </td>
+              <TableScroll>
+                <table className="w-full text-left text-sm">
+                  <caption className="sr-only">MCP tool catalog</caption>
+                  <thead>
+                    <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+                      <th scope="col" className="py-2 pr-3 font-medium">
+                        Tool
+                      </th>
+                      <th scope="col" className="py-2 pr-3 font-medium">
+                        Description
+                      </th>
+                      <th scope="col" className="py-2 text-right font-medium">
+                        Permissions
+                      </th>
+                      <th scope="col" className="py-2 pl-1 font-medium">
+                        <span className="sr-only">Open tool</span>
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {visible.map((t) => (
+                      <tr
+                        key={t.name}
+                        className={`border-t border-ink/10 dark:border-parchment/10 ${
+                          t.name === selected ? 'bg-ink/4 dark:bg-parchment/6' : ''
+                        }`}
+                      >
+                        <td className="max-w-48 truncate py-2 pr-3 font-mono text-[13px]">
+                          {t.name}
+                        </td>
+                        <td className="max-w-96 truncate py-2 pr-3 text-[13px]">
+                          {t.description ?? 'n/a'}
+                        </td>
+                        <td className="py-2 text-right text-[13px]">
+                          {permissionBadges(t.annotations).join(' · ') || 'none'}
+                        </td>
+                        <td className="py-2 pl-1 text-right">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelected(t.name === selected ? null : t.name)
+                            }}
+                            aria-label={`Inspect tool ${t.name}`}
+                            className="rounded px-1 text-ink-soft dark:text-parchment-soft"
+                          >
+                            <span aria-hidden="true">›</span>
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableScroll>
             )}
           </div>
           {inspected === null ? (

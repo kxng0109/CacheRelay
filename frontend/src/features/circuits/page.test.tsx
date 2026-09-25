@@ -58,6 +58,29 @@ describe('CircuitsPage', () => {
     })
     expect(screen.getByText('● Closed')).toBeInTheDocument()
     expect(screen.getByText(/1 of 1 shown · 1 flowing/i)).toBeInTheDocument()
+    // FE-22: narrow viewports scroll the table region, never the page.
+    expect(screen.getByRole('table').closest('.overflow-x-auto')).not.toBeNull()
+  })
+
+  it('renders inherited state names as unknown instead of mislabeling', async () => {
+    server.use(
+      http.get('*/v1/admin/circuits', () =>
+        HttpResponse.json([
+          {
+            provider: 'weird',
+            state: '__proto__',
+            failures: 0,
+            cooldownMsRemaining: 0,
+            halfOpenProbe: false,
+          },
+        ]),
+      ),
+      providers(['weird']),
+    )
+    renderBoard()
+    await waitFor(() => {
+      expect(screen.getByText('? __proto__')).toBeInTheDocument()
+    })
   })
 
   it('states the traffic consequence in the inspector', async () => {
@@ -68,7 +91,7 @@ describe('CircuitsPage', () => {
     )
     renderBoard()
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('openai'))
+    await user.click(within(table).getByRole('button', { name: /inspect circuit openai/i }))
     expect(screen.getByText(/requests flow normally/i)).toBeInTheDocument()
   })
 
@@ -80,13 +103,11 @@ describe('CircuitsPage', () => {
     )
     renderBoard()
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('openai'))
-    const inspector = await screen.findByRole('complementary', { name: /circuit inspector/i })
+    await user.click(within(table).getByRole('button', { name: /inspect circuit openai/i }))
+    const inspector = await screen.findByRole('dialog', { name: /circuit inspector/i })
     await user.click(within(inspector).getByRole('button', { name: /close inspector/i }))
     await waitFor(() => {
-      expect(
-        screen.queryByRole('complementary', { name: /circuit inspector/i }),
-      ).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: /circuit inspector/i })).not.toBeInTheDocument()
     })
     expect(screen.getByText(/select a row to inspect a circuit/i)).toBeInTheDocument()
   })
@@ -102,8 +123,8 @@ describe('CircuitsPage', () => {
     )
     renderBoard()
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('openai'))
-    const inspector = await screen.findByRole('complementary', { name: /circuit inspector/i })
+    await user.click(within(table).getByRole('button', { name: /inspect circuit openai/i }))
+    const inspector = await screen.findByRole('dialog', { name: /circuit inspector/i })
     await user.click(within(inspector).getByRole('button', { name: /reset circuit/i }))
     await waitFor(() => {
       expect(screen.getByText('openai: CLOSED')).toBeInTheDocument()
@@ -133,8 +154,8 @@ describe('CircuitsPage', () => {
     )
     renderBoard()
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('openai'))
-    const inspector = await screen.findByRole('complementary', { name: /circuit inspector/i })
+    await user.click(within(table).getByRole('button', { name: /inspect circuit openai/i }))
+    const inspector = await screen.findByRole('dialog', { name: /circuit inspector/i })
     await user.click(within(inspector).getByRole('button', { name: /reset circuit/i }))
     await waitFor(() => {
       expect(screen.getByText(/HTTP 500/i)).toBeInTheDocument()
@@ -188,8 +209,10 @@ describe('CircuitsPage', () => {
     expect(screen.getByText('▲ Half-open')).toBeInTheDocument()
     expect(screen.getByText('? DRAINING')).toBeInTheDocument()
     expect(screen.getByText('15000')).toBeInTheDocument()
-    await user.click(within(screen.getByRole('table')).getByText('b'))
-    expect(screen.getByRole('complementary', { name: /circuit inspector/i })).toHaveTextContent(
+    await user.click(
+      within(screen.getByRole('table')).getByRole('button', { name: /inspect circuit b/i }),
+    )
+    expect(screen.getByRole('dialog', { name: /circuit inspector/i })).toHaveTextContent(
       'in flight',
     )
   })
@@ -215,13 +238,13 @@ describe('CircuitsPage', () => {
       expect(screen.getByText('DRAINING')).toBeInTheDocument()
     })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('c'))
-    const inspector = screen.getByRole('complementary', { name: /circuit inspector/i })
+    await user.click(within(table).getByRole('button', { name: /inspect circuit c/i }))
+    const inspector = screen.getByRole('dialog', { name: /circuit inspector/i })
     expect(inspector).toHaveTextContent(/not mapped in this ui/i)
     expect(inspector).toHaveTextContent(/treat traffic as suspect/i)
   })
 
-  it('selects an other segment row from the keyboard', async () => {
+  it('selects a row from the keyboard through its inspect control', async () => {
     const user = userEvent.setup()
     server.use(
       http.get('*/v1/admin/circuits', () =>
@@ -239,9 +262,11 @@ describe('CircuitsPage', () => {
     )
     renderBoard()
     const table = await screen.findByRole('table')
-    within(table).getByText('c').closest('tr')?.focus()
+    within(table)
+      .getByRole('button', { name: /inspect circuit c/i })
+      .focus()
     await user.keyboard('{Enter}')
-    expect(screen.getByRole('complementary', { name: /circuit inspector/i })).toHaveTextContent(
+    expect(screen.getByRole('dialog', { name: /circuit inspector/i })).toHaveTextContent(
       /not mapped in this ui/i,
     )
   })
@@ -301,15 +326,11 @@ describe('CircuitsPage', () => {
     )
     renderBoard()
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('openai'))
-    expect(screen.getByRole('complementary', { name: /circuit inspector/i })).toHaveTextContent(
-      'Flowing',
-    )
-    await user.click(within(table).getByText('openai'))
+    await user.click(within(table).getByRole('button', { name: /inspect circuit openai/i }))
+    expect(screen.getByRole('dialog', { name: /circuit inspector/i })).toHaveTextContent('Flowing')
+    await user.click(within(table).getByRole('button', { name: /inspect circuit openai/i }))
     await waitFor(() => {
-      expect(
-        screen.queryByRole('complementary', { name: /circuit inspector/i }),
-      ).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: /circuit inspector/i })).not.toBeInTheDocument()
     })
     expect(screen.getByText(/select a row to inspect a circuit/i)).toBeInTheDocument()
   })
@@ -434,11 +455,9 @@ describe('CircuitsPage', () => {
     )
     renderBoard()
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('openai'))
-    expect(screen.getByRole('complementary', { name: /circuit inspector/i })).toHaveTextContent(
-      'Flowing',
-    )
-    const inspector = screen.getByRole('complementary', { name: /circuit inspector/i })
+    await user.click(within(table).getByRole('button', { name: /inspect circuit openai/i }))
+    expect(screen.getByRole('dialog', { name: /circuit inspector/i })).toHaveTextContent('Flowing')
+    const inspector = screen.getByRole('dialog', { name: /circuit inspector/i })
     await user.click(within(inspector).getByRole('button', { name: /reset circuit/i }))
     await waitFor(() => {
       expect(screen.getByText('openai: CLOSED')).toBeInTheDocument()

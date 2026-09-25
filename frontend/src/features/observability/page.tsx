@@ -5,6 +5,8 @@ import { resolveApiBase, resolveManagementBase } from '../../shared/api/client.j
 import { isProbeHttpFailure } from './probe.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { PulseStrip } from './PulseStrip.js'
+import { SafeOutboundLink } from '../../shared/components/SafeOutboundLink.js'
+import { SCRAPE_POLL_MS, usePrometheusScrape } from './useScrape.js'
 
 const LatencyChart = lazy(() => import('./LatencyChart.js'))
 
@@ -50,27 +52,18 @@ function hrefFor(path: string): string {
   return `${base}${path}`
 }
 /**
- * Probes one actuator endpoint without throwing on empty bodies.
+ * Validates one shared scrape as a metrics probe.
  *
- * @param base - Resolved management base.
- * @param path - Actuator path.
- * @param signal - Abort signal.
+ * @param scrape - Shared scrape text plus content type.
  * @returns Up flag plus checked timestamp.
+ * @throws When the endpoint answered the wrong content type.
  */
-async function probeEndpoint(
-  base: string,
-  path: string,
-  signal: AbortSignal,
-): Promise<{ up: boolean; at: string }> {
-  const res = await fetch(`${base}${path}`, { signal })
-  if (!res.ok) throw new Error(`Health probe failed: HTTP ${String(res.status)}. Retry shortly.`)
-  const contentType = res.headers.get('content-type') ?? ''
-  if (!contentType.includes('text/plain')) {
+function probeSelect(scrape: { text: string; contentType: string }): { up: boolean; at: string } {
+  if (!scrape.contentType.includes('text/plain')) {
     throw new Error(
-      `Metrics endpoint answered ${contentType === '' ? 'without a content type' : contentType}, not Prometheus text. Check the management base URL.`,
+      `Metrics endpoint answered ${scrape.contentType === '' ? 'without a content type' : scrape.contentType}, not Prometheus text. Check the management base URL.`,
     )
   }
-  await res.text().catch(() => '')
   return { up: true, at: new Date().toISOString() }
 }
 
@@ -110,12 +103,7 @@ export function ObservabilityPage(): React.JSX.Element {
     refetchInterval: 15_000,
   })
 
-  const metrics = useQuery({
-    queryKey: ['metrics-probe'],
-    enabled: isAdmin,
-    queryFn: ({ signal }) => probeEndpoint(resolveManagementBase(), '/actuator/prometheus', signal),
-    refetchInterval: 15_000,
-  })
+  const metrics = usePrometheusScrape(SCRAPE_POLL_MS, isAdmin, probeSelect)
 
   const probes = health.isPending ? 'probing' : health.data?.status === 'UP' ? 'up' : 'down'
   // The metrics endpoint row is operator tooling: regular sessions do not
@@ -125,11 +113,13 @@ export function ObservabilityPage(): React.JSX.Element {
 
   const retryAll = (): void => {
     void qc.invalidateQueries({ queryKey: ['health'] })
-    void qc.invalidateQueries({ queryKey: ['metrics-probe'] })
+    void qc.invalidateQueries({ queryKey: ['prometheus-scrape'] })
   }
 
   /**
-   * Retries one probe without disturbing the other card's state.
+   * Retries one probe without disturbing the other card's state. The
+   * metrics card shares the scrape query, so its retry re-scrapes once
+   * for every consumer.
    *
    * @param key - The probe query key to invalidate.
    */
@@ -275,7 +265,7 @@ export function ObservabilityPage(): React.JSX.Element {
                 <button
                   type="button"
                   onClick={() => {
-                    retryProbe('metrics-probe')
+                    retryProbe('prometheus-scrape')
                   }}
                   className="mt-2 rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
                 >
@@ -387,14 +377,12 @@ export function ObservabilityPage(): React.JSX.Element {
                   <dd className="text-right">{inspected.auth}</dd>
                 </div>
               </dl>
-              <a
+              <SafeOutboundLink
                 href={hrefFor(inspected.path)}
-                target="_blank"
-                rel="noreferrer"
                 className="block rounded-md border border-ink/15 px-3 py-2 text-center text-[13px] dark:border-parchment/15"
               >
                 Open in new tab
-              </a>
+              </SafeOutboundLink>
             </div>
           )}
         </aside>

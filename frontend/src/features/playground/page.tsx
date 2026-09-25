@@ -224,8 +224,10 @@ export function PlaygroundPage(): React.JSX.Element {
           Send a prompt through the gateway. Tokens, cost, and phase land live below.
         </p>
       </div>
+      {/* Grid items default to min-width:auto (min-content): without min-w-0
+          the model/key cells force the page past 320 px (DEF-04). */}
       <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <form
             onSubmit={(e) => {
               void handleSubmit(onSubmit)(e)
@@ -258,7 +260,7 @@ export function PlaygroundPage(): React.JSX.Element {
               idPrefix="pg"
             />
             <div className="grid gap-3 sm:grid-cols-2">
-              <div>
+              <div className="min-w-0">
                 <ModelSelect
                   token={effectiveModelToken}
                   {...(effectiveModelActAs !== undefined && effectiveModelActAs !== ''
@@ -278,7 +280,7 @@ export function PlaygroundPage(): React.JSX.Element {
                 )}
               </div>
               {accountMode ? null : (
-                <div>
+                <div className="min-w-0">
                   <label htmlFor="pg-key" className="mb-1 block text-[13px] font-medium">
                     API key (memory only, never stored)
                   </label>
@@ -438,7 +440,9 @@ export function PlaygroundPage(): React.JSX.Element {
                               ? 'running'
                               : streamSummary.phase === 'done'
                                 ? 'done'
-                                : 'error',
+                                : streamSummary.phase === 'stopped'
+                                  ? 'stopped'
+                                  : 'error',
                           ...(streamSummary === null
                             ? {}
                             : {
@@ -471,7 +475,7 @@ export function PlaygroundPage(): React.JSX.Element {
             </section>
           )}
         </div>
-        <aside aria-label="Run history" className="space-y-3">
+        <aside aria-label="Run history" className="min-w-0 space-y-3">
           <h2 className="font-mono text-xs text-ink-soft dark:text-parchment-soft">run history</h2>
           {history.length === 0 ? (
             <div className="rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">

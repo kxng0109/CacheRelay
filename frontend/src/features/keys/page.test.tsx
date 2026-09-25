@@ -37,6 +37,16 @@ describe('KeysPage', () => {
     expect(screen.getByText('100K')).toBeInTheDocument()
   })
 
+  it('degrades a drifted key payload to the empty state without crashing', async () => {
+    server.use(http.get('*/v1/admin/keys', () => HttpResponse.json({ keys: {} })))
+    renderApp(<KeysPage />, { adminSession: true })
+    await waitFor(() => {
+      expect(screen.getByText('No keys yet')).toBeInTheDocument()
+    })
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   it('renders unlimited for zero limits', async () => {
     server.use(
       http.get('*/v1/admin/keys', () =>
@@ -115,8 +125,8 @@ describe('KeysPage', () => {
     )
     renderApp(<KeysPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('ci-key'))
-    const inspector = await screen.findByRole('complementary', { name: /key inspector/i })
+    await user.click(within(table).getByRole('button', { name: /inspect key ci-key/i }))
+    const inspector = await screen.findByRole('dialog', { name: /key inspector/i })
     await user.click(within(inspector).getByRole('button', { name: /revoke key/i }))
     await user.click(within(inspector).getByRole('button', { name: /yes, revoke/i }))
     await waitFor(() => {
@@ -137,8 +147,8 @@ describe('KeysPage', () => {
     )
     renderApp(<KeysPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('ci-key'))
-    const inspector = await screen.findByRole('complementary', { name: /key inspector/i })
+    await user.click(within(table).getByRole('button', { name: /inspect key ci-key/i }))
+    const inspector = await screen.findByRole('dialog', { name: /key inspector/i })
     await user.click(within(inspector).getByRole('button', { name: /disable key/i }))
     await waitFor(() => {
       expect(screen.getAllByText(/disabled/i).length).toBeGreaterThanOrEqual(2)
@@ -167,15 +177,17 @@ describe('KeysPage', () => {
     )
     renderApp(<KeysPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    within(table).getByText('old-key').closest('tr')?.focus()
+    within(table)
+      .getByRole('button', { name: /inspect key old-key/i })
+      .focus()
     await user.keyboard('{Enter}')
-    const inspector = await screen.findByRole('complementary', { name: /key inspector/i })
+    const inspector = await screen.findByRole('dialog', { name: /key inspector/i })
     expect(inspector).toHaveTextContent('disabled')
     expect(inspector).toHaveTextContent('all')
     expect(inspector).toHaveTextContent('unlimited / unlimited')
     await user.click(within(inspector).getByRole('button', { name: /close inspector/i }))
     await waitFor(() => {
-      expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     })
     expect(screen.getByText(/select a row to inspect a key/i)).toBeInTheDocument()
   })
@@ -264,14 +276,12 @@ describe('KeysPage', () => {
     )
     renderApp(<KeysPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('ci-key'))
-    expect(screen.getByRole('complementary', { name: /key inspector/i })).toBeInTheDocument()
+    await user.click(within(table).getByRole('button', { name: /inspect key ci-key/i }))
+    expect(screen.getByRole('dialog', { name: /key inspector/i })).toBeInTheDocument()
     await user.click(within(table).getByRole('button', { name: /^delete$/i }))
     await user.click(await screen.findByRole('button', { name: /^yes$/i }))
     await waitFor(() => {
-      expect(
-        screen.queryByRole('complementary', { name: /key inspector/i }),
-      ).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: /key inspector/i })).not.toBeInTheDocument()
     })
   })
 
@@ -352,8 +362,8 @@ describe('KeysPage', () => {
     server.use(http.get('*/v1/admin/keys', () => HttpResponse.json(KEYS)))
     renderApp(<KeysPage />, { adminSession: true })
     await screen.findByRole('table')
-    await user.click(screen.getByText('ci-key'))
-    const inspector = await screen.findByRole('complementary', { name: /key inspector/i })
+    await user.click(screen.getByRole('button', { name: /inspect key ci-key/i }))
+    const inspector = await screen.findByRole('dialog', { name: /key inspector/i })
     expect(inspector).toHaveTextContent('tenant-corp')
     expect(inspector).toHaveTextContent('all')
     await user.click(within(inspector).getByRole('button', { name: /copy key id/i }))
@@ -379,19 +389,11 @@ describe('KeysPage', () => {
     server.use(http.get('*/v1/admin/keys', () => HttpResponse.json(KEYS)))
     renderApp(<KeysPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('ci-key'))
-    await waitFor(() => {
-      expect(within(table).getByText('ci-key').closest('tr')).toHaveAttribute(
-        'aria-selected',
-        'true',
-      )
-    })
-    expect(screen.getByRole('complementary', { name: /key inspector/i })).toHaveTextContent(
-      'tenant-corp',
-    )
+    await user.click(within(table).getByRole('button', { name: /inspect key ci-key/i }))
+    expect(screen.getByRole('dialog', { name: /key inspector/i })).toHaveTextContent('tenant-corp')
     const tableAgain = await screen.findByRole('table')
-    await user.click(within(tableAgain).getByText('ci-key'))
-    expect(screen.queryByRole('complementary', { name: /key inspector/i })).not.toBeInTheDocument()
+    await user.click(within(tableAgain).getByRole('button', { name: /inspect key ci-key/i }))
+    expect(screen.queryByRole('dialog', { name: /key inspector/i })).not.toBeInTheDocument()
     expect(screen.getByText(/select a row to inspect a key/i)).toBeInTheDocument()
   })
 
@@ -464,8 +466,8 @@ describe('KeysPage', () => {
     server.use(http.get('*/v1/admin/keys', () => HttpResponse.json(KEYS)))
     renderApp(<KeysPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('ci-key'))
-    const inspector = await screen.findByRole('complementary', { name: /key inspector/i })
+    await user.click(within(table).getByRole('button', { name: /inspect key ci-key/i }))
+    const inspector = await screen.findByRole('dialog', { name: /key inspector/i })
     expect(inspector).toHaveTextContent('tenant-corp')
     expect(inspector).toHaveTextContent('all')
     await user.click(within(inspector).getByRole('button', { name: /copy key id/i }))
@@ -487,17 +489,19 @@ describe('KeysPage', () => {
     server.use(http.get('*/v1/admin/keys', () => HttpResponse.json(KEYS)))
     renderApp(<KeysPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    within(table).getByText('ci-key').closest('tr')?.focus()
+    within(table)
+      .getByRole('button', { name: /inspect key ci-key/i })
+      .focus()
     await user.keyboard('{Enter}')
-    expect(await screen.findByRole('complementary', { name: /key inspector/i })).toHaveTextContent(
+    expect(await screen.findByRole('dialog', { name: /key inspector/i })).toHaveTextContent(
       'tenant-corp',
     )
-    within(table).getByText('ci-key').closest('tr')?.focus()
+    within(table)
+      .getByRole('button', { name: /inspect key ci-key/i })
+      .focus()
     await user.keyboard('{ }')
     await waitFor(() => {
-      expect(
-        screen.queryByRole('complementary', { name: /key inspector/i }),
-      ).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: /key inspector/i })).not.toBeInTheDocument()
     })
   })
 
@@ -510,8 +514,8 @@ describe('KeysPage', () => {
     )
     renderApp(<KeysPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('ci-key'))
-    const inspector = await screen.findByRole('complementary', { name: /key inspector/i })
+    await user.click(within(table).getByRole('button', { name: /inspect key ci-key/i }))
+    const inspector = await screen.findByRole('dialog', { name: /key inspector/i })
     expect(inspector).toHaveTextContent('gpt-4o-mini')
     expect(inspector).toHaveTextContent('openai')
   })

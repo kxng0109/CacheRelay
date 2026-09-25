@@ -251,8 +251,12 @@ describe('ObservabilityPage', () => {
       http.get('*/actuator/prometheus', () => new HttpResponse('x', { status: 500 })),
     )
     renderApp(<ObservabilityPage />, { adminSession: true })
+    // One failed scrape surfaces in every consumer (probe card and chart),
+    // each owning its own message.
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent(/HTTP 500/)
+      const alerts = screen.getAllByRole('alert')
+      expect(alerts.length).toBeGreaterThan(0)
+      expect(alerts.some((a) => a.textContent.includes('HTTP 500'))).toBe(true)
     })
   })
 

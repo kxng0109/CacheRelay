@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
 import type { ECharts } from 'echarts/core'
-import { resolveManagementBase } from '../../shared/api/client.js'
 import { echarts } from '../../shared/echarts/setup.js'
 import type { EChartsOption } from '../../shared/echarts/setup.js'
 import { useUiStore } from '../../shared/store.js'
 import { MAX_POINTS, appendLatencyPoint, parsePrometheusHistogram } from './prometheus.js'
 import { isProbeHttpFailure } from './probe.js'
 import type { Accumulator, LatencyPoint } from './prometheus.js'
+import { usePrometheusScrape } from './useScrape.js'
 
 const POLL_MS = 15_000
 
@@ -66,16 +65,13 @@ export default function LatencyChart({
     latestRef.current = onLatest
   })
 
-  const metrics = useQuery({
-    queryKey: ['prometheus-latency'],
-    queryFn: async ({ signal }): Promise<string> => {
-      const res = await fetch(`${resolveManagementBase()}/actuator/prometheus`, { signal })
-      if (!res.ok)
-        throw new Error(`Metrics scrape failed: HTTP ${String(res.status)}. Retry shortly.`)
-      return res.text()
-    },
-    refetchInterval: pollMs,
-  })
+  const metrics = usePrometheusScrape(
+    pollMs,
+    true,
+    // Identity select keeps the raw text; parsing stays in the point
+    // effect below (dedupe-aware via `seenRef`), exactly as before.
+    (scrape) => scrape.text,
+  )
 
   useEffect(() => {
     if (metrics.data === undefined || metrics.data === seenRef.current) return

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ApiError, GatewayClient } from '../api/client.js'
+import { ApiError, GatewayClient, keyFingerprint } from '../api/client.js'
 import { Select } from '../components/Select.js'
 
 /**
@@ -25,6 +25,7 @@ export function ModelSelect({
   value,
   onSelect,
   invalid,
+  describedBy,
 }: {
   token: string
   /** Owned key hash for act-as-self reads (session JWT supplies auth). */
@@ -33,15 +34,26 @@ export function ModelSelect({
   value: string
   onSelect: (value: string) => void
   invalid: boolean
+  /** Error node id for `aria-describedby` when invalid. */
+  describedBy?: string
 }): React.JSX.Element {
   const qc = useQueryClient()
   const hasCredentials = token.length > 0 || (actAsKey !== undefined && actAsKey.length > 0)
+  // Paste mode ignores the session (a session JWT is not a virtual key, so
+  // session precedence would turn every logged-in paste into a 401); the
+  // query key carries a fingerprint — never the secret — so key switches
+  // refetch instead of serving the previous key's catalog.
   const catalog = useQuery({
-    queryKey: ['model-catalog', token.length > 0, actAsKey ?? null],
+    queryKey: [
+      'model-catalog',
+      token.length === 0 ? null : keyFingerprint(token),
+      actAsKey ?? null,
+    ],
     queryFn: ({ signal }) =>
       new GatewayClient({ token }).models({
         signal,
         ...(actAsKey === undefined ? {} : { actAsKey }),
+        ...(token.length === 0 ? {} : { ignoreSession: true }),
       }),
     enabled: hasCredentials,
     staleTime: 60_000,
@@ -77,6 +89,7 @@ export function ModelSelect({
             placeholder={placeholder}
             disabled={!hasCredentials || catalog.isError}
             invalid={invalid}
+            {...(describedBy === undefined ? {} : { describedBy })}
           />
         </div>
         {catalog.isError && hasCredentials ? (

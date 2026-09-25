@@ -33,7 +33,7 @@ afterEach(() => {
 })
 
 describe('SseStreamViewer', () => {
-  it('stops a hanging stream and settles gracefully', async () => {
+  it('stops a hanging stream and settles neutrally, never as an error', async () => {
     const user = userEvent.setup()
     server.use(
       http.post('*/v1/chat/completions', () => {
@@ -44,9 +44,42 @@ describe('SseStreamViewer', () => {
     renderApp(<SseStreamViewer token="gw-test" model="m" messages={MESSAGES} />)
     await user.click(await screen.findByRole('button', { name: /^stop$/i }))
     await waitFor(() => {
-      expect(screen.getByText(/phase: done/i)).toBeInTheDocument()
+      expect(screen.getByText(/phase: stopped/i)).toBeInTheDocument()
     })
+    expect(screen.getByText(/stopped by user/i)).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^stop$/i })).not.toBeInTheDocument()
+  })
+
+  it('reports a user stop as neutral, never an error', async () => {
+    const user = userEvent.setup()
+    const summaries: unknown[] = []
+    server.use(
+      http.post('*/v1/chat/completions', () => {
+        const hanging = new ReadableStream<Uint8Array>({})
+        return new HttpResponse(hanging, { headers: { 'content-type': 'text/event-stream' } })
+      }),
+    )
+    renderApp(
+      <SseStreamViewer
+        token="gw-test"
+        model="m"
+        messages={MESSAGES}
+        onSummary={(s) => {
+          summaries.push(s)
+        }}
+      />,
+    )
+    await user.click(await screen.findByRole('button', { name: /^stop$/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/phase: stopped/i)).toBeInTheDocument()
+    })
+    // Neutral status, never the red error alert.
+    expect(screen.getByText(/stopped by user/i)).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(summaries).toHaveLength(1)
+    expect(summaries[0]).toMatchObject({ phase: 'stopped' })
+    expect(summaries[0]).not.toHaveProperty('error')
   })
 
   it('counts malformed frames while streaming', async () => {
@@ -96,6 +129,31 @@ describe('SseStreamViewer', () => {
     const log = screen.getByRole('log')
     expect(log).toHaveTextContent('42')
     expect(log).toHaveTextContent('M')
+  })
+
+  it('truncates runaway transcripts with a visible stop notice', async () => {
+    const big = 'y'.repeat(200_000)
+    const frames =
+      Array.from({ length: 12 }, () => `data: {"choices":[{"delta":{"content":"${big}"}}]}`).join(
+        '\n\n',
+      ) + '\n\n'
+    server.use(
+      http.post('*/v1/chat/completions', () => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            ctrl.enqueue(new TextEncoder().encode(frames))
+            ctrl.close()
+          },
+        })
+        return new HttpResponse(stream, { headers: { 'content-type': 'text/event-stream' } })
+      }),
+    )
+    renderApp(<SseStreamViewer token="gw-test" model="m" messages={MESSAGES} />)
+    await waitFor(() => {
+      expect(screen.getByText(/output truncated/i)).toBeInTheDocument()
+    })
+    expect(screen.getByText(/phase: done/i)).toBeInTheDocument()
+    expect(screen.getByRole('log').textContent.length).toBeLessThan(2_097_152 + 1000)
   })
 
   it('surfaces handshake failures as alerts', async () => {
@@ -222,8 +280,9 @@ describe('SseStreamViewer', () => {
     await user.click(await screen.findByRole('button', { name: /^stop$/i }))
     release()
     await waitFor(() => {
-      expect(screen.getByText(/phase: error/i)).toBeInTheDocument()
+      expect(screen.getByText(/phase: stopped/i)).toBeInTheDocument()
     })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('honors explicit retry and heartbeat options', async () => {

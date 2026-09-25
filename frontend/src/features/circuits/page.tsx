@@ -2,21 +2,22 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { GatewayClient, resolveApiBase } from '../../shared/api/client.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
+import { TableScroll } from '../../shared/components/TableScroll.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 
 const STATE_META: Record<string, { badge: string; dark: string; label: string }> = {
   CLOSED: {
-    badge: 'bg-success/15 text-success',
+    badge: 'bg-success/15 text-success-deep',
     dark: 'dark:text-success-soft',
     label: '● Closed',
   },
   OPEN: {
-    badge: 'bg-danger/15 text-danger',
+    badge: 'bg-danger/15 text-danger-deep',
     dark: 'dark:text-danger-soft',
     label: '■ Open',
   },
   HALF_OPEN: {
-    badge: 'bg-warn/15 text-warn',
+    badge: 'bg-warn/15 text-warn-deep',
     dark: 'dark:text-warn-soft',
     label: '▲ Half-open',
   },
@@ -32,6 +33,7 @@ const STATE_META: Record<string, { badge: string; dark: string; label: string }>
  * of being mislabeled.
  */
 function stateMeta(state: string): { badge: string; dark: string; label: string } {
+  if (!Object.hasOwn(STATE_META, state)) return { badge: '', dark: '', label: `? ${state}` }
   return STATE_META[state] ?? { badge: '', dark: '', label: `? ${state}` }
 }
 
@@ -233,81 +235,78 @@ function CircuitsBoard(): React.JSX.Element {
           </p>
         ) : null}
         {visible.length === 0 ? null : (
-          <table className="w-full text-left text-sm">
-            <caption className="sr-only">Provider circuit states</caption>
-            <thead className="sticky top-0 bg-paper dark:bg-night">
-              <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
-                <th scope="col" className="py-2 pr-3 font-medium">
-                  Provider
-                </th>
-                <th scope="col" className="py-2 pr-3 font-medium">
-                  State
-                </th>
-                <th scope="col" className="py-2 pr-3 font-medium">
-                  Signal
-                </th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">
-                  Failures
-                </th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">
-                  Cooldown (ms)
-                </th>
-                <th scope="col" className="py-2 pl-1 font-medium">
-                  <span className="sr-only">Open circuit</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map((c) => {
-                const meta = stateMeta(c.state)
-                const active = c.provider === selected
-                return (
-                  <tr
-                    key={c.provider}
-                    tabIndex={0}
-                    aria-selected={active}
-                    onClick={() => {
-                      setSelected(active ? null : c.provider)
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault()
-                        setSelected(active ? null : c.provider)
-                      }
-                    }}
-                    className={`cursor-pointer border-t border-ink/10 dark:border-parchment/10 ${
-                      active ? 'bg-ink/4 dark:bg-parchment/6' : ''
-                    }`}
-                  >
-                    <td
-                      className="max-w-44 truncate py-2 pr-3 font-mono text-[13px]"
-                      title={c.provider}
+          <TableScroll>
+            <table className="w-full text-left text-sm">
+              <caption className="sr-only">Provider circuit states</caption>
+              <thead className="sticky top-0 bg-paper dark:bg-night">
+                <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+                  <th scope="col" className="py-2 pr-3 font-medium">
+                    Provider
+                  </th>
+                  <th scope="col" className="py-2 pr-3 font-medium">
+                    State
+                  </th>
+                  <th scope="col" className="py-2 pr-3 font-medium">
+                    Signal
+                  </th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">
+                    Failures
+                  </th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">
+                    Cooldown (ms)
+                  </th>
+                  <th scope="col" className="py-2 pl-1 font-medium">
+                    <span className="sr-only">Open circuit</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((c) => {
+                  const meta = stateMeta(c.state)
+                  const active = c.provider === selected
+                  return (
+                    <tr
+                      key={c.provider}
+                      className={`border-t border-ink/10 dark:border-parchment/10 ${
+                        active ? 'bg-ink/4 dark:bg-parchment/6' : ''
+                      }`}
                     >
-                      {c.provider}
-                    </td>
-                    <td className="py-2 pr-3">
-                      <span
-                        className={`rounded px-2 py-1 text-[13px] tnum ${meta.badge} ${meta.dark}`}
+                      <td
+                        className="max-w-44 truncate py-2 pr-3 font-mono text-[13px]"
+                        title={c.provider}
                       >
-                        {meta.label}
-                      </span>
-                    </td>
-                    <td className="py-2 pr-3 font-display text-lg tnum">{stateWord(c.state)}</td>
-                    <td className="py-2 pr-3 text-right text-[13px] tnum">{c.failures}</td>
-                    <td className="py-2 pr-3 text-right text-[13px] tnum">
-                      {c.cooldownMsRemaining}
-                    </td>
-                    <td
-                      aria-hidden="true"
-                      className="py-2 pl-1 text-ink-soft dark:text-parchment-soft"
-                    >
-                      ›
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+                        {c.provider}
+                      </td>
+                      <td className="py-2 pr-3">
+                        <span
+                          className={`rounded px-2 py-1 text-[13px] tnum ${meta.badge} ${meta.dark}`}
+                        >
+                          {meta.label}
+                        </span>
+                      </td>
+                      <td className="py-2 pr-3 font-display text-lg tnum">{stateWord(c.state)}</td>
+                      <td className="py-2 pr-3 text-right text-[13px] tnum">{c.failures}</td>
+                      <td className="py-2 pr-3 text-right text-[13px] tnum">
+                        {c.cooldownMsRemaining}
+                      </td>
+                      <td className="py-2 pl-1 text-right">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelected(active ? null : c.provider)
+                          }}
+                          aria-label={`Inspect circuit ${c.provider}`}
+                          className="rounded px-1 text-ink-soft dark:text-parchment-soft"
+                        >
+                          <span aria-hidden="true">›</span>
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </TableScroll>
         )}
         <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
           Base: {resolveApiBase() === '' ? 'same-origin' : resolveApiBase()}

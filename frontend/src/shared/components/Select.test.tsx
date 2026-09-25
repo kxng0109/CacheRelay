@@ -52,6 +52,47 @@ describe('Select', () => {
     expect(onChange).toHaveBeenCalledWith('past-7d')
   })
 
+  it('opens on Enter and ArrowUp from the closed trigger', async () => {
+    const user = userEvent.setup()
+    picker()
+    const trigger = screen.getByRole('combobox', { name: /range/i })
+    trigger.focus()
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    trigger.focus()
+    await user.keyboard('{ArrowUp}')
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    trigger.focus()
+    await user.keyboard('{ArrowDown}')
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+  })
+
+  it('moves up with ArrowUp inside the open menu', async () => {
+    const user = userEvent.setup()
+    const onChange = picker()
+    await user.click(screen.getByRole('combobox', { name: /range/i }))
+    await user.keyboard('{ArrowDown}')
+    await user.keyboard('{ArrowUp}')
+    await user.keyboard('{Enter}')
+    expect(onChange).toHaveBeenCalledWith('today')
+  })
+
+  it('ignores keys while disabled', async () => {
+    const user = userEvent.setup()
+    const onChange = picker({ disabled: true })
+    const trigger = screen.getByRole('combobox', { name: /range/i })
+    // Disabled buttons take no focus: dispatch at the element so the
+    // guard itself is exercised, not the focus system.
+    fireEvent.keyDown(trigger, { key: 'Enter' })
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    fireEvent.keyDown(trigger, { key: 'Escape' })
+    await user.click(trigger)
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('closes on Escape without picking', async () => {
     const user = userEvent.setup()
     const onChange = picker()
@@ -159,5 +200,91 @@ describe('Select', () => {
     const menu = screen.getByRole('listbox')
     fireEvent.scroll(menu)
     expect(screen.getByRole('listbox')).toBeInTheDocument()
+  })
+
+  it('ticks the selected value, not the hovered option', async () => {
+    const user = userEvent.setup()
+    picker({ value: 'past-7d' })
+    await user.click(screen.getByRole('combobox', { name: /range/i }))
+    const options = screen.getAllByRole('option')
+    const selected = options[1]
+    const hovered = options[2]
+    if (selected === undefined || hovered === undefined) throw new Error('Options missing')
+    expect(selected.querySelector('svg')).not.toBeNull()
+    await user.hover(hovered)
+    expect(selected.querySelector('svg')).not.toBeNull()
+    expect(hovered.querySelector('svg')).toBeNull()
+  })
+
+  it('jumps to the matching option on printable keys', async () => {
+    const user = userEvent.setup()
+    const onChange = picker()
+    await user.click(screen.getByRole('combobox', { name: /range/i }))
+    await user.keyboard('c')
+    await user.keyboard('{Enter}')
+    expect(onChange).toHaveBeenCalledWith('custom')
+  })
+
+  it('accumulates fast keys into one narrowing buffer', async () => {
+    const user = userEvent.setup()
+    const onChange = picker()
+    await user.click(screen.getByRole('combobox', { name: /range/i }))
+    // 't' lands on Today; 'c' within the window narrows to 'tc', which
+    // matches nothing, so the stop stays on Today instead of Custom.
+    await user.keyboard('t')
+    await user.keyboard('c')
+    await user.keyboard('{Enter}')
+    expect(onChange).toHaveBeenCalledWith('today')
+  })
+
+  it('resets the buffer after a pause', async () => {
+    const user = userEvent.setup()
+    const onChange = picker()
+    await user.click(screen.getByRole('combobox', { name: /range/i }))
+    await user.keyboard('t')
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    await user.keyboard('c')
+    await user.keyboard('{Enter}')
+    expect(onChange).toHaveBeenCalledWith('custom')
+  }, 10_000)
+
+  it('leaves a closed menu alone on Escape', async () => {
+    const user = userEvent.setup()
+    const onChange = picker()
+    const trigger = screen.getByRole('combobox', { name: /range/i })
+    trigger.focus()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('keeps Escape inside an open menu from closing the parent dialog', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    const { Modal } = await import('./Modal.js')
+    renderApp(
+      <Modal
+        label="Parent dialog"
+        title="Parent dialog"
+        closeLabel="Close dialog"
+        onClose={onClose}
+      >
+        <Select
+          id="inner-pick"
+          label="Range"
+          value=""
+          options={OPTIONS}
+          onChange={vi.fn()}
+          placeholder="Pick one"
+        />
+      </Modal>,
+    )
+    await user.click(screen.getByRole('combobox', { name: /range/i }))
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    // The dialog never entered its leaving state: Esc stopped at the menu.
+    expect(screen.getByRole('dialog', { name: /parent dialog/i })).toHaveClass('translate-y-0')
+    expect(onClose).not.toHaveBeenCalled()
   })
 })

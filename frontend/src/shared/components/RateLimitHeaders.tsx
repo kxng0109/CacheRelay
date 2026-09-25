@@ -14,7 +14,9 @@ interface RateLimitHeadersProps {
  * the reset epoch: a 1s interval re-renders only while a future reset is
  * displayed, and cleanup runs on unmount and on every reset change. No
  * tab-visibility pausing — the countdown re-derives from the epoch on every
- * tick, so background throttling self-corrects on return.
+ * tick, so background throttling self-corrects on return. Deliberately not
+ * a live region: a 1 Hz countdown inside `role="status"` would re-announce
+ * continuously and drown real content (FE-21).
  *
  * @param props - The parsed rate-limit snapshot.
  * @returns An inline metric strip, or nothing when the gateway sent no headers.
@@ -51,7 +53,7 @@ export function RateLimitHeaders({ snapshot }: RateLimitHeadersProps): React.JSX
     </span>
   )
   return (
-    <p role="status" aria-label="Rate limit status" className="flex flex-wrap gap-4">
+    <div aria-label="Rate limit status" className="flex flex-wrap gap-4">
       <span className="text-[13px]">
         {snapshot.dimension === 'TPM' ? 'Token quota' : 'Request quota'}
       </span>
@@ -59,6 +61,6 @@ export function RateLimitHeaders({ snapshot }: RateLimitHeadersProps): React.JSX
       {cell('Remaining', snapshot.remaining)}
       <span className="text-[13px] tnum">Resets in: {resetLabel}</span>
       {cell('Retry after (s)', snapshot.retryAfter)}
-    </p>
+    </div>
   )
 }

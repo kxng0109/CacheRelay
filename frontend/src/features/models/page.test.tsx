@@ -163,8 +163,8 @@ describe('ModelsPage', () => {
     )
     renderApp(<ModelsPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('db-fast'))
-    const inspector = screen.getByRole('complementary', { name: /alias inspector/i })
+    await user.click(within(table).getByRole('button', { name: /inspect alias db-fast/i }))
+    const inspector = screen.getByRole('dialog', { name: /alias inspector/i })
     await user.click(within(inspector).getByRole('button', { name: /^replace plan$/i }))
     const editor = await screen.findByRole('heading', { name: /replace plan:/i })
     const editorCard = editor.closest('div')
@@ -175,6 +175,26 @@ describe('ModelsPage', () => {
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent(/db-fast replaced/i)
     })
+  })
+
+  it('selects an alias from the keyboard through its named inspect control', async () => {
+    const user = userEvent.setup()
+    server.use(listOk())
+    renderApp(<ModelsPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    within(table)
+      .getByRole('button', { name: /inspect alias db-fast/i })
+      .focus()
+    await user.keyboard('{Enter}')
+    expect(await screen.findByRole('dialog', { name: /alias inspector/i })).toHaveTextContent(
+      'db-fast',
+    )
+    // Rows are static: no focusable grid rows remain.
+    expect(within(table).queryByRole('row', { selected: true })).not.toBeInTheDocument()
+    for (const row of within(table).getAllByRole('row')) {
+      expect(row).not.toHaveAttribute('tabindex')
+      expect(row).not.toHaveAttribute('aria-selected')
+    }
   })
 
   it('deletes with inline confirm and keeps file rows actionless', async () => {
@@ -234,39 +254,25 @@ describe('ModelsPage', () => {
     expect(screen.queryByRole('button', { name: /add step/i })).not.toBeInTheDocument()
   })
 
-  it('selects an alias with the Space key', async () => {
+  it('selects an alias with the Space key on its inspect control', async () => {
     const user = userEvent.setup()
     server.use(listOk())
     renderApp(<ModelsPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    within(table).getByText('db-fast').closest('tr')?.focus()
+    within(table)
+      .getByRole('button', { name: /inspect alias db-fast/i })
+      .focus()
     await user.keyboard('{ }')
-    expect(screen.getByRole('complementary', { name: /alias inspector/i })).toHaveTextContent(
-      'db-fast',
-    )
+    expect(screen.getByRole('dialog', { name: /alias inspector/i })).toHaveTextContent('db-fast')
     await user.click(
-      within(screen.getByRole('complementary', { name: /alias inspector/i })).getByRole('button', {
+      within(screen.getByRole('dialog', { name: /alias inspector/i })).getByRole('button', {
         name: /close inspector/i,
       }),
     )
     await waitFor(() => {
-      expect(
-        screen.queryByRole('complementary', { name: /alias inspector/i }),
-      ).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: /alias inspector/i })).not.toBeInTheDocument()
     })
     expect(screen.getByText(/select a row to inspect an alias/i)).toBeInTheDocument()
-  })
-
-  it('selects an alias with the Space key', async () => {
-    const user = userEvent.setup()
-    server.use(listOk())
-    renderApp(<ModelsPage />, { adminSession: true })
-    const table = await screen.findByRole('table')
-    within(table).getByText('db-fast').closest('tr')?.focus()
-    await user.keyboard('{ }')
-    expect(screen.getByRole('complementary', { name: /alias inspector/i })).toHaveTextContent(
-      'db-fast',
-    )
   })
 
   it('clears the inspector when its alias is deleted', async () => {
@@ -277,16 +283,12 @@ describe('ModelsPage', () => {
     )
     renderApp(<ModelsPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('db-fast'))
-    expect(screen.getByRole('complementary', { name: /alias inspector/i })).toHaveTextContent(
-      'db-fast',
-    )
+    await user.click(within(table).getByRole('button', { name: /inspect alias db-fast/i }))
+    expect(screen.getByRole('dialog', { name: /alias inspector/i })).toHaveTextContent('db-fast')
     await user.click(within(table).getByRole('button', { name: /^delete$/i }))
     await user.click(screen.getByRole('button', { name: /^yes$/i }))
     await waitFor(() => {
-      expect(
-        screen.queryByRole('complementary', { name: /alias inspector/i }),
-      ).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: /alias inspector/i })).not.toBeInTheDocument()
     })
     expect(screen.getByText(/select a row to inspect an alias/i)).toBeInTheDocument()
   })
@@ -332,8 +334,8 @@ describe('ModelsPage', () => {
     server.use(listOk())
     renderApp(<ModelsPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('file-gpt'))
-    const inspector = screen.getByRole('complementary', { name: /alias inspector/i })
+    await user.click(within(table).getByRole('button', { name: /inspect alias file-gpt/i }))
+    const inspector = screen.getByRole('dialog', { name: /alias inspector/i })
     expect(inspector).toHaveTextContent(/file bound aliases are read only/i)
     expect(
       within(inspector).queryByRole('button', { name: /^replace plan$/i }),
@@ -352,8 +354,8 @@ describe('ModelsPage', () => {
     )
     renderApp(<ModelsPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('db-fast'))
-    const inspector = screen.getByRole('complementary', { name: /alias inspector/i })
+    await user.click(within(table).getByRole('button', { name: /inspect alias db-fast/i }))
+    const inspector = screen.getByRole('dialog', { name: /alias inspector/i })
     await user.click(within(inspector).getByRole('button', { name: /^replace plan$/i }))
     const editor = await screen.findByRole('heading', { name: /replace plan:/i })
     const editorCard = editor.closest('div')
@@ -376,8 +378,8 @@ describe('ModelsPage', () => {
     )
     renderApp(<ModelsPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('db-fast'))
-    const inspector = screen.getByRole('complementary', { name: /alias inspector/i })
+    await user.click(within(table).getByRole('button', { name: /inspect alias db-fast/i }))
+    const inspector = screen.getByRole('dialog', { name: /alias inspector/i })
     await user.click(within(inspector).getByRole('button', { name: /^replace plan$/i }))
     const editor = await screen.findByRole('heading', { name: /replace plan:/i })
     const editorCard = editor.closest('div')
@@ -397,13 +399,18 @@ describe('ModelsPage', () => {
       listOk(),
       http.put('*/v1/admin/models/:name', async ({ request }) => {
         body = await request.json()
-        return HttpResponse.json({})
+        return HttpResponse.json({
+          name: 'db-fast',
+          chain: [{ providerName: 'openai', modelOverride: 'gpt-x' }],
+          strategy: 'SEQUENTIAL',
+          source: 'database',
+        })
       }),
     )
     renderApp(<ModelsPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('db-fast'))
-    const inspector = screen.getByRole('complementary', { name: /alias inspector/i })
+    await user.click(within(table).getByRole('button', { name: /inspect alias db-fast/i }))
+    const inspector = screen.getByRole('dialog', { name: /alias inspector/i })
     await user.click(within(inspector).getByRole('button', { name: /^replace plan$/i }))
     const editor = await screen.findByRole('heading', { name: /replace plan:/i })
     const editorCard = editor.closest('div')
@@ -442,8 +449,8 @@ describe('ModelsPage', () => {
     server.use(listOk())
     renderApp(<ModelsPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('db-fast'))
-    const inspector = screen.getByRole('complementary', { name: /alias inspector/i })
+    await user.click(within(table).getByRole('button', { name: /inspect alias db-fast/i }))
+    const inspector = screen.getByRole('dialog', { name: /alias inspector/i })
     await user.click(within(inspector).getByRole('button', { name: /^replace plan$/i }))
     await screen.findByRole('heading', { name: /replace plan:/i })
     expect(screen.getByRole('combobox', { name: /provider 1/i })).toHaveTextContent(/openai/)
@@ -500,42 +507,29 @@ describe('ModelsPage', () => {
     })
   })
 
-  it('selects and deselects rows on click', async () => {
+  it('selects and deselects aliases through the inspect control', async () => {
     const user = userEvent.setup()
     server.use(listOk())
     renderApp(<ModelsPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('db-fast'))
-    expect(await screen.findByRole('complementary')).toHaveTextContent('db-fast')
-    await user.click(within(table).getByText('db-fast'))
+    await user.click(within(table).getByRole('button', { name: /inspect alias db-fast/i }))
+    expect(await screen.findByRole('dialog')).toHaveTextContent('db-fast')
+    await user.click(within(table).getByRole('button', { name: /inspect alias db-fast/i }))
     await waitFor(() => {
-      expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     })
   })
 
-  it('selects rows from the keyboard', async () => {
+  it('ignores non-action keys when the inspect control is focused', async () => {
     const user = userEvent.setup()
     server.use(listOk())
     renderApp(<ModelsPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    within(table).getByText('db-fast').closest('tr')?.focus()
-    await user.keyboard('{Enter}')
-    expect(await screen.findByRole('complementary')).toHaveTextContent('db-fast')
-    within(table).getByText('db-fast').closest('tr')?.focus()
-    await user.keyboard('{ }')
-    await waitFor(() => {
-      expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
-    })
-  })
-
-  it('ignores non-action keys on rows', async () => {
-    const user = userEvent.setup()
-    server.use(listOk())
-    renderApp(<ModelsPage />, { adminSession: true })
-    const table = await screen.findByRole('table')
-    within(table).getByText('db-fast').closest('tr')?.focus()
+    within(table)
+      .getByRole('button', { name: /inspect alias db-fast/i })
+      .focus()
     await user.keyboard('a')
-    expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   it('seeds the replace editor with a blank step for empty chains', async () => {
@@ -550,7 +544,7 @@ describe('ModelsPage', () => {
     renderApp(<ModelsPage />, { adminSession: true })
     const table = await screen.findByRole('table')
     expect(within(table).getByText('empty-db').closest('tr')).toHaveTextContent('none')
-    await user.click(within(table).getByText('empty-db'))
+    await user.click(within(table).getByRole('button', { name: /inspect alias empty-db/i }))
     await user.click(await screen.findByRole('button', { name: /^replace plan$/i }))
     await waitFor(() => {
       expect(screen.getByText(/replace plan:/i)).toHaveTextContent('empty-db')
@@ -669,8 +663,8 @@ describe('ModelsPage', () => {
     )
     renderApp(<ModelsPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('legacy'))
-    const inspector = screen.getByRole('complementary', { name: /alias inspector/i })
+    await user.click(within(table).getByRole('button', { name: /inspect alias legacy/i }))
+    const inspector = screen.getByRole('dialog', { name: /alias inspector/i })
     await user.click(within(inspector).getByRole('button', { name: /^replace plan$/i }))
     await screen.findByRole('heading', { name: /replace plan:/i })
     expect(screen.getByRole('combobox', { name: /provider 1/i })).toHaveTextContent(

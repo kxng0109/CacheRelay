@@ -2,6 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
+import { useAuthStore } from '../../shared/auth/store.js'
 import { server } from '../../test/setup.js'
 import { renderApp } from '../../test/utils.js'
 import { McpPage } from './page.js'
@@ -57,14 +58,46 @@ describe('McpPage', () => {
     expect(screen.getByText(/tools:/i)).toHaveTextContent('3')
   })
 
+  it('sends the pasted gateway key even when a session is present', async () => {
+    let auth: string | null = null
+    server.use(
+      http.post('*/v1/mcp', ({ request }) => {
+        auth = request.headers.get('authorization')
+        return HttpResponse.json(toolsList())
+      }),
+    )
+    renderApp(<McpPage />, { gatewayKey: 'gw-pasted-key', adminSession: true })
+    await screen.findByRole('table')
+    expect(auth).toBe('Bearer gw-pasted-key')
+  })
+
+  it('refetches with the new key after a key switch', async () => {
+    const seen: string[] = []
+    server.use(
+      http.post('*/v1/mcp', ({ request }) => {
+        seen.push(request.headers.get('authorization') ?? '')
+        return HttpResponse.json(toolsList())
+      }),
+    )
+    renderApp(<McpPage />, { gatewayKey: 'gw-first' })
+    await screen.findByRole('table')
+    expect(seen).toEqual(['Bearer gw-first'])
+    useAuthStore.getState().setGatewayKey('gw-second')
+    await waitFor(() => {
+      expect(seen).toEqual(['Bearer gw-first', 'Bearer gw-second'])
+    })
+  })
+
   it('selects a tool with the keyboard', async () => {
     const user = userEvent.setup()
     server.use(http.post('*/v1/mcp', () => HttpResponse.json(toolsList())))
     renderApp(<McpPage />, { gatewayKey: 'gw-test' })
     const table = await screen.findByRole('table')
-    within(table).getByText('postgres__run_query').closest('tr')?.focus()
+    within(table)
+      .getByRole('button', { name: /inspect tool postgres__run_query/i })
+      .focus()
     await user.keyboard('{Enter}')
-    expect(screen.getByRole('complementary', { name: /tool inspector/i })).toHaveTextContent(
+    expect(screen.getByRole('dialog', { name: /tool inspector/i })).toHaveTextContent(
       'postgres__run_query',
     )
   })
@@ -74,13 +107,13 @@ describe('McpPage', () => {
     server.use(http.post('*/v1/mcp', () => HttpResponse.json(toolsList())))
     renderApp(<McpPage />, { gatewayKey: 'gw-test' })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('postgres__run_query'))
-    const inspector = await screen.findByRole('complementary', { name: /tool inspector/i })
+    await user.click(
+      within(table).getByRole('button', { name: /inspect tool postgres__run_query/i }),
+    )
+    const inspector = await screen.findByRole('dialog', { name: /tool inspector/i })
     await user.click(within(inspector).getByRole('button', { name: /close inspector/i }))
     await waitFor(() => {
-      expect(
-        screen.queryByRole('complementary', { name: /tool inspector/i }),
-      ).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: /tool inspector/i })).not.toBeInTheDocument()
     })
     expect(screen.getByText(/select a tool to inspect/i)).toBeInTheDocument()
   })
@@ -92,8 +125,10 @@ describe('McpPage', () => {
     const table = await screen.findByRole('table')
     await user.type(screen.getByLabelText(/filter tools/i), 'postgres')
     expect(table).toHaveTextContent('postgres__run_query')
-    await user.click(within(table).getByText('postgres__run_query'))
-    const inspector = screen.getByRole('complementary', { name: /tool inspector/i })
+    await user.click(
+      within(table).getByRole('button', { name: /inspect tool postgres__run_query/i }),
+    )
+    const inspector = screen.getByRole('dialog', { name: /tool inspector/i })
     expect(inspector).toHaveTextContent('read')
     expect(inspector).toHaveTextContent('destructive')
     expect(inspector).toHaveTextContent('idempotent')
@@ -155,13 +190,15 @@ describe('McpPage', () => {
     server.use(http.post('*/v1/mcp', () => HttpResponse.json(toolsList())))
     renderApp(<McpPage />, { gatewayKey: 'gw-test' })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('postgres__run_query'))
-    expect(screen.getByRole('complementary', { name: /tool inspector/i })).toHaveTextContent('sql')
-    await user.click(within(table).getByText('postgres__run_query'))
+    await user.click(
+      within(table).getByRole('button', { name: /inspect tool postgres__run_query/i }),
+    )
+    expect(screen.getByRole('dialog', { name: /tool inspector/i })).toHaveTextContent('sql')
+    await user.click(
+      within(table).getByRole('button', { name: /inspect tool postgres__run_query/i }),
+    )
     await waitFor(() => {
-      expect(
-        screen.queryByRole('complementary', { name: /tool inspector/i }),
-      ).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: /tool inspector/i })).not.toBeInTheDocument()
     })
     expect(screen.getByText(/select a tool to inspect/i)).toBeInTheDocument()
   })
@@ -171,8 +208,8 @@ describe('McpPage', () => {
     server.use(http.post('*/v1/mcp', () => HttpResponse.json(toolsList())))
     renderApp(<McpPage />, { gatewayKey: 'gw-test' })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('broken'))
-    const inspector = screen.getByRole('complementary', { name: /tool inspector/i })
+    await user.click(within(table).getByRole('button', { name: /inspect tool broken/i }))
+    const inspector = screen.getByRole('dialog', { name: /tool inspector/i })
     expect(inspector).toHaveTextContent('No description.')
   })
 

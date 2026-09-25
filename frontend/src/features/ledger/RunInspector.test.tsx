@@ -87,12 +87,8 @@ describe('RunInspector', () => {
     server.use(summary(), entries(), receipt())
     renderApp(<LedgerPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    const cell = within(table).getAllByText('gpt-4o-mini')[0]
-    expect(cell).toBeDefined()
-    if (cell !== undefined) {
-      await user.click(cell)
-    }
-    const inspector = await screen.findByRole('complementary')
+    await user.click(within(table).getByRole('button', { name: /inspect receipt r9/i }))
+    const inspector = await screen.findByRole('dialog')
     expect(within(inspector).getByText('tenant-corp')).toBeInTheDocument()
     expect(within(inspector).getAllByText('openai').length).toBeGreaterThanOrEqual(2)
     await waitFor(() => {
@@ -105,15 +101,11 @@ describe('RunInspector', () => {
     server.use(summary(), entries(), receipt())
     renderApp(<LedgerPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    const row = within(table).getAllByText('gpt-4o-mini')[0]?.closest('tr')
-    expect(row).not.toBeNull()
-    if (row !== null && row !== undefined) {
-      await user.click(row)
-    }
-    await screen.findByRole('complementary')
+    await user.click(within(table).getByRole('button', { name: /inspect receipt r9/i }))
+    await screen.findByRole('dialog')
     await user.keyboard('{Escape}')
     await waitFor(() => {
-      expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     })
     expect(screen.getByText(/select a row to inspect/i)).toBeInTheDocument()
   })
@@ -123,16 +115,12 @@ describe('RunInspector', () => {
     server.use(summary(), entries(), receipt())
     renderApp(<LedgerPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    const cell = within(table).getAllByText('gpt-4o-mini')[0]
-    expect(cell).toBeDefined()
-    if (cell !== undefined) {
-      await user.click(cell)
-    }
-    await screen.findByRole('complementary')
-    const inspector = screen.getByRole('complementary')
+    await user.click(within(table).getByRole('button', { name: /inspect receipt r9/i }))
+    await screen.findByRole('dialog')
+    const inspector = screen.getByRole('dialog')
     await user.click(within(inspector).getByRole('button', { name: /close inspector/i }))
     await waitFor(() => {
-      expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     })
     expect(screen.getByText(/select a row to inspect/i)).toBeInTheDocument()
   })
@@ -142,15 +130,11 @@ describe('RunInspector', () => {
     server.use(summary(), entries(), receipt())
     renderApp(<LedgerPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    const cell = within(table).getAllByText('gpt-4o-mini')[0]
-    expect(cell).toBeDefined()
-    if (cell !== undefined) {
-      await user.click(cell)
-    }
-    await screen.findByRole('complementary')
+    await user.click(within(table).getByRole('button', { name: /inspect receipt r9/i }))
+    await screen.findByRole('dialog')
     await user.click(screen.getByRole('button', { name: /dismiss inspector/i }))
     await waitFor(() => {
-      expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     })
     expect(screen.getByText(/select a row to inspect/i)).toBeInTheDocument()
   })
@@ -160,12 +144,8 @@ describe('RunInspector', () => {
     server.use(summary(), entries(), receipt())
     renderApp(<LedgerPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    const cell = within(table).getAllByText('gpt-4o-mini')[0]
-    expect(cell).toBeDefined()
-    if (cell !== undefined) {
-      await user.click(cell)
-    }
-    await screen.findByRole('complementary')
+    await user.click(within(table).getByRole('button', { name: /inspect receipt r9/i }))
+    await screen.findByRole('dialog')
     await user.type(screen.getByLabelText(/filter audit log/i), 'zzz-no-match')
     await waitFor(() => {
       expect(screen.getByText(/left the visible page/i)).toBeInTheDocument()
@@ -177,17 +157,13 @@ describe('RunInspector', () => {
     server.use(summary(), entries(), receipt())
     renderApp(<LedgerPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    const first = within(table).getAllByText('gpt-4o-mini')[0]
-    expect(first).toBeDefined()
-    if (first !== undefined) {
-      await user.click(first)
-    }
+    await user.click(within(table).getByRole('button', { name: /inspect receipt r9/i }))
     await user.click(screen.getByRole('button', { name: /next receipt/i }))
-    expect(screen.getByRole('complementary')).toHaveTextContent('r10')
+    expect(screen.getByRole('dialog')).toHaveTextContent('r10')
     await user.click(screen.getByRole('button', { name: /previous receipt/i }))
-    expect(screen.getByRole('complementary')).toHaveTextContent('r9')
+    expect(screen.getByRole('dialog')).toHaveTextContent('r9')
     await user.click(screen.getByRole('button', { name: /previous receipt/i }))
-    expect(screen.getByRole('complementary')).toHaveTextContent('r10')
+    expect(screen.getByRole('dialog')).toHaveTextContent('r10')
   })
 
   it('reads a gone receipt without crashing', async () => {
@@ -199,11 +175,7 @@ describe('RunInspector', () => {
     )
     renderApp(<LedgerPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    const gone = within(table).getAllByText('gpt-4o-mini')[0]
-    expect(gone).toBeDefined()
-    if (gone !== undefined) {
-      await user.click(gone)
-    }
+    await user.click(within(table).getByRole('button', { name: /inspect receipt r9/i }))
     await waitFor(() => {
       expect(screen.getByText(/receipt unavailable/i)).toBeInTheDocument()
     })
@@ -249,8 +221,8 @@ describe('RunInspector', () => {
     )
     renderApp(<LedgerPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('qwen'))
-    const inspector = await screen.findByRole('complementary')
+    await user.click(within(table).getByRole('button', { name: /inspect receipt r-free/i }))
+    const inspector = await screen.findByRole('dialog')
     expect(within(inspector).getByText('free')).toBeInTheDocument()
     expect(within(inspector).getAllByText(/l0-memory/i).length).toBeGreaterThan(0)
   })
@@ -295,8 +267,8 @@ describe('RunInspector', () => {
     )
     renderApp(<LedgerPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('qwen'))
-    const inspector = await screen.findByRole('complementary')
+    await user.click(within(table).getByRole('button', { name: /inspect receipt r-odd/i }))
+    const inspector = await screen.findByRole('dialog')
     expect(within(inspector).getByText('not-a-date')).toBeInTheDocument()
   })
 
@@ -340,8 +312,8 @@ describe('RunInspector', () => {
     )
     renderApp(<LedgerPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('gpt-4o-mini'))
-    const inspector = await screen.findByRole('complementary')
+    await user.click(within(table).getByRole('button', { name: /inspect receipt r-live/i }))
+    const inspector = await screen.findByRole('dialog')
     expect(within(inspector).getByText('50µ$')).toBeInTheDocument()
     expect(within(inspector).getByText('no')).toBeInTheDocument()
   })
@@ -351,12 +323,8 @@ describe('RunInspector', () => {
     server.use(summary(), entries(), receipt())
     renderApp(<LedgerPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    const cell = within(table).getAllByText('gpt-4o-mini')[0]
-    expect(cell).toBeDefined()
-    if (cell !== undefined) {
-      await user.click(cell)
-    }
-    const inspector = await screen.findByRole('complementary')
+    await user.click(within(table).getByRole('button', { name: /inspect receipt r9/i }))
+    const inspector = await screen.findByRole('dialog')
     await user.click(within(inspector).getByText('Raw JSON'))
     expect(within(inspector).getAllByText(/tenant-corp/).length).toBeGreaterThan(1)
   })
@@ -385,12 +353,8 @@ describe('RunInspector', () => {
     )
     renderApp(<LedgerPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    const cell = within(table).getAllByText('gpt-4o-mini')[0]
-    expect(cell).toBeDefined()
-    if (cell !== undefined) {
-      await user.click(cell)
-    }
-    const inspector = await screen.findByRole('complementary')
+    await user.click(within(table).getByRole('button', { name: /inspect receipt r9/i }))
+    const inspector = await screen.findByRole('dialog')
     await waitFor(() => {
       const badges = within(inspector).getAllByText('Cached', { exact: true })
       const badge = badges.find((el) => el.tagName === 'SPAN')
@@ -410,12 +374,8 @@ describe('RunInspector', () => {
     )
     renderApp(<LedgerPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    const cell = within(table).getAllByText('gpt-4o-mini')[0]
-    expect(cell).toBeDefined()
-    if (cell !== undefined) {
-      await user.click(cell)
-    }
-    await screen.findByRole('complementary')
+    await user.click(within(table).getByRole('button', { name: /inspect receipt r9/i }))
+    await screen.findByRole('dialog')
     await waitFor(() => {
       expect(screen.queryByLabelText(/receipt overview/i)).not.toBeInTheDocument()
     })

@@ -73,6 +73,24 @@ describe('ApprovalsPage', () => {
     })
   })
 
+  it('attributes the decision to the session username', async () => {
+    const user = userEvent.setup()
+    let body: unknown = null
+    server.use(
+      http.get('*/v1/admin/mcp/approvals/pending', () => HttpResponse.json(PENDING)),
+      http.post('*/v1/admin/mcp/approvals/:id/approve', async ({ request }) => {
+        body = await request.json()
+        return new HttpResponse(null, { status: 200 })
+      }),
+    )
+    renderBoard()
+    await user.click(await screen.findByRole('button', { name: /^approve$/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/a1: approved/i)).toBeInTheDocument()
+    })
+    expect(body).toMatchObject({ decidedBy: 'test-admin' })
+  })
+
   it('rejects a pending tool call', async () => {
     const user = userEvent.setup()
     server.use(

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { GatewayClient } from '../../shared/api/client.js'
 import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
+import { TableScroll } from '../../shared/components/TableScroll.js'
 import {
   formatCount,
   formatDurationMs,
@@ -72,7 +73,7 @@ function LedgerBoard(): React.JSX.Element {
             {summary.error.message}
           </p>
         ) : summary.data === undefined ? null : (
-          <dl className="grid grid-cols-3 gap-3">
+          <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
               <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Requests</dt>
               <dd className="font-mono text-lg tnum">{formatCount(summary.data.totalRequests)}</dd>
@@ -150,75 +151,72 @@ function LedgerBoard(): React.JSX.Element {
               </p>
             ) : (
               <>
-                <table className="w-full text-left text-sm">
-                  <caption className="sr-only">Audit log entries</caption>
-                  <thead className="sticky top-0 bg-paper dark:bg-night">
-                    <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
-                      <th scope="col" className="py-2 pr-3 font-medium">
-                        Request
-                      </th>
-                      <th scope="col" className="py-2 pr-3 font-medium">
-                        Model
-                      </th>
-                      <th scope="col" className="py-2 pr-3 text-right font-medium">
-                        Cost (µ$)
-                      </th>
-                      <th scope="col" className="py-2 text-right font-medium">
-                        Created
-                      </th>
-                      <th scope="col" className="py-2 pl-1 font-medium">
-                        <span className="sr-only">Open receipt</span>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visible.map((e) => (
-                      <tr
-                        key={e.requestId}
-                        tabIndex={0}
-                        aria-selected={e.requestId === selected}
-                        onClick={() => {
-                          selectRow(e.requestId)
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault()
-                            selectRow(e.requestId)
-                          }
-                        }}
-                        className={`cursor-pointer border-t border-ink/10 hover:bg-ink/3 dark:border-parchment/10 dark:hover:bg-parchment/4 ${
-                          e.requestId === selected ? 'bg-ink/4 dark:bg-parchment/6' : ''
-                        }`}
-                      >
-                        <td
-                          className="max-w-44 truncate py-2 pr-3 font-mono text-[13px]"
-                          title={e.requestId}
-                        >
-                          {e.requestId}
-                        </td>
-                        <td className="max-w-40 truncate py-2 pr-3 text-[13px]" title={e.model}>
-                          {e.model}
-                        </td>
-                        <td className="py-2 pr-3 text-right font-mono text-[13px] tnum">
-                          {e.costUsdMicros === 0 ? (
-                            <span className="text-ink-soft dark:text-parchment-soft">free</span>
-                          ) : (
-                            formatMicros(e.costUsdMicros)
-                          )}
-                        </td>
-                        <td className="py-2 text-right text-[13px] tnum" title={e.createdAt}>
-                          {formatShortDate(e.createdAt)}
-                        </td>
-                        <td
-                          aria-hidden="true"
-                          className="py-2 pl-1 text-ink-soft dark:text-parchment-soft"
-                        >
-                          ›
-                        </td>
+                <TableScroll>
+                  <table className="w-full text-left text-sm">
+                    <caption className="sr-only">Audit log entries</caption>
+                    <thead className="sticky top-0 bg-paper dark:bg-night">
+                      <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+                        <th scope="col" className="py-2 pr-3 font-medium">
+                          Request
+                        </th>
+                        <th scope="col" className="py-2 pr-3 font-medium">
+                          Model
+                        </th>
+                        <th scope="col" className="py-2 pr-3 text-right font-medium">
+                          Cost (µ$)
+                        </th>
+                        <th scope="col" className="py-2 text-right font-medium">
+                          Created
+                        </th>
+                        <th scope="col" className="py-2 pl-1 font-medium">
+                          <span className="sr-only">Open receipt</span>
+                        </th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {visible.map((e) => (
+                        <tr
+                          key={e.requestId}
+                          className={`border-t border-ink/10 hover:bg-ink/3 dark:border-parchment/10 dark:hover:bg-parchment/4 ${
+                            e.requestId === selected ? 'bg-ink/4 dark:bg-parchment/6' : ''
+                          }`}
+                        >
+                          <td
+                            className="max-w-44 truncate py-2 pr-3 font-mono text-[13px]"
+                            title={e.requestId}
+                          >
+                            {e.requestId}
+                          </td>
+                          <td className="max-w-40 truncate py-2 pr-3 text-[13px]" title={e.model}>
+                            {e.model}
+                          </td>
+                          <td className="py-2 pr-3 text-right font-mono text-[13px] tnum">
+                            {e.costUsdMicros === 0 ? (
+                              <span className="text-ink-soft dark:text-parchment-soft">free</span>
+                            ) : (
+                              formatMicros(e.costUsdMicros)
+                            )}
+                          </td>
+                          <td className="py-2 text-right text-[13px] tnum" title={e.createdAt}>
+                            {formatShortDate(e.createdAt)}
+                          </td>
+                          <td className="py-2 pl-1 text-right">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                selectRow(e.requestId)
+                              }}
+                              aria-label={`Inspect receipt ${e.requestId}`}
+                              className="rounded px-1 text-ink-soft dark:text-parchment-soft"
+                            >
+                              <span aria-hidden="true">›</span>
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </TableScroll>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <button
                     type="button"

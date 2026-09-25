@@ -1,5 +1,6 @@
 import type { DashboardView } from '../../shared/api/types.js'
 import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
+import { TableScroll } from '../../shared/components/TableScroll.js'
 import {
   formatCount,
   formatDurationMs,
@@ -68,7 +69,7 @@ export function SummaryBoard({ view }: SummaryBoardProps): React.JSX.Element {
           {`Updated ${formatRelativeTime(view.generatedAt) ?? 'recently'}`}
         </p>
       )}
-      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
           <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Requests</dt>
           <dd className="font-mono text-lg tnum">{formatCount(summary.totalRequests)}</dd>
@@ -93,74 +94,78 @@ export function SummaryBoard({ view }: SummaryBoardProps): React.JSX.Element {
         </div>
       </dl>
       {summary.byModel.length === 0 ? null : (
-        <table className="w-full text-left text-sm">
-          <caption className="sr-only">Usage by model</caption>
-          <thead>
-            <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
-              <th scope="col" className="py-2 pr-3 font-medium">
-                Model
-              </th>
-              <th scope="col" className="py-2 pr-3 text-right font-medium">
-                Requests
-              </th>
-              <th scope="col" className="py-2 text-right font-medium">
-                Cost (µ$)
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {summary.byModel.map((row) => (
-              <tr
-                key={`${row.provider}/${row.model}`}
-                className="border-t border-ink/10 dark:border-parchment/10"
-              >
-                <td
-                  className="max-w-44 truncate py-2 pr-3 text-[13px]"
-                  title={`${row.provider}/${row.model}`}
-                >
-                  {row.provider}/{row.model}
-                </td>
-                <td className="py-2 pr-3 text-right font-mono text-[13px] tnum">
-                  {formatCount(row.totalRequests)}
-                </td>
-                <td className="py-2 text-right font-mono text-[13px] tnum">
-                  {formatMicros(row.totalCostUsdMicros)}
-                </td>
+        <TableScroll>
+          <table className="w-full text-left text-sm">
+            <caption className="sr-only">Usage by model</caption>
+            <thead>
+              <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+                <th scope="col" className="py-2 pr-3 font-medium">
+                  Model
+                </th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">
+                  Requests
+                </th>
+                <th scope="col" className="py-2 text-right font-medium">
+                  Cost (µ$)
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {summary.byModel.map((row) => (
+                <tr
+                  key={`${row.provider}/${row.model}`}
+                  className="border-t border-ink/10 dark:border-parchment/10"
+                >
+                  <td
+                    className="max-w-44 truncate py-2 pr-3 text-[13px]"
+                    title={`${row.provider}/${row.model}`}
+                  >
+                    {row.provider}/{row.model}
+                  </td>
+                  <td className="py-2 pr-3 text-right font-mono text-[13px] tnum">
+                    {formatCount(row.totalRequests)}
+                  </td>
+                  <td className="py-2 text-right font-mono text-[13px] tnum">
+                    {formatMicros(row.totalCostUsdMicros)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableScroll>
       )}
       {summary.byProvider.length === 0 ? null : (
-        <table className="w-full text-left text-sm">
-          <caption className="sr-only">Usage by provider</caption>
-          <thead>
-            <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
-              <th scope="col" className="py-2 pr-3 font-medium">
-                Provider
-              </th>
-              <th scope="col" className="py-2 pr-3 text-right font-medium">
-                Requests
-              </th>
-              <th scope="col" className="py-2 text-right font-medium">
-                Cost (µ$)
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {summary.byProvider.map((row) => (
-              <tr key={row.provider} className="border-t border-ink/10 dark:border-parchment/10">
-                <td className="py-2 pr-3 text-[13px]">{row.provider}</td>
-                <td className="py-2 pr-3 text-right font-mono text-[13px] tnum">
-                  {formatCount(row.totalRequests)}
-                </td>
-                <td className="py-2 text-right font-mono text-[13px] tnum">
-                  {formatMicros(row.totalCostUsdMicros)}
-                </td>
+        <TableScroll>
+          <table className="w-full text-left text-sm">
+            <caption className="sr-only">Usage by provider</caption>
+            <thead>
+              <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+                <th scope="col" className="py-2 pr-3 font-medium">
+                  Provider
+                </th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">
+                  Requests
+                </th>
+                <th scope="col" className="py-2 text-right font-medium">
+                  Cost (µ$)
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {summary.byProvider.map((row) => (
+                <tr key={row.provider} className="border-t border-ink/10 dark:border-parchment/10">
+                  <td className="py-2 pr-3 text-[13px]">{row.provider}</td>
+                  <td className="py-2 pr-3 text-right font-mono text-[13px] tnum">
+                    {formatCount(row.totalRequests)}
+                  </td>
+                  <td className="py-2 text-right font-mono text-[13px] tnum">
+                    {formatMicros(row.totalCostUsdMicros)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableScroll>
       )}
     </div>
   )

@@ -84,6 +84,7 @@ describe('SsoCallback', () => {
       expect(screen.getByRole('alert')).toHaveTextContent(/idp account may be disabled/i)
     })
     expect(useAuthStore.getState().session).toBeNull()
+    expect(window.location.hash).toBe('')
   })
 
   it('treats 403 like 401 for disabled accounts', async () => {
@@ -106,5 +107,6 @@ describe('SsoCallback', () => {
       },
       { timeout: 5000 },
     )
+    expect(window.location.hash).toBe('')
   })
 })

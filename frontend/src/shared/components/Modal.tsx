@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { useOverlayFocus } from './useOverlayFocus.js'
 
 /**
  * Shared centered dialog for every form popup in the console.
@@ -36,18 +38,25 @@ export function Modal({
   const [entered, setEntered] = useState(false)
   const [leaving, setLeaving] = useState(false)
   const leaveTimer = useRef<number | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  // Shared overlay contract: origin capture, initial focus, Tab trap,
+  // background inert, focus return (FE-09). The panel portals to `body`
+  // so the background splits cleanly at the `body` child level.
+  const { release } = useOverlayFocus(panelRef)
 
   // Dismissals play the exit before unmounting. The delay matches the
-  // --dur-panel motion token used by the entrance.
+  // --dur-panel motion token used by the entrance. Focus returns the
+  // moment the close starts, never inside the fading tree.
   const requestClose = useCallback((): void => {
     if (leaving) return
+    release()
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       onClose()
       return
     }
     setLeaving(true)
     leaveTimer.current = window.setTimeout(onClose, 280)
-  }, [leaving, onClose])
+  }, [leaving, onClose, release])
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -61,7 +70,7 @@ export function Modal({
 
   const show = entered && !leaving
 
-  return (
+  return createPortal(
     <div
       className={`fixed inset-0 z-50 m-0 flex items-center justify-center bg-night/60 p-4 transition-opacity duration-(--dur-panel) ${
         show ? 'opacity-100' : 'opacity-0'
@@ -74,6 +83,7 @@ export function Modal({
       }}
     >
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label={label}
@@ -99,6 +109,7 @@ export function Modal({
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

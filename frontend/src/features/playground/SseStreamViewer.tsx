@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { parseRateLimit, resolveApiBase } from '../../shared/api/client.js'
-import { openSseStream } from '../../shared/sse/client.js'
+import { createIdempotencyKey, openSseStream } from '../../shared/sse/client.js'
 import { useRateLimitStore } from '../../shared/ratelimit/store.js'
 import type { ChatMessage } from '../../shared/api/types.js'
 
@@ -21,8 +21,13 @@ export interface StreamSummary {
   age: string | null
   /** Wall clock milliseconds from mount to settle. */
   durationMs: number
-  /** Terminal phase. */
-  phase: 'done' | 'error'
+  /**
+   * Terminal phase. `incomplete` means frames arrived before the failure:
+   * the partial transcript is kept and nothing was retried automatically.
+   * `stopped` means the operator pressed Stop: a first-class neutral
+   * outcome, never an error (DEF-06).
+   */
+  phase: 'done' | 'error' | 'incomplete' | 'stopped'
   /** Failure message, error runs only. */
   error?: string
 }
@@ -74,6 +79,14 @@ function extractPiece(data: string): string {
 }
 
 /**
+ * Transcript ceiling (chars). Past it the viewer stops the stream with a
+ * visible notice instead of growing one string plus one giant text node
+ * until the tab stalls. The client stream cap stays larger, so truncation
+ * always lands here first with a coherent message.
+ */
+const MAX_TRANSCRIPT_CHARS = 2_097_152
+
+/**
  * Live token stream viewer for chat completions.
  *
  * @remarks
@@ -95,10 +108,19 @@ export function SseStreamViewer({
   onSummary,
 }: SseStreamViewerProps): React.JSX.Element {
   const [text, setText] = useState('')
-  const [phase, setPhase] = useState<'streaming' | 'done' | 'error'>('streaming')
+  const [phase, setPhase] = useState<'streaming' | 'done' | 'error' | 'incomplete' | 'stopped'>(
+    'streaming',
+  )
   const [error, setError] = useState<string | null>(null)
   const [malformed, setMalformed] = useState(0)
   const [tokens, setTokens] = useState(0)
+  const [retries, setRetries] = useState(0)
+  /**
+   * Manual-run counter. Bumping it restarts the stream effect with a fresh
+   * idempotency key: an operator-confirmed retry is a new billed run, never
+   * a replay of the chopped one.
+   */
+  const [runNonce, setRunNonce] = useState(0)
   const [copied, setCopied] = useState(false)
   const [copiedBytes, setCopiedBytes] = useState(0)
   const [copyError, setCopyError] = useState<string | null>(null)
@@ -115,6 +137,12 @@ export function SseStreamViewer({
   const rafRef = useRef(0)
   const ctrlRef = useRef<AbortController | null>(null)
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null)
+  const [truncated, setTruncated] = useState(false)
+  /**
+   * Truncation flag readable inside stream callbacks without retriggering
+   * the effect (state alone would go stale in the closure).
+   */
+  const truncatedRef = useRef(false)
   /**
    * Mount time for stream duration. Reported once in the summary so the
    * detail panel shows a real number without polling viewer state.
@@ -127,6 +155,16 @@ export function SseStreamViewer({
   })
 
   /**
+   * User-stop flag readable inside stream callbacks. Set only by the Stop
+   * button (never by truncation or unmount, which share `stopStream`):
+   * a flagged settle maps to the neutral `stopped` outcome instead of
+   * `done` or `error`, so stopping never reads as a failure (DEF-06).
+   * Abort still settles the input-known portion — backend hold semantics
+   * are unchanged; only the presentation is neutral.
+   */
+  const stopRequestedRef = useRef(false)
+
+  /**
    * Stops the active stream: cancels the pending reader first (an aborted
    * fetch alone never settles reads that already resolved headers), then
    * aborts the request itself.
@@ -136,6 +174,32 @@ export function SseStreamViewer({
     readerRef.current = null
     if (reader) void reader.cancel(new Error('Stopped by user.'))
     ctrlRef.current?.abort()
+  }
+
+  /**
+   * User-initiated stop: marks the run stopped, then tears down the
+   * stream. Truncation and unmount call `stopStream` directly so their
+   * settles keep their own meaning.
+   */
+  const stopByUser = (): void => {
+    stopRequestedRef.current = true
+    stopStream()
+  }
+
+  /**
+   * Restarts the stream as a new billed run after an incomplete stop.
+   * Per-run state resets; the effect mints a fresh idempotency key.
+   */
+  const retryRun = (): void => {
+    bufferRef.current = ''
+    setText('')
+    setPhase('streaming')
+    setError(null)
+    setMalformed(0)
+    setTokens(0)
+    setRetries(0)
+    stopRequestedRef.current = false
+    setRunNonce((n) => n + 1)
   }
 
   /**
@@ -167,7 +231,11 @@ export function SseStreamViewer({
   useEffect(() => {
     const ctrl = new AbortController()
     ctrlRef.current = ctrl
+    stopRequestedRef.current = false
     startRef.current = performance.now()
+    // One key per logical run: internal retries replay it, a manual retry
+    // mints a fresh one (see runNonce).
+    const idempotencyKey = createIdempotencyKey()
     let frames = 0
     let malformed = 0
     let tier: string | null = null
@@ -189,6 +257,26 @@ export function SseStreamViewer({
       fn()
     }
 
+    /**
+     * Settles a user stop as neutral: no error text, no alert, summary
+     * phase `stopped` without an error message.
+     */
+    const settleStopped = (): void => {
+      stop(() => {
+        setPhase('stopped')
+        setError(null)
+        summaryRef.current?.({
+          frames,
+          malformed,
+          cacheTier: tier,
+          similarity,
+          age,
+          durationMs: performance.now() - startRef.current,
+          phase: 'stopped',
+        })
+      })
+    }
+
     void openSseStream({
       url: `${resolveApiBase()}/v1/chat/completions`,
       method: 'POST',
@@ -200,6 +288,7 @@ export function SseStreamViewer({
       body: { model, messages, stream: true },
       signal: ctrl.signal,
       readerSlot: readerRef,
+      idempotencyKey,
       onHeaders: (headers, code) => {
         useRateLimitStore.getState().setSnapshot(parseRateLimit(headers, code))
         const headerTier = headers.get('X-Cache')
@@ -215,7 +304,14 @@ export function SseStreamViewer({
       ...(maxRetries === undefined ? {} : { maxRetries }),
       ...(heartbeatMs === undefined ? {} : { heartbeatMs }),
       onMessage: (data) => {
-        bufferRef.current += extractPiece(data)
+        const piece = extractPiece(data)
+        if (bufferRef.current.length + piece.length > MAX_TRANSCRIPT_CHARS) {
+          truncatedRef.current = true
+          setTruncated(true)
+          stopStream()
+          return
+        }
+        bufferRef.current += piece
         frames += 1
         setTokens(frames)
         schedule()
@@ -224,7 +320,32 @@ export function SseStreamViewer({
         malformed = count
         setMalformed(count)
       },
+      onRetry: (attempt) => {
+        setRetries(attempt)
+      },
+      onIncomplete: (e, delivered) => {
+        stop(() => {
+          setPhase('incomplete')
+          setError(
+            `Stream stopped incomplete after ${String(delivered)} frames. Kept what arrived — retry starts a new billed run. (${e.message})`,
+          )
+          summaryRef.current?.({
+            frames,
+            malformed,
+            cacheTier: tier,
+            similarity,
+            age,
+            durationMs: performance.now() - startRef.current,
+            phase: 'incomplete',
+            error: e.message,
+          })
+        })
+      },
       onDone: () => {
+        if (stopRequestedRef.current) {
+          settleStopped()
+          return
+        }
         stop(() => {
           setPhase('done')
           summaryRef.current?.({
@@ -235,10 +356,17 @@ export function SseStreamViewer({
             age,
             durationMs: performance.now() - startRef.current,
             phase: 'done',
+            ...(truncatedRef.current
+              ? { error: 'Output truncated — stream stopped at 2 MB.' }
+              : {}),
           })
         })
       },
       onError: (e) => {
+        if (stopRequestedRef.current) {
+          settleStopped()
+          return
+        }
         stop(() => {
           setPhase('error')
           setError(e.message)
@@ -264,7 +392,7 @@ export function SseStreamViewer({
       ctrl.abort()
       cancelAnimationFrame(rafRef.current)
     }
-  }, [token, actAsKey, model, messages, maxRetries, heartbeatMs])
+  }, [token, actAsKey, model, messages, maxRetries, heartbeatMs, runNonce])
 
   return (
     <section
@@ -277,6 +405,7 @@ export function SseStreamViewer({
         </p>
         <p className="text-[13px] tnum">Frames: {tokens}</p>
         <p className="text-[13px] tnum">Malformed: {malformed}</p>
+        <p className="text-[13px] tnum">Retries: {retries}</p>
         <p className="text-[13px] tnum">
           cache: {cacheTier ?? 'live'}
           {cacheSimilarity === null ? null : ` · sim ${cacheSimilarity}`}
@@ -295,11 +424,22 @@ export function SseStreamViewer({
           <button
             type="button"
             onClick={() => {
-              stopStream()
+              stopByUser()
             }}
             className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
           >
             Stop
+          </button>
+        ) : null}
+        {phase === 'incomplete' ? (
+          <button
+            type="button"
+            onClick={() => {
+              retryRun()
+            }}
+            className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+          >
+            Retry run
           </button>
         ) : null}
       </div>
@@ -313,6 +453,16 @@ export function SseStreamViewer({
           {error}
         </p>
       )}
+      {phase === 'stopped' ? (
+        <p role="status" className="mb-2 text-[13px] text-ink-soft dark:text-parchment-soft">
+          Stopped by user.
+        </p>
+      ) : null}
+      {truncated ? (
+        <p role="status" className="mb-2 text-[13px] text-warn dark:text-warn-soft">
+          Output truncated — stream stopped at 2 MB. Kept the first 2 MB.
+        </p>
+      ) : null}
       <div
         role="log"
         aria-live="polite"

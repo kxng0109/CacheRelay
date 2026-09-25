@@ -12,4 +12,12 @@ interface ImportMetaEnv {
   readonly VITE_MANAGEMENT_BASE_URL?: string
   /** `false` forces non-streaming JSON completions; anything else streams. */
   readonly VITE_FEATURE_STREAMING?: string
+  /** Comma-separated Spring registration ids for SSO entry buttons. */
+  readonly VITE_SSO_PROVIDERS?: string
+}
+
+interface ViteTypeOptions {
+  // Makes undeclared `import.meta.env` keys a type error, matching the
+  // docstring contract above (verified in vite `importMeta.d.ts`).
+  strictImportMetaEnv: unknown
 }

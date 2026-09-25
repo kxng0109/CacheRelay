@@ -13,7 +13,7 @@ export interface RunDetail {
   /** True while the stream is still open. */
   streaming: boolean
   /** Terminal state, or running while the stream is open. */
-  status: 'running' | 'done' | 'error'
+  status: 'running' | 'done' | 'error' | 'stopped'
   /** Wall clock milliseconds for static calls, or stream duration. */
   latencyMs?: number
   /** SSE frames received (streaming runs). */

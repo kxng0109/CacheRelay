@@ -14,6 +14,18 @@
 export const SSE_DONE = '[DONE]'
 const SSE_CONTENT_TYPE = 'text/event-stream'
 
+/**
+ * Per-frame ceiling (chars ≈ bytes for SSE text). Oversized frames are
+ * dropped and counted via `onMalformed`, never accumulated: a peer that
+ * never sends a blank line cannot grow the tab.
+ */
+const MAX_SSE_FRAME_CHARS = 1_048_576
+/**
+ * Per-attempt stream ceiling. Breaching ends the stream with an error
+ * instead of retrying: re-downloading a flood would hammer the gateway.
+ */
+const MAX_SSE_STREAM_CHARS = 8_388_608
+
 export interface SseCallbacks {
   /** Invoked once per `data:` payload (excluding `[DONE]`). */
   onMessage: (data: string) => void
@@ -23,6 +35,18 @@ export interface SseCallbacks {
   onError?: (error: Error) => void
   /** Invoked per malformed frame with the running total (never fatal). */
   onMalformed?: (count: number) => void
+  /**
+   * Invoked before each automatic retry with the 1-based retry number, so
+   * the UI can surface how many rebroadcasts a run needed.
+   */
+  onRetry?: (attempt: number) => void
+  /**
+   * Invoked when the stream fails after delivering frames. The partial
+   * transcript is kept and no automatic retry follows: retrying would bill
+   * a second completion and interleave a second generation. Falls back to
+   * `onError` when absent.
+   */
+  onIncomplete?: (error: Error, delivered: number) => void
 }
 
 export interface SseRequest {
@@ -33,6 +57,12 @@ export interface SseRequest {
   signal: AbortSignal
   maxRetries?: number
   heartbeatMs?: number
+  /**
+   * Idempotency key for the logical run. Generated per `openSseStream`
+   * call when absent and reused across every retry, so a retried
+   * completion replays byte-identically instead of billing twice.
+   */
+  idempotencyKey?: string
   /**
    * Receives the handshake response headers once the stream is accepted.
    * Lets the shell mirror operational headers (for example rate limits)
@@ -65,6 +95,37 @@ export function parseSseFrame(frame: string): string | null {
   }
   if (payload.length === 0) return null
   return payload.join('\n')
+}
+
+/**
+ * Handshake rejection carrying the HTTP status for retry classification.
+ * Only the transport raises it; callers distinguish deterministic denials
+ * (400/401/403/404/422 — surface immediately) from transient ones
+ * (408/429/5xx — worth a bounded retry) via `isRetryableHandshakeStatus`.
+ */
+export class SseHandshakeError extends Error {
+  /** HTTP status that refused the stream. */
+  readonly status: number
+
+  /**
+   * @param status - Refusing HTTP status.
+   */
+  constructor(status: number) {
+    super(`SSE handshake failed: HTTP ${String(status)}`)
+    this.name = 'SseHandshakeError'
+    this.status = status
+  }
+}
+
+/**
+ * Decides whether a refused handshake deserves a retry.
+ *
+ * @param status - Refusing HTTP status.
+ * @returns True for 408/429/5xx (transient); false for other 4xx
+ * (deterministic — retrying hammers the gateway for ~31 s with no hope).
+ */
+export function isRetryableHandshakeStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500
 }
 
 /**
@@ -125,6 +186,21 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /**
+ * Mints one idempotency key per logical stream run.
+ *
+ * @remarks Callers pass the result as `idempotencyKey` (or let
+ * `openSseStream` mint one). A manual "retry run" mints a fresh key: it is
+ * a new billed run by operator intent, never a replay.
+ *
+ * @returns A unique opaque key for the run.
+ */
+export function createIdempotencyKey(): string {
+  const g = globalThis as { crypto?: { randomUUID?: () => string } }
+  if (typeof g.crypto?.randomUUID === 'function') return g.crypto.randomUUID()
+  return `${Date.now().toString(36)}-${Math.floor(Math.random() * 0xffffff).toString(36)}`
+}
+
+/**
  * Opens an SSE stream with bounded retries and a heartbeat watchdog.
  *
  * @param req - Request, callbacks, and tuning (see {@link SseRequest}).
@@ -132,11 +208,18 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
 export async function openSseStream(req: SseRequest & SseCallbacks): Promise<void> {
   const maxRetries = req.maxRetries ?? 5
   const heartbeatMs = req.heartbeatMs ?? 30_000
+  const idempotencyKey = req.idempotencyKey ?? createIdempotencyKey()
   let attempt = 0
   let malformed = 0
+  let delivered = 0
 
   const connect = async (): Promise<void> => {
     let buffer = ''
+    // A chunk boundary may split a CRLF pair: a trailing CR is held back
+    // and reattached to the next chunk before normalization, so a split
+    // pair never becomes a false frame boundary.
+    let pendingCR = false
+    let streamChars = 0
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
     let watchdog: ReturnType<typeof setTimeout> | undefined
 
@@ -150,12 +233,15 @@ export async function openSseStream(req: SseRequest & SseCallbacks): Promise<voi
     try {
       const res = await fetch(req.url, {
         method: req.method ?? 'POST',
-        headers: { ...req.headers, Accept: SSE_CONTENT_TYPE },
+        headers: { ...req.headers, Accept: SSE_CONTENT_TYPE, 'Idempotency-Key': idempotencyKey },
         ...(req.body === undefined ? {} : { body: JSON.stringify(req.body) }),
         signal: req.signal,
       })
-      if (!res.ok || res.headers.get('content-type')?.startsWith(SSE_CONTENT_TYPE) !== true) {
-        throw new Error(`SSE handshake failed: HTTP ${String(res.status)}`)
+      if (!res.ok) {
+        throw new SseHandshakeError(res.status)
+      }
+      if (res.headers.get('content-type')?.startsWith(SSE_CONTENT_TYPE) !== true) {
+        throw new Error('SSE handshake failed: unexpected content type')
       }
       req.onHeaders?.(res.headers, null)
       if (res.body === null) throw new Error('SSE handshake failed: empty body')
@@ -170,20 +256,46 @@ export async function openSseStream(req: SseRequest & SseCallbacks): Promise<voi
           const { done, value } = await reader.read()
           if (done) break
           armWatchdog()
-          buffer += decoder.decode(value, { stream: true })
+          let chunk = decoder.decode(value, { stream: true })
+          if (pendingCR) {
+            chunk = '\r' + chunk
+            pendingCR = false
+          }
+          if (chunk.endsWith('\r')) {
+            pendingCR = true
+            chunk = chunk.slice(0, -1)
+          }
+          // WHATWG SSE lines may end CRLF, LF, or CR: normalize before
+          // scanning so CRLF-only peers dispatch instead of buffering
+          // forever while the tab grows.
+          chunk = chunk.replace(/\r\n|\r/g, '\n')
+          streamChars += chunk.length
+          if (streamChars > MAX_SSE_STREAM_CHARS) {
+            malformed += 1
+            req.onMalformed?.(malformed)
+            req.onError?.(new Error('SSE stream byte budget exceeded.'))
+            return
+          }
+          buffer += chunk
           let idx = buffer.indexOf('\n\n')
           while (idx >= 0) {
             const frame = buffer.slice(0, idx)
             buffer = buffer.slice(idx + 2)
-            const data = parseSseFrame(frame)
-            if (data === null) {
+            if (frame.length > MAX_SSE_FRAME_CHARS) {
               malformed += 1
               req.onMalformed?.(malformed)
-            } else if (data === SSE_DONE) {
-              req.onDone?.()
-              return
             } else {
-              req.onMessage(data)
+              const data = parseSseFrame(frame)
+              if (data === null) {
+                malformed += 1
+                req.onMalformed?.(malformed)
+              } else if (data === SSE_DONE) {
+                req.onDone?.()
+                return
+              } else {
+                delivered += 1
+                req.onMessage(data)
+              }
             }
             idx = buffer.indexOf('\n\n')
           }
@@ -202,9 +314,20 @@ export async function openSseStream(req: SseRequest & SseCallbacks): Promise<voi
         req.onError?.(new Error('Stream aborted.'))
         return
       }
+      if (delivered > 0) {
+        const incomplete = asError(error)
+        if (req.onIncomplete !== undefined) req.onIncomplete(incomplete, delivered)
+        else req.onError?.(incomplete)
+        return
+      }
+      if (error instanceof SseHandshakeError && !isRetryableHandshakeStatus(error.status)) {
+        req.onError?.(error)
+        return
+      }
       if (attempt < maxRetries) {
         const delay = backoffDelay(attempt)
         attempt += 1
+        req.onRetry?.(attempt)
         try {
           await abortableSleep(delay, req.signal)
         } catch {

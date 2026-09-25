@@ -1,8 +1,9 @@
 import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { resolveApiBase } from '../../shared/api/client.js'
 import { renderApp } from '../../test/utils.js'
-import { RequestCard } from './RequestCard.js'
+import { RequestCard, exampleRequest } from './RequestCard.js'
 
 function stubClipboard(writeText?: (s: string) => Promise<void>): void {
   Object.defineProperty(navigator, 'clipboard', {
@@ -33,6 +34,38 @@ describe('RequestCard', () => {
       expect(screen.getByRole('button', { name: /copied/i })).toBeInTheDocument()
     } finally {
       stubClipboard()
+    }
+  })
+
+  it('quotes server-controlled model ids so shells cannot break out', () => {
+    const evil = `x';$(touch pwned);echo '`
+    const snippet = exampleRequest(evil)
+    expect(snippet).toContain(`'\\''`)
+    const arg = snippet.slice(snippet.indexOf('-d ') + 3).trim()
+    const inner = arg.slice(1, -1).replaceAll(`'\\''`, `'`)
+    expect((JSON.parse(inner) as { model: string }).model).toBe(evil)
+  })
+
+  it('derives the snippet URL from the configured base', () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://gw.example')
+    try {
+      expect(exampleRequest('m')).toContain('https://gw.example/v1/chat/completions')
+    } finally {
+      vi.unstubAllEnvs()
+    }
+    const base = resolveApiBase()
+    const configured = base.length > 0 ? base : window.location.origin
+    expect(exampleRequest('m')).toContain(`${configured}/v1/chat/completions`)
+  })
+
+  it('falls back to the page origin when no base is configured', () => {
+    vi.stubEnv('VITE_API_BASE_URL', '')
+    try {
+      const snippet = exampleRequest('m')
+      expect(snippet).toContain(`${window.location.origin}/v1/chat/completions`)
+      expect(snippet).not.toContain('localhost:8080')
+    } finally {
+      vi.unstubAllEnvs()
     }
   })
 

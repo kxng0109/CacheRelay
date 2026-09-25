@@ -9,6 +9,7 @@ import type { ApiKeyCreated } from '../../shared/api/types.js'
 import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
 import { Modal } from '../../shared/components/Modal.js'
+import { TableScroll } from '../../shared/components/TableScroll.js'
 import { formatCount, formatShortDate } from '../../shared/utils/format.js'
 
 const schema = z.object({
@@ -400,112 +401,110 @@ function KeysBoard(): React.JSX.Element {
             </p>
           )
         ) : (
-          <table className="w-full text-left text-sm">
-            <caption className="sr-only">Virtual API keys</caption>
-            <thead className="sticky top-0 bg-paper dark:bg-night">
-              <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
-                <th scope="col" className="py-2 pr-3 font-medium">
-                  Name
-                </th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">
-                  RPM
-                </th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">
-                  TPM
-                </th>
-                <th scope="col" className="py-2 pr-3 font-medium">
-                  Models
-                </th>
-                <th scope="col" className="py-2 pr-3 font-medium">
-                  State
-                </th>
-                <th scope="col" className="py-2 text-right font-medium">
-                  <span className="sr-only">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map((k) => (
-                <tr
-                  key={k.keyId}
-                  tabIndex={0}
-                  aria-selected={k.keyId === selected}
-                  onClick={() => {
-                    setSelected(k.keyId === selected ? null : k.keyId)
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault()
-                      setSelected(k.keyId === selected ? null : k.keyId)
-                    }
-                  }}
-                  className={`cursor-pointer border-t border-ink/10 dark:border-parchment/10 ${
-                    k.keyId === selected ? 'bg-ink/4 dark:bg-parchment/6' : ''
-                  }`}
-                >
-                  <td className="py-2 pr-3 font-mono text-[13px]">{k.name}</td>
-                  <td className="py-2 pr-3 text-right text-[13px] tnum">
-                    {k.rpmLimit === 0 ? 'unlimited' : formatCount(k.rpmLimit)}
-                  </td>
-                  <td className="py-2 pr-3 text-right text-[13px] tnum">
-                    {k.tpmLimit === 0 ? 'unlimited' : formatCount(k.tpmLimit)}
-                  </td>
-                  <td className="max-w-48 truncate py-2 pr-3 text-[13px]">
-                    {k.allowedModels.length === 0 ? 'all' : k.allowedModels.join(', ')}
-                  </td>
-                  <td className="py-2 pr-3">
-                    <span
-                      className={`rounded px-2 py-1 text-[13px] ${
-                        k.enabled
-                          ? 'bg-success/15 text-success dark:text-success-soft'
-                          : 'bg-warn/15 text-warn dark:text-warn-soft'
-                      }`}
-                    >
-                      ● {k.enabled ? 'enabled' : 'disabled'}
-                    </span>
-                  </td>
-                  <td className="py-2 text-right">
-                    {confirming === k.keyId ? (
-                      <span className="inline-flex items-center gap-2 text-[13px]">
-                        Delete “{k.name}”?
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            void onDelete(k.keyId)
-                          }}
-                          className="rounded-md border border-danger/40 px-2 py-1 text-danger dark:text-danger-soft"
-                        >
-                          Yes
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setConfirming(null)
-                          }}
-                          className="rounded-md border border-ink/15 px-2 py-1 dark:border-parchment/15"
-                        >
-                          No
-                        </button>
+          <TableScroll>
+            <table className="w-full text-left text-sm">
+              <caption className="sr-only">Virtual API keys</caption>
+              <thead className="sticky top-0 bg-paper dark:bg-night">
+                <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+                  <th scope="col" className="py-2 pr-3 font-medium">
+                    Name
+                  </th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">
+                    RPM
+                  </th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">
+                    TPM
+                  </th>
+                  <th scope="col" className="py-2 pr-3 font-medium">
+                    Models
+                  </th>
+                  <th scope="col" className="py-2 pr-3 font-medium">
+                    State
+                  </th>
+                  <th scope="col" className="py-2 text-right font-medium">
+                    <span className="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((k) => (
+                  <tr
+                    key={k.keyId}
+                    className={`border-t border-ink/10 dark:border-parchment/10 ${
+                      k.keyId === selected ? 'bg-ink/4 dark:bg-parchment/6' : ''
+                    }`}
+                  >
+                    <td className="py-2 pr-3 font-mono text-[13px]">{k.name}</td>
+                    <td className="py-2 pr-3 text-right text-[13px] tnum">
+                      {k.rpmLimit === 0 ? 'unlimited' : formatCount(k.rpmLimit)}
+                    </td>
+                    <td className="py-2 pr-3 text-right text-[13px] tnum">
+                      {k.tpmLimit === 0 ? 'unlimited' : formatCount(k.tpmLimit)}
+                    </td>
+                    <td className="max-w-48 truncate py-2 pr-3 text-[13px]">
+                      {k.allowedModels.length === 0 ? 'all' : k.allowedModels.join(', ')}
+                    </td>
+                    <td className="py-2 pr-3">
+                      <span
+                        className={`rounded px-2 py-1 text-[13px] ${
+                          k.enabled
+                            ? 'bg-success/15 text-success-deep dark:text-success-soft'
+                            : 'bg-warn/15 text-warn-deep dark:text-warn-soft'
+                        }`}
+                      >
+                        ● {k.enabled ? 'enabled' : 'disabled'}
                       </span>
-                    ) : (
+                    </td>
+                    <td className="py-2 text-right">
                       <button
                         type="button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setConfirming(k.keyId)
+                        onClick={() => {
+                          setSelected(k.keyId === selected ? null : k.keyId)
                         }}
-                        className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+                        aria-label={`Inspect key ${k.name}`}
+                        className="mr-2 rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
                       >
-                        Delete
+                        Inspect
                       </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                      {confirming === k.keyId ? (
+                        <span className="inline-flex items-center gap-2 text-[13px]">
+                          Delete “{k.name}”?
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void onDelete(k.keyId)
+                            }}
+                            className="rounded-md border border-danger/40 px-2 py-1 text-danger dark:text-danger-soft"
+                          >
+                            Yes
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setConfirming(null)
+                            }}
+                            className="rounded-md border border-ink/15 px-2 py-1 dark:border-parchment/15"
+                          >
+                            No
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setConfirming(k.keyId)
+                          }}
+                          className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableScroll>
         )}
         {inspected === null ? (
           <p className="text-[13px] text-ink-soft dark:text-parchment-soft">

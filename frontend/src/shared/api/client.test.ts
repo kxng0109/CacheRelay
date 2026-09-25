@@ -3,12 +3,14 @@ import {
   ApiError,
   GatewayClient,
   isStreamingEnabled,
+  keyFingerprint,
   parseGatewayErrorCode,
   parseRateLimit,
   resolveApiBase,
   resolveManagementBase,
   safeErrorMessage,
   selectPrimaryDimension,
+  setDriftReporter,
   setHeadersReporter,
   toErrorMessage,
 } from './client.js'
@@ -17,6 +19,240 @@ import { useAuthStore } from '../auth/store.js'
 afterEach(() => {
   vi.unstubAllGlobals()
   setHeadersReporter(null)
+  setDriftReporter(null)
+})
+
+/**
+ * Stubs fetch with one JSON body for transport-boundary tests.
+ *
+ * @param body - Decoded body the gateway supposedly sent.
+ */
+function stubJson(body: unknown): void {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } }),
+      ),
+    ),
+  )
+}
+
+describe('wire drift', () => {
+  it('degrades drifted collections to empty with a notice, never throws', async () => {
+    const drifted: string[] = []
+    setDriftReporter((endpoint) => {
+      drifted.push(endpoint)
+    })
+    stubJson({ keys: {} })
+    await expect(new GatewayClient().listKeys()).resolves.toEqual({ keys: [] })
+    stubJson({ nope: 1 })
+    await expect(new GatewayClient().circuitState()).resolves.toEqual({ circuits: [] })
+    stubJson('nope')
+    await expect(new GatewayClient().listBudgets()).resolves.toEqual({ budgets: [] })
+    stubJson({ approvals: {} })
+    await expect(new GatewayClient().hitlPending()).resolves.toEqual({ approvals: [] })
+    stubJson({ data: {} })
+    await expect(new GatewayClient().models()).resolves.toEqual({ data: [] })
+    stubJson({ x: 1 })
+    await expect(new GatewayClient().myTeams()).resolves.toEqual([])
+    stubJson([1, 2])
+    await expect(new GatewayClient().orgTeams('acme')).resolves.toEqual([])
+    expect(drifted).toEqual([
+      'keys',
+      'circuits',
+      'budgets',
+      'hitl-pending',
+      'models',
+      'my-teams',
+      'org-teams',
+      'org-teams',
+    ])
+  })
+
+  it('accepts the live bare-array approvals shape', async () => {
+    stubJson([{ approvalId: 'a1', toolName: 't', requestedAt: 'r', requestedBy: 'b' }])
+    await expect(new GatewayClient().hitlPending()).resolves.toEqual({
+      approvals: [{ approvalId: 'a1', toolName: 't', requestedAt: 'r', requestedBy: 'b' }],
+    })
+  })
+
+  it('drops malformed rows but keeps valid ones', async () => {
+    const drifted: string[] = []
+    setDriftReporter((endpoint) => {
+      drifted.push(endpoint)
+    })
+    stubJson([
+      {
+        keyId: 'k1',
+        keyPrefix: 'gw-aaa',
+        ownerId: 'o1',
+        name: 'good',
+        rpmLimit: 60,
+        tpmLimit: 1000,
+        allowedModels: [],
+        allowedProviders: [],
+        enabled: true,
+        createdAt: '2026-01-01',
+        ownerUserId: null,
+        ownerUsername: null,
+      },
+      { name: 42 },
+    ])
+    const keys = await new GatewayClient().listKeys()
+    expect(keys.keys.map((k) => k.name)).toEqual(['good'])
+    expect(drifted).toEqual(['keys'])
+  })
+
+  it('degrades drifted summaries to zeros with a notice', async () => {
+    const drifted: string[] = []
+    setDriftReporter((endpoint) => {
+      drifted.push(endpoint)
+    })
+    stubJson({ totalRequests: 'lots' })
+    const summary = await new GatewayClient().ledgerSummary()
+    expect(summary.totalRequests).toBe(0)
+    expect(summary.byOwner).toEqual([])
+    stubJson({ totalRequests: 'lots' })
+    const mine = await new GatewayClient().myUsage()
+    expect(mine.summary.totalRequests).toBe(0)
+    stubJson({ totalRequests: 'lots' })
+    const theirs = await new GatewayClient().userUsage('u1')
+    expect(theirs.summary.totalRequests).toBe(0)
+    expect(drifted).toEqual(['ledger-summary', 'my-usage', 'user-usage'])
+  })
+
+  it('degrades drifted ledger pages to an empty page', async () => {
+    const drifted: string[] = []
+    setDriftReporter((endpoint) => {
+      drifted.push(endpoint)
+    })
+    stubJson({ content: null, page: 0, size: 10, totalElements: 0, totalPages: 0, hasNext: false })
+    const page = await new GatewayClient().ledgerLogs(0, 10)
+    expect(page.content).toEqual([])
+    stubJson({
+      content: [{ requestId: 'r1', model: 'm', costUsdMicros: 5, createdAt: 't' }, { nope: true }],
+      page: 0,
+      size: 10,
+      totalElements: 2,
+      totalPages: 1,
+      hasNext: false,
+    })
+    const mixed = await new GatewayClient().ledgerLogs(0, 10)
+    expect(mixed.content.map((e) => e.requestId)).toEqual(['r1'])
+    expect(drifted).toEqual(['ledger-entries', 'ledger-entries'])
+  })
+
+  it('reads a drifted receipt as gone, never fabricated', async () => {
+    const drifted: string[] = []
+    setDriftReporter((endpoint) => {
+      drifted.push(endpoint)
+    })
+    stubJson({ requestId: 'r1' })
+    await expect(new GatewayClient().ledgerReceipt('r1')).resolves.toBeNull()
+    expect(drifted).toEqual(['ledger-receipt'])
+  })
+
+  it('rejects a drifted identity with a safe error', async () => {
+    stubJson({ username: 'op' })
+    await expect(new GatewayClient().authMe()).rejects.toThrow(/changed shape/i)
+  })
+
+  it('rejects drifted mutation bodies with safe errors, never raw crashes', async () => {
+    const drifted: string[] = []
+    setDriftReporter((endpoint) => {
+      drifted.push(endpoint)
+    })
+    const keyBody = {
+      ownerId: 'o',
+      ownerUserId: 'u',
+      name: 'n',
+      rpmLimit: 1,
+      tpmLimit: 1,
+      allowedModels: [],
+    }
+    stubJson({ nope: true })
+    await expect(new GatewayClient().createKey(keyBody)).rejects.toThrow(/changed shape/i)
+    stubJson({ nope: true })
+    await expect(new GatewayClient().setKeyEnabled('k1', false)).rejects.toThrow(/changed shape/i)
+    stubJson({ nope: true })
+    await expect(new GatewayClient().revokeKey('k1')).rejects.toThrow(/changed shape/i)
+    stubJson({ nope: true })
+    await expect(
+      new GatewayClient().createModelAlias({ name: 'a', chain: [], strategy: 'S' }),
+    ).rejects.toThrow(/changed shape/i)
+    stubJson({ nope: true })
+    await expect(
+      new GatewayClient().updateModelAlias('a', { chain: [], strategy: 'S' }),
+    ).rejects.toThrow(/changed shape/i)
+    stubJson({ nope: true })
+    await expect(new GatewayClient().resetCircuit('openai')).rejects.toThrow(/changed shape/i)
+    stubJson({ nope: true })
+    await expect(new GatewayClient().cacheStats()).rejects.toThrow(/changed shape/i)
+    stubJson({ nope: true })
+    await expect(new GatewayClient().purgeCache()).rejects.toThrow(/changed shape/i)
+    stubJson({ nope: true })
+    await expect(
+      new GatewayClient().createBudget({
+        level: 'L',
+        subjectId: 's',
+        minuteMicros: 0,
+        monthMicros: 0,
+      }),
+    ).rejects.toThrow(/changed shape/i)
+    stubJson({ nope: true })
+    await expect(new GatewayClient().chat({ model: 'm', messages: [] })).rejects.toThrow(
+      /changed shape/i,
+    )
+    stubJson({ nope: true })
+    await expect(new GatewayClient().embeddings({ model: 'm', input: 'hi' })).rejects.toThrow(
+      /changed shape/i,
+    )
+    expect(drifted).toEqual([
+      'keys-create',
+      'keys-update',
+      'keys-revoke',
+      'models-create',
+      'models-update',
+      'circuits-reset',
+      'cache-stats',
+      'cache-purge',
+      'budgets-create',
+      'chat-completion',
+      'embeddings',
+    ])
+  })
+})
+
+describe('keyFingerprint', () => {
+  it('is stable per credential and distinct across credentials', () => {
+    expect(keyFingerprint('gw-alpha')).toBe(keyFingerprint('gw-alpha'))
+    expect(keyFingerprint('gw-alpha')).not.toBe(keyFingerprint('gw-beta'))
+  })
+
+  it('carries no key material', () => {
+    const print = keyFingerprint('gw-super-secret-value')
+    expect(print).not.toContain('gw-super-secret-value')
+    expect(print).not.toContain('secret')
+  })
+
+  it('omits the authorization header when no credential resolves', async () => {
+    let auth: string | null | undefined = undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: unknown, init?: RequestInit) => {
+        auth = new Headers(init?.headers).get('Authorization')
+        return Promise.resolve(
+          new Response(JSON.stringify({ data: [] }), {
+            headers: { 'content-type': 'application/json' },
+          }),
+        )
+      }),
+    )
+    useAuthStore.getState().clear()
+    await new GatewayClient().models()
+    expect(auth).toBeNull()
+  })
 })
 
 describe('parseRateLimit', () => {
@@ -490,13 +726,24 @@ describe('GatewayClient transport', () => {
     expect(headers.Authorization).toBe('Bearer gw-test')
   })
 
-  it('resolves empty payloads as undefined', async () => {
+  it('resolves empty payloads as empty catalogs, never undefined', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(() => Promise.resolve(new Response(null, { status: 204 }))),
     )
     const out = await new GatewayClient({ base: '', token: 'gw-test' }).models()
-    expect(out).toBeUndefined()
+    expect(out).toEqual({ data: [] })
+  })
+
+  it('resolves empty key payloads as an empty list', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response(null, { status: 204 }))),
+    )
+    useAuthStore.getState().clear()
+    await expect(new GatewayClient({ base: '', token: 'gw-test' }).listKeys()).resolves.toEqual({
+      keys: [],
+    })
   })
 
   it('treats non-abort DOMExceptions as network failures', async () => {

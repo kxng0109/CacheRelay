@@ -22,6 +22,12 @@ describe('targetForChord', () => {
     expect(targetForChord('Enter')).toBeNull()
     expect(targetForChord('')).toBeNull()
   })
+
+  it('rejects prototype-chain names instead of inheriting them', () => {
+    expect(targetForChord('constructor')).toBeNull()
+    expect(targetForChord('__proto__')).toBeNull()
+    expect(targetForChord('toString')).toBeNull()
+  })
 })
 
 describe('isEditable', () => {

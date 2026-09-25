@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { GatewayClient } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
+import { useAuthStore } from '../../shared/auth/store.js'
 import { useToastStore } from '../../shared/toast/store.js'
 import { formatShortDate } from '../../shared/utils/format.js'
 
@@ -32,6 +33,7 @@ export function ApprovalsPage(): React.JSX.Element {
 function ApprovalsBoard(): React.JSX.Element {
   const qc = useQueryClient()
   const pushToast = useToastStore((s) => s.push)
+  const username = useAuthStore((s) => s.session?.username ?? '')
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set())
 
   const pending = useQuery({
@@ -43,7 +45,7 @@ function ApprovalsBoard(): React.JSX.Element {
   const decide = async (approvalId: string, approved: boolean): Promise<void> => {
     setBusy((prev) => new Set(prev).add(approvalId))
     try {
-      await new GatewayClient().decideHitl(approvalId, approved, 'console-operator')
+      await new GatewayClient().decideHitl(approvalId, approved, username)
       const at = new Date().toISOString().slice(11, 19)
       pushToast('success', `${approvalId}: ${approved ? 'approved' : 'rejected'} · ${at} UTC.`)
       await qc.invalidateQueries({ queryKey: ['hitl-pending'] })

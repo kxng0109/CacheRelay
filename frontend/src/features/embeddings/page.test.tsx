@@ -77,6 +77,15 @@ describe('EmbeddingsPage', () => {
       expect(screen.getByText(/input text is required/i)).toBeInTheDocument()
     })
     expect(screen.getByText(/model is required/i)).toBeInTheDocument()
+    // FE-30: errors are linked, not just broadcast.
+    expect(screen.getByLabelText(/input text/i)).toHaveAttribute(
+      'aria-describedby',
+      'emb-input-error',
+    )
+    expect(screen.getByRole('combobox', { name: /^model$/i })).toHaveAttribute(
+      'aria-describedby',
+      'emb-model-error',
+    )
   })
 
   it('reports dimensions and vector count on success', async () => {
@@ -173,10 +182,8 @@ describe('EmbeddingsPage', () => {
     await user.type(screen.getByLabelText(/filter usage by model/i), 'm-b')
     expect(table).not.toHaveTextContent('m-a')
     await user.clear(screen.getByLabelText(/filter usage by model/i))
-    await user.click(within(table).getByText('m-b'))
-    expect(screen.getByRole('complementary', { name: /run inspector/i })).toHaveTextContent(
-      /HTTP 500/,
-    )
+    await user.click(within(table).getByRole('button', { name: /inspect run m-b/i }))
+    expect(screen.getByRole('dialog', { name: /run inspector/i })).toHaveTextContent(/HTTP 500/)
   })
 
   it('closes the run inspector from its close button', async () => {
@@ -196,13 +203,11 @@ describe('EmbeddingsPage', () => {
     await user.type(screen.getByLabelText(/input text/i), 'one')
     await user.click(screen.getByRole('button', { name: /create embeddings/i }))
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('m'))
-    const inspector = await screen.findByRole('complementary', { name: /run inspector/i })
+    await user.click(within(table).getByRole('button', { name: /inspect run m /i }))
+    const inspector = await screen.findByRole('dialog', { name: /run inspector/i })
     await user.click(within(inspector).getByRole('button', { name: /close inspector/i }))
     await waitFor(() => {
-      expect(
-        screen.queryByRole('complementary', { name: /run inspector/i }),
-      ).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: /run inspector/i })).not.toBeInTheDocument()
     })
     expect(screen.getByText(/select a run to inspect/i)).toBeInTheDocument()
   })
@@ -292,15 +297,14 @@ describe('EmbeddingsPage', () => {
     await user.type(screen.getByLabelText(/input text/i), 'hi')
     await user.click(screen.getByRole('button', { name: /create embeddings/i }))
     const table = await screen.findByRole('table')
-    const row = within(table).getByText('● ok').closest('tr')
-    expect(row).not.toBeNull()
-    await user.click(row as HTMLElement)
-    expect(screen.getByRole('complementary', { name: /run inspector/i })).toHaveTextContent('m')
-    await user.click(row as HTMLElement)
+    const inspect = within(table).getByRole('button', {
+      name: /inspect run text-embedding-3-small/i,
+    })
+    await user.click(inspect)
+    expect(screen.getByRole('dialog', { name: /run inspector/i })).toHaveTextContent('m')
+    await user.click(inspect)
     await waitFor(() => {
-      expect(
-        screen.queryByRole('complementary', { name: /run inspector/i }),
-      ).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: /run inspector/i })).not.toBeInTheDocument()
     })
     expect(screen.getByText(/select a run to inspect/i)).toBeInTheDocument()
   })
@@ -319,9 +323,11 @@ describe('EmbeddingsPage', () => {
     await user.type(screen.getByLabelText(/input text/i), 'hi')
     await user.click(screen.getByRole('button', { name: /create embeddings/i }))
     const table = await screen.findByRole('table')
-    within(table).getByText('● ok').closest('tr')?.focus()
+    within(table)
+      .getByRole('button', { name: /inspect run text-embedding-3-small/i })
+      .focus()
     await user.keyboard('{ }')
-    expect(screen.getByRole('complementary', { name: /run inspector/i })).toHaveTextContent('m')
+    expect(screen.getByRole('dialog', { name: /run inspector/i })).toHaveTextContent('m')
   })
 
   it('embeds through act-as-self with the session bearer', async () => {

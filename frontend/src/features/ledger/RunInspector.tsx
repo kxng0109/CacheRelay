@@ -163,7 +163,7 @@ export function RunInspector({
           →
         </button>
       </div>
-      <dl className="grid grid-cols-2 gap-2">
+      <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <div className="rounded-lg border border-ink/10 p-2 dark:border-parchment/10">
           <dt className="font-mono text-xs text-ink-soft dark:text-parchment-soft">Cost</dt>
           <dd className="font-mono text-sm tnum">

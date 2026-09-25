@@ -1,11 +1,13 @@
 import { resolveSsoProviders, ssoAuthorizationUrl } from '../../shared/api/client.js'
+import { SafeOutboundLink } from '../../shared/components/SafeOutboundLink.js'
 
 /**
  * SSO entry buttons driven by public client config.
  *
  * @remarks Providers come from the non-secret `VITE_SSO_PROVIDERS`
  * allow-list (Spring registration ids). SSO cannot run when nothing is
- * configured: a single muted line says so, never a dead button.
+ * configured: a single muted line says so, never a dead button. Entry
+ * URLs render through the shared safety gate, never as raw anchors.
  *
  * @returns Provider links, or the muted not-enabled line.
  */
@@ -21,13 +23,13 @@ export function SsoButtons(): React.JSX.Element {
   return (
     <div className="space-y-2">
       {providers.map((p) => (
-        <a
+        <SafeOutboundLink
           key={p}
           href={ssoAuthorizationUrl(p)}
           className="block w-full rounded-md border border-ink/15 px-4 py-2 text-center text-sm dark:border-parchment/15"
         >
           Continue with {p}
-        </a>
+        </SafeOutboundLink>
       ))}
     </div>
   )

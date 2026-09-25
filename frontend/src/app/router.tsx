@@ -1,10 +1,12 @@
-import { Suspense, lazy } from 'react'
-import { createBrowserRouter } from 'react-router'
+import { Suspense, lazy, useEffect } from 'react'
+import { createBrowserRouter, useNavigate, useParams, useSearchParams } from 'react-router'
 import { Layout } from './layout.js'
 import { NotFound } from './NotFound.js'
 import { RequireAdmin } from './RequireAdmin.js'
 import { RequireAuth } from './RequireAuth.js'
 import { RequireGuest } from './RequireGuest.js'
+import { RouteError } from './RouteError.js'
+import { useAuthStore } from '../shared/auth/store.js'
 
 const OverviewPage = lazy(() =>
   import('../features/overview/page.js').then((m) => ({ default: m.OverviewPage })),
@@ -94,6 +96,39 @@ function suspend(element: React.JSX.Element): React.JSX.Element {
 }
 
 /**
+ * DEV-only Playwright session seed (FE-05). Never ships: the route is
+ * registered only when `import.meta.env.DEV` is true, so production
+ * builds eliminate the branch. Seeds an obviously-fake in-memory
+ * session (`playwright-test`, never a real credential) and forwards to
+ * `?next=` (same-origin paths only) so the axe gate scans real screens
+ * instead of the login page. No backend is involved; API calls fail
+ * into loading/error states, which is exactly the idle surface the gate
+ * must cover.
+ *
+ * @returns Redirect to the seeded screen.
+ */
+export function TestSessionSeed(): React.JSX.Element {
+  const { role } = useParams()
+  const [params] = useSearchParams()
+  const navigate = useNavigate()
+  const raw = params.get('next') ?? '/'
+  const next = raw.startsWith('/') && !raw.startsWith('//') ? raw : '/'
+  useEffect(() => {
+    // Seed first, then navigate imperatively: rendering `<Navigate>`
+    // immediately would let the target guards bounce to login before this
+    // effect runs. No React state involved (the lint rule forbids
+    // synchronous setState in effects); the store set is external.
+    useAuthStore.getState().setSession({
+      accessToken: 'playwright-test-session',
+      admin: role === 'admin',
+      username: 'playwright',
+    })
+    void navigate(next, { replace: true })
+  }, [role, next, navigate])
+  return <p role="status">Seeding test session…</p>
+}
+
+/**
  * Data router: one lazy route per console screen under the shell layout.
  *
  * @remarks Every feature chunk loads on demand so the initial JS stays in
@@ -102,7 +137,14 @@ function suspend(element: React.JSX.Element): React.JSX.Element {
 export const router = createBrowserRouter([
   {
     element: <Layout />,
+    errorElement: <RouteError />,
     children: [
+      // DEV-only Playwright session seed (FE-05): eliminated from
+      // production builds by the `import.meta.env.DEV` branch. Renders
+      // under the shell so the gate scans real screens with chrome.
+      ...(import.meta.env.DEV
+        ? [{ path: '__test/session/:role', element: <TestSessionSeed /> }]
+        : []),
       { index: true, element: authed(<OverviewPage />) },
       { path: 'playground', element: suspend(<PlaygroundPage />) },
       { path: 'usage', element: authed(<UsagePage />) },
@@ -117,7 +159,7 @@ export const router = createBrowserRouter([
       { path: 'cache', element: guard(<CachePage />) },
       { path: 'embeddings', element: suspend(<EmbeddingsPage />) },
       { path: 'approvals', element: guard(<ApprovalsPage />) },
-      { path: 'mcp', element: authed(<McpPage />) },
+      { path: 'mcp', element: suspend(<McpPage />) },
       { path: 'observability', element: authed(<ObservabilityPage />) },
       { path: '*', element: <NotFound /> },
     ],

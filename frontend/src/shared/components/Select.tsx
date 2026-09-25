@@ -29,6 +29,8 @@ interface SelectProps {
   disabled?: boolean
   /** Invalid state (aria-invalid ring). */
   invalid?: boolean
+  /** Error node id for `aria-describedby` when invalid. */
+  describedBy?: string
 }
 
 /**
@@ -36,11 +38,13 @@ interface SelectProps {
  *
  * @remarks One look everywhere: input-matching border and radius, mono
  * value text, ember chevron (the native arrow renders OS-chrome that
- * breaks both themes), flat hairline menu, ember tick on the active
- * option. Full keyboard contract: opens on Enter/Space/ArrowDown,
- * arrows move, Enter/Space picks, Esc closes, click-outside closes,
- * focus never leaves the trigger. ARIA `listbox` pattern with
- * `aria-expanded` and `aria-activedescendant`.
+ * breaks both themes), flat hairline menu, ember tick on the selected
+ * option (never the hovered one). Full keyboard contract: opens on
+ * Enter/Space/ArrowDown, arrows move, printable keys jump, Enter/Space
+ * picks, Esc closes topmost-first (an open menu stops Esc so a parent
+ * dialog never closes underneath it), click-outside closes, focus never
+ * leaves the trigger. ARIA `listbox` pattern with `aria-expanded` and
+ * `aria-activedescendant`.
  *
  * @param props - Label, value, options, and handlers.
  * @returns The dropdown.
@@ -54,6 +58,7 @@ export function Select({
   placeholder = 'Select…',
   disabled = false,
   invalid = false,
+  describedBy,
 }: SelectProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
@@ -61,8 +66,18 @@ export function Select({
   const [anchor, setAnchor] = useState<DOMRect | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const menuRef = useRef<HTMLUListElement | null>(null)
+  // Type-ahead buffer: printable keys accumulate briefly so "cu" narrows
+  // past "c" alone; the timer resets it back to single-key jumps.
+  const typeRef = useRef('')
+  const typeTimer = useRef<number | null>(null)
   const listId = useId()
   const selected = options.find((o) => o.value === value) ?? null
+
+  useEffect(() => {
+    return () => {
+      if (typeTimer.current !== null) window.clearTimeout(typeTimer.current)
+    }
+  }, [])
 
   useEffect(() => {
     if (!open) return
@@ -172,13 +187,37 @@ export function Select({
         openMenu()
       }
     } else if (e.key === 'Escape') {
-      setOpen(false)
+      // Topmost-first Esc ladder: an open menu consumes the key so a
+      // parent dialog never closes underneath it; a closed picker lets
+      // the key bubble to the overlay.
+      if (open) {
+        e.stopPropagation()
+        setOpen(false)
+      }
     } else if (e.key === 'Home' && open) {
       e.preventDefault()
       setActive(0)
     } else if (e.key === 'End' && open) {
       e.preventDefault()
       setActive(options.length - 1)
+    } else if (e.key.length === 1 && open) {
+      // Printable-key jump: cycle from after the current stop through
+      // labels starting with the buffered text (case-insensitive).
+      e.preventDefault()
+      if (typeTimer.current !== null) window.clearTimeout(typeTimer.current)
+      const next = `${typeRef.current}${e.key}`.toLowerCase()
+      typeRef.current = next
+      typeTimer.current = window.setTimeout(() => {
+        typeRef.current = ''
+      }, 500)
+      const from = (active + 1) % options.length
+      for (let step = 0; step < options.length; step += 1) {
+        const candidate = options[(from + step) % options.length]
+        if (candidate?.label.toLowerCase().startsWith(next) === true) {
+          setActive((from + step) % options.length)
+          break
+        }
+      }
     }
   }
 
@@ -195,6 +234,7 @@ export function Select({
         aria-controls={listId}
         aria-activedescendant={open ? `${listId}-option-${String(active)}` : undefined}
         aria-invalid={invalid}
+        aria-describedby={describedBy}
         disabled={disabled}
         onClick={() => {
           if (options.length === 0) return
@@ -244,7 +284,7 @@ export function Select({
                   }`}
                 >
                   <span aria-hidden="true" className="w-4 shrink-0 text-ember">
-                    {i === active ? <Check size={14} /> : null}
+                    {o.value === value ? <Check size={14} /> : null}
                   </span>
                   <span className="truncate" title={o.label}>
                     {o.label}

@@ -28,17 +28,21 @@ import {
   GatewayClient,
   parseRateLimit,
   resolveApiBase,
+  setDriftReporter,
   setHeadersReporter,
 } from '../shared/api/client.js'
 import { logout, startSessionHeartbeat } from '../shared/auth/session.js'
 import { CommandPalette } from '../shared/components/CommandPalette.js'
 import { CacheRelayMark } from '../shared/components/CacheRelayMark.js'
+import { DriftNotice } from '../shared/components/DriftNotice.js'
 import { RateLimitHeaders } from '../shared/components/RateLimitHeaders.js'
 import { ShortcutSheet } from '../shared/components/ShortcutSheet.js'
 import { Toasts } from '../shared/components/Toasts.js'
 import { SsoCallback } from '../features/auth/SsoCallback.js'
 import { useAuthStore } from '../shared/auth/store.js'
+import { useDriftStore } from '../shared/drift/store.js'
 import { useRateLimitStore } from '../shared/ratelimit/store.js'
+import { useToastStore } from '../shared/toast/store.js'
 import { useUiStore } from '../shared/store.js'
 import type { LucideIcon } from 'lucide-react'
 import { CHORD_WINDOW_MS, isEditable, targetForChord } from './shortcuts.js'
@@ -138,8 +142,10 @@ export function Layout(): React.JSX.Element {
    * SSO landing: the backend redirects here (`/?sso=1#access_token=…`)
    * before any session exists, so route guards would bounce and drop the
    * fragment. The callback screen owns this paint until it completes.
+   * Honoured on `/` only (FE-40): deeper paths fall through to the
+   * normal guards instead of replacing the outlet.
    */
-  const ssoLanding = params.get('sso') === '1' && session === null
+  const ssoLanding = pathname === '/' && params.get('sso') === '1' && session === null
 
   useEffect(() => {
     // A stale SSO fragment on a live session is dead weight in the URL bar
@@ -183,8 +189,44 @@ export function Layout(): React.JSX.Element {
     setHeadersReporter((headers, code) => {
       useRateLimitStore.getState().setSnapshot(parseRateLimit(headers, code))
     })
+    setDriftReporter((endpoint) => {
+      useDriftStore.getState().note(endpoint)
+    })
     return () => {
       setHeadersReporter(null)
+      setDriftReporter(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    // CSP violation diagnosability (FE-17 frontend half): a blocked
+    // management-port fetch surfaces as a generic "unreachable" in the
+    // probe cards, which misreads as a gateway outage. Each distinct
+    // directive-plus-target toasts once per mount so a 15 s poll cannot
+    // spam the stack; the backend `connect-src` decision stays an
+    // escalation (the UI cannot grant its own origins).
+    const seen = new Set<string>()
+    const onViolation = (e: Event): void => {
+      const detail = e as Event & {
+        violatedDirective?: unknown
+        blockedURI?: unknown
+      }
+      const directive =
+        typeof detail.violatedDirective === 'string' ? detail.violatedDirective : 'csp'
+      const target = typeof detail.blockedURI === 'string' ? detail.blockedURI : 'unknown target'
+      const key = `${directive} ${target}`
+      if (seen.has(key)) return
+      seen.add(key)
+      useToastStore
+        .getState()
+        .push(
+          'error',
+          `Blocked by content policy (${directive}): ${target}. Check the gateway connect-src, not the gateway itself.`,
+        )
+    }
+    document.addEventListener('securitypolicyviolation', onViolation)
+    return () => {
+      document.removeEventListener('securitypolicyviolation', onViolation)
     }
   }, [])
 
@@ -251,7 +293,7 @@ export function Layout(): React.JSX.Element {
               ? () => (
                   <span
                     aria-label={`${String(pendingCount)} pending approvals`}
-                    className="rounded-full bg-warn/20 px-2 py-0.5 font-mono text-xs text-warn tnum dark:text-warn-soft"
+                    className="rounded-full bg-warn/20 px-2 py-0.5 font-mono text-xs text-warn-deep tnum dark:text-warn-soft"
                   >
                     {pendingCount}
                   </span>
@@ -266,7 +308,7 @@ export function Layout(): React.JSX.Element {
       label: 'Inspect',
       items: [
         { to: '/ledger', label: 'Ledger', icon: BookOpen, audience: 'admin' },
-        { to: '/mcp', label: 'MCP', icon: Plug, audience: 'session' },
+        { to: '/mcp', label: 'MCP', icon: Plug, audience: 'public' },
         { to: '/observability', label: 'Observability', icon: Activity, audience: 'session' },
       ],
     },
@@ -332,6 +374,42 @@ export function Layout(): React.JSX.Element {
       ? 'Overview'
       : (visibleGroups.flatMap((g) => g.items).find((item) => item.to === pathname)?.label ??
         pathname)
+
+  // Screen name for the document title. The status bar above stays
+  // path-faithful; the title names the screen for tabs and readers.
+  const titleLabel =
+    pathname === '/'
+      ? 'Overview'
+      : pathname === '/login'
+        ? 'Log in'
+        : pathname === '/redeem'
+          ? 'Redeem invite'
+          : pathname.startsWith('/ledger/user/')
+            ? 'Account ledger'
+            : (visibleGroups.flatMap((g) => g.items).find((item) => item.to === pathname)?.label ??
+              'Page not found')
+
+  useEffect(() => {
+    // Per-route document title: screen readers and tabs name the screen,
+    // not just the product.
+    document.title = `${titleLabel} · CacheRelay`
+  }, [titleLabel])
+
+  const firstPaint = useRef(true)
+  useEffect(() => {
+    // Focus move on navigation (not on first paint): keyboard and screen
+    // reader users land on the new screen heading instead of staying on a
+    // stale stop. Post-login landing keeps its own once-only focus above.
+    if (firstPaint.current) {
+      firstPaint.current = false
+      return
+    }
+    const heading = document.querySelector('#main h1')
+    if (heading instanceof HTMLElement) {
+      heading.tabIndex = -1
+      heading.focus({ preventScroll: true })
+    }
+  }, [pathname])
 
   const sidebarBody = (
     <div className="flex h-full flex-col">
@@ -547,6 +625,7 @@ export function Layout(): React.JSX.Element {
             <RateLimitHeaders snapshot={snapshot} />
           </div>
         ) : null}
+        <DriftNotice />
         <main id="main" className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
           <div key={pathname} className="rise">
             {ssoLanding ? <SsoCallback /> : <Outlet />}

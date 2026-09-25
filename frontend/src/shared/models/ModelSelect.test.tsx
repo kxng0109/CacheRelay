@@ -81,6 +81,60 @@ describe('ModelSelect', () => {
     expect(alert).toHaveTextContent(/paste a key instead/i)
   })
 
+  it('sends the pasted key instead of the session for paste-mode catalogs', async () => {
+    const user = userEvent.setup()
+    let seenAuth = ''
+    server.use(
+      http.get('*/v1/models', ({ request }) => {
+        seenAuth = request.headers.get('Authorization') ?? ''
+        return HttpResponse.json({ data: [{ id: 'alpha' }] })
+      }),
+    )
+    renderApp(<Harness token="gw-pasted" />, { nonAdminSession: true })
+    await waitFor(() => {
+      expect(seenAuth).toBe('Bearer gw-pasted')
+    })
+    await selectOption(user, /model/i, 'alpha')
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: /model/i })).toHaveTextContent('alpha')
+    })
+  })
+
+  it('refetches with the new credential after a key switch', async () => {
+    const user = userEvent.setup()
+    const seen: string[] = []
+    server.use(
+      http.get('*/v1/models', ({ request }) => {
+        seen.push(request.headers.get('Authorization') ?? '')
+        return HttpResponse.json({ data: [{ id: 'alpha' }] })
+      }),
+    )
+    function Switchable() {
+      const [token, setToken] = useState('gw-first')
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              setToken('gw-second')
+            }}
+          >
+            switch key
+          </button>
+          <Harness token={token} />
+        </>
+      )
+    }
+    renderApp(<Switchable />)
+    await waitFor(() => {
+      expect(seen).toEqual(['Bearer gw-first'])
+    })
+    await user.click(screen.getByRole('button', { name: /switch key/i }))
+    await waitFor(() => {
+      expect(seen).toEqual(['Bearer gw-first', 'Bearer gw-second'])
+    })
+  })
+
   it('lists models through act-as-self with the session bearer', async () => {
     const user = userEvent.setup()
     let seenActAs: string | null = null

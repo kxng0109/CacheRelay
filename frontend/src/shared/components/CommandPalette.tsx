@@ -148,7 +148,7 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
     {
       id: 'nav-mcp',
       label: 'Go to MCP',
-      audience: 'session',
+      audience: 'public',
       run: () => {
         go('/mcp')
       },

@@ -13,18 +13,19 @@ test('shell loads, guests land on login, public screens render idle', async ({ p
   const screens: { link: string; heading: string }[] = [
     { link: 'Playground', heading: 'Playground' },
     { link: 'Embeddings', heading: 'Embeddings' },
+    { link: 'MCP', heading: 'MCP tools' },
   ]
   for (const s of screens) {
     await page.getByRole('link', { name: s.link, exact: true }).click()
     await expect(page.getByRole('heading', { name: s.heading })).toBeVisible()
   }
-  for (const label of ['Overview', 'MCP', 'Observability']) {
+  for (const label of ['Overview', 'Observability']) {
     await expect(page.getByRole('link', { name: label, exact: true })).toHaveCount(0)
   }
   await page.goto('/observability')
   await expect(page.getByRole('heading', { name: /log in/i })).toBeVisible()
   await page.goto('/mcp')
-  await expect(page.getByRole('heading', { name: /log in/i })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'MCP tools' })).toBeVisible()
 })
 
 /**
@@ -52,6 +53,40 @@ test('login screen renders', async ({ page }) => {
   await expect(page.getByRole('heading', { name: /log in/i })).toBeVisible()
   await expect(page.getByLabel(/username/i)).toBeVisible()
   await expect(page.getByLabel(/^password$/i)).toBeVisible()
+})
+
+/**
+ * FE-03: a tab-smuggled `next` value never leaves the origin. Guests stay on
+ * the login screen (this leg). The authenticated post-login leg needs a
+ * real login POST against a live gateway, which the backend-less e2e
+ * environment cannot do; the unit leg pins the resolver contract.
+ */
+test('smuggled next never leaves the origin', async ({ page }) => {
+  await page.goto('/login?next=%2F%09%2Fevil.example')
+  await expect(page.getByRole('heading', { name: /log in/i })).toBeVisible()
+  expect(new URL(page.url()).hostname).not.toBe('evil.example')
+})
+
+/**
+ * DEF-01: dot-segment smuggling (`/..//evil.example` and encoded variants)
+ * resolves same-origin but yields a `//host` pathname. With a seeded
+ * session, navigating to the payload must never leave the origin, and the
+ * in-browser resolver must return `/` for every variant (Chromium's URL
+ * parser, not jsdom).
+ */
+test('dot-segment next never leaves the origin', async ({ page }) => {
+  await page.goto('/__test/session/user?next=/')
+  await expect(page.getByRole('heading', { level: 1, name: 'Overview' })).toBeVisible()
+  const origin = new URL(page.url()).origin
+  // Prove Chromium's parser agrees with the audit: the payload stays
+  // same-origin yet yields a `//host` pathname (the old code returned it).
+  const pathname: unknown = await page.evaluate(
+    () => new URL('/..//evil.example', window.location.origin).pathname,
+  )
+  expect(pathname).toBe('//evil.example')
+  await page.goto('/login?next=%2F..%2F%2Fevil.example')
+  expect(page.url().startsWith(origin)).toBe(true)
+  expect(new URL(page.url()).hostname).not.toBe('evil.example')
 })
 
 /**

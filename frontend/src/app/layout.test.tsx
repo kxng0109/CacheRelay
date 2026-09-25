@@ -8,11 +8,13 @@ import { useRateLimitStore } from '../shared/ratelimit/store.js'
 import { useUiStore } from '../shared/store.js'
 import { server } from '../test/setup.js'
 import { renderApp } from '../test/utils.js'
+import { useToastStore } from '../shared/toast/store.js'
 import { Layout, parseSidebar } from './layout.js'
 
 describe('Layout', () => {
   beforeEach(() => {
     useRateLimitStore.getState().clear()
+    useToastStore.getState().clear()
     window.localStorage.removeItem('cacherelay.sidebar')
     window.history.replaceState(null, '', '/')
     server.use(
@@ -54,7 +56,7 @@ describe('Layout', () => {
 
   it('hides the rate-limit strip before any gateway response', () => {
     renderApp(<Layout />, { gatewayKey: 'gw-test' })
-    expect(screen.queryByRole('status', { name: /rate limit status/i })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/rate limit status/i)).not.toBeInTheDocument()
   })
 
   it('hides the rate-limit strip when signed out even with a snapshot', () => {
@@ -64,7 +66,7 @@ describe('Layout', () => {
         .getState()
         .setSnapshot({ dimension: 'RPM', limit: 60, remaining: 41, reset: 12, retryAfter: null })
     })
-    expect(screen.queryByRole('status', { name: /rate limit status/i })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/rate limit status/i)).not.toBeInTheDocument()
   })
 
   it('shows the last observed snapshot once authenticated', () => {
@@ -74,7 +76,7 @@ describe('Layout', () => {
         .getState()
         .setSnapshot({ dimension: 'RPM', limit: 60, remaining: 41, reset: 12, retryAfter: null })
     })
-    const strip = screen.getByRole('status', { name: /rate limit status/i })
+    const strip = screen.getByLabelText(/rate limit status/i)
     expect(strip).toHaveTextContent('Remaining: 41')
   })
 
@@ -85,11 +87,11 @@ describe('Layout', () => {
         .getState()
         .setSnapshot({ dimension: 'RPM', limit: 60, remaining: 41, reset: 12, retryAfter: null })
     })
-    expect(screen.getByRole('status', { name: /rate limit status/i })).toBeInTheDocument()
+    expect(screen.getByLabelText(/rate limit status/i)).toBeInTheDocument()
     act(() => {
       useAuthStore.getState().setGatewayKey('gw-second')
     })
-    expect(screen.queryByRole('status', { name: /rate limit status/i })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/rate limit status/i)).not.toBeInTheDocument()
     expect(useRateLimitStore.getState().snapshot).toBeNull()
   })
 
@@ -100,11 +102,11 @@ describe('Layout', () => {
         .getState()
         .setSnapshot({ dimension: 'RPM', limit: 60, remaining: 41, reset: 12, retryAfter: null })
     })
-    expect(screen.getByRole('status', { name: /rate limit status/i })).toBeInTheDocument()
+    expect(screen.getByLabelText(/rate limit status/i)).toBeInTheDocument()
     act(() => {
       useAuthStore.getState().clear()
     })
-    expect(screen.queryByRole('status', { name: /rate limit status/i })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/rate limit status/i)).not.toBeInTheDocument()
   })
 
   it('shows session identity and route in the shell bars', () => {
@@ -225,13 +227,14 @@ describe('Layout', () => {
       'Keys',
       'Ledger',
       'Teams',
-      'MCP',
       'Observability',
     ]) {
       expect(screen.queryByRole('link', { name: new RegExp(`^${label}$`) })).not.toBeInTheDocument()
     }
     expect(screen.getByRole('link', { name: /^Playground$/ })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /^Embeddings$/ })).toBeInTheDocument()
+    // FE-40: the MCP catalog is paste-key first, so guests may open it.
+    expect(screen.getByRole('link', { name: /^MCP$/ })).toBeInTheDocument()
     expect(screen.queryByText('Guard')).not.toBeInTheDocument()
   })
 
@@ -334,7 +337,12 @@ describe('Layout', () => {
   it('badges live pending approvals for admins', async () => {
     server.use(
       http.get('*/v1/admin/mcp/approvals/pending', () =>
-        HttpResponse.json({ approvals: [{ id: 'a' }, { id: 'b' }] }),
+        HttpResponse.json({
+          approvals: [
+            { approvalId: 'a1', toolName: 't', requestedAt: 'r', requestedBy: 'b' },
+            { approvalId: 'a2', toolName: 't', requestedAt: 'r', requestedBy: 'b' },
+          ],
+        }),
       ),
     )
     renderApp(<Layout />, { adminSession: true })
@@ -344,7 +352,13 @@ describe('Layout', () => {
   })
 
   it('survives a bare-array approvals payload without crashing', async () => {
-    server.use(http.get('*/v1/admin/mcp/approvals/pending', () => HttpResponse.json([{ id: 'a' }])))
+    server.use(
+      http.get('*/v1/admin/mcp/approvals/pending', () =>
+        HttpResponse.json([
+          { approvalId: 'a1', toolName: 't', requestedAt: 'r', requestedBy: 'b' },
+        ]),
+      ),
+    )
     renderApp(<Layout />, { adminSession: true })
     await waitFor(() => {
       expect(screen.getByLabelText('1 pending approvals')).toBeInTheDocument()
@@ -355,6 +369,40 @@ describe('Layout', () => {
   it('shows no badge without an admin key', () => {
     renderApp(<Layout />)
     expect(screen.queryByLabelText(/pending approvals/i)).not.toBeInTheDocument()
+  })
+
+  it('diagnoses content-policy blocks once per target', async () => {
+    const user = userEvent.setup()
+    // The shell already renders the toast viewport; do not double it.
+    renderApp(<Layout />)
+    expect(screen.queryByText(/blocked by content policy/i)).not.toBeInTheDocument()
+    const first = new Event('securitypolicyviolation')
+    Object.assign(first, { violatedDirective: 'connect-src', blockedURI: 'http://h:9091/x' })
+    document.dispatchEvent(first)
+    await waitFor(() => {
+      expect(screen.getByText(/blocked by content policy/i)).toBeInTheDocument()
+    })
+    expect(screen.getByText(/connect-src/i)).toBeInTheDocument()
+    // A second identical violation must not stack another toast; the user
+    // dismisses the first and the 15 s poll stays quiet.
+    await user.click(screen.getByRole('button', { name: /dismiss:/i }))
+    await waitFor(() => {
+      expect(screen.queryByText(/blocked by content policy/i)).not.toBeInTheDocument()
+    })
+    const second = new Event('securitypolicyviolation')
+    Object.assign(second, { violatedDirective: 'connect-src', blockedURI: 'http://h:9091/x' })
+    document.dispatchEvent(second)
+    expect(screen.queryByText(/blocked by content policy/i)).not.toBeInTheDocument()
+  })
+
+  it('names unknown policy blocks without internals', async () => {
+    renderApp(<Layout />)
+    const bare = new Event('securitypolicyviolation')
+    document.dispatchEvent(bare)
+    await waitFor(() => {
+      expect(screen.getByText(/blocked by content policy/i)).toBeInTheDocument()
+    })
+    expect(screen.getByText(/\(csp\): unknown target/i)).toBeInTheDocument()
   })
 
   it('offers login when logged out and lock when in session', () => {
@@ -386,6 +434,29 @@ describe('Layout', () => {
     fireEvent.keyDown(document, { key: 'g' })
     fireEvent.keyDown(document, { key: 'c' })
     expect(screen.getByText('route: Circuits')).toBeInTheDocument()
+  })
+
+  it('names the screen in the document title on navigation', () => {
+    renderApp(<Layout />, { adminSession: true })
+    expect(document.title).toBe('Overview · CacheRelay')
+    fireEvent.keyDown(document, { key: 'g' })
+    fireEvent.keyDown(document, { key: 'p' })
+    expect(document.title).toBe('Playground · CacheRelay')
+  })
+
+  it('moves focus to the new screen heading on navigation, never on first paint', () => {
+    renderApp(<Layout />, { adminSession: true })
+    const main = document.querySelector('#main')
+    if (main === null) throw new Error('#main missing')
+    const heading = document.createElement('h1')
+    heading.textContent = 'Probe screen'
+    main.appendChild(heading)
+    // First paint leaves focus alone.
+    expect(heading).not.toHaveFocus()
+    fireEvent.keyDown(document, { key: 'g' })
+    fireEvent.keyDown(document, { key: 'p' })
+    expect(heading).toHaveFocus()
+    heading.remove()
   })
 
   it('blocks chords to routes the session may not see', () => {
@@ -444,12 +515,10 @@ describe('Layout', () => {
       ),
     )
     renderApp(<Layout />, { gatewayKey: 'gw-test' })
-    expect(screen.queryByRole('status', { name: /rate limit status/i })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/rate limit status/i)).not.toBeInTheDocument()
     await new GatewayClient({ base: '', token: 'gw-test' }).models()
     await waitFor(() => {
-      expect(screen.getByRole('status', { name: /rate limit status/i })).toHaveTextContent(
-        'Remaining: 41',
-      )
+      expect(screen.getByLabelText(/rate limit status/i)).toHaveTextContent('Remaining: 41')
     })
   })
 })

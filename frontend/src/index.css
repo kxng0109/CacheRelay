@@ -15,13 +15,19 @@
   --color-ember: #c7431f;
 
   /* Status: success / warn / danger keep operational meaning only.
-     Base variants pass 4.5:1 on paper; `-soft` variants pass on night. */
+     Base variants pass 4.5:1 on paper; `-soft` variants pass on night.
+     `-deep` variants are the badge-text step for translucent tints in
+     light mode: success-deep 5.95:1, danger-deep 6.00:1, warn-deep
+     5.56:1 on their flattened tints (WCAG formula, FE-08). */
   --color-success: #2e7d32;
   --color-success-soft: #81c784;
+  --color-success-deep: #1b5e20;
   --color-warn: #8a5e14;
   --color-warn-soft: #d9a441;
+  --color-warn-deep: #6e4a0e;
   --color-danger: #c0392b;
   --color-danger-soft: #e08073;
+  --color-danger-deep: #922b21;
 
   /* Muted text: solid mixes that keep 4.5:1 (never opacity-faded text,
      which drops below the floor once flattened). */
@@ -108,6 +114,19 @@ html.dark {
 }
 .dark :focus-visible {
   outline-color: var(--color-parchment);
+}
+
+/* Placeholder text: explicit solid tokens in both themes (ink-soft 7.03:1
+   on paper, parchment-soft 7.51:1 on night). Never the preflight 50%
+   currentColor mix, which drops light mode to ~3.42:1. */
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-ink-soft);
+  opacity: 1;
+}
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: var(--color-parchment-soft);
 }
 
 /* Console scrollbars: thin themed thumb on a transparent track in both

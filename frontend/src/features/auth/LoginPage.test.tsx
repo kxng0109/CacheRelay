@@ -79,6 +79,15 @@ describe('LoginPage', () => {
     await waitFor(() => {
       expect(screen.getByText(/username is required/i)).toBeInTheDocument()
     })
+    // FE-30: errors are linked, not just broadcast.
+    expect(screen.getByLabelText(/username/i)).toHaveAttribute(
+      'aria-describedby',
+      'login-username-error',
+    )
+    expect(screen.getByLabelText(/^password$/i)).toHaveAttribute(
+      'aria-describedby',
+      'login-password-error',
+    )
   })
 
   it('focuses the username field on arrival', () => {

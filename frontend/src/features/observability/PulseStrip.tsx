@@ -1,9 +1,8 @@
-import { useQuery } from '@tanstack/react-query'
 import { useShallow } from 'zustand/react/shallow'
-import { resolveManagementBase } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { histogramQuantile, parseGatewayPulse, parsePrometheusHistogram } from './prometheus.js'
 import type { GatewayPulse } from './prometheus.js'
+import { usePrometheusScrape } from './useScrape.js'
 
 const POLL_MS = 15_000
 
@@ -41,6 +40,22 @@ interface PulseValues extends GatewayPulse {
 }
 
 /**
+ * Derives the pulse view from one raw scrape.
+ *
+ * @param scrape - Shared scrape text.
+ * @returns Pulse gauges plus lifetime P99.
+ */
+function pulseSelect(scrape: { text: string }): PulseValues {
+  const pulse = parseGatewayPulse(scrape.text)
+  const snapshot = parsePrometheusHistogram(scrape.text)
+  const quantile =
+    snapshot === null || snapshot.count <= 0
+      ? null
+      : histogramQuantile(snapshot.buckets, snapshot.count, 0.99)
+  return { ...pulse, p99: quantile === null ? null : quantile * 1000 }
+}
+
+/**
  * Gateway pulse strip: aggregate live gauges for operator sessions.
  *
  * @remarks
@@ -57,26 +72,9 @@ interface PulseValues extends GatewayPulse {
  */
 export function PulseStrip({ pollMs = POLL_MS }: { pollMs?: number }): React.JSX.Element | null {
   const isAdmin = useAuthStore(useShallow((s) => s.session?.admin === true))
-  const query = useQuery({
-    queryKey: ['prometheus-pulse'],
-    enabled: isAdmin,
-    queryFn: async ({ signal }): Promise<PulseValues> => {
-      const res = await fetch(`${resolveManagementBase()}/actuator/prometheus`, { signal })
-      if (!res.ok) {
-        throw new Error(`Metrics scrape failed: HTTP ${String(res.status)}. Retry shortly.`)
-      }
-      const text = await res.text()
-      const pulse = parseGatewayPulse(text)
-      const snapshot = parsePrometheusHistogram(text)
-      const quantile =
-        snapshot === null || snapshot.count <= 0
-          ? null
-          : histogramQuantile(snapshot.buckets, snapshot.count, 0.99)
-      return { ...pulse, p99: quantile === null ? null : quantile * 1000 }
-    },
-    refetchInterval: pollMs,
-    retry: false,
-  })
+  // Shared scrape (FE-18): one request per interval for every consumer;
+  // the pulse view derives locally via `select`.
+  const query = usePrometheusScrape(pollMs, isAdmin, pulseSelect)
 
   // Regular sessions keep the status page only; operators see the pulse.
   if (!isAdmin) return null
@@ -107,7 +105,7 @@ export function PulseStrip({ pollMs = POLL_MS }: { pollMs?: number }): React.JSX
 
   return (
     <section aria-label="Gateway pulse" className="space-y-2">
-      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
           <dt className="text-[13px] text-ink-soft dark:text-parchment-soft">Uptime</dt>
           <dd className="font-mono text-lg tnum">{uptime}</dd>

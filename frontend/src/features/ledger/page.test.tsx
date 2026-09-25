@@ -122,9 +122,13 @@ describe('LedgerPage', () => {
     )
     renderApp(<LedgerPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    within(table).getByText('gpt-4o-mini').closest('tr')?.focus()
+    // FE-22: narrow viewports scroll the table region, never the page.
+    expect(table.closest('.overflow-x-auto')).not.toBeNull()
+    within(table)
+      .getByRole('button', { name: /inspect receipt r9/i })
+      .focus()
     await user.keyboard('{Enter}')
-    expect(await screen.findByRole('complementary')).toHaveTextContent(/r9|gpt-4o-mini/)
+    expect(await screen.findByRole('dialog')).toHaveTextContent(/r9|gpt-4o-mini/)
   })
 
   it('ignores an empty jump instead of paging', async () => {
@@ -152,9 +156,11 @@ describe('LedgerPage', () => {
     )
     renderApp(<LedgerPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    within(table).getByText('gpt-4o-mini').closest('tr')?.focus()
+    within(table)
+      .getByRole('button', { name: /inspect receipt r9/i })
+      .focus()
     await user.keyboard('{ }')
-    expect(await screen.findByRole('complementary')).toHaveTextContent(/r9|gpt-4o-mini/)
+    expect(await screen.findByRole('dialog')).toHaveTextContent(/r9|gpt-4o-mini/)
   })
 
   it('shows the empty state without traffic', async () => {
@@ -213,20 +219,13 @@ describe('LedgerPage', () => {
     )
     renderApp(<LedgerPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    const row = within(table).getByText('gpt-4o-mini').closest('tr')
-    expect(row).not.toBeNull()
-    if (row !== null) {
-      await user.click(row)
-    }
-    const inspector = await screen.findByRole('complementary')
+    const inspect = within(table).getByRole('button', { name: /inspect receipt r9/i })
+    await user.click(inspect)
+    const inspector = await screen.findByRole('dialog')
     expect(inspector).toHaveTextContent(/r9|gpt-4o-mini/)
-    const rowAgain = within(table).getByText('gpt-4o-mini').closest('tr')
-    expect(rowAgain).not.toBeNull()
-    if (rowAgain !== null) {
-      await user.click(rowAgain)
-    }
+    await user.click(inspect)
     await waitFor(() => {
-      expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     })
     expect(screen.getByText(/select a row to inspect/i)).toBeInTheDocument()
   })
@@ -268,7 +267,7 @@ describe('LedgerPage', () => {
       )
       renderApp(<LedgerPage />, { adminSession: true })
       const table = await screen.findByRole('table')
-      await user.click(within(table).getByText('gpt-4o-mini'))
+      await user.click(within(table).getByRole('button', { name: /inspect receipt r9/i }))
       await user.click(screen.getByRole('button', { name: /copy receipt/i }))
       expect(writes.length).toBe(1)
       const first = writes.at(0)
@@ -288,9 +287,11 @@ describe('LedgerPage', () => {
     )
     renderApp(<LedgerPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    within(table).getByText('gpt-4o-mini').closest('tr')?.focus()
+    within(table)
+      .getByRole('button', { name: /inspect receipt r9/i })
+      .focus()
     await user.keyboard('{Enter}')
-    expect(screen.getByRole('complementary', { name: /receipt inspector/i })).toHaveTextContent(
+    expect(screen.getByRole('dialog', { name: /receipt inspector/i })).toHaveTextContent(
       'gpt-4o-mini',
     )
   })
@@ -314,7 +315,7 @@ describe('LedgerPage', () => {
       )
       renderApp(<LedgerPage />, { adminSession: true })
       const table = await screen.findByRole('table')
-      await user.click(within(table).getByText('gpt-4o-mini'))
+      await user.click(within(table).getByRole('button', { name: /inspect receipt r9/i }))
       await user.click(screen.getByRole('button', { name: /copy markdown/i }))
       expect(writes.length).toBe(1)
       const first = writes.at(0)
@@ -338,7 +339,7 @@ describe('LedgerPage', () => {
     )
     renderApp(<LedgerPage />, { adminSession: true })
     const table = await screen.findByRole('table')
-    await user.click(within(table).getByText('gpt-4o-mini'))
+    await user.click(within(table).getByRole('button', { name: /inspect receipt r9/i }))
     await user.click(screen.getByRole('button', { name: /copy receipt/i }))
     expect(screen.getByText(/copy unavailable in this browser/i)).toBeInTheDocument()
   })
@@ -356,7 +357,7 @@ describe('LedgerPage', () => {
       )
       renderApp(<LedgerPage />, { adminSession: true })
       const table = await screen.findByRole('table')
-      await user.click(within(table).getByText('gpt-4o-mini'))
+      await user.click(within(table).getByRole('button', { name: /inspect receipt r9/i }))
       await user.click(screen.getByRole('button', { name: /copy markdown/i }))
       expect(await screen.findByText(/copy failed. select the text manually/i)).toBeInTheDocument()
     } finally {

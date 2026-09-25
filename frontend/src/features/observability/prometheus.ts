@@ -18,6 +18,30 @@ const MAX_BUCKETS = 100
 /** Points kept per chart: 48 polls at 15s cover the last 12 minutes. */
 export const MAX_POINTS = 48
 
+/**
+ * Scans exposition lines without allocating a line array.
+ *
+ * @remarks A 100 MB body split on `\n` would materialize millions of
+ * substrings before the `MAX_LINES` cap ever applied. The generator
+ * yields at most `MAX_LINES` slices, so unbounded bodies cost iterations,
+ * never a giant array — and the transport already caps bytes (FE-35).
+ *
+ * @param text - Raw scrape text.
+ * @returns Up to `MAX_LINES` line slices.
+ */
+export function* scanLines(text: string): Generator<string> {
+  let start = 0
+  let count = 0
+  for (let i = 0; i < text.length && count < MAX_LINES; i += 1) {
+    if (text[i] === '\n') {
+      count += 1
+      yield text.slice(start, i)
+      start = i + 1
+    }
+  }
+  if (start < text.length && count < MAX_LINES) yield text.slice(start)
+}
+
 export interface HistogramBucket {
   /** Bucket upper bound in seconds (`Infinity` for `+Inf`). */
   le: number
@@ -97,8 +121,7 @@ function parseLine(line: string, into: { buckets: Map<number, number>; count: nu
  */
 export function parsePrometheusHistogram(text: string): HistogramSnapshot | null {
   const aggregate = { buckets: new Map<number, number>(), count: 0 }
-  const lines = text.split('\n')
-  for (const line of lines.slice(0, MAX_LINES)) {
+  for (const line of scanLines(text)) {
     if (line.length === 0 || line.startsWith('#') || line.length > MAX_LINE_LENGTH) continue
     parseLine(line, aggregate)
     if (aggregate.buckets.size > MAX_BUCKETS) break
@@ -253,8 +276,7 @@ export function parseGatewayPulse(text: string): GatewayPulse {
   let heapUsedBytes: number | null = null
   let heapMaxBytes: number | null = null
   let liveStreams: number | null = null
-  const lines = text.split('\n')
-  for (const line of lines.slice(0, MAX_LINES)) {
+  for (const line of scanLines(text)) {
     if (line.length === 0 || line.startsWith('#') || line.length > MAX_LINE_LENGTH) continue
     const name = metricName(line)
     if (name === 'process_uptime_seconds') {

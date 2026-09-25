@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { ApiError, GatewayClient } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
+import { TableScroll } from '../../shared/components/TableScroll.js'
 
 /**
  * Org team inventory table: mounted only after an org slug applies, so no
@@ -54,33 +55,38 @@ function OrgInventory({ org }: { org: string }): React.JSX.Element {
     )
   }
   return (
-    <table className="w-full text-left text-sm">
-      <caption className="sr-only">Teams in {org}</caption>
-      <thead>
-        <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
-          <th scope="col" className="py-2 pr-3 font-medium">
-            Team
-          </th>
-          <th scope="col" className="py-2 pr-3 font-medium">
-            IdP group
-          </th>
-          <th scope="col" className="py-2 text-right font-medium">
-            Members
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        {inventory.data.map((t) => (
-          <tr key={t.teamId} className="border-t border-ink/10 dark:border-parchment/10">
-            <td className="py-2 pr-3 text-[13px]">{t.name}</td>
-            <td className="max-w-44 truncate py-2 pr-3 font-mono text-[13px]" title={t.idpGroupId}>
-              {t.idpGroupId}
-            </td>
-            <td className="py-2 text-right font-mono text-[13px] tnum">{t.activeMembers}</td>
+    <TableScroll>
+      <table className="w-full text-left text-sm">
+        <caption className="sr-only">Teams in {org}</caption>
+        <thead>
+          <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+            <th scope="col" className="py-2 pr-3 font-medium">
+              Team
+            </th>
+            <th scope="col" className="py-2 pr-3 font-medium">
+              IdP group
+            </th>
+            <th scope="col" className="py-2 text-right font-medium">
+              Members
+            </th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {inventory.data.map((t) => (
+            <tr key={t.teamId} className="border-t border-ink/10 dark:border-parchment/10">
+              <td className="py-2 pr-3 text-[13px]">{t.name}</td>
+              <td
+                className="max-w-44 truncate py-2 pr-3 font-mono text-[13px]"
+                title={t.idpGroupId}
+              >
+                {t.idpGroupId}
+              </td>
+              <td className="py-2 text-right font-mono text-[13px] tnum">{t.activeMembers}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </TableScroll>
   )
 }
 
@@ -156,43 +162,45 @@ export function TeamsPage(): React.JSX.Element {
           action={{ label: 'Redeem an invite', to: '/redeem' }}
         />
       ) : (
-        <table className="w-full text-left text-sm">
-          <caption className="sr-only">My team memberships</caption>
-          <thead>
-            <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
-              <th scope="col" className="py-2 pr-3 font-medium">
-                Team
-              </th>
-              <th scope="col" className="py-2 pr-3 font-medium">
-                Org
-              </th>
-              <th scope="col" className="py-2 pr-3 font-medium">
-                Role
-              </th>
-              <th scope="col" className="py-2 font-medium">
-                Status
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {mine.data.map((m) => (
-              <tr key={m.teamId} className="border-t border-ink/10 dark:border-parchment/10">
-                <td className="py-2 pr-3 text-[13px]">{m.teamName}</td>
-                <td className="py-2 pr-3 font-mono text-[13px] tnum">{m.orgSlug}</td>
-                <td className="py-2 pr-3 text-[13px]">
-                  <span className="rounded-full border border-ink/15 px-2 py-0.5 font-mono text-xs dark:border-parchment/15">
-                    {m.role}
-                  </span>
-                </td>
-                <td className="py-2 text-[13px]">
-                  <span className="rounded-full border border-ink/15 px-2 py-0.5 font-mono text-xs dark:border-parchment/15">
-                    {m.status}
-                  </span>
-                </td>
+        <TableScroll>
+          <table className="w-full text-left text-sm">
+            <caption className="sr-only">My team memberships</caption>
+            <thead>
+              <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+                <th scope="col" className="py-2 pr-3 font-medium">
+                  Team
+                </th>
+                <th scope="col" className="py-2 pr-3 font-medium">
+                  Org
+                </th>
+                <th scope="col" className="py-2 pr-3 font-medium">
+                  Role
+                </th>
+                <th scope="col" className="py-2 font-medium">
+                  Status
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {mine.data.map((m) => (
+                <tr key={m.teamId} className="border-t border-ink/10 dark:border-parchment/10">
+                  <td className="py-2 pr-3 text-[13px]">{m.teamName}</td>
+                  <td className="py-2 pr-3 font-mono text-[13px] tnum">{m.orgSlug}</td>
+                  <td className="py-2 pr-3 text-[13px]">
+                    <span className="rounded-full border border-ink/15 px-2 py-0.5 font-mono text-xs dark:border-parchment/15">
+                      {m.role}
+                    </span>
+                  </td>
+                  <td className="py-2 text-[13px]">
+                    <span className="rounded-full border border-ink/15 px-2 py-0.5 font-mono text-xs dark:border-parchment/15">
+                      {m.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableScroll>
       )}
       {isAdmin ? (
         <section aria-label="Org team inventory" className="space-y-3">

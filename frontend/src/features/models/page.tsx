@@ -6,6 +6,7 @@ import type { ModelAliasRecord, ProviderChainStep, ProviderStatus } from '../../
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
 import { Modal } from '../../shared/components/Modal.js'
 import { Select } from '../../shared/components/Select.js'
+import { TableScroll } from '../../shared/components/TableScroll.js'
 import { ProviderBoard } from './ProviderBoard.js'
 
 const STRATEGIES = ['SEQUENTIAL', 'RACE'] as const
@@ -476,126 +477,136 @@ function ModelsBoard(): React.JSX.Element {
               : 'No aliases match this filter.'}
           </p>
         ) : (
-          <table className="w-full text-left text-sm">
-            <caption className="sr-only">Model aliases</caption>
-            <thead className="sticky top-0 bg-paper dark:bg-night">
-              <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
-                <th scope="col" className="py-2 pr-3 font-medium">
-                  Name
-                </th>
-                <th scope="col" className="py-2 pr-3 font-medium">
-                  Source
-                </th>
-                <th scope="col" className="py-2 pr-3 font-medium">
-                  Chain
-                </th>
-                {showActions ? (
-                  <th scope="col" className="py-2 text-right font-medium">
-                    <span className="sr-only">Actions</span>
+          <TableScroll>
+            <table className="w-full text-left text-sm">
+              <caption className="sr-only">Model aliases</caption>
+              <thead className="sticky top-0 bg-paper dark:bg-night">
+                <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+                  <th scope="col" className="py-2 pr-3 font-medium">
+                    Name
                   </th>
-                ) : null}
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map((a) => {
-                const active = a.name === selected
-                return (
-                  <tr
-                    key={a.name}
-                    tabIndex={0}
-                    aria-selected={active}
-                    onClick={() => {
-                      setSelected(active ? null : a.name)
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault()
-                        setSelected(active ? null : a.name)
-                      }
-                    }}
-                    className={`cursor-pointer border-t border-ink/10 dark:border-parchment/10 ${
-                      active ? 'bg-ink/4 dark:bg-parchment/6' : ''
-                    }`}
-                  >
-                    <td
-                      className="max-w-44 truncate py-2 pr-3 font-mono text-[13px]"
-                      title={a.name}
+                  <th scope="col" className="py-2 pr-3 font-medium">
+                    Source
+                  </th>
+                  <th scope="col" className="py-2 pr-3 font-medium">
+                    Chain
+                  </th>
+                  {showActions ? (
+                    <th scope="col" className="py-2 text-right font-medium">
+                      <span className="sr-only">Actions</span>
+                    </th>
+                  ) : null}
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((a) => {
+                  const active = a.name === selected
+                  return (
+                    <tr
+                      key={a.name}
+                      className={`border-t border-ink/10 dark:border-parchment/10 ${
+                        active ? 'bg-ink/4 dark:bg-parchment/6' : ''
+                      }`}
                     >
-                      {a.name}
-                    </td>
-                    <td className="py-2 pr-3">
-                      <span
-                        className={`rounded px-2 py-1 text-[13px] ${
-                          a.source === 'file'
-                            ? 'bg-ink/8 text-ink-soft dark:bg-parchment/10 dark:text-parchment-soft'
-                            : 'bg-success/15 text-success dark:text-success-soft'
-                        }`}
+                      <td
+                        className="max-w-44 truncate py-2 pr-3 font-mono text-[13px]"
+                        title={a.name}
                       >
-                        ● {a.source}
-                      </span>
-                    </td>
-                    <td
-                      className="max-w-56 truncate py-2 pr-3 font-mono text-[13px]"
-                      title={a.chain.map((s) => s.providerName).join(' → ')}
-                    >
-                      {a.chain.length === 0
-                        ? 'none'
-                        : a.chain.map((s) => s.providerName).join(' → ')}
-                    </td>
-                    {showActions ? (
-                      <td className="py-2 text-right">
-                        {a.source === 'database' ? (
-                          confirming === a.name ? (
-                            <span className="inline-flex items-center gap-2 text-[13px]">
-                              Delete “{a.name}”?
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  onDelete(a.name)
-                                }}
-                                className="rounded-md border border-danger/40 px-2 py-1 text-danger dark:text-danger-soft"
-                              >
-                                Yes
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setConfirming(null)
-                                }}
-                                className="rounded-md border border-ink/15 px-2 py-1 dark:border-parchment/15"
-                              >
-                                No
-                              </button>
-                            </span>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setConfirming(a.name)
-                              }}
-                              className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
-                            >
-                              Delete
-                            </button>
-                          )
-                        ) : (
-                          <span
-                            className="font-mono text-xs text-ink-soft dark:text-parchment-soft"
-                            title="File bound aliases are read only"
+                        {a.name}
+                        {showActions ? null : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelected(active ? null : a.name)
+                            }}
+                            aria-label={`Inspect alias ${a.name}`}
+                            className="sr-only"
                           >
-                            read only
-                          </span>
+                            Inspect alias {a.name}
+                          </button>
                         )}
                       </td>
-                    ) : null}
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+                      <td className="py-2 pr-3">
+                        <span
+                          className={`rounded px-2 py-1 text-[13px] ${
+                            a.source === 'file'
+                              ? 'bg-ink/8 text-ink-soft dark:bg-parchment/10 dark:text-parchment-soft'
+                              : 'bg-success/15 text-success dark:text-success-soft'
+                          }`}
+                        >
+                          ● {a.source}
+                        </span>
+                      </td>
+                      <td
+                        className="max-w-56 truncate py-2 pr-3 font-mono text-[13px]"
+                        title={a.chain.map((s) => s.providerName).join(' → ')}
+                      >
+                        {a.chain.length === 0
+                          ? 'none'
+                          : a.chain.map((s) => s.providerName).join(' → ')}
+                      </td>
+                      {showActions ? (
+                        <td className="py-2 text-right">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelected(active ? null : a.name)
+                            }}
+                            aria-label={`Inspect alias ${a.name}`}
+                            className="mr-2 rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+                          >
+                            Inspect
+                          </button>
+                          {a.source === 'database' ? (
+                            confirming === a.name ? (
+                              <span className="inline-flex items-center gap-2 text-[13px]">
+                                Delete “{a.name}”?
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onDelete(a.name)
+                                  }}
+                                  className="rounded-md border border-danger/40 px-2 py-1 text-danger dark:text-danger-soft"
+                                >
+                                  Yes
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setConfirming(null)
+                                  }}
+                                  className="rounded-md border border-ink/15 px-2 py-1 dark:border-parchment/15"
+                                >
+                                  No
+                                </button>
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setConfirming(a.name)
+                                }}
+                                className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+                              >
+                                Delete
+                              </button>
+                            )
+                          ) : (
+                            <span
+                              className="font-mono text-xs text-ink-soft dark:text-parchment-soft"
+                              title="File bound aliases are read only"
+                            >
+                              read only
+                            </span>
+                          )}
+                        </td>
+                      ) : null}
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </TableScroll>
         )}
         {replacing === null ? null : (
           <div className="space-y-3 rounded-xl border border-ink/10 bg-cream p-4 dark:border-parchment/10 dark:bg-transparent">

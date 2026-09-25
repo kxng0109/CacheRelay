@@ -1,16 +1,36 @@
 import { useState } from 'react'
+import { resolveApiBase } from '../../shared/api/client.js'
+
+/**
+ * Quotes a string for POSIX shells: wraps it in single quotes with every
+ * embedded quote escaped as `'\''`. Inside single quotes `$`, backticks,
+ * newlines, and `$(...)` stay literal, so a hostile model id pasted into a
+ * terminal cannot execute.
+ *
+ * @param value - Raw text to quote.
+ * @returns Shell-quoted text.
+ */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`
+}
 
 /**
  * Builds the exact curl an operator can paste into a terminal.
  *
  * @remarks The key stays the `YOUR_KEY` placeholder: memory-only keys never
- * leave the page, not even into a copy buffer.
+ * leave the page, not even into a copy buffer. The payload is built with
+ * `JSON.stringify` (never interpolation) and shell-quoted; the URL follows
+ * the configured API base with a same-origin fallback instead of a
+ * hardcoded loopback.
  *
- * @param model - Model id interpolated into the payload.
+ * @param model - Model id placed into the payload.
  * @returns The curl snippet text.
  */
 export function exampleRequest(model: string): string {
-  return `curl -s http://localhost:8080/v1/chat/completions -H "Authorization: Bearer YOUR_KEY" -H "Content-Type: application/json" -d '{"model":"${model}","messages":[{"role":"user","content":"Hello"}]}'`
+  const base = resolveApiBase()
+  const origin = base.length > 0 ? base : window.location.origin
+  const body = JSON.stringify({ model, messages: [{ role: 'user', content: 'Hello' }] })
+  return `curl -s ${origin}/v1/chat/completions -H "Authorization: Bearer YOUR_KEY" -H "Content-Type: application/json" -d ${shellQuote(body)}`
 }
 
 /**

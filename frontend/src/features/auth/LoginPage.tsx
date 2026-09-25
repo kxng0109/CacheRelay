@@ -91,10 +91,15 @@ export function LoginPage(): React.JSX.Element {
             autoFocus
             {...register('username')}
             aria-invalid={errors.username !== undefined}
+            aria-describedby={errors.username === undefined ? undefined : 'login-username-error'}
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
           />
           {errors.username === undefined ? null : (
-            <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+            <p
+              id="login-username-error"
+              role="alert"
+              className="mt-1 text-[13px] text-danger dark:text-danger-soft"
+            >
               {errors.username.message}
             </p>
           )}
@@ -112,6 +117,7 @@ export function LoginPage(): React.JSX.Element {
               onKeyDown={trackCapsLock}
               onKeyUp={trackCapsLock}
               aria-invalid={errors.password !== undefined}
+              aria-describedby={errors.password === undefined ? undefined : 'login-password-error'}
               className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
             />
             <button
@@ -127,7 +133,11 @@ export function LoginPage(): React.JSX.Element {
             </button>
           </div>
           {errors.password === undefined ? null : (
-            <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+            <p
+              id="login-password-error"
+              role="alert"
+              className="mt-1 text-[13px] text-danger dark:text-danger-soft"
+            >
               {errors.password.message}
             </p>
           )}
