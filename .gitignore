@@ -65,6 +65,9 @@ frontend/.env.local
 # Locally built k6 SSE binary (49 MB; rebuild via go install + xk6, see loadtest/k6/31-sse-hold-xk6.js header)
 k6-sse.exe
 
+# k6 CSV run outputs (local measurements, incl. multi-GB breakpoint samples; never commit)
+backend/loadtest/k6/results/
+
 # Local opencode enforcement wall (machine-local only; never commit)
 .opencode/
 

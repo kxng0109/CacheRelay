@@ -109,6 +109,25 @@ class DevCorsTest extends SharedContainersBase {
 	}
 
 	@Test
+	@DisplayName("act-as header passes preflight")
+	void actAsHeaderPassesPreflight() throws Exception {
+		HttpRequest request = HttpRequest.newBuilder()
+				.uri(URI.create("http://localhost:" + port + "/v1/models"))
+				.header("Origin", DEV_ORIGIN)
+				.header("Access-Control-Request-Method", "GET")
+				.header("Access-Control-Request-Headers", "X-Act-As-Key")
+				.method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+				.build();
+		HttpResponse<Void> response = HttpClient.newHttpClient().send(request,
+				HttpResponse.BodyHandlers.discarding());
+
+		assertThat(response.statusCode()).as("act-as preflight status").isEqualTo(200);
+		assertThat(response.headers().firstValue("Access-Control-Allow-Origin"))
+				.as("echoed origin")
+				.hasValue(DEV_ORIGIN);
+	}
+
+	@Test
 	@DisplayName("refresh CSRF header passes preflight")
 	void refreshHeaderPassesPreflight() throws Exception {
 		HttpRequest request = HttpRequest.newBuilder()

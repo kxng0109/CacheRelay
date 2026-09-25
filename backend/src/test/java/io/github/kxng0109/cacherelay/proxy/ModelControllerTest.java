@@ -97,6 +97,57 @@ class ModelControllerTest {
 	}
 
 	@Test
+	@DisplayName("session JWT plus default act-as key lists models")
+	@SuppressWarnings("unchecked")
+	void sessionWithDefaultActAsKeyListsModels() {
+		when(keys.findByHash(any())).thenReturn(Optional.empty());
+		when(keys.resolveActAsSelf(any(), any())).thenReturn(Optional.of(key(true)));
+		MockHttpServletRequest request = bearerRequest("session-jwt");
+		request.addHeader("X-Act-As-Key", "default");
+
+		ResponseEntity<Map<String, Object>> response = controller.listModels(request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody().get("object")).isEqualTo("list");
+		List<Map<String, Object>> data =
+				(List<Map<String, Object>>) response.getBody().get("data");
+		assertThat(data).hasSize(2);
+		verify(keys).resolveActAsSelf("session-jwt", "default");
+	}
+
+	@Test
+	@DisplayName("session JWT with unknown act-as key is 401")
+	void sessionWithUnknownActAsKeyIs401() {
+		when(keys.findByHash(any())).thenReturn(Optional.empty());
+		when(keys.resolveActAsSelf(any(), any())).thenReturn(Optional.empty());
+		MockHttpServletRequest request = bearerRequest("session-jwt");
+		request.addHeader("X-Act-As-Key", "deadbeef");
+
+		assertThat(controller.listModels(request).getStatusCode())
+				.isEqualTo(HttpStatus.UNAUTHORIZED);
+	}
+
+	@Test
+	@DisplayName("session JWT without act-as header is 401 without resolution")
+	void sessionWithoutActAsHeaderIs401() {
+		when(keys.findByHash(any())).thenReturn(Optional.empty());
+
+		assertThat(controller.listModels(bearerRequest("session-jwt")).getStatusCode())
+				.isEqualTo(HttpStatus.UNAUTHORIZED);
+		verify(keys, never()).resolveActAsSelf(any(), any());
+	}
+
+	@Test
+	@DisplayName("direct key hit never consults act-as resolution")
+	void directKeySkipsActAsResolution() {
+		ResponseEntity<Map<String, Object>> response =
+				controller.listModels(bearerRequest("gw-test-key"));
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		verify(keys, never()).resolveActAsSelf(any(), any());
+	}
+
+	@Test
 	@DisplayName("non-Bearer credentials are 401 without a lookup")
 	void rejectsNonBearer() {
 		MockHttpServletRequest request = new MockHttpServletRequest("GET", "/v1/models");

@@ -7,6 +7,7 @@ import java.util.Map;
 import io.github.kxng0109.cacherelay.contracts.GatewayProperties;
 import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
 import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
+import io.github.kxng0109.cacherelay.security.filter.KeyAuthFilter;
 import io.github.kxng0109.cacherelay.security.ratelimit.KeyManagementService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -73,7 +74,16 @@ public class ModelController {
 		if (authHeader != null && authHeader.startsWith("Bearer ")) {
 			String token = authHeader.substring("Bearer ".length()).trim();
 			if (!token.isBlank()) {
-				return keyManagementService.findByHash(SHA256Hash.fromRawKey(token)).orElse(null);
+				VirtualApiKey direct =
+						keyManagementService.findByHash(SHA256Hash.fromRawKey(token)).orElse(null);
+				if (direct != null) {
+					return direct;
+				}
+				String actAsKey = request.getHeader(KeyAuthFilter.ACT_AS_KEY_HEADER);
+				if (actAsKey != null && !actAsKey.isBlank()) {
+					return keyManagementService.resolveActAsSelf(token, actAsKey.trim())
+							.orElse(null);
+				}
 			}
 		}
 		return null;

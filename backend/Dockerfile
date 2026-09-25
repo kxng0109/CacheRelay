@@ -48,10 +48,12 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 \
 
 # 2 vCPU / 2 GB cgroup profile (PERF-15): heap 1152m + direct 256m + ~200m
 # metaspace/native stays under the limit with headroom (cgroup kills are NOT
-# covered by ExitOnOutOfMemoryError — see JDK-8257790). GC threads are pinned for
-# 2 vCPU (the default derives from host CPUs and steals mutator time in
-# containers). Removed dead flags: MaxRAMPercentage (Xmx wins) and
-# java.security.egd (no-op since JDK 8).
+# covered by ExitOnOutOfMemoryError — see JDK-8257790). Thread counts are left
+# to JVM container ergonomics: HotSpot derives ParallelGCThreads,
+# ConcGCThreads, and the virtual-thread scheduler parallelism from the cgroup
+# CPU quota (verified: unpinned defaults compute exactly 2/1 at --cpus=2 and
+# scale to 8/2 at --cpus=8), so fixed pins would only cap bigger iron.
+# ZUncommitDelay stays explicit (not ergonomic).
 ENTRYPOINT ["java", \
   "-XX:+UseCompactObjectHeaders", \
   "-XX:+UseZGC", \
@@ -59,8 +61,5 @@ ENTRYPOINT ["java", \
   "-Xmx1152m", \
   "-XX:SoftMaxHeapSize=768m", \
   "-XX:MaxDirectMemorySize=256m", \
-  "-XX:ParallelGCThreads=2", \
-  "-XX:ConcGCThreads=1", \
   "-XX:ZUncommitDelay=60", \
-  "-Djdk.virtualThreadScheduler.parallelism=4", \
   "-jar", "/app/cacherelay.jar"]

@@ -1,7 +1,8 @@
 /*
- * 33-knees: concurrency knees hunt against the host-run jar (no container,
- * no cgroup CPU cap, no NAT hop). Fixed concurrency per step — concurrency,
- * not arrival rate, is what bends thread pools and queues.
+ * 33-knees: concurrency knees hunt against the containerized stack (2 vCPU /
+ * 2 GB cgroup cap, loopback-published ports, bridge NAT hop). Fixed
+ * concurrency per step — concurrency, not arrival rate, is what bends thread
+ * pools and queues.
  *
  * Env:  BASE_URL, LOAD_KEY (must be unlimited: RPMLIMIT=0),
  *       MODEL (default local-llama).

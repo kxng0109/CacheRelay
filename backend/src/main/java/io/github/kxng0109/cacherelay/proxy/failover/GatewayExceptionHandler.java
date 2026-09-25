@@ -3,6 +3,7 @@ package io.github.kxng0109.cacherelay.proxy.failover;
 import io.github.kxng0109.cacherelay.security.compliance.DataResidencyBreachException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -45,7 +46,9 @@ public class GatewayExceptionHandler {
 		error.put("message", exception.getMessage());
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("error", error);
-		return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(body);
+		return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+				.contentType(MediaType.APPLICATION_JSON)
+				.body(body);
 	}
 
 	/**
@@ -61,7 +64,9 @@ public class GatewayExceptionHandler {
 				"Upstream request failed with mapped status {}: {}",
 				status.value(), exception.getMessage()
 		);
-		return ResponseEntity.status(status).body(errorBody(messageFor(status)));
+		return ResponseEntity.status(status)
+				.contentType(MediaType.APPLICATION_JSON)
+				.body(errorBody(messageFor(status)));
 	}
 
 	private HttpStatus resolveStatus(UpstreamUnavailableException exception) {

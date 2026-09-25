@@ -294,33 +294,6 @@ gateway:
       connect-timeout: ${LMSTUDIO_CONNECT_TIMEOUT:3s}
       request-timeout: ${LMSTUDIO_REQUEST_TIMEOUT:120s}
   aliases:
-    gpt-56-luna:
-      chain:
-        - provider-name: openai
-          model-override: gpt-5.6-luna
-      strategy: SEQUENTIAL
-    gpt-56-terra:
-      chain:
-        - provider-name: openai
-          model-override: gpt-5.6-terra
-      strategy: SEQUENTIAL
-    gpt-56-sol:
-      chain:
-        - provider-name: openai
-          model-override: gpt-5.6-sol
-      strategy: SEQUENTIAL
-    claude-sonnet-5:
-      chain:
-        - provider-name: anthropic
-      strategy: SEQUENTIAL
-    claude-opus-5:
-      chain:
-        - provider-name: anthropic
-      strategy: SEQUENTIAL
-    claude-haiku-4-5:
-      chain:
-        - provider-name: anthropic
-      strategy: SEQUENTIAL
     local-llama:
       chain:
         - provider-name: ollama
@@ -331,22 +304,6 @@ gateway:
         - provider-name: ollama
           model-override: nomic-embed-text:latest
       strategy: SEQUENTIAL
-    fast:
-      chain:
-        - provider-name: openai
-          model-override: gpt-5.6-luna
-        - provider-name: openrouter
-          model-override: gpt-5.6-luna
-        - provider-name: ollama
-          model-override: llama3.2
-      strategy: SEQUENTIAL
-    race-demo:
-      chain:
-        - provider-name: openai
-          model-override: gpt-5.6-luna
-        - provider-name: openrouter
-          model-override: gpt-5.6-luna
-      strategy: RACE
   bootstrap-keys:
   # Bootstrap keys are provisioned exclusively through environment variables.
   # Example for the first key:

@@ -59,6 +59,7 @@ public class DevCorsConfig {
 				"Authorization",
 				"Content-Type",
 				"X-Admin-Key",
+				"X-Act-As-Key",
 				"X-CacheRelay-Refresh",
 				"Idempotency-Key",
 				"Mcp-Name",

@@ -1,8 +1,33 @@
 # k6 local-Docker-stack runbook
 
+Naming: decade = traffic domain (`0x` pre-flight, `1x` chat, `2x` embeddings,
+`3x` streaming + advanced, `4x` synthetic capacity with no inference);
+ascending number = intensity within the decade; named files (e.g.
+`gate-profile-b.js`) are non-local artifacts, never local runs.
+
 `00-smoke` → `10-rps-flood` → `20-embeddings-burst` → `30-sse-smoke` →
 `31-sse-hold-xk6` (custom binary, see file header). `gate-profile-b.js` is the
 staging-scale artifact (sharded generators), not for local runs.
+
+## Script catalog
+
+Decade = traffic domain; number = intensity. All runs need the app healthy
+(`/actuator/health` UP) and, unless noted, a seeded `LOAD_KEY`.
+
+| Script | Purpose | Wall time | Load shape (VUs / rate) | Endpoints touched | Untouched | Key needed |
+|---|---|---|---|---|---|---|
+| `00-smoke.js` | Wiring proof: actuator + auth-deny shapes | ~1m | 10 VUs | `GET /actuator/health`, `GET /actuator/prometheus`, `POST /v1/chat/completions` (401/4xx negatives only) | Models, embeddings, SSE, MCP | None |
+| `01-gate-smoke.js` | 60s gate tripwire: auth + rate Lua + budget Lua, no upstream | ~1m | 100 rps, 20 pre / 50 max VUs | `POST /v1/chat/completions` (unknown model → local 404) | Upstream, embeddings, SSE | `LOAD_KEY` |
+| `02-gate-burst.js` | 3m measurement burst for carrier A/B + bottleneck order | ~3m | 500 rps, 60 pre / 150 max VUs | Same as `01` | Same as `01` | `LOAD_KEY` |
+| `10-rps-flood.js` | Cache-hit-able chat flood + rate-integrity dual mode | ~2m | Prime 10 rps + flood 50 rps (env override) | `POST /v1/chat/completions` | Embeddings, SSE, models | `LOAD_KEY` (falls back to 120-RPM dev key → asserts 429 shape instead) |
+| `20-embeddings-burst.js` | Embeddings rate | ~1–2m | 20 rps (env override) | `POST /v1/embeddings` | Chat, SSE, models | `LOAD_KEY` + upstream embedding key or local Ollama |
+| `30-sse-smoke.js` | SSE acceptance (start + close, no TTFT) | ~1–2m | 3 VUs (env override) | `POST /v1/chat/completions` (`stream:true`) | Embeddings, models | `LOAD_KEY` |
+| `31-sse-hold-xk6.js` | True TTFT + inter-event gaps (xk6-sse, auto-provisioned) | ~6.5m | Ramp 0→3 VUs 1m, hold 5m + 30s stop | `POST /v1/chat/completions` (`stream:true`) | Embeddings, models | `LOAD_KEY` |
+| `32-overload-ramp.js` | Gateway ceiling hunt on the cache-hit path | ~4.5m | 5 steps 1k/5k/10k/25k/50k rps, 30–60s each | `POST /v1/chat/completions` (byte-fixed body → L2 HIT, no Ollama) | Embeddings, SSE, models | `LOAD_KEY` unlimited (`RPMLIMIT=0`) |
+| `33-knees.js` | Concurrency knees (fixed-VU steps bend pools/queues) | ~5.5m | 500/1000/2000/4000 VUs, 60–90s each | `POST /v1/chat/completions` (byte-fixed body → L2 HIT) | Embeddings, SSE, models | `LOAD_KEY` unlimited |
+| `35-mixed-60s.js` | Mixed-traffic proof: HIT + MISS + full error matrix | 75s | 4+4+2+2 rps chat/embed + 1 rps each err-401/400/404/429 | Chat + embeddings + error paths | SSE | `LOAD_KEY` + `DEV_KEY` (120-RPM, for the 429 phase) |
+| `40-breakpoint.js` | Gateway ceiling WITHOUT completions (models-list ramp) | ~12m | 20 steps 100→2000 rps, 30s each; aborts past sustained 1% transport failures | `GET /v1/models` only | Chat, embeddings, SSE, upstream, Ollama | `LOAD_KEY` unlimited (default key 429s above 1000 rps) |
+| `gate-profile-b.js` | Staging/distributed artifact (sharded generators, 80k rps + 25k SSE) — NOT a local run | N/A | 4000 pre VUs across generator hosts | Small-JSON + SSE mix | N/A (staging) | `GATEWAY_URL` + `API_KEY` |
 
 ## Prerequisites
 

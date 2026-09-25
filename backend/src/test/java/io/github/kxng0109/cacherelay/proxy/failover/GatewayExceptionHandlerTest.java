@@ -2,11 +2,20 @@ package io.github.kxng0109.cacherelay.proxy.failover;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * Unit tests for {@link GatewayExceptionHandler}: the mapping of the failover exception to 502, 503, 504, and the
@@ -67,6 +76,28 @@ class GatewayExceptionHandlerTest {
 				handler.handleUpstreamUnavailable(new UpstreamUnavailableException("mixed", null, true, true));
 
 		assertEquals(504, response.getStatusCode().value());
+	}
+
+	@Test
+	@DisplayName("event-stream Accept still renders the JSON error instead of 406")
+	void eventStreamAcceptRendersJsonError() throws Exception {
+		MockMvc mockMvc = MockMvcBuilders.standaloneSetup(new FailingController())
+				.setControllerAdvice(handler)
+				.build();
+
+		mockMvc.perform(get("/probe")
+						.accept(MediaType.parseMediaType("text/event-stream")))
+				.andExpect(status().isServiceUnavailable())
+				.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+				.andExpect(jsonPath("$.error.message").value("upstream service unavailable"));
+	}
+
+	@RestController
+	static class FailingController {
+		@GetMapping("/probe")
+		Map<String, Object> probe() {
+			throw new UpstreamUnavailableException("nothing reachable", null, true, false);
+		}
 	}
 
 	@SuppressWarnings("unchecked")
