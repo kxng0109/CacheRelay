@@ -105,6 +105,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   database-managed rows visible (file cells read muted `read-only`); login
   orders form → SSO → first-account/redeem (the pointer stays: no
   enumeration-safe hide signal exists); shortcut sheet lists the new chords.
+- **File-bound alias surface is local-only:** `gateway.aliases` in `application.yml` now ships
+  only `local-llama` and `local-embed` (Ollama). Database-managed aliases via
+  `GET/POST/PUT/DELETE /v1/admin/models` are unaffected. Binding tests lock the new surface.
+- **JVM thread ergonomics:** the Dockerfile no longer pins `ParallelGCThreads`/`ConcGCThreads`/
+  `jdk.virtualThreadScheduler.parallelism` — HotSpot derives all three from the cgroup CPU quota
+  (verified: identical 2/1 at `--cpus=2`, scales to 8/2 at `--cpus=8`), so bigger iron scales
+  without flag edits. The 2 vCPU / 2 GB profile (heap, direct memory, `ZUncommitDelay`) is unchanged.
+- **Model catalog act-as support:** `GET /v1/models` accepts a session JWT plus `X-Act-As-Key`
+  exactly like the send paths, closing the account-key-mode dropdown gap; failure contract
+  unchanged (dev CORS allow-list covers the header).
+- **Upstream-error rendering on streams:** the failover exception handler presets
+  `Content-Type: application/json`, so streaming requests that fail pre-commit render the mapped
+  JSON error instead of dying in content negotiation (raw 500).
 
 ### Fixed
 

@@ -50,25 +50,22 @@ class GatewayPropertiesBindingTest extends SharedContainersBase {
 	void dottedAliasesBind() {
 		assertNotNull(gatewayProperties.getAliases());
 		assertTrue(
-				gatewayProperties.getAliases().containsKey("gpt-56-luna"),
-				"the alias gpt-56-luna must bind as a single key"
+				gatewayProperties.getAliases().containsKey("local-llama"),
+				"the alias local-llama must bind as a single key"
 		);
 		assertTrue(
-				gatewayProperties.getAliases().containsKey("gpt-56-terra"),
-				"the alias gpt-56-terra must bind as a single key"
-		);
-		assertTrue(
-				gatewayProperties.getAliases().containsKey("gpt-56-sol"),
-				"the alias gpt-56-sol must bind as a single key"
+				gatewayProperties.getAliases().containsKey("local-embed"),
+				"the alias local-embed must bind as a single key"
 		);
 	}
 
 	@Test
 	@DisplayName("alias chains and strategies bind correctly")
 	void aliasDetailsBind() {
-		ModelAlias fast = gatewayProperties.getAliases().get("fast");
-		assertNotNull(fast);
-		assertEquals(3, fast.chain().size(), "the fast alias must chain three providers");
-		assertEquals(FailoverStrategy.SEQUENTIAL, fast.strategy());
+		ModelAlias localLlama = gatewayProperties.getAliases().get("local-llama");
+		assertNotNull(localLlama);
+		assertEquals(1, localLlama.chain().size(), "the local-llama alias must chain one provider");
+		assertEquals("ollama", localLlama.chain().getFirst().providerName());
+		assertEquals(FailoverStrategy.SEQUENTIAL, localLlama.strategy());
 	}
 }

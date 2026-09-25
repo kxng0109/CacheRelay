@@ -122,28 +122,15 @@ gateway:
       connect-timeout: 3s
       request-timeout: 120s
   aliases:
-    gpt-56-sol:
-      chain:
-        - provider-name: openai
-          model-override: gpt-5.6-sol
-      strategy: SEQUENTIAL
-    claude-sonnet-5:
-      chain:
-        - provider-name: anthropic
-      strategy: SEQUENTIAL
     local-llama:
       chain:
         - provider-name: ollama
-          model-override: llama3.2
+          model-override: qwen2.5:0.5b
       strategy: SEQUENTIAL
-    fast:
+    local-embed:
       chain:
-        - provider-name: openai
-          model-override: gpt-5.6-luna
-        - provider-name: openrouter
-          model-override: gpt-5.6-luna
         - provider-name: ollama
-          model-override: llama3.2
+          model-override: nomic-embed-text:latest
       strategy: SEQUENTIAL
 ```
 
@@ -660,7 +647,9 @@ curl http://localhost:8080/v1/embeddings \
 ### Model Catalog (`/v1/models`)
 
 OpenAI-compatible key-authenticated listing of the configured model aliases (`id`, `owned_by` primary provider).
-Unmetered metadata — no budget or rate-limit charge:
+Unmetered metadata — no budget or rate-limit charge. Session owners may also list with their
+session JWT as the Bearer token plus `X-Act-As-Key: default` (or an owned key hash); anything
+else answers the session/key 401 shape with no oracle:
 
 ```bash
 curl http://localhost:8080/v1/models \
@@ -845,6 +834,10 @@ surface as append-only `budget_gap` rows. The same key hash is reused as the ide
 stored completion is served with `Idempotent-Replayed: true` and no second charge, a reused key with a different
 body is 422, and a concurrent duplicate is 409.
 - **`GET /v1/admin/cache/stats`**: Inspects active cache configuration, layer statuses, and similarity thresholds.
+- **`GET /v1/admin/cache/tiers`**: Live `INFO memory` + `INFO stats` per Redis tier (used/max/percent,
+  live policy, evictions, hits/misses) behind a ten-second memo with a freshness stamp; dead tiers
+  degrade to absent metrics, never an error. `accounting.evictedKeysTotal > 0` is an anomaly
+  (`noeviction` must never evict).
 - **`DELETE /v1/admin/cache`**: Executes an emergency global purge across L0 in-memory, L1 Redis exact keys, and L2
   vector document indexes (supports optional `?ownerId=...` for single-tenant scoped purges).
 
