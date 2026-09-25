@@ -8,9 +8,15 @@ services:
   # never a tuning knob: size maxmemory for the accounting working set +20%.
   # ---------------------------------------------------------------------------
   redis:
-    image: redis:8.10.1-alpine3.23
+    image: redis:8.10.2-alpine3.23
     container_name: cacherelay-redis
     restart: unless-stopped
+    # Least privilege: data dir is uid-999-owned, so the server runs as its own
+    # user with a read-only rootfs (tmpfs covers /tmp); verified healthy + app probes green.
+    user: "999:999"
+    read_only: true
+    tmpfs:
+      - /tmp
     # Auth: --requirepass from REDIS_PASSWORD (hard-required, no default; generate
     # with: openssl rand -hex 32). Hex output has no spaces, so the folded command
     # string never splits the secret into extra argv words.
@@ -23,10 +29,14 @@ services:
       --maxmemory-policy noeviction
       --protected-mode no
       --requirepass ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    environment:
+      # Lets the healthcheck authenticate without placing the secret on the
+      # process command line (redis-cli reads REDISCLI_AUTH by default).
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     healthcheck:
-      test: [ "CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}", "--no-auth-warning", "ping" ]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -60,9 +70,15 @@ services:
   # accounting corruption. Separate persistence volume; loss is recoverable.
   # ---------------------------------------------------------------------------
   redis-cache:
-    image: redis:8.10.1-alpine3.23
+    image: redis:8.10.2-alpine3.23
     container_name: cacherelay-redis-cache
     restart: unless-stopped
+    # Least privilege: data dir is uid-999-owned, so the server runs as its own
+    # user with a read-only rootfs (tmpfs covers /tmp); verified healthy + app probes green.
+    user: "999:999"
+    read_only: true
+    tmpfs:
+      - /tmp
     # Auth: separate credential from the accounting tier (see REDIS_PASSWORD).
     # Generate with: openssl rand -hex 32.
     command: >
@@ -73,10 +89,14 @@ services:
       --maxmemory-policy allkeys-lru
       --protected-mode no
       --requirepass ${REDIS_CACHE_PASSWORD:?set REDIS_CACHE_PASSWORD in .env}
+    environment:
+      # Lets the healthcheck authenticate without placing the secret on the
+      # process command line (redis-cli reads REDISCLI_AUTH by default).
+      REDISCLI_AUTH: ${REDIS_CACHE_PASSWORD:?set REDIS_CACHE_PASSWORD in .env}
     ports:
       - "127.0.0.1:${REDIS_CACHE_PORT:-6380}:6379"
     healthcheck:
-      test: [ "CMD", "redis-cli", "-a", "${REDIS_CACHE_PASSWORD:?set REDIS_CACHE_PASSWORD in .env}", "--no-auth-warning", "ping" ]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -111,6 +131,10 @@ services:
     image: postgres:16.15-alpine
     container_name: cacherelay-postgres
     restart: unless-stopped
+    # Least privilege: the data dir is uid-70-owned from init, so the server runs
+    # as its own user. No read_only: the socket dir lives on the rootfs (verified
+    # healthy + app probes green).
+    user: "70:70"
     # pg_stat_statements needs shared_preload_libraries (restart to apply);
     # track_io_timing reloads live but rides along. Scrape via postgres-exporter.
     command:
@@ -178,6 +202,13 @@ services:
     image: cacherelay:latest
     container_name: cacherelay-app
     restart: unless-stopped
+    # Least privilege: image already runs as uid 10001; read-only rootfs with
+    # tmpfs /tmp (jar extraction, Tomcat work). File fallbacks (ledger
+    # dead-letter under logs/) stay best-effort by design: failures log and
+    # degrade, never break requests (verified healthy + probes green).
+    read_only: true
+    tmpfs:
+      - /tmp
     # File descriptors must cover concurrent streams + Redis/PG/upstream sockets.
     # Plain integers: Compose schema-types ulimits as integers, so ${}-interpolated
     # strings fail validation at deploy. Tune by editing these two numbers.
@@ -234,12 +265,11 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
 
       # Local self-hosted bases (host gateway: containers cannot reach the host's
-      # localhost). Compose-side defaults mirror application.yml so unset entries
-      # behave exactly as before; set LMSTUDIO_BASE_URL / LLAMACPP_BASE_URL to
-      # http://host.docker.internal:<port> in .env for host servers.
-      VLLM_BASE_URL: ${VLLM_BASE_URL:-http://localhost:8000}
-      LLAMACPP_BASE_URL: ${LLAMACPP_BASE_URL:-http://localhost:8081}
-      LMSTUDIO_BASE_URL: ${LMSTUDIO_BASE_URL:-http://localhost:1234}
+      # localhost). Defaults use host.docker.internal like OLLAMA_BASE_URL so local
+      # servers work out of the box; override in .env for remote targets.
+      VLLM_BASE_URL: ${VLLM_BASE_URL:-http://host.docker.internal:8000}
+      LLAMACPP_BASE_URL: ${LLAMACPP_BASE_URL:-http://host.docker.internal:8081}
+      LMSTUDIO_BASE_URL: ${LMSTUDIO_BASE_URL:-http://host.docker.internal:1234}
       QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode}
       AWS_BEDROCK_BASE_URL: ${AWS_BEDROCK_BASE_URL:-https://bedrock-runtime.us-east-1.amazonaws.com/openai}
 
@@ -332,6 +362,8 @@ services:
         max-file: "3"
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
     networks:
       - cacherelay-network
 
@@ -341,7 +373,7 @@ services:
   # config values redacted from metrics)
   # ---------------------------------------------------------------------------
   redis-exporter:
-    image: oliver006/redis_exporter:v1.89.0-alpine
+    image: oliver006/redis_exporter:v1.92.0-alpine
     container_name: cacherelay-redis-exporter
     restart: unless-stopped
     # Authenticated scrape: the exporter reads REDIS_PASSWORD natively
@@ -383,7 +415,7 @@ services:
   # alert thresholds for this job must differ from the accounting tier).
   # ---------------------------------------------------------------------------
   redis-cache-exporter:
-    image: oliver006/redis_exporter:v1.89.0-alpine
+    image: oliver006/redis_exporter:v1.92.0-alpine
     container_name: cacherelay-redis-cache-exporter
     restart: unless-stopped
     environment:
@@ -432,7 +464,14 @@ services:
       - "--collector.stat_activity_autovacuum"
       - "--collector.long_running_transactions"
     environment:
-      DATA_SOURCE_NAME: "postgresql://${POSTGRES_EXPORTER_USER:-cacherelay_exporter}:${POSTGRES_EXPORTER_PASSWORD:?set POSTGRES_EXPORTER_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-cacherelay}?sslmode=disable"
+      # Split DSN: host/db in the URI (never credentials), auth in discrete
+      # vars so the password is not baked into one interpolated connection
+      # string surfaced in exporter logs and scrape debug. Full _FILE hygiene
+      # (USER_FILE/PASS_FILE/URI_FILE + secrets blocks) is a follow-up — it
+      # changes the .env secret workflow operator-side.
+      DATA_SOURCE_URI: "postgres:5432/${POSTGRES_DB:-cacherelay}?sslmode=disable"
+      DATA_SOURCE_USER: "${POSTGRES_EXPORTER_USER:-cacherelay_exporter}"
+      DATA_SOURCE_PASS: "${POSTGRES_EXPORTER_PASSWORD:?set POSTGRES_EXPORTER_PASSWORD in .env}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -464,7 +503,7 @@ services:
   # webhook URL in monitoring/alertmanager/alertmanager.yml before relying on pages.
   # ---------------------------------------------------------------------------
   alertmanager:
-    image: prom/alertmanager:v0.34.0
+    image: prom/alertmanager:v0.34.1
     container_name: cacherelay-alertmanager
     restart: unless-stopped
     user: "65534:65534"
@@ -517,7 +556,7 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=30d"
-      - "--storage.tsdb.retention.size=20GB"
+      - "--storage.tsdb.retention.size=20GiB"
       - "--storage.tsdb.wal-compression"
       - "--web.enable-lifecycle"
     ports:
@@ -562,13 +601,13 @@ services:
     image: grafana/grafana-enterprise:11.5.2
     container_name: cacherelay-grafana
     restart: unless-stopped
-    user: "472:0"
+    user: "472:472"
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-cacherelay_secret}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
       GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_AUTH_ANONYMOUS_ENABLED: ${GRAFANA_AUTH_ANONYMOUS_ENABLED:-true}
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_ANONYMOUS_ENABLED: ${GRAFANA_AUTH_ANONYMOUS_ENABLED:-false}
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       GF_SECURITY_DISABLE_GRAVATAR: "true"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"

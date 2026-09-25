@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9" fill="none" stroke="#8b93a7" stroke-width="1.6"/>
+    </marker>
+    <marker id="arrG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9" fill="none" stroke="#4ade80" stroke-width="1.6"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1200" height="900" rx="12" fill="#0b0d12"/>
+  <text x="40" y="44" fill="#f2f4f8" font-size="24" font-weight="bold">CacheRelay — enterprise AI gateway</text>
+  <text x="40" y="68" fill="#8b93a7" font-size="13">single binary · 2 vCPU / 2 GB floor · zero-trust · horizontal by design</text>
+
+  <!-- ROW 1: request path y=100 h=150 -->
+  <g>
+    <rect x="40" y="100" width="170" height="150" rx="10" fill="#12151d" stroke="#2a3040"/>
+    <text x="56" y="128" fill="#7dd3fc" font-size="12" font-weight="bold">CLIENTS</text>
+    <text x="56" y="152" fill="#c6cbd8" font-size="12">apps · agents · SPA</text>
+    <text x="56" y="174" fill="#8b93a7" font-size="11">OpenAI chat + embed</text>
+    <text x="56" y="194" fill="#8b93a7" font-size="11">MCP · A2A · SSO login</text>
+  </g>
+
+  <g>
+    <rect x="250" y="100" width="230" height="150" rx="10" fill="#12151d" stroke="#2a3040"/>
+    <text x="266" y="128" fill="#7dd3fc" font-size="12" font-weight="bold">INGRESS + AUTH</text>
+    <text x="266" y="152" fill="#c6cbd8" font-size="12">KeyAuthFilter</text>
+    <text x="266" y="174" fill="#8b93a7" font-size="11">virtual keys (SHA-256)</text>
+    <text x="266" y="194" fill="#8b93a7" font-size="11">session + X-Act-As-Key</text>
+    <text x="266" y="214" fill="#8b93a7" font-size="11">SSRF · guardrails · PII</text>
+  </g>
+
+  <g>
+    <rect x="520" y="100" width="230" height="150" rx="10" fill="#12151d" stroke="#2a3040"/>
+    <text x="536" y="128" fill="#fbbf24" font-size="12" font-weight="bold">GATES (Lua, 1 RTT)</text>
+    <text x="536" y="152" fill="#c6cbd8" font-size="12">rate limit · budgets</text>
+    <text x="536" y="174" fill="#8b93a7" font-size="11">hold-then-settle spend</text>
+    <text x="536" y="194" fill="#8b93a7" font-size="11">idempotency (422/409)</text>
+    <text x="536" y="214" fill="#8b93a7" font-size="11">fail-closed everywhere</text>
+  </g>
+
+  <g>
+    <rect x="790" y="100" width="370" height="150" rx="10" fill="#12151d" stroke="#4ade80"/>
+    <text x="806" y="128" fill="#4ade80" font-size="12" font-weight="bold">CACHE (serve before providers)</text>
+    <text x="806" y="152" fill="#c6cbd8" font-size="12">L0 memory · L1 exact · L2 vectors</text>
+    <text x="806" y="174" fill="#8b93a7" font-size="11">tenant-scoped · polarity/entity guards</text>
+    <text x="806" y="194" fill="#8b93a7" font-size="11">replay store (byte-identical retries)</text>
+    <text x="806" y="214" fill="#8b93a7" font-size="11">purge: tenant or global</text>
+  </g>
+
+  <!-- ROW 2: y=300 h=150 -->
+  <g>
+    <rect x="40" y="300" width="170" height="150" rx="10" fill="#12151d" stroke="#2a3040"/>
+    <text x="56" y="328" fill="#c084fc" font-size="12" font-weight="bold">LEDGER</text>
+    <text x="56" y="352" fill="#c6cbd8" font-size="12">usage rows · costs</text>
+    <text x="56" y="374" fill="#8b93a7" font-size="11">micro-batch · staging</text>
+    <text x="56" y="394" fill="#8b93a7" font-size="11">dashboards · budgets</text>
+    <text x="56" y="414" fill="#8b93a7" font-size="11">meters → Prometheus</text>
+  </g>
+
+  <g>
+    <rect x="250" y="300" width="500" height="150" rx="10" fill="#12151d" stroke="#2a3040"/>
+    <text x="266" y="328" fill="#7dd3fc" font-size="12" font-weight="bold">FAILOVER ORCHESTRATOR</text>
+    <text x="266" y="352" fill="#c6cbd8" font-size="12">alias chain → SEQUENTIAL / RACE</text>
+    <text x="266" y="374" fill="#8b93a7" font-size="11">per-provider circuit breakers · backoff</text>
+    <text x="266" y="394" fill="#8b93a7" font-size="11">adapters: OpenAI · Anthropic · Gemini · DeepSeek · Ollama</text>
+    <text x="266" y="414" fill="#8b93a7" font-size="11">SSE normalize · 502 / 503 / 504 mapping</text>
+  </g>
+
+  <g>
+    <rect x="790" y="300" width="370" height="150" rx="10" fill="#12151d" stroke="#2a3040"/>
+    <text x="806" y="328" fill="#7dd3fc" font-size="12" font-weight="bold">UPSTREAMS</text>
+    <text x="806" y="352" fill="#c6cbd8" font-size="12">27 pre-wired · key-inert until used</text>
+    <text x="806" y="374" fill="#8b93a7" font-size="11">OpenAI · OpenRouter · Anthropic</text>
+    <text x="806" y="394" fill="#8b93a7" font-size="11">Ollama (local) · +23 compatible</text>
+    <text x="806" y="414" fill="#8b93a7" font-size="11">contract-tested URLs + quirks</text>
+  </g>
+
+  <!-- ROW 3: y=500 h=140 -->
+  <g>
+    <rect x="40" y="500" width="350" height="140" rx="10" fill="#12151d" stroke="#2a3040"/>
+    <text x="56" y="528" fill="#7dd3fc" font-size="12" font-weight="bold">MCP GATEWAY</text>
+    <text x="56" y="552" fill="#c6cbd8" font-size="12">tools / resources / prompts</text>
+    <text x="56" y="574" fill="#8b93a7" font-size="11">per-key RBAC · egress envelope</text>
+    <text x="56" y="596" fill="#8b93a7" font-size="11">HITL approvals · guardrail scans</text>
+  </g>
+
+  <g>
+    <rect x="420" y="500" width="350" height="140" rx="10" fill="#12151d" stroke="#2a3040"/>
+    <text x="436" y="528" fill="#7dd3fc" font-size="12" font-weight="bold">A2A RELAY</text>
+    <text x="436" y="552" fill="#c6cbd8" font-size="12">governed agent proxy</text>
+    <text x="436" y="574" fill="#8b93a7" font-size="11">per-key agent allowlists</text>
+    <text x="436" y="596" fill="#8b93a7" font-size="11">discovery cards · breakers</text>
+  </g>
+
+  <g>
+    <rect x="800" y="500" width="360" height="140" rx="10" fill="#12151d" stroke="#f87171"/>
+    <text x="816" y="528" fill="#f87171" font-size="12" font-weight="bold">CONTROL PLANE (stealth-404)</text>
+    <text x="816" y="552" fill="#c6cbd8" font-size="12">master key · admin JWT</text>
+    <text x="816" y="574" fill="#8b93a7" font-size="11">keys · models · teams · ledger</text>
+    <text x="816" y="596" fill="#8b93a7" font-size="11">SSO + invites · audit-logged</text>
+  </g>
+
+  <!-- ROW 4: data tier y=690 h=150 -->
+  <g>
+    <rect x="40" y="690" width="350" height="150" rx="10" fill="#12151d" stroke="#2a3040"/>
+    <text x="56" y="718" fill="#7dd3fc" font-size="12" font-weight="bold">POSTGRES 16</text>
+    <text x="56" y="742" fill="#c6cbd8" font-size="12">ledger · pricing · teams</text>
+    <text x="56" y="764" fill="#8b93a7" font-size="11">invites · budgets · replays</text>
+    <text x="56" y="786" fill="#8b93a7" font-size="11">scram-sha-256 · loopback only</text>
+    <text x="56" y="808" fill="#8b93a7" font-size="11">Flyway V1–V21</text>
+  </g>
+
+  <g>
+    <rect x="420" y="690" width="350" height="150" rx="10" fill="#12151d" stroke="#2a3040"/>
+    <text x="436" y="718" fill="#7dd3fc" font-size="12" font-weight="bold">REDIS · ACCOUNTING</text>
+    <text x="436" y="742" fill="#c6cbd8" font-size="12">limits · budgets · circuits</text>
+    <text x="436" y="764" fill="#8b93a7" font-size="11">noeviction · 384 MB · AUTH</text>
+    <text x="436" y="786" fill="#8b93a7" font-size="11">Lua gates · idempotency</text>
+    <text x="436" y="808" fill="#8b93a7" font-size="11">loopback only</text>
+  </g>
+
+  <g>
+    <rect x="800" y="690" width="360" height="150" rx="10" fill="#12151d" stroke="#2a3040"/>
+    <text x="816" y="718" fill="#7dd3fc" font-size="12" font-weight="bold">REDIS · CACHE</text>
+    <text x="816" y="742" fill="#c6cbd8" font-size="12">L1 exact · L2 vectors · replay</text>
+    <text x="816" y="764" fill="#8b93a7" font-size="11">allkeys-lru · 512 MB · AUTH</text>
+    <text x="816" y="786" fill="#8b93a7" font-size="11">RediSearch KNN · TTLs</text>
+    <text x="816" y="808" fill="#8b93a7" font-size="11">loopback only</text>
+  </g>
+
+  <!-- Row-1 flow arrows (gaps between boxes) -->
+  <line x1="210" y1="175" x2="246" y2="175" stroke="#8b93a7" stroke-width="1.6" marker-end="url(#arr)"/>
+  <line x1="480" y1="175" x2="516" y2="175" stroke="#8b93a7" stroke-width="1.6" marker-end="url(#arr)"/>
+  <line x1="750" y1="175" x2="786" y2="175" stroke="#4ade80" stroke-width="1.6" marker-end="url(#arrG)"/>
+  <!-- Gates down to failover -->
+  <line x1="635" y1="250" x2="635" y2="296" stroke="#8b93a7" stroke-width="1.6" marker-end="url(#arr)"/>
+  <!-- Failover to upstreams -->
+  <line x1="750" y1="375" x2="786" y2="375" stroke="#8b93a7" stroke-width="1.6" marker-end="url(#arr)"/>
+  <!-- Persistence gutters: x=125 (ledger→pg), x=500 (row2→row4 gap), x=980 (control→cache) -->
+  <line x1="125" y1="450" x2="125" y2="686" stroke="#8b93a7" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arr)"/>
+  <line x1="500" y1="450" x2="500" y2="686" stroke="#8b93a7" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arr)"/>
+  <line x1="980" y1="450" x2="980" y2="686" stroke="#8b93a7" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arr)"/>
+
+  <text x="40" y="872" fill="#5b6376" font-size="11">request path: clients → ingress → gates → cache → failover → providers · control + data planes below · evictions only ever touch the cache tier</text>
+</svg>

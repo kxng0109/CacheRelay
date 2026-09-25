@@ -345,14 +345,15 @@ public class MicroBatchLedgerWriter implements SmartLifecycle {
 				       .register(meterRegistry)
 				       .increment(event.completionTokens());
 			}
-			if (event.costUsdMicros() > 0) {
-				Counter.builder("cacherelay.cost.micros")
-				       .baseUnit("micros")
-				       .tag("provider", provider)
-				       .tag("model", model)
-				       .register(meterRegistry)
-				       .increment(event.costUsdMicros());
-			}
+			// Always incremented, including zero-cost (cached, local) traffic: the
+			// series must materialize so cost panels read 0 instead of no-data.
+			// Burn-rate sums are unaffected (zeros add nothing).
+			Counter.builder("cacherelay.cost.micros")
+			       .baseUnit("micros")
+			       .tag("provider", provider)
+			       .tag("model", model)
+			       .register(meterRegistry)
+			       .increment(event.costUsdMicros());
 		}
 	}
 

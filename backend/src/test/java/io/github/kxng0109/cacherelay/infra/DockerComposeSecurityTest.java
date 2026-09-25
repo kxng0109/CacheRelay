@@ -94,12 +94,65 @@ class DockerComposeSecurityTest {
 		assertThat(rawCompose).doesNotContain("cacherelay_admin_secret_key");
 		assertThat(rawCompose).doesNotContain("POSTGRES_PASSWORD:-");
 		assertThat(rawCompose).doesNotContain("POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cacherelay_secret}");
+		assertThat(rawCompose).doesNotContain("cacherelay_secret");
+		assertThat(rawCompose).doesNotContain("GRAFANA_ADMIN_PASSWORD:-");
 	}
 
 	@Test
 	@DisplayName("Postgres password is hard-required with no default")
 	void postgresPasswordHardRequired() {
 		assertThat(rawCompose).contains("POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env");
+	}
+
+	@Test
+	@DisplayName("Grafana admin password is hard-required with no default")
+	void grafanaAdminPasswordHardRequired() {
+		assertThat(rawCompose).contains("GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env");
+	}
+
+	@Test
+	@DisplayName("Grafana anonymous access defaults to disabled Viewer")
+	void grafanaAnonymousDisabledByDefault() {
+		assertThat(rawCompose).contains("GF_AUTH_ANONYMOUS_ENABLED: ${GRAFANA_AUTH_ANONYMOUS_ENABLED:-false}");
+		assertThat(rawCompose).doesNotContain("GF_AUTH_ANONYMOUS_ORG_ROLE: Admin");
+	}
+
+	@Test
+	@DisplayName("Grafana runs without the root group")
+	void grafanaRunsWithoutRootGroup() {
+		assertThat(rawCompose).doesNotContain("472:0");
+	}
+
+	@Test
+	@DisplayName("Postgres exporter keeps credentials out of the connection URI")
+	void postgresExporterDsnSplit() {
+		assertThat(rawCompose).doesNotContain("DATA_SOURCE_NAME");
+		assertThat(rawCompose).contains("DATA_SOURCE_URI:");
+		assertThat(rawCompose).contains("DATA_SOURCE_PASS: \"${POSTGRES_EXPORTER_PASSWORD:?set POSTGRES_EXPORTER_PASSWORD in .env}\"");
+	}
+
+	@Test
+	@DisplayName("Alertmanager receiver targets the app service, not its own loopback")
+	void alertmanagerReceiverUsesServiceName() throws IOException {
+		Path receiver = Paths.get(System.getProperty("user.dir"), "monitoring", "alertmanager", "alertmanager.yml");
+		assertThat(Files.exists(receiver)).as("alertmanager.yml resolves").isTrue();
+		String config = Files.readString(receiver);
+		assertThat(config).as("webhook routes to the app service").contains("http://cacherelay:8080");
+		assertThat(config).as("no self-loopback receiver").doesNotContain("localhost:8080");
+	}
+
+	@Test
+	@DisplayName("Prometheus retention size uses binary units matching engine reporting")
+	void prometheusRetentionBinaryUnits() {
+		assertThat(rawCompose).contains("--storage.tsdb.retention.size=20GiB");
+	}
+
+	@Test
+	@DisplayName("Provisioned dashboards are file-sourced; UI edits disabled")
+	void dashboardsFileSourced() throws IOException {
+		Path provider = Paths.get(System.getProperty("user.dir"), "monitoring", "grafana", "provisioning", "dashboards", "dashboards.yml");
+		assertThat(Files.exists(provider)).as("dashboards.yml resolves").isTrue();
+		assertThat(Files.readString(provider)).as("UI updates disabled for read-only provisioned path").contains("allowUiUpdates: false");
 	}
 
 	@Test

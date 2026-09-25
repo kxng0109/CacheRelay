@@ -383,4 +383,25 @@ class MicroBatchLedgerWriterTest {
 		assertThat(registry.get("cacherelay.ledger.batch.size").summary().max()).isEqualTo(3.0);
 		assertThat(registry.get("cacherelay.ledger.queue.depth").gauge().value()).isEqualTo(0.0);
 	}
+
+	@Test
+	@DisplayName("Zero-cost traffic materializes the cost series at 0, not absent")
+	void shouldMaterializeZeroCostSeries() {
+		SimpleMeterRegistry registry = new SimpleMeterRegistry();
+		MicroBatchLedgerWriter metered = new MicroBatchLedgerWriter(
+				queue, repository, spillwayJournal, registry, 100, 50, 30_000L, 60_000L, 5);
+		queue.offer(new TokenUsageEvent(
+				UUID.randomUUID(), "tenant-zero", "ollama", "local-llama",
+				100, 50, 150, 5, 0, Instant.now()));
+
+		int flushed = metered.flushCycle();
+
+		assertThat(flushed).as("flushed events").isEqualTo(1);
+		assertThat(registry.find("cacherelay.cost.micros").counter())
+				.as("cost series materialized")
+				.isNotNull();
+		assertThat(registry.get("cacherelay.cost.micros").counter().count())
+				.as("zero-cost count")
+				.isEqualTo(0.0);
+	}
 }
