@@ -60,7 +60,7 @@
       "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
       "id": 2,
       "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value", "noValue": "No data" },
-      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "100 * max without (instance) (jvm_memory_used_bytes{area=\"heap\"}) / max without (instance) (jvm_memory_max_bytes{area=\"heap\"})", "instant": true, "range": false, "refId": "A" }],
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "cacherelay-prometheus" }, "editorMode": "code", "expr": "100 * sum(jvm_memory_used_bytes{area=\"heap\"}) / max(jvm_memory_max_bytes{area=\"heap\"})", "instant": true, "range": false, "refId": "A" }],
       "title": "Heap Used %",
       "type": "stat"
     },
@@ -280,7 +280,7 @@
   ],
   "refresh": "15s",
   "schemaVersion": 39,
-  "tags": ["cacherelay", "jvm", "runtime"],
+  "tags": ["cacherelay", "cacherelay-deep-dive", "jvm", "runtime"],
   "templating": { "list": [] },
   "time": { "from": "now-3h", "to": "now" },
   "timepicker": {},

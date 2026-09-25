@@ -345,7 +345,7 @@
   ],
   "refresh": "30s",
   "schemaVersion": 39,
-  "tags": ["cacherelay", "redis", "postgres", "data-tier"],
+  "tags": ["cacherelay", "cacherelay-deep-dive", "redis", "postgres", "data-tier"],
   "templating": { "list": [] },
   "time": { "from": "now-6h", "to": "now" },
   "timepicker": {},

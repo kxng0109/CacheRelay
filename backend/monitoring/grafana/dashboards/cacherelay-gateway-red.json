@@ -330,7 +330,7 @@
   ],
   "refresh": "15s",
   "schemaVersion": 39,
-  "tags": ["cacherelay", "gateway", "red"],
+  "tags": ["cacherelay", "cacherelay-deep-dive", "gateway", "red"],
   "templating": { "list": [] },
   "time": { "from": "now-3h", "to": "now" },
   "timepicker": {},

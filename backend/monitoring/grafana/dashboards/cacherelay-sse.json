@@ -238,7 +238,7 @@
   ],
   "refresh": "15s",
   "schemaVersion": 39,
-  "tags": ["cacherelay", "sse", "streaming"],
+  "tags": ["cacherelay", "cacherelay-deep-dive", "sse", "streaming"],
   "templating": { "list": [] },
   "time": { "from": "now-3h", "to": "now" },
   "timepicker": {},
