@@ -8,7 +8,15 @@ import { scanForA11yViolations } from './a11y.js'
  * no shipped surface changes. If the `expect(violations).toEqual([])` line
  * is ever deleted from `a11y.ts`, this test fails (nothing rejects).
  */
-test('axe gate rejects a deliberate contrast violation', async ({ page }) => {
+test('axe gate rejects a deliberate contrast violation', async ({ page, browserName }) => {
+  // Contrast-rule carve-out (see a11y.ts): on Firefox the color-contrast
+  // rule is disabled (axe cannot parse Firefox's oklab serialization), so
+  // a contrast probe cannot reject there. Structural checks stay on
+  // Firefox via the main gate; this control runs where the rule runs.
+  test.skip(
+    browserName === 'firefox',
+    'color-contrast rule disabled on Firefox; covered on Chromium/WebKit',
+  )
   await page.goto('/playground')
   await expect(page.getByRole('heading', { level: 1, name: 'Playground' })).toBeVisible()
   await page.evaluate(() => {
