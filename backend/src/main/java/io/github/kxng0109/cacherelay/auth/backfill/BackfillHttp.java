@@ -204,4 +204,32 @@ public final class BackfillHttp {
 		}
 		return null;
 	}
+
+	/**
+	 * Checks that a server-supplied pagination URL belongs to the expected API
+	 * origin. Compares scheme plus authority (host and explicit port) for exact
+	 * equality: a prefix check would accept look-alike hosts such as
+	 * {@code https://api.example.com.evil.example/} or a scheme downgrade to
+	 * {@code http}. Unparseable sides fail closed.
+	 *
+	 * @param base      expected API base URL, never {@code null}
+	 * @param candidate pagination URL from the upstream response, possibly {@code null}
+	 * @return {@code true} only when both parse and share scheme and authority
+	 */
+	public static boolean sameOrigin(String base, String candidate) {
+		if (base == null || candidate == null) {
+			return false;
+		}
+		try {
+			URI expected = URI.create(base);
+			URI actual = URI.create(candidate);
+			String scheme = expected.getScheme();
+			String authority = expected.getAuthority();
+			return scheme != null && authority != null
+					&& scheme.equalsIgnoreCase(actual.getScheme())
+					&& authority.equalsIgnoreCase(actual.getAuthority());
+		} catch (IllegalArgumentException malformed) {
+			return false;
+		}
+	}
 }

@@ -21,6 +21,8 @@ import io.github.kxng0109.cacherelay.admin.dto.SetDisabledRequest;
 import io.github.kxng0109.cacherelay.auth.UserAccount;
 import io.github.kxng0109.cacherelay.auth.UserAccountRepository;
 import io.github.kxng0109.cacherelay.security.ratelimit.KeyManagementService;
+import jakarta.validation.Validation;
+import jakarta.validation.Validator;
 
 /**
  * User lifecycle administration: disabling toggles access without touching
@@ -28,6 +30,9 @@ import io.github.kxng0109.cacherelay.security.ratelimit.KeyManagementService;
  */
 @DisplayName("AdminUserController")
 class AdminUserControllerTest {
+
+	private static final Validator VALIDATOR =
+			Validation.buildDefaultValidatorFactory().getValidator();
 
 	private final UserAccountRepository users = mock(UserAccountRepository.class);
 	private final KeyManagementService keys = mock(KeyManagementService.class);
@@ -108,5 +113,14 @@ class AdminUserControllerTest {
 				.isInstanceOf(ResponseStatusException.class)
 				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
 				.isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
+	@SuppressWarnings("DataFlowIssue")
+	@DisplayName("FS-B10: absent disabled flag violates the constraint (empty {} cannot re-enable)")
+	void absentDisabledFlagViolates() {
+		assertThat(VALIDATOR.validate(new SetDisabledRequest(null))).isNotEmpty();
+		assertThat(VALIDATOR.validate(new SetDisabledRequest(Boolean.TRUE))).isEmpty();
+		assertThat(VALIDATOR.validate(new SetDisabledRequest(Boolean.FALSE))).isEmpty();
 	}
 }

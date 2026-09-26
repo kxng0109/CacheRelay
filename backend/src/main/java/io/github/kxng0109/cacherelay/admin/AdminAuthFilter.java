@@ -18,6 +18,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -75,13 +76,7 @@ public class AdminAuthFilter extends OncePerRequestFilter {
 					"Rejected access to admin endpoint {}: master admin key is not configured",
 					request.getRequestURI()
 			);
-			writeProblem(
-					response,
-					HttpServletResponse.SC_FORBIDDEN,
-					"Admin Interface Disabled",
-					"Master admin key is not configured. Administrative access is disabled.",
-					request.getRequestURI()
-			);
+			writeStealth(response, request.getRequestURI());
 			return;
 		}
 
@@ -91,24 +86,44 @@ public class AdminAuthFilter extends OncePerRequestFilter {
 			return;
 		}
 
-		byte[] expectedBytes = masterKey.getBytes(StandardCharsets.UTF_8);
-		byte[] actualBytes = token.getBytes(StandardCharsets.UTF_8);
-
-		if (MessageDigest.isEqual(expectedBytes, actualBytes)) {
-			filterChain.doFilter(request, response);
-			auditMutation(request, response, null);
+		if (MessageDigest.isEqual(sha256(masterKey), sha256(token))) {
+			try {
+				filterChain.doFilter(request, response);
+			} finally {
+				auditMutation(request, response, null);
+			}
 			return;
 		}
 
 		if (acceptAdminJwt(request, token)) {
-			filterChain.doFilter(request, response);
-			auditMutation(request, response,
-					request.getAttribute(ATTRIBUTE_ADMIN_ID).toString());
+			String adminId = String.valueOf(request.getAttribute(ATTRIBUTE_ADMIN_ID));
+			try {
+				filterChain.doFilter(request, response);
+			} finally {
+				auditMutation(request, response, adminId);
+			}
 			return;
 		}
 
 		log.warn("Invalid admin authentication attempt on {}", request.getRequestURI());
 		writeStealth(response, request.getRequestURI());
+	}
+
+	/**
+	 * Digests a credential with SHA-256 so the master-key comparison always runs
+	 * over fixed 32-byte arrays. Comparing raw variable-length secrets would leak
+	 * the expected length through the comparison timing.
+	 *
+	 * @param credential raw credential value, never {@code null}
+	 * @return 32-byte SHA-256 digest
+	 */
+	private static byte[] sha256(String credential) {
+		try {
+			return MessageDigest.getInstance("SHA-256")
+					.digest(credential.getBytes(StandardCharsets.UTF_8));
+		} catch (NoSuchAlgorithmException missing) {
+			throw new IllegalStateException("SHA-256 unavailable", missing);
+		}
 	}
 
 	/**
@@ -145,8 +160,11 @@ public class AdminAuthFilter extends OncePerRequestFilter {
 	}
 
 	/**
-	 * Records every admin mutation (non-read method): actor, path, and outcome derived
-	 * from the response status. Reads stay out of the ledger to keep it signal-dense.
+	 * Records every authenticated admin request: actor, path, and outcome derived
+	 * from the response status. Reads audit at INFO, mutations at WARN/ERROR, so the
+	 * ledger stays signal-dense while no authenticated access goes unattributed.
+	 * Runs from a {@code finally} block at every call site, so a throwing controller
+	 * never skips the audit.
 	 *
 	 * @param request  current request
 	 * @param response current response (status already set by the controller)
@@ -158,13 +176,14 @@ public class AdminAuthFilter extends OncePerRequestFilter {
 			return;
 		}
 		String method = request.getMethod();
-		if ("GET".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method)
-				|| "OPTIONS".equalsIgnoreCase(method)) {
-			return;
-		}
+		boolean read = "GET".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method)
+				|| "OPTIONS".equalsIgnoreCase(method);
 		int status = response.getStatus();
+		String severity = status < 400
+				? (read ? AuthAuditService.SEVERITY_INFO : AuthAuditService.SEVERITY_WARN)
+				: AuthAuditService.SEVERITY_ERROR;
 		audit.record(AuthAuditService.ACTION_ADMIN_MUTATION,
-				status < 400 ? AuthAuditService.SEVERITY_WARN : AuthAuditService.SEVERITY_ERROR,
+				severity,
 				adminId != null ? adminId : "master-key",
 				request.getRequestURI(),
 				status < 400 ? AuthAuditService.OUTCOME_SUCCESS : AuthAuditService.OUTCOME_FAILURE,

@@ -113,6 +113,17 @@ public record McpJsonRpcError(
 				+ "re-initiate the tool call to request a new approval");
 	}
 
+	/**
+	 * Resumption of an explicitly rejected HITL approval. Surfaced as {@code INTERNAL_ERROR}
+	 * (-32603): the rejection is terminal for the token's TTL, so retrying it must never
+	 * re-enter the suspension cycle (a later approval could otherwise execute a call an
+	 * administrator already refused). Clients re-initiate the tool call if they still need it.
+	 */
+	public static McpJsonRpcError resumptionRejected() {
+		return internalError("Resumption rejected: an administrator refused this call; "
+				+ "re-initiate the tool call to request a new approval");
+	}
+
 	public static McpJsonRpcError headerMismatch(String detail) {
 		return new McpJsonRpcError(HEADER_MISMATCH, "Header mismatch: " + detail, null);
 	}

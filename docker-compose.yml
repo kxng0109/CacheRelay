@@ -545,10 +545,11 @@ services:
       - cacherelay-network
 
   # ---------------------------------------------------------------------------
-  # Prometheus 3 - Metrics Aggregator & Alerting Engine
+  # Prometheus 3 - Metrics Aggregator & Alerting Engine (FS-B06: v3.13.3 LTS;
+  # v3.2.1 carried post-release security fixes)
   # ---------------------------------------------------------------------------
   prometheus:
-    image: prom/prometheus:v3.2.1
+    image: prom/prometheus:v3.13.3
     container_name: cacherelay-prometheus
     restart: unless-stopped
     user: "65534:65534"

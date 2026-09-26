@@ -46,6 +46,7 @@ import java.util.stream.Stream;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.*;
 
 @DisplayName("E12 Coverage Support")
@@ -379,7 +380,7 @@ class E12CoverageSupportTest {
 		assertThat(res2.getStatusCode().value()).isEqualTo(400);
 
 		// CompletionException with generic RuntimeException
-		when(orchestrator.execute(any(), any())).thenReturn(CompletableFuture.failedFuture(
+		when(orchestrator.execute(any(), any(), anyBoolean())).thenReturn(CompletableFuture.failedFuture(
 				new CompletionException(new IllegalStateException("simulated unexpected boom"))
 		));
 		assertThatThrownBy(() -> controller.proxyChatCompletions("{\"model\": \"test-model\"}", req))
@@ -390,7 +391,7 @@ class E12CoverageSupportTest {
 		HttpResponse<java.util.stream.Stream<String>> errHttpResp = mock(HttpResponse.class);
 		when(errHttpResp.statusCode()).thenReturn(500);
 		when(errHttpResp.body()).thenReturn(java.util.stream.Stream.of("error line 1", "error line 2"));
-		when(orchestrator.execute(any(), any())).thenReturn(CompletableFuture.completedFuture(
+		when(orchestrator.execute(any(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(
 				new ProviderResponse("openai-p", errHttpResp, List.of("openai-p"))
 		));
 
@@ -404,6 +405,25 @@ class E12CoverageSupportTest {
 			}
 		});
 
+		// Upstream error body that trips the line ceiling mid-relay truncates cleanly
+		HttpResponse<java.util.stream.Stream<String>> longErrResp = mock(HttpResponse.class);
+		when(longErrResp.statusCode()).thenReturn(500);
+		Stream<String> longLines = Stream.concat(
+				Stream.of("error line 1"),
+				Stream.generate(() -> {
+					throw new LineTooLongException(100, 200, "openai-p");
+				}));
+		when(longErrResp.body()).thenReturn(longLines);
+		when(orchestrator.execute(any(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(
+				new ProviderResponse("openai-p", longErrResp, List.of("openai-p"))
+		));
+
+		var res6 = controller.proxyChatCompletions("{\"model\": \"test-model\"}", req);
+		assertThat(res6.getStatusCode().value()).isEqualTo(500);
+		ByteArrayOutputStream out6 = new ByteArrayOutputStream();
+		res6.getBody().writeTo(out6);
+		assertThat(out6.toString(StandardCharsets.UTF_8)).contains("error line 1");
+
 		// 200 upstream response with SseConnectionLimitException in flush strategy
 		when(flush.register(any())).thenThrow(new SseConnectionLimitException("limit reached"));
 		HttpResponse<java.util.stream.Stream<String>> okHttpResp = mock(HttpResponse.class);
@@ -412,7 +432,7 @@ class E12CoverageSupportTest {
 				"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}",
 				"data: [DONE]"
 		));
-		when(orchestrator.execute(any(), any())).thenReturn(CompletableFuture.completedFuture(
+		when(orchestrator.execute(any(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(
 				new ProviderResponse("openai-p", okHttpResp, List.of("openai-p"))
 		));
 
@@ -430,7 +450,7 @@ class E12CoverageSupportTest {
 			throw new LineTooLongException(100, 200, "openai-p");
 		});
 		when(oomHttpResp.body()).thenReturn(throwingStream);
-		when(orchestrator.execute(any(), any())).thenReturn(CompletableFuture.completedFuture(
+		when(orchestrator.execute(any(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(
 				new ProviderResponse("openai-p", oomHttpResp, List.of("openai-p"))
 		));
 

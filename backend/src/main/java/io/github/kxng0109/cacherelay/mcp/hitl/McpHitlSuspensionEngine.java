@@ -35,6 +35,7 @@ public class McpHitlSuspensionEngine {
 	private static final String REDIS_PENDING_PREFIX = "mcp:hitl:pending:";
 	private static final String REDIS_APPROVED_PREFIX = "mcp:hitl:approved:";
 	private static final String REDIS_CONSUMED_PREFIX = "mcp:hitl:consumed:";
+	private static final String REDIS_REJECTED_PREFIX = "mcp:hitl:rejected:";
 
 	/**
 	 * Atomically claims a single-use HITL approval (SEC-02) and records a consumption
@@ -118,11 +119,23 @@ public class McpHitlSuspensionEngine {
 			Optional<McpResumptionClaims> verifiedClaims = tokenService.verifyAndExtract(
 					resumptionToken,
 					currentArgsSha256,
-					apiKey.ownerId()
+					apiKey.ownerId(),
+					namespacedToolName
 			);
 
 			if (verifiedClaims.isPresent()) {
 				McpResumptionClaims claims = verifiedClaims.get();
+				if (Boolean.TRUE.equals(redisTemplate.hasKey(REDIS_REJECTED_PREFIX + claims.tokenId()))) {
+					// The call was explicitly refused: the rejection is terminal for the
+					// token's TTL and must never re-enter the suspension cycle.
+					log.warn(
+							"HITL replay denied for rejected token '{}' on tool '{}'",
+							claims.tokenId(),
+							namespacedToolName
+					);
+					return Optional.of(McpJsonRpcResponse.failure(
+							request.id(), McpJsonRpcError.resumptionRejected()));
+				}
 				Long claimed = redisTemplate.execute(
 						CLAIM_APPROVAL_SCRIPT,
 						List.of(
@@ -156,9 +169,11 @@ public class McpHitlSuspensionEngine {
 							request.id(), McpJsonRpcError.resumptionConsumed()));
 				}
 
-				// Authentic but not approved yet (or rejected): re-suspend under the SAME
+				// Authentic but not approved yet: re-suspend under the SAME
 				// token id so the invocation keeps exactly one pending entry, approvals stay
-				// bound to the id the client holds, and retries cannot litter Redis.
+				// bound to the id the client holds, and retries cannot litter Redis. The
+				// pending metadata gets a fresh createdAt so expiry and queue ordering
+				// reflect the latest activity, not the original suspension.
 				return Optional.of(suspend(
 						request,
 						serverConfig,
@@ -167,7 +182,7 @@ public class McpHitlSuspensionEngine {
 						serializedArgs,
 						currentArgsSha256,
 						claims.tokenId(),
-						claims.issuedAt()
+						Instant.now()
 				));
 			}
 		}
@@ -190,8 +205,9 @@ public class McpHitlSuspensionEngine {
 	 * Suspends a privileged call under the given token id.
 	 *
 	 * <p>The token id is stable across retries of the same verified call; the minted AEAD
-	 * token always gets a fresh ciphertext and refreshed expiry. The pending metadata keeps
-	 * the original {@code createdAt} so the admin queue reflects the true wait time.</p>
+	 * token always gets a fresh ciphertext and refreshed expiry. The pending metadata takes
+	 * the given {@code createdAt}: first suspensions pass the current time, re-suspensions
+	 * refresh it so the admin queue and TTLs track the latest activity.</p>
 	 */
 	private McpJsonRpcResponse suspend(
 			McpJsonRpcRequest request,
@@ -217,7 +233,18 @@ public class McpHitlSuspensionEngine {
 
 		String mintedToken = tokenService.mintToken(newClaims);
 
-		// Store pending invocation metadata in Redis for admin review UI
+		// Store pending invocation metadata in Redis for admin review UI. Tool arguments are
+		// sealed (AEAD) at rest: Redis holds ciphertext, and only the admin read path decrypts
+		// for review. Retention: the pending entry lives exactly the suspension TTL; approved
+		// flags 300s; consumed markers the suspension TTL; rejected markers and decision
+		// records 86_400s; then Redis expiry purges everything with no janitor needed.
+		String storedArgs;
+		try {
+			storedArgs = tokenService.sealString(serializedArgs);
+		} catch (RuntimeException sealFailure) {
+			log.error("Failed to seal pending args for token '{}': {}", tokenId, sealFailure.getMessage());
+			storedArgs = "";
+		}
 		try {
 			ObjectNode pendingMeta = objectMapper.createObjectNode();
 			pendingMeta.put("tokenId", tokenId);
@@ -225,7 +252,7 @@ public class McpHitlSuspensionEngine {
 			pendingMeta.put("keyName", apiKey.name());
 			pendingMeta.put("toolName", namespacedToolName);
 			pendingMeta.put("serverName", serverConfig.name());
-			pendingMeta.put("args", serializedArgs);
+			pendingMeta.put("args", storedArgs);
 			pendingMeta.put("createdAt", createdAt.toString());
 			pendingMeta.put("expiresAt", expiresAt.toString());
 

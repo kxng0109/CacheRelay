@@ -1,5 +1,6 @@
 package io.github.kxng0109.cacherelay.mcp.hitl;
 
+import io.github.kxng0109.cacherelay.admin.AdminAuthFilter;
 import io.github.kxng0109.cacherelay.config.OpenApiConfig;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -9,6 +10,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.jspecify.annotations.Nullable;
 import org.springframework.data.redis.core.Cursor;
@@ -40,12 +42,14 @@ public class AdminMcpApprovalController {
 	private static final String REDIS_PENDING_PREFIX = "mcp:hitl:pending:";
 	private static final String REDIS_APPROVED_PREFIX = "mcp:hitl:approved:";
 	private static final String REDIS_DECISION_PREFIX = "mcp:hitl:decision:";
+	private static final String REDIS_REJECTED_PREFIX = "mcp:hitl:rejected:";
 	private static final long DECISION_TTL_SECONDS = 86_400L;
 	private static final long PENDING_SCAN_COUNT = 100L;
 	private static final int PENDING_LIST_CAP = 500;
 
 	private final StringRedisTemplate redisTemplate;
 	private final ObjectMapper objectMapper;
+	private final McpAeadResumptionTokenService tokenService;
 
 	/**
 	 * Lists pending tool invocations (newest first, arguments stripped).
@@ -152,7 +156,40 @@ public class AdminMcpApprovalController {
 		if (raw == null || raw.isBlank()) {
 			return ResponseEntity.notFound().build();
 		}
-		return ResponseEntity.ok(raw);
+		return ResponseEntity.ok(decryptArgsForReview(raw));
+	}
+
+	/**
+	 * Decrypts sealed pending arguments for admin review. Legacy plaintext entries (stored
+	 * before sealing) pass through; undecryptable sealed values render as an explicit marker
+	 * rather than ciphertext or nothing.
+	 *
+	 * @param raw pending metadata JSON
+	 * @return metadata JSON with reviewable arguments
+	 */
+	String decryptArgsForReview(String raw) {
+		JsonNode meta;
+		try {
+			meta = objectMapper.readTree(raw);
+		} catch (Exception e) {
+			return raw;
+		}
+		if (!(meta instanceof ObjectNode object) || !object.has("args") || !object.path("args").isString()) {
+			return raw;
+		}
+		String stored = object.path("args").asString();
+		String reviewed = tokenService.openString(stored)
+				.orElse(stored.startsWith("v1.aead.args.") ? "***undecryptable***" : stored);
+		if (reviewed.equals(stored)) {
+			return raw;
+		}
+		ObjectNode copy = object.deepCopy();
+		copy.put("args", reviewed);
+		try {
+			return objectMapper.writeValueAsString(copy);
+		} catch (Exception e) {
+			return raw;
+		}
 	}
 
 	/**
@@ -179,7 +216,8 @@ public class AdminMcpApprovalController {
 	public ResponseEntity<String> approveToolCall(
 			@Parameter(description = "Hex token ID of the suspended invocation", example = "9f8e7d6c5b4a3210")
 			@PathVariable("tokenId") String tokenId,
-			@RequestBody(required = false) @Valid DecisionRequest decision
+			@RequestBody(required = false) @Valid DecisionRequest decision,
+			HttpServletRequest httpRequest
 	) {
 		String pendingKey = REDIS_PENDING_PREFIX + tokenId;
 		String raw = redisTemplate.opsForValue().get(pendingKey);
@@ -189,7 +227,7 @@ public class AdminMcpApprovalController {
 
 		// Mark approved with a 300s window
 		redisTemplate.opsForValue().set(REDIS_APPROVED_PREFIX + tokenId, "APPROVED", 300, TimeUnit.SECONDS);
-		recordDecision(tokenId, "APPROVED", decision);
+		recordDecision(tokenId, "APPROVED", decision, resolveActor(httpRequest));
 		log.info("Administrator approved MCP tool invocation for token ID '{}'", tokenId);
 
 		ObjectNode response = objectMapper.createObjectNode();
@@ -220,11 +258,16 @@ public class AdminMcpApprovalController {
 	public ResponseEntity<String> rejectToolCall(
 			@Parameter(description = "Hex token ID of the suspended invocation", example = "9f8e7d6c5b4a3210")
 			@PathVariable("tokenId") String tokenId,
-			@RequestBody(required = false) @Valid DecisionRequest decision
+			@RequestBody(required = false) @Valid DecisionRequest decision,
+			HttpServletRequest httpRequest
 	) {
 		redisTemplate.delete(REDIS_PENDING_PREFIX + tokenId);
 		redisTemplate.delete(REDIS_APPROVED_PREFIX + tokenId);
-		recordDecision(tokenId, "REJECTED", decision);
+		// Terminal marker: resuming this token is refused without re-suspension for the
+		// decision TTL, so a refusal cannot be washed out by a later approval.
+		redisTemplate.opsForValue().set(
+				REDIS_REJECTED_PREFIX + tokenId, "REJECTED", DECISION_TTL_SECONDS, TimeUnit.SECONDS);
+		recordDecision(tokenId, "REJECTED", decision, resolveActor(httpRequest));
 		log.info("Administrator rejected MCP tool invocation for token ID '{}'", tokenId);
 
 		ObjectNode response = objectMapper.createObjectNode();
@@ -237,14 +280,15 @@ public class AdminMcpApprovalController {
 
 	/**
 	 * Records a human decision for the audit trail without touching the resumption handshake.
+	 * The actor is always the authenticated admin identity, never the client-supplied claim.
 	 *
 	 * @param tokenId  suspended invocation id
 	 * @param status   {@code APPROVED} or {@code REJECTED}
 	 * @param decision optional reason context, possibly {@code null}
+	 * @param decidedBy authenticated actor id, or {@code master-key} for master-key callers
 	 */
-	private void recordDecision(String tokenId, String status, DecisionRequest decision) {
+	private void recordDecision(String tokenId, String status, DecisionRequest decision, String decidedBy) {
 		String reason = decision != null && decision.reason() != null ? decision.reason() : "";
-		String decidedBy = decision != null && decision.decidedBy() != null ? decision.decidedBy() : "";
 		try {
 			ObjectNode entry = objectMapper.createObjectNode();
 			entry.put("status", status);
@@ -258,5 +302,18 @@ public class AdminMcpApprovalController {
 			log.debug("Skipping HITL decision record for token ID '{}': {}", tokenId, e.getMessage());
 		}
 		log.info("HITL {} for token ID '{}' by '{}': {}", status, tokenId, decidedBy, reason);
+	}
+
+	/**
+	 * Resolves the authenticated actor for the audit trail from the admin identity attribute.
+	 * Master-key callers carry no account, so they attribute to the shared master key explicitly
+	 * rather than to any client-supplied name.
+	 *
+	 * @param httpRequest current request
+	 * @return admin account id string, or {@code master-key} when unattributed
+	 */
+	private static String resolveActor(HttpServletRequest httpRequest) {
+		Object adminId = httpRequest != null ? httpRequest.getAttribute(AdminAuthFilter.ATTRIBUTE_ADMIN_ID) : null;
+		return adminId != null ? adminId.toString() : "master-key";
 	}
 }

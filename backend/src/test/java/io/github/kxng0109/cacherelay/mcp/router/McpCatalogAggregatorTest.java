@@ -4,11 +4,13 @@ import io.github.kxng0109.cacherelay.config.SensitiveString;
 import io.github.kxng0109.cacherelay.mcp.config.McpGatewayProperties;
 import io.github.kxng0109.cacherelay.mcp.contracts.McpServerConfig;
 import io.github.kxng0109.cacherelay.mcp.contracts.McpTransportType;
+import io.github.kxng0109.cacherelay.mcp.protocol.BoundedResultBodyHandler;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentMatchers;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import tools.jackson.databind.ObjectMapper;
@@ -155,6 +157,41 @@ class McpCatalogAggregatorTest {
 		assertThat(catalog.tools()).isEmpty();
 		assertThat(catalog.resources()).isEmpty();
 		assertThat(catalog.prompts()).isEmpty();
+	}
+
+	@Test
+	@DisplayName("catalog fetches use the byte-capped body handler")
+	@SuppressWarnings("unchecked")
+	void catalogFetchesUseBoundedHandler() throws Exception {
+		when(pgToolsResponse.statusCode()).thenReturn(200);
+		when(pgToolsResponse.body()).thenReturn("{\"result\":{\"tools\":[]}}");
+		when(pgResourcesResponse.statusCode()).thenReturn(200);
+		when(pgResourcesResponse.body()).thenReturn("{\"result\":{\"resources\":[]}}");
+		when(pgPromptsResponse.statusCode()).thenReturn(200);
+		when(pgPromptsResponse.body()).thenReturn("{\"result\":{\"prompts\":[]}}");
+		when(httpClient.send(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()))
+				.thenAnswer(invocation -> {
+					HttpRequest req = invocation.getArgument(0);
+					String method = req.headers().firstValue("Mcp-Method").orElse("");
+					return switch (method) {
+						case "tools/list" -> pgToolsResponse;
+						case "resources/list" -> pgResourcesResponse;
+						case "prompts/list" -> pgPromptsResponse;
+						default -> pgToolsResponse;
+					};
+				});
+
+		aggregator.refreshCatalog();
+
+		ArgumentCaptor<HttpResponse.BodyHandler<String>> handlers =
+				ArgumentCaptor.forClass(HttpResponse.BodyHandler.class);
+		verify(httpClient, atLeastOnce()).send(any(HttpRequest.class), handlers.capture());
+		assertThat(handlers.getAllValues())
+				.as("every catalog fetch handler")
+				.isNotEmpty()
+				.allSatisfy(handler -> assertThat(handler)
+						.as("byte-capped handler")
+						.isInstanceOf(BoundedResultBodyHandler.class));
 	}
 
 	@Test

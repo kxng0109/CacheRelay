@@ -33,6 +33,8 @@ class BudgetKeySlotTest {
 		slots.add(SlotHash.getSlot(BudgetEnforcer.cfgKey("TEAM", "owner-1")));
 		slots.add(SlotHash.getSlot(BudgetEnforcer.cfgKey("ORG", "global")));
 		slots.add(SlotHash.getSlot("budget:{b:global}:dedupe:some-idempotency-key"));
+		slots.add(SlotHash.getSlot(BudgetEnforcer.dedupeKey(
+				BudgetEnforcer.dedupeClaimId("owner-1", HEX, "body-sha-1", "some-idempotency-key"))));
 
 		assertThat(slots).hasSize(1);
 	}

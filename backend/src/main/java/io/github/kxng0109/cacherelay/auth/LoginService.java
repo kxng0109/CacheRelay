@@ -13,6 +13,8 @@ import org.springframework.transaction.annotation.Transactional;
  * success or failure — is audited with a pseudonymized actor; failures inside the window
  * accumulate toward lockout, and lockouts are audited as critical. All rejections share
  * one generic outcome so callers cannot distinguish unknown users from bad passwords.
+ * A dummy BCrypt verification runs whenever no usable stored hash exists, so rejection
+ * timing reveals nothing about account existence or state either.
  */
 @Service
 public class LoginService {
@@ -36,6 +38,15 @@ public class LoginService {
 	private final RefreshService refresh;
 	private final AuthProperties properties;
 	private final AuthAuditService audit;
+
+	/**
+	 * Fixed dummy BCrypt hash verified (and discarded) whenever no usable stored
+	 * hash exists. Unknown users, disabled accounts, and hash-less SSO-only rows
+	 * then cost one hash verification exactly like a real password check, so
+	 * response timing reveals nothing about account existence or state.
+	 */
+	static final String DUMMY_HASH =
+			"$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
 
 	/**
 	 * Creates the service.
@@ -79,10 +90,16 @@ public class LoginService {
 			return new LoginRejected();
 		}
 		Optional<UserAccount> found = users.findByUsernameIgnoreCase(username);
-		boolean ok = found.isPresent()
-				&& !found.get().isDisabled()
-				&& found.get().getPasswordHash() != null
-				&& passwordEncoder.matches(password, found.get().getPasswordHash());
+		String storedHash = found.isPresent() && !found.get().isDisabled()
+				? found.get().getPasswordHash()
+				: null;
+		boolean ok;
+		if (storedHash != null) {
+			ok = passwordEncoder.matches(password, storedHash);
+		} else {
+			passwordEncoder.matches(password, DUMMY_HASH);
+			ok = false;
+		}
 		if (!ok) {
 			audit.record(AuthAuditService.ACTION_LOCAL_LOGIN, AuthAuditService.SEVERITY_WARN,
 					username, "/v1/auth/login", AuthAuditService.OUTCOME_FAILURE, ip, requestId);

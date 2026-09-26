@@ -121,9 +121,28 @@ public class McpGatewayProperties {
 	private Duration clientConnectTimeout = Duration.ofSeconds(5);
 
 	/**
-	 * Sets the registered upstream MCP servers.
+	 * Sets the registered upstream MCP servers. Server map keys and config names must not
+	 * contain the {@code __} namespace delimiter: namespaced tool identifiers split on the
+	 * first delimiter, so a delimiter inside a name is non-injective and routes ambiguously.
+	 *
+	 * @param servers servers keyed by name/prefix
+	 * @throws IllegalArgumentException when any key or name contains {@code __}
 	 */
 	public void setServers(Map<String, McpServerConfig> servers) {
+		if (servers != null) {
+			for (Map.Entry<String, McpServerConfig> entry : servers.entrySet()) {
+				if (entry.getKey() != null && entry.getKey().contains("__")) {
+					throw new IllegalArgumentException(
+							"MCP server key must not contain the '__' namespace delimiter: " + entry.getKey());
+				}
+				if (entry.getValue() != null && entry.getValue().name() != null
+						&& entry.getValue().name().contains("__")) {
+					throw new IllegalArgumentException(
+							"MCP server name must not contain the '__' namespace delimiter: "
+									+ entry.getValue().name());
+				}
+			}
+		}
 		this.servers = servers == null
 				? Map.of()
 				: Collections.unmodifiableMap(new LinkedHashMap<>(servers));

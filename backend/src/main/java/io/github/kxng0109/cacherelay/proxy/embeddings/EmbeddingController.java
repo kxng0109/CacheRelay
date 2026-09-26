@@ -4,7 +4,9 @@ import java.util.Map;
 
 import io.github.kxng0109.cacherelay.budget.BudgetDecision;
 import io.github.kxng0109.cacherelay.config.OpenApiConfig;
+import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
 import io.github.kxng0109.cacherelay.proxy.IdempotencyKeys;
+import io.github.kxng0109.cacherelay.proxy.ProviderAccess;
 import io.github.kxng0109.cacherelay.proxy.embeddings.dto.EmbeddingRequest;
 import io.github.kxng0109.cacherelay.proxy.embeddings.dto.EmbeddingResponse;
 import io.github.kxng0109.cacherelay.security.filter.KeyAuthFilter;
@@ -124,6 +126,15 @@ public class EmbeddingController {
 			HttpServletRequest httpServletRequest
 	) {
 		@Nullable String ownerId = (String) httpServletRequest.getAttribute(KeyAuthFilter.OWNER_ID_ATTRIBUTE);
+		@Nullable VirtualApiKey apiKey =
+				(VirtualApiKey) httpServletRequest.getAttribute(KeyAuthFilter.VIRTUAL_KEY_ATTRIBUTE);
+		if (apiKey != null && !apiKey.allowedProviders().isEmpty()) {
+			String resolvedProvider = embeddingService.resolveProviderName(request.model());
+			if (!ProviderAccess.isProviderAllowed(apiKey.allowedProviders(), resolvedProvider)) {
+				throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+						"Provider '" + resolvedProvider + "' not allowed for this key");
+			}
+		}
 		final String idempotencyKey;
 		try {
 			idempotencyKey = IdempotencyKeys.validateOrNull(httpServletRequest.getHeader(IdempotencyKeys.HEADER));

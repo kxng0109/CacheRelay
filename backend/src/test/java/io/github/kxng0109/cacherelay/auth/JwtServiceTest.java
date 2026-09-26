@@ -1,11 +1,17 @@
 package io.github.kxng0109.cacherelay.auth;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.env.Environment;
+import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
+import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtClaimsSet;
+import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import org.springframework.security.oauth2.jwt.JwtException;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -57,6 +63,45 @@ class JwtServiceTest {
 		String token = service.issueAccessToken(userId, "op", false, 600L);
 
 		assertThat(service.validate(token).getSubject()).isEqualTo(userId.toString());
+	}
+
+	@Test
+	@DisplayName("FS-B10: issued tokens carry the service audience and foreign audiences are rejected")
+	void audienceStampedAndEnforced() {
+		UUID userId = UUID.randomUUID();
+
+		String token = service.issueAccessToken(userId, "op", false, 300L);
+
+		assertThat(service.validate(token).getAudience()).containsExactly(JwtService.AUDIENCE);
+
+		JwtClaimsSet forged = JwtClaimsSet.builder()
+				.issuer("cacherelay")
+				.subject(userId.toString())
+				.issuedAt(Instant.now())
+				.expiresAt(Instant.now().plusSeconds(300L))
+				.audience(List.of("foreign-service"))
+				.build();
+		String forgedToken = config.authJwtEncoder().encode(JwtEncoderParameters.from(
+				JwsHeader.with(MacAlgorithm.HS256).build(), forged)).getTokenValue();
+
+		assertThatThrownBy(() -> service.validate(forgedToken)).isInstanceOf(JwtException.class);
+	}
+
+	@Test
+	@DisplayName("FS-B10: tokens expired beyond the tight skew window are rejected")
+	void tightSkewRejectsStaleTokens() {
+		UUID userId = UUID.randomUUID();
+		JwtClaimsSet stale = JwtClaimsSet.builder()
+				.issuer("cacherelay")
+				.subject(userId.toString())
+				.issuedAt(Instant.now().minusSeconds(100L))
+				.expiresAt(Instant.now().minusSeconds(40L))
+				.audience(List.of(JwtService.AUDIENCE))
+				.build();
+		String token = config.authJwtEncoder().encode(JwtEncoderParameters.from(
+				JwsHeader.with(MacAlgorithm.HS256).build(), stale)).getTokenValue();
+
+		assertThatThrownBy(() -> service.validate(token)).isInstanceOf(JwtException.class);
 	}
 
 	@Test

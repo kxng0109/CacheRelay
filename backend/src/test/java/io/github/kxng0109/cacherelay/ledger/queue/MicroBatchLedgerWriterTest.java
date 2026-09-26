@@ -12,8 +12,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -77,6 +80,17 @@ class MicroBatchLedgerWriterTest {
 				queue, repository, spillwayJournal, null, 100, 50, 30_000L, 60_000L, 5
 		);
 		assertThat(nullRegWriter).isNotNull();
+	}
+
+	@Test
+	@DisplayName("FS-B12: stopping with an unstarted producer executor degrades without throwing")
+	void stopWithUnstartedExecutor() {
+		writer.start();
+		writer.setLedgerExecutor(new ThreadPoolTaskExecutor());
+
+		writer.stop();
+
+		assertThat(writer.isRunning()).isFalse();
 	}
 
 	@Test
@@ -361,6 +375,89 @@ class MicroBatchLedgerWriterTest {
 			assertThat(writer.isRunning()).isFalse();
 		} finally {
 			Thread.interrupted();
+		}
+	}
+
+	@Test
+	@DisplayName("Flush scheduler survives an uncaught flush failure")
+	void flushSchedulerSurvivesUncaughtFailure() throws Exception {
+		UsageLedgerRepository failingRepo = mock(UsageLedgerRepository.class);
+		when(failingRepo.saveAll(anyList())).thenThrow(new AssertionError("boom"));
+		MicroBatchLedgerWriter resilient = new MicroBatchLedgerWriter(
+				queue, failingRepo, spillwayJournal, new SimpleMeterRegistry(), 100, 50, 30_000L, 60_000L, 5);
+		resilient.start();
+		try {
+			for (int i = 0; i < 3; i++) {
+				queue.offer(createEvent("poison-" + i));
+				Thread.sleep(150L);
+			}
+			verify(failingRepo, timeout(5000).times(3)).saveAll(anyList());
+		} finally {
+			resilient.stop();
+		}
+	}
+
+	@Test
+	@DisplayName("Stop drains producer-fed events; nothing strands in the ring")
+	void stopDrainsProducerFedEvents() throws Exception {
+		ThreadPoolTaskExecutor producers = new ThreadPoolTaskExecutor();
+		producers.setCorePoolSize(1);
+		producers.setMaxPoolSize(1);
+		producers.setQueueCapacity(10);
+		producers.setWaitForTasksToCompleteOnShutdown(true);
+		producers.initialize();
+		try {
+			UsageLedgerRepository ledgerRepo = mock(UsageLedgerRepository.class);
+			List<UUID> saved = Collections.synchronizedList(new ArrayList<>());
+			when(ledgerRepo.saveAll(anyList())).thenAnswer(invocation -> {
+				List<UsageLedgerEntry> batch = invocation.getArgument(0);
+				for (UsageLedgerEntry entry : batch) {
+					saved.add(entry.getRequestId());
+				}
+				return batch;
+			});
+			DisruptorUsageLedgerQueue stopQueue = new DisruptorUsageLedgerQueue(1024, spillwayJournal);
+			MicroBatchLedgerWriter stopWriter = new MicroBatchLedgerWriter(
+					stopQueue, ledgerRepo, spillwayJournal, new SimpleMeterRegistry(), 100, 50,
+					30_000L, 60_000L, 5);
+			stopWriter.setLedgerExecutor(producers);
+			stopWriter.start();
+			CountDownLatch gate = new CountDownLatch(1);
+			producers.submit(() -> {
+				try {
+					gate.await();
+				} catch (InterruptedException interrupted) {
+					Thread.currentThread().interrupt();
+				}
+			});
+			List<UUID> ids = new ArrayList<>();
+			List<Boolean> offered = Collections.synchronizedList(new ArrayList<>());
+			for (int i = 0; i < 5; i++) {
+				TokenUsageEvent event = createEvent("stop-" + i);
+				ids.add(event.requestId());
+				producers.submit(() -> offered.add(stopQueue.offer(event)));
+			}
+			Thread stopper = Thread.ofPlatform().start(stopWriter::stop);
+			Thread.sleep(300L);
+			gate.countDown();
+			stopper.join(10_000L);
+
+			long pollDeadline = System.currentTimeMillis() + 5_000L;
+			while (offered.size() < 5 && System.currentTimeMillis() < pollDeadline) {
+				Thread.sleep(50L);
+			}
+			assertThat(producers.getThreadPoolExecutor().getCompletedTaskCount())
+					.as("quiesce waited for all producer tasks (executor state: %s)",
+							producers.getThreadPoolExecutor().toString())
+					.isEqualTo(6L);
+			assertThat(producers.getThreadPoolExecutor().getQueue().size())
+					.as("executor queue drained").isZero();
+			assertThat(offered).as("offers executed").hasSize(5);
+			assertThat(stopQueue.size()).as("ring drained").isZero();
+
+			assertThat(saved).as("all producer-fed events persisted").containsExactlyInAnyOrderElementsOf(ids);
+		} finally {
+			producers.shutdown();
 		}
 	}
 

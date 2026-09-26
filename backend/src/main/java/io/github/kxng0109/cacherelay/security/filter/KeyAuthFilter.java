@@ -1,6 +1,7 @@
 package io.github.kxng0109.cacherelay.security.filter;
 
 import io.github.kxng0109.cacherelay.contracts.*;
+import io.github.kxng0109.cacherelay.proxy.ProviderAccess;
 import io.github.kxng0109.cacherelay.security.ratelimit.KeyManagementService;
 import io.github.kxng0109.cacherelay.security.ratelimit.RateLimitEngine;
 import io.github.kxng0109.cacherelay.security.ratelimit.RateLimitUnavailableException;
@@ -159,20 +160,24 @@ public class KeyAuthFilter extends OncePerRequestFilter {
 	private final KeyManagementService keyManagementService;
 	private final RateLimitEngine rateLimitEngine;
 	private final ObjectMapper objectMapper;
+	private final GatewayProperties gatewayProperties;
 
 	/**
 	 * @param keyManagementService key lookup service
 	 * @param rateLimitEngine      distributed rate-limit engine
 	 * @param objectMapper         Jackson (tools.jackson) mapper for JSON bodies/errors
+	 * @param gatewayProperties    alias catalog for provider-allowlist admission
 	 */
 	public KeyAuthFilter(
 			KeyManagementService keyManagementService,
 			RateLimitEngine rateLimitEngine,
-			ObjectMapper objectMapper
+			ObjectMapper objectMapper,
+			GatewayProperties gatewayProperties
 	) {
 		this.keyManagementService = keyManagementService;
 		this.rateLimitEngine = rateLimitEngine;
 		this.objectMapper = objectMapper;
+		this.gatewayProperties = gatewayProperties;
 	}
 
 	/**
@@ -212,6 +217,7 @@ public class KeyAuthFilter extends OncePerRequestFilter {
 			case KEY_DISABLED -> "API key is disabled.";
 			case KEY_NOT_FOUND -> "API key not found.";
 			case MODEL_NOT_ALLOWED -> "Model not allowed for this key.";
+			case PROVIDER_NOT_ALLOWED -> "Provider not allowed for this key.";
 		};
 	}
 
@@ -294,6 +300,17 @@ public class KeyAuthFilter extends OncePerRequestFilter {
 					RejectionReason.MODEL_NOT_ALLOWED
 			);
 			return;
+		}
+		if (!key.allowedProviders().isEmpty() && model != null) {
+			ModelAlias alias = gatewayProperties.getAliases().get(model);
+			if (alias != null
+					&& ProviderAccess.filterAlias(alias, key.allowedProviders()).isEmpty()) {
+				writeJsonError(
+						response, HttpStatus.FORBIDDEN, "Provider not allowed for this key",
+						RejectionReason.PROVIDER_NOT_ALLOWED
+				);
+				return;
+			}
 		}
 		int estimatedTokens = extractEstimatedTokens(bodyTree);
 

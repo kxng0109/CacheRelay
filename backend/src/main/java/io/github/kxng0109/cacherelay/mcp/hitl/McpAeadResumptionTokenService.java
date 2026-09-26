@@ -30,6 +30,7 @@ import java.util.Optional;
 public class McpAeadResumptionTokenService {
 
 	private static final String TOKEN_PREFIX = "v2.aead.";
+	private static final String SEALED_PREFIX = "v1.aead.args.";
 	private static final String AES_GCM_TRANSFORMATION = "AES/GCM/NoPadding";
 	private static final int GCM_IV_LENGTH_BYTES = 12;
 	private static final int GCM_TAG_LENGTH_BITS = 128;
@@ -91,17 +92,21 @@ public class McpAeadResumptionTokenService {
 	}
 
 	/**
-	 * Verifies token authenticity, AEAD integrity, expiration, owner binding, and parameter SHA-256 match.
+	 * Verifies token authenticity, AEAD integrity, expiration, owner binding, tool binding,
+	 * and parameter SHA-256 match.
 	 *
 	 * @param tokenString        candidate token string
 	 * @param expectedArgsSha256 SHA-256 digest of parameters submitted on resumption
 	 * @param expectedOwnerId    tenant owner ID of the caller
+	 * @param expectedToolName   namespaced tool name being resumed (server-qualified, so this
+	 *                           check binds both tool and server)
 	 * @return verified claims if valid and authentic
 	 */
 	public Optional<McpResumptionClaims> verifyAndExtract(
 			@Nullable String tokenString,
 			String expectedArgsSha256,
-			String expectedOwnerId
+			String expectedOwnerId,
+			String expectedToolName
 	) {
 		if (tokenString == null || !tokenString.startsWith(TOKEN_PREFIX)) {
 			return Optional.empty();
@@ -145,9 +150,80 @@ public class McpAeadResumptionTokenService {
 				return Optional.empty();
 			}
 
+			// 4. Tool binding check (the namespaced name is server-qualified, so this binds
+			// both tool and server: an approval for tool A never clears tool B)
+			if (!claims.toolName().equals(expectedToolName)) {
+				log.warn("Resumption token tool mismatch: expected '{}', got '{}'",
+						expectedToolName, claims.toolName());
+				return Optional.empty();
+			}
+
 			return Optional.of(claims);
 		} catch (Exception e) {
 			log.warn("Failed to decrypt or verify MCP resumption token: {}", e.getMessage());
+			return Optional.empty();
+		}
+	}
+
+	/**
+	 * Seals an arbitrary string (pending tool arguments) under the service key. Same AES-256-GCM
+	 * primitive as token minting, fresh IV per call; the {@code v1.aead.args.} prefix keeps sealed
+	 * blobs distinguishable from resumption tokens.
+	 *
+	 * @param plaintext string to seal, possibly {@code null} (seals as empty)
+	 * @return sealed string, never {@code null}
+	 * @throws IllegalStateException when sealing fails
+	 */
+	public String sealString(@Nullable String plaintext) {
+		try {
+			byte[] iv = new byte[GCM_IV_LENGTH_BYTES];
+			RANDOM.nextBytes(iv);
+
+			Cipher cipher = Cipher.getInstance(AES_GCM_TRANSFORMATION);
+			GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv);
+			cipher.init(Cipher.ENCRYPT_MODE, aesKey, spec);
+
+			byte[] raw = plaintext == null ? new byte[0] : plaintext.getBytes(StandardCharsets.UTF_8);
+			byte[] ciphertext = cipher.doFinal(raw);
+
+			ByteBuffer buffer = ByteBuffer.allocate(iv.length + ciphertext.length);
+			buffer.put(iv);
+			buffer.put(ciphertext);
+			return SEALED_PREFIX + Base64.getUrlEncoder().withoutPadding().encodeToString(buffer.array());
+		} catch (Exception e) {
+			log.error("Failed to seal string: {}", e.getMessage(), e);
+			throw new IllegalStateException("Failed to seal string", e);
+		}
+	}
+
+	/**
+	 * Opens a string sealed by {@link #sealString}.
+	 *
+	 * @param sealed sealed string, possibly {@code null}
+	 * @return plaintext, or empty when the input is not a sealed string or fails authentication
+	 * (wrong key, tampered bytes — never throws, never leaks)
+	 */
+	public Optional<String> openString(@Nullable String sealed) {
+		if (sealed == null || !sealed.startsWith(SEALED_PREFIX)) {
+			return Optional.empty();
+		}
+		try {
+			byte[] payload = Base64.getUrlDecoder().decode(sealed.substring(SEALED_PREFIX.length()));
+			if (payload.length <= GCM_IV_LENGTH_BYTES + 16) {
+				return Optional.empty();
+			}
+			ByteBuffer buffer = ByteBuffer.wrap(payload);
+			byte[] iv = new byte[GCM_IV_LENGTH_BYTES];
+			buffer.get(iv);
+			byte[] ciphertext = new byte[buffer.remaining()];
+			buffer.get(ciphertext);
+
+			Cipher cipher = Cipher.getInstance(AES_GCM_TRANSFORMATION);
+			GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv);
+			cipher.init(Cipher.DECRYPT_MODE, aesKey, spec);
+			return Optional.of(new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8));
+		} catch (Exception e) {
+			log.warn("Failed to open sealed string: {}", e.getMessage());
 			return Optional.empty();
 		}
 	}

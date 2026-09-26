@@ -37,7 +37,7 @@ class GitHubWebhookControllerTest {
 
 	private GitHubWebhookController controller() {
 		SsoWebhookProperties props = new SsoWebhookProperties(List.of(
-				new SsoWebhookProperties.RegistrationWebhook("github", SECRET, "", "", "")));
+				new SsoWebhookProperties.RegistrationWebhook("github", SECRET, "", "", "", "", "")));
 		return new GitHubWebhookController(props, invalidator, audit);
 	}
 

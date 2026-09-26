@@ -20,9 +20,9 @@ import io.github.kxng0109.cacherelay.auth.backfill.BackfillRequest;
  * matches presented IdP groups and roles against configured patterns,
  * materializes teams, and flips memberships to mirror the IdP.
  *
- * <p>Registrations without a claim mapping keep legacy behavior (shadow
- * account, no teams) so existing SSO keeps working until the operator
- * configures teams. Tenant allowlists fail closed. Team lead is the maximum
+ * <p>Registrations without a claim mapping deny the login outright (fail closed):
+ * an IdP account must never gain an API-capable account without an explicit
+ * per-registration allowlist entry. Tenant allowlists fail closed. Team lead is the maximum
  * IdP-derivable privilege: gateway admin stays locally assigned and is never
  * touched here, no matter what the claims assert. Accounts with no mapped
  * team land in the org's unassigned team under least privilege. When several
@@ -141,7 +141,10 @@ public class SsoProvisioningService {
 		Optional<SsoClaimProperties.RegistrationTeams> mapping =
 				claimProperties.forRegistration(registrationId);
 		if (mapping.isEmpty()) {
-			return Optional.of(user);
+			audit.record(AuthAuditService.ACTION_SSO_TEAMS_SYNC, AuthAuditService.SEVERITY_WARN,
+					user.getUsername(), CALLBACK_PATH, AuthAuditService.OUTCOME_FAILURE, ip,
+					requestId);
+			return Optional.empty();
 		}
 		SsoClaimProperties.RegistrationTeams rules = mapping.get();
 		SsoOrg org = orgs.findBySlug(rules.orgSlug())

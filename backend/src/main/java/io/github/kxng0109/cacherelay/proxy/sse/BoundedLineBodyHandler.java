@@ -80,17 +80,27 @@ public final class BoundedLineBodyHandler
 
 		private static final Object TERMINAL = new Object();
 
+	/**
+	 * Maximum queued lines between producer and consumer (64 lines of at most
+	 * {@code maxLineBytes + 4} bytes each, ~1 MiB at the default ceiling). Bounds per-connection
+	 * memory regardless of upstream speed or downstream stalls.
+	 */
+	static final int QUEUE_CAPACITY = 64;
+
 		private final int maxLineBytes;
 		private final CompletableFuture<Stream<String>> bodyFuture = new CompletableFuture<>();
 		private final Stream<String> stream;
 		private final AtomicReference<Flow.Subscription> subscription = new AtomicReference<>();
 		private final AtomicBoolean subscribed = new AtomicBoolean(false);
 		private final AtomicReference<Throwable> failure = new AtomicReference<>();
-		// Unbounded queue: each line is at most maxLineBytes + 4 bytes, and a
-		// single onNext batch is bounded by the JDK receive buffer (typically
-		// 16-64 KiB). The unbounded queue avoids deadlock when the producer
-		// pushes multiple lines before the consumer can take.
-		private final LinkedBlockingQueue<Object> queue = new LinkedBlockingQueue<>();
+		private final AtomicBoolean completed = new AtomicBoolean(false);
+		// Bounded queue (capacity lines of at most maxLineBytes + 4 bytes each): the producer
+		// blocks in put() once full instead of growing memory without bound, which applies TCP-level
+		// backpressure through the parked publisher thread. TERMINAL is offered best-effort (never
+		// blocking, so a closed stream cannot deadlock); the completed flag is the ground truth the
+		// consumer consults when the queue drains, so a dropped sentinel can never hang it.
+		private final LinkedBlockingQueue<Object> queue =
+				new LinkedBlockingQueue<>(QUEUE_CAPACITY);
 		private final byte[] lineBuffer;
 		private int lineLen;
 		private boolean pendingCr;
@@ -148,6 +158,7 @@ public final class BoundedLineBodyHandler
 			if (lineLen > 0) {
 				emitLine();
 			}
+			completed.set(true);
 			enqueueTerminal();
 		}
 
@@ -178,14 +189,20 @@ public final class BoundedLineBodyHandler
 
 		private void emitLine() {
 			String line = new String(lineBuffer, 0, lineLen, StandardCharsets.UTF_8);
-			queue.offer(line);
 			lineLen = 0;
+			try {
+				queue.put(line);
+			} catch (InterruptedException ex) {
+				Thread.currentThread().interrupt();
+				signalError(ex);
+			}
 		}
 
 		private void terminate(@Nullable Throwable t, boolean cancel) {
 			if (t != null && !failure.compareAndSet(null, t)) {
 				return;
 			}
+			completed.set(true);
 			if (cancel) {
 				Flow.Subscription s = subscription.getAndSet(null);
 				if (s != null) {
@@ -235,10 +252,16 @@ public final class BoundedLineBodyHandler
 					rethrowIfFailed();
 					Object item = queue.poll();
 					if (item == null) {
-						// Never consult a completion flag here: TERMINAL is always
-						// enqueued after the last line, so blocking until it arrives
-						// cannot hang and cannot skip data (JDK HttpResponseInputStream
-						// sentinel pattern).
+						// The completed flag (set before the best-effort TERMINAL offer) is the
+						// ground truth: a sentinel dropped on a full queue can never hang the drain.
+						if (completed.get()) {
+							rethrowIfFailed();
+							return false;
+						}
+						// Otherwise block for the next item (JDK HttpResponseInputStream
+						// sentinel pattern): the producer is paced by demand and the queue is
+						// bounded, so blocking here cannot accumulate memory and cannot hang
+						// while the producer is alive.
 						try {
 							item = queue.take();
 						} catch (InterruptedException ex) {

@@ -95,6 +95,17 @@ class GatewayPropertiesTest {
 		assertTrue(properties.getBootstrapKeys().isEmpty());
 	}
 
+	@Test
+	@DisplayName("null jurisdiction seeds bind to an empty map")
+	void nullJurisdictionsBindToEmptyMap() {
+		GatewayProperties properties = new GatewayProperties();
+		properties.setProviderJurisdictions(null);
+		assertTrue(properties.getProviderJurisdictions().isEmpty());
+
+		properties.setProviderJurisdictions(Map.of("openai", "US"));
+		assertEquals(Map.of("openai", "US"), properties.getProviderJurisdictions());
+	}
+
 	private static ProviderConfig provider() {
 		return new ProviderConfig(
 				"openai",

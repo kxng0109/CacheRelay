@@ -51,14 +51,14 @@ class BudgetSettlementTest {
 	@DisplayName("disabled kill-switch falls back to the prompt-only gate with no hold")
 	void disabledFallsBackToPromptOnly() {
 		BudgetEnforcer enforcer = mock(BudgetEnforcer.class);
-		when(enforcer.checkBudget(any(), any(), any(), anyString(), anyInt(), any()))
+		when(enforcer.checkBudget(any(), any(), any(), anyString(), anyInt(), any(), any()))
 				.thenReturn(new BudgetDecision.Allowed(-1L, 0L));
 		BudgetSettlementProperties off =
 				new BudgetSettlementProperties(false, 4096, 3600L, 30L, 500);
 		BudgetSettlement settlement = new BudgetSettlement(enforcer, mock(BudgetGapRepository.class), off);
 
 		BudgetEnforcer.HoldAuthorization auth = settlement.authorize(
-				keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 100, 50, null);
+				keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 100, 50, null, null);
 
 		assertThat(auth.decision()).isInstanceOf(BudgetDecision.Allowed.class);
 		assertThat(auth.holdMicros()).isEqualTo(-1L);
@@ -70,11 +70,11 @@ class BudgetSettlementTest {
 		BudgetEnforcer enforcer = mock(BudgetEnforcer.class);
 		BudgetEnforcer.HoldAuthorization auth =
 				new BudgetEnforcer.HoldAuthorization(new BudgetDecision.Allowed(100L, 60L), 9_000L, "2026-09");
-		when(enforcer.authorizeHold(any(), any(), any(), anyString(), anyInt(), anyInt(), any()))
+		when(enforcer.authorizeHold(any(), any(), any(), anyString(), anyInt(), anyInt(), any(), any()))
 				.thenReturn(auth);
 
 		BudgetEnforcer.HoldAuthorization result = settlement(enforcer, mock(BudgetGapRepository.class))
-				.authorize(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 100, 50, null);
+				.authorize(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 100, 50, null, null);
 
 		assertThat(result.holdMicros()).isEqualTo(9_000L);
 		assertThat(result.holdMonth()).isEqualTo("2026-09");
@@ -205,14 +205,14 @@ class BudgetSettlementTest {
 		BudgetEnforcer enforcer = mock(BudgetEnforcer.class);
 		BudgetEnforcer.HoldAuthorization auth =
 				new BudgetEnforcer.HoldAuthorization(new BudgetDecision.Allowed(100L, 60L), 9_000L, "2026-09");
-		when(enforcer.authorizeHold(any(), any(), any(), anyString(), anyInt(), anyInt(), any()))
+		when(enforcer.authorizeHold(any(), any(), any(), anyString(), anyInt(), anyInt(), any(), any()))
 				.thenReturn(auth);
 
 		settlement(enforcer, mock(BudgetGapRepository.class))
-				.authorize(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 100, null, null);
+				.authorize(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 100, null, null, null);
 
 		verify(enforcer).authorizeHold(any(), any(), any(), anyString(),
-				eq(BudgetEnforcer.estimatePromptTokens(100)), eq(4096), any());
+				eq(BudgetEnforcer.estimatePromptTokens(100)), eq(4096), any(), any());
 	}
 
 	@Test
@@ -221,15 +221,16 @@ class BudgetSettlementTest {
 		BudgetEnforcer enforcer = mock(BudgetEnforcer.class);
 		BudgetEnforcer.HoldAuthorization auth =
 				new BudgetEnforcer.HoldAuthorization(new BudgetDecision.Allowed(100L, 60L), 9_000L, "2026-09");
-		when(enforcer.authorizeHold(any(), any(), any(), anyString(), anyInt(), anyInt(), any()))
+		when(enforcer.authorizeHold(any(), any(), any(), anyString(), anyInt(), anyInt(), any(), any()))
 				.thenReturn(auth);
 		BudgetSettlement settlement = settlement(enforcer, mock(BudgetGapRepository.class));
 
-		settlement.authorize(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 100, 0, null);
-		settlement.authorize(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 100, 99_999_999, null);
+		settlement.authorize(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 100, 0, null, null);
+		settlement.authorize(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 100, 99_999_999, null,
+				null);
 
 		verify(enforcer, times(2)).authorizeHold(any(), any(), any(), anyString(),
-				eq(BudgetEnforcer.estimatePromptTokens(100)), eq(4096), any());
+				eq(BudgetEnforcer.estimatePromptTokens(100)), eq(4096), any(), any());
 	}
 
 	@Test

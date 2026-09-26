@@ -6,10 +6,12 @@ import io.github.kxng0109.cacherelay.SharedContainersBase;
 import io.github.kxng0109.cacherelay.contracts.ProviderType;
 import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
 import io.github.kxng0109.cacherelay.ledger.CostCalculator;
+import io.github.kxng0109.cacherelay.security.ratelimit.RateLimitUnavailableException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 
@@ -18,6 +20,14 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -105,7 +115,7 @@ class BudgetLuaIntegrationTest extends SharedContainersBase {
 		BudgetEnforcer enforcer = enforcer(template, 60_000L);
 
 		BudgetDecision first = enforcer.checkBudget(
-				SHA256Hash.fromHex(hex()), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null);
+				SHA256Hash.fromHex(hex()), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
 
 		assertTrue(first instanceof BudgetDecision.Allowed allowed);
 		assertEquals(940_000L, ((BudgetDecision.Allowed) first).remainingMicros());
@@ -126,11 +136,11 @@ class BudgetLuaIntegrationTest extends SharedContainersBase {
 		BudgetEnforcer enforcer = enforcer(template, 60_000L);
 
 		BudgetDecision first = enforcer.checkBudget(
-				SHA256Hash.fromHex(hex()), "tenant-a", ProviderType.OPENAI, "gpt-5.6-luna", 10, null);
+				SHA256Hash.fromHex(hex()), "tenant-a", ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
 		assertTrue(first instanceof BudgetDecision.Allowed);
 
 		BudgetDecision second = enforcer.checkBudget(
-				SHA256Hash.fromHex(hex()), "tenant-a", ProviderType.OPENAI, "gpt-5.6-luna", 10, null);
+				SHA256Hash.fromHex(hex()), "tenant-a", ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
 		assertTrue(second instanceof BudgetDecision.Denied denied);
 		assertEquals("KEY", ((BudgetDecision.Denied) second).level());
 		assertEquals("MINUTE", ((BudgetDecision.Denied) second).window());
@@ -155,7 +165,7 @@ class BudgetLuaIntegrationTest extends SharedContainersBase {
 		BudgetEnforcer enforcer = enforcer(template, 0L);
 
 		BudgetDecision decision = enforcer.checkBudget(
-				SHA256Hash.fromHex(hex()), "owner-1", ProviderType.OLLAMA, "local-llama", 10, null);
+				SHA256Hash.fromHex(hex()), "owner-1", ProviderType.OLLAMA, "local-llama", 10, null, null);
 
 		assertTrue(decision instanceof BudgetDecision.Allowed);
 		assertFalse(template.hasKey(BudgetEnforcer.minuteKey(
@@ -172,7 +182,7 @@ class BudgetLuaIntegrationTest extends SharedContainersBase {
 		seedCfg(template, "KEY", hex(), 0L, 100_000_000L);
 		BudgetEnforcer enforcer = enforcer(template, 60_000L);
 
-		enforcer.checkBudget(SHA256Hash.fromHex(hex()), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null);
+		enforcer.checkBudget(SHA256Hash.fromHex(hex()), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
 
 		String expected = BudgetEnforcer.monthKey("KEY", hex(), YearMonth.now(ZoneOffset.UTC).toString());
 		assertEquals("60000", template.opsForValue().get(expected));
@@ -219,8 +229,11 @@ class BudgetLuaIntegrationTest extends SharedContainersBase {
 	}
 
 	@Test
-	@DisplayName("retried idempotency key admits without double-debit")
-	void retryAdmitsWithoutDoubleDebit() {
+	@DisplayName("duplicate claim still evaluates caps and charges every attempt")
+	void duplicateClaimEvaluatesCapsAndCharges() {
+		// FIN-B12: a retried key with no replay hit is new upstream work, so every
+		// attempt consumes budget (fail-closed). Free retries come from the replay
+		// store, never from the spend gate.
 		StringRedisTemplate template = template();
 		template.getConnectionFactory().getConnection().serverCommands().flushDb();
 		seedCfg(template, "KEY", hex(), 1_000_000L, 100_000_000L);
@@ -228,13 +241,118 @@ class BudgetLuaIntegrationTest extends SharedContainersBase {
 		String idempotencyKey = UUID.randomUUID().toString();
 
 		BudgetDecision first = enforcer.checkBudget(
-				SHA256Hash.fromHex(hex()), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, idempotencyKey);
+				SHA256Hash.fromHex(hex()), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, idempotencyKey, "body-sha-1");
 		BudgetDecision second = enforcer.checkBudget(
-				SHA256Hash.fromHex(hex()), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, idempotencyKey);
+				SHA256Hash.fromHex(hex()), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, idempotencyKey, "body-sha-1");
 
-		assertTrue(first instanceof BudgetDecision.Allowed);
-		assertTrue(second instanceof BudgetDecision.Allowed);
+		assertThat(first).as("first attempt").isInstanceOf(BudgetDecision.Allowed.class);
+		assertThat(second).as("retry without replay hit").isInstanceOf(BudgetDecision.Allowed.class);
 		String month = YearMonth.now(ZoneOffset.UTC).toString();
-		assertEquals("60000", template.opsForValue().get(BudgetEnforcer.monthKey("KEY", hex(), month)));
+		assertThat(template.opsForValue().get(BudgetEnforcer.monthKey("KEY", hex(), month)))
+				.as("both attempts charged")
+				.isEqualTo("120000");
+	}
+
+	@Test
+	@DisplayName("same key with a different body is a separate namespaced spend")
+	void sameKeyDifferentBodyChargedSeparately() {
+		StringRedisTemplate template = template();
+		template.getConnectionFactory().getConnection().serverCommands().flushDb();
+		seedCfg(template, "KEY", hex(), 1_000_000L, 100_000_000L);
+		BudgetEnforcer enforcer = enforcer(template, 60_000L);
+		String idempotencyKey = UUID.randomUUID().toString();
+
+		BudgetDecision first = enforcer.checkBudget(
+				SHA256Hash.fromHex(hex()), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10,
+				idempotencyKey, "body-sha-1");
+		BudgetDecision second = enforcer.checkBudget(
+				SHA256Hash.fromHex(hex()), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10,
+				idempotencyKey, "body-sha-2");
+
+		assertThat(first).as("first body").isInstanceOf(BudgetDecision.Allowed.class);
+		assertThat(second).as("different body").isInstanceOf(BudgetDecision.Allowed.class);
+		String month = YearMonth.now(ZoneOffset.UTC).toString();
+		assertThat(template.opsForValue().get(BudgetEnforcer.monthKey("KEY", hex(), month)))
+				.as("both bodies charged")
+				.isEqualTo("120000");
+		assertThat(template.hasKey(BudgetEnforcer.dedupeKey(
+				BudgetEnforcer.dedupeClaimId("owner-1", hex(), "body-sha-1", idempotencyKey))))
+				.as("first body claim namespaced").isTrue();
+		assertThat(template.hasKey(BudgetEnforcer.dedupeKey(
+				BudgetEnforcer.dedupeClaimId("owner-1", hex(), "body-sha-2", idempotencyKey))))
+				.as("second body claim namespaced").isTrue();
+	}
+
+	@Test
+	@Timeout(value = 60, unit = TimeUnit.SECONDS)
+	@DisplayName("50 concurrent duplicate claims never yield uncharged work")
+	void concurrentDuplicateClaimsAllCharged() throws Exception {
+		StringRedisTemplate template = template();
+		template.getConnectionFactory().getConnection().serverCommands().flushDb();
+		seedCfg(template, "KEY", hex(), 100_000_000L, 10_000_000_000L);
+		BudgetEnforcer enforcer = enforcer(template, 60_000L);
+		String idempotencyKey = UUID.randomUUID().toString();
+
+		int tasks = 50;
+		AtomicInteger allowed = new AtomicInteger();
+		CountDownLatch startGate = new CountDownLatch(1);
+		CountDownLatch completionGate = new CountDownLatch(tasks);
+		try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+			for (int i = 0; i < tasks; i++) {
+				executor.submit(() -> {
+					try {
+						startGate.await();
+						BudgetDecision decision = enforcer.checkBudget(
+								SHA256Hash.fromHex(hex()), "owner-1", ProviderType.OPENAI,
+								"gpt-5.6-luna", 10, idempotencyKey, "body-sha-1");
+						if (decision instanceof BudgetDecision.Allowed) {
+							allowed.incrementAndGet();
+						}
+					} catch (InterruptedException interrupted) {
+						Thread.currentThread().interrupt();
+					} finally {
+						completionGate.countDown();
+					}
+				});
+			}
+			startGate.countDown();
+			assertThat(completionGate.await(30, TimeUnit.SECONDS)).as("all tasks complete").isTrue();
+		}
+
+		assertThat(allowed.get()).as("allowed attempts").isEqualTo(tasks);
+		String month = YearMonth.now(ZoneOffset.UTC).toString();
+		assertThat(template.opsForValue().get(BudgetEnforcer.monthKey("KEY", hex(), month)))
+				.as("every attempt charged exactly once")
+				.isEqualTo(String.valueOf(60_000L * tasks));
+	}
+
+	@Test
+	@DisplayName("hold TTL is clamped below the settled-flag TTL")
+	void holdTtlClampedBelowFlagTtl() {
+		StringRedisTemplate template = template();
+		template.getConnectionFactory().getConnection().serverCommands().flushDb();
+		BudgetEnforcer enforcer = enforcer(template, 60_000L);
+
+		assertThat(enforcer.createHold("h-clamp", "KEY:hex", 100L, "2026-09",
+				1_700_000_000L, 86_400L)).as("hold created").isTrue();
+		Long ttl = template.getExpire(BudgetEnforcer.holdKey("h-clamp"));
+		assertThat(ttl).as("applied hold TTL").isNotNull().isLessThanOrEqualTo(86_100L);
+	}
+
+	@Test
+	@DisplayName("non-positive hold TTL is rejected fail-closed")
+	void nonPositiveHoldTtlRejected() {
+		StringRedisTemplate template = template();
+		template.getConnectionFactory().getConnection().serverCommands().flushDb();
+		BudgetEnforcer enforcer = enforcer(template, 60_000L);
+
+		assertThatThrownBy(() -> enforcer.createHold("h-bad", "KEY:hex", 100L, "2026-09",
+				1_700_000_000L, 0L))
+				.as("zero TTL")
+				.isInstanceOf(RateLimitUnavailableException.class);
+		assertThatThrownBy(() -> enforcer.createHold("h-bad", "KEY:hex", 100L, "2026-09",
+				1_700_000_000L, -5L))
+				.as("negative TTL")
+				.isInstanceOf(RateLimitUnavailableException.class);
 	}
 }

@@ -65,6 +65,56 @@ class RequestBodyCachingFilterTest {
 	}
 
 	@Test
+	@DisplayName("POST to MCP paths is wrapped pre-auth")
+	void postToMcpWrapped() throws Exception {
+		MockHttpServletRequest request = postRequestWithPath("/v1/mcp/message", "{\"jsonrpc\":\"2.0\"}");
+		MockHttpServletResponse response = new MockHttpServletResponse();
+		MockFilterChain chain = new MockFilterChain();
+
+		filter.doFilter(request, response, chain);
+
+		assertInstanceOf(CachedBodyHttpServletRequest.class, chain.getRequest());
+	}
+
+	@Test
+	@DisplayName("oversized MCP body is rejected 413 before buffering")
+	void oversizedMcpRejected() throws Exception {
+		RequestBodyCachingFilter small = new RequestBodyCachingFilter(10);
+		MockHttpServletRequest request = postRequestWithPath("/v1/mcp", "{\"jsonrpc\":\"2.0\",\"id\":1}");
+		MockHttpServletResponse response = new MockHttpServletResponse();
+		MockFilterChain chain = new MockFilterChain();
+
+		small.doFilter(request, response, chain);
+
+		assertEquals(413, response.getStatus());
+	}
+
+	@Test
+	@DisplayName("POST to A2A paths is wrapped pre-auth")
+	void postToA2aWrapped() throws Exception {
+		MockHttpServletRequest request = postRequestWithPath("/v1/a2a/agent-1", "{}");
+		MockHttpServletResponse response = new MockHttpServletResponse();
+		MockFilterChain chain = new MockFilterChain();
+
+		filter.doFilter(request, response, chain);
+
+		assertInstanceOf(CachedBodyHttpServletRequest.class, chain.getRequest());
+	}
+
+	@Test
+	@DisplayName("oversized A2A body is rejected 413 before buffering")
+	void oversizedA2aRejected() throws Exception {
+		RequestBodyCachingFilter small = new RequestBodyCachingFilter(10);
+		MockHttpServletRequest request = postRequestWithPath("/v1/a2a/agent-1", "{\"message\":{\"x\":1}}");
+		MockHttpServletResponse response = new MockHttpServletResponse();
+		MockFilterChain chain = new MockFilterChain();
+
+		small.doFilter(request, response, chain);
+
+		assertEquals(413, response.getStatus());
+	}
+
+	@Test
 	@DisplayName("the controller can re-read the body after the filter consumed it")
 	void replayThroughChain() throws Exception {
 		byte[] body = "{\"model\":\"gpt-4o\",\"max_tokens\":500}".getBytes(StandardCharsets.UTF_8);

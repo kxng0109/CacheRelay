@@ -12,6 +12,8 @@ import io.github.kxng0109.cacherelay.ledger.TokenUsageEvent;
 import io.github.kxng0109.cacherelay.proxy.IdempotencyKeys;
 import io.github.kxng0109.cacherelay.proxy.embeddings.dto.EmbeddingRequest;
 import io.github.kxng0109.cacherelay.proxy.embeddings.dto.EmbeddingResponse;
+import io.github.kxng0109.cacherelay.proxy.failover.UpstreamUrlValidator;
+import io.github.kxng0109.cacherelay.security.SsrfViolationException;
 import io.github.kxng0109.cacherelay.security.ratelimit.RateLimitUnavailableException;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.Nullable;
@@ -119,6 +121,19 @@ public class EmbeddingService {
 
 	private volatile @Nullable EmbeddingMetrics embeddingMetrics;
 
+	private volatile @Nullable UpstreamUrlValidator upstreamUrlValidator;
+
+	/**
+	 * Wires the shared SSRF validator when present. Optional on purpose:
+	 * unit-constructed services keep working with validation skipped.
+	 *
+	 * @param upstreamUrlValidator the shared upstream URL validator, if available
+	 */
+	@Autowired(required = false)
+	public void setUpstreamUrlValidator(UpstreamUrlValidator upstreamUrlValidator) {
+		this.upstreamUrlValidator = upstreamUrlValidator;
+	}
+
 	/**
 	 * Processes an embedding request, managing batching, upstream routing, and ledger tracking.
 	 *
@@ -139,8 +154,8 @@ public class EmbeddingService {
 	 * message.
 	 */
 	private void enforceBudgetOrThrow(@Nullable String keyHashHex, @Nullable String ownerId,
-			@Nullable String idempotencyKey, ProviderConfig providerConfig, ResolvedEmbeddingTarget target,
-			byte[] canonicalBytes) {
+			@Nullable String idempotencyKey, @Nullable String bodyHashHex, ProviderConfig providerConfig,
+			ResolvedEmbeddingTarget target, byte[] canonicalBytes) {
 		BudgetEnforcer enforcer = this.budgetEnforcer;
 		if (enforcer == null || keyHashHex == null || keyHashHex.isBlank()) {
 			return;
@@ -154,7 +169,7 @@ public class EmbeddingService {
 		final BudgetDecision decision;
 		try {
 			decision = enforcer.checkBudget(keyHash, ownerId, providerConfig.type(), target.effectiveModel(),
-					BudgetEnforcer.estimatePromptTokens(canonicalBytes.length), idempotencyKey);
+					BudgetEnforcer.estimatePromptTokens(canonicalBytes.length), idempotencyKey, bodyHashHex);
 		} catch (RateLimitUnavailableException unavailable) {
 			throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Budget service unavailable", unavailable);
 		}
@@ -204,11 +219,28 @@ public class EmbeddingService {
 		);
 		EmbeddingAdapter adapter = adapterResolver.resolve(providerConfig.type());
 		URI targetUri = resolveTargetUri(providerConfig);
+		UpstreamUrlValidator urlValidator = this.upstreamUrlValidator;
+		if (urlValidator != null) {
+			try {
+				urlValidator.validate(targetUri);
+			} catch (SsrfViolationException rejected) {
+				String failureId = UUID.randomUUID().toString();
+				log.warn("Embedding upstream target rejected [id={}]: {}", failureId, rejected.getMessage());
+				recordOutcome(providerConfig.name(), target.metricModel(), "error", -1);
+				throw new ResponseStatusException(
+						HttpStatus.BAD_GATEWAY,
+						"Embedding upstream provider error (id=" + failureId + ")",
+						rejected
+				);
+			}
+		}
 		byte[] canonicalBytes = canonicalEmbeddingBytes(request);
+		String bodyHashHex = IdempotencyKeys.sha256Hex(canonicalBytes);
 		try {
-			enforceBudgetOrThrow(keyHashHex, ownerId, idempotencyKey, providerConfig, target, canonicalBytes);
+			enforceBudgetOrThrow(keyHashHex, ownerId, idempotencyKey, bodyHashHex, providerConfig, target,
+					canonicalBytes);
 		} catch (EmbeddingBudgetDeniedException denied) {
-			recordOutcome(providerConfig.name(), target.effectiveModel(), "denied", -1);
+			recordOutcome(providerConfig.name(), target.metricModel(), "denied", -1);
 			throw denied;
 		}
 
@@ -220,9 +252,16 @@ public class EmbeddingService {
 			if (ex instanceof InterruptedException) {
 				Thread.currentThread().interrupt();
 			}
+			// The flight did no upstream work to completion: release the budget claim so a retry
+			// claims fresh. A stale claim is harmless (colliding retries still charge), never free.
+			BudgetEnforcer enforcer = this.budgetEnforcer;
+			if (enforcer != null) {
+				enforcer.releaseIdempotencyClaim(
+						BudgetEnforcer.dedupeClaimId(ownerId, keyHashHex, bodyHashHex, idempotencyKey));
+			}
 			String failureId = UUID.randomUUID().toString();
 			log.warn("Embedding upstream call failed [id={}]: {}", failureId, ex.getMessage());
-			recordOutcome(providerConfig.name(), target.effectiveModel(), "error", -1);
+			recordOutcome(providerConfig.name(), target.metricModel(), "error", -1);
 			throw new ResponseStatusException(
 					HttpStatus.BAD_GATEWAY,
 					"Embedding upstream provider error (id=" + failureId + ")",
@@ -231,7 +270,7 @@ public class EmbeddingService {
 		}
 
 		long durationMs = Duration.between(start, Instant.now()).toMillis();
-		recordOutcome(providerConfig.name(), target.effectiveModel(), "success", durationMs);
+		recordOutcome(providerConfig.name(), target.metricModel(), "success", durationMs);
 		int promptTokens = response.usage() != null ? response.usage().promptTokens() : 0;
 		long costUsdMicros = costCalculator.calculate(
 				providerConfig.type(), target.effectiveModel(), promptTokens, 0);
@@ -240,7 +279,7 @@ public class EmbeddingService {
 				idempotencyKey,
 				ownerId == null || ownerId.isBlank() ? "" : ownerId,
 				"/v1/embeddings",
-				IdempotencyKeys.sha256Hex(canonicalBytes));
+				bodyHashHex);
 		TokenUsageEvent event = new TokenUsageEvent(
 				requestId,
 				ownerId == null || ownerId.isBlank() ? "unknown" : ownerId,
@@ -263,7 +302,8 @@ public class EmbeddingService {
 	 * Silent when no metrics are wired (non-Spring unit-test contexts).
 	 *
 	 * @param provider   upstream provider name
-	 * @param model      effective upstream model
+	 * @param model      metric model id: the requested alias, or {@code unresolved} for steered
+	 *                   names (never a raw client string, keeping meter cardinality closed)
 	 * @param outcome    {@code success} or {@code error}
 	 * @param durationMs upstream milliseconds, or negative to skip latency
 	 */
@@ -284,6 +324,7 @@ public class EmbeddingService {
 		if (request.model() == null || request.model().isBlank()) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Parameter 'model' is required");
 		}
+		validateInputShape(request.input());
 		List<String> inputs = request.extractTextInputs();
 		if (inputs.isEmpty()) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Parameter 'input' cannot be empty");
@@ -294,13 +335,47 @@ public class EmbeddingService {
 					"Batch size of " + inputs.size() + " exceeds maximum allowed limit of " + properties.maxBatchItems() + " items"
 			);
 		}
+		if (request.dimensions() != null && request.dimensions() <= 0) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Parameter 'dimensions' must be positive");
+		}
+		if (request.encodingFormat() != null
+				&& !"float".equalsIgnoreCase(request.encodingFormat())
+				&& !"base64".equalsIgnoreCase(request.encodingFormat())) {
+			throw new ResponseStatusException(
+					HttpStatus.BAD_REQUEST, "Parameter 'encoding_format' must be 'float' or 'base64'");
+		}
+	}
+
+	/**
+	 * Rejects non-string input shapes before coercion. Token-id arrays and mixed
+	 * or foreign types fail closed with 400 instead of being stringified into
+	 * unintended embeddings.
+	 *
+	 * @param input raw polymorphic input payload, possibly {@code null}
+	 */
+	private void validateInputShape(@Nullable Object input) {
+		if (input == null || input instanceof String) {
+			return;
+		}
+		if (input instanceof List<?> list) {
+			for (Object item : list) {
+				if (!(item instanceof String)) {
+					throw new ResponseStatusException(
+							HttpStatus.BAD_REQUEST,
+							"Parameter 'input' must be a string or an array of strings");
+				}
+			}
+			return;
+		}
+		throw new ResponseStatusException(
+				HttpStatus.BAD_REQUEST, "Parameter 'input' must be a string or an array of strings");
 	}
 
 	/**
 	 * Resolved routing target: the provider config plus the effective upstream model id (the chain's
 	 * {@code model-override} when present, else the requested name).
 	 */
-	private record ResolvedEmbeddingTarget(ProviderConfig config, String effectiveModel) {
+	private record ResolvedEmbeddingTarget(ProviderConfig config, String effectiveModel, String metricModel) {
 	}
 
 	/**
@@ -341,35 +416,25 @@ public class EmbeddingService {
 
 	private ResolvedEmbeddingTarget resolveTarget(String model) {
 		ModelAlias alias = gatewayProperties.getAliases().get(model);
-		if (alias != null && !alias.chain().isEmpty()) {
-			ProviderRef primaryRef = alias.chain().getFirst();
-			ProviderConfig config = gatewayProperties.getProviders().get(primaryRef.providerName());
-			if (config != null) {
-				String effectiveModel = primaryRef.modelOverride() != null
-						&& !primaryRef.modelOverride().isBlank()
-						? primaryRef.modelOverride()
-						: model;
-				return new ResolvedEmbeddingTarget(config, effectiveModel);
-			}
+		if (alias == null || alias.chain().isEmpty()) {
+			throw new ResponseStatusException(
+					HttpStatus.NOT_FOUND,
+					"No upstream provider configured for embedding model: " + model
+			);
 		}
-
-		// Direct lookup by provider key if model contains provider prefix or matches configured provider
-		for (ProviderConfig config : gatewayProperties.getProviders().values()) {
-			if (model.toLowerCase().contains(config.type().name().toLowerCase())) {
-				return new ResolvedEmbeddingTarget(config, model);
-			}
+		ProviderRef primaryRef = alias.chain().getFirst();
+		ProviderConfig config = gatewayProperties.getProviders().get(primaryRef.providerName());
+		if (config == null) {
+			throw new ResponseStatusException(
+					HttpStatus.NOT_FOUND,
+					"No upstream provider configured for embedding model: " + model
+			);
 		}
-
-		// Fallback to first available provider if configured
-		if (!gatewayProperties.getProviders().isEmpty()) {
-			return new ResolvedEmbeddingTarget(
-					gatewayProperties.getProviders().values().iterator().next(), model);
-		}
-
-		throw new ResponseStatusException(
-				HttpStatus.NOT_FOUND,
-				"No upstream provider configured for embedding model: " + model
-		);
+		String effectiveModel = primaryRef.modelOverride() != null
+				&& !primaryRef.modelOverride().isBlank()
+				? primaryRef.modelOverride()
+				: model;
+		return new ResolvedEmbeddingTarget(config, effectiveModel, model);
 	}
 
 	private URI resolveTargetUri(ProviderConfig providerConfig) {

@@ -50,8 +50,8 @@ import io.github.kxng0109.cacherelay.web.SpaFallbackController;
  *       endpoint at all, Docker Compose publishes the management port on host loopback
  *       only, and the Kubernetes Service never maps it. The chain is port-agnostic, so
  *       these matchers simply let the internal scraper and probes through.</li>
- *   <li><b>Public docs:</b> {@code /v3/api-docs}, {@code /swagger-ui.html}
- *       (no secrets).</li>
+ *   <li><b>Public docs:</b> {@code /v3/api-docs}, {@code /v3/api-docs/**},
+ *       {@code /swagger-ui.html}, {@code /swagger-ui/**} (no secrets).</li>
  *   <li><b>Delegated auth:</b> {@code /v1/chat/completions} and
  *       {@code /v1/embeddings} (authenticated, rate-limited, and budget-gated by
  *       {@code KeyAuthFilter}); {@code /v1/models} (virtual-key authenticated inside
@@ -135,7 +135,9 @@ public class SecurityConfig {
 								"/actuator/prometheus",
 								"/.well-known/agent-card.json",
 								"/v3/api-docs",
-								"/swagger-ui.html"
+								"/v3/api-docs/**",
+								"/swagger-ui.html",
+								"/swagger-ui/**"
 						).permitAll()
 						.requestMatchers(
 								"/v1/chat/completions",

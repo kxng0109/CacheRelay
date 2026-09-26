@@ -2,6 +2,7 @@ package io.github.kxng0109.cacherelay.mcp.router;
 
 import io.github.kxng0109.cacherelay.mcp.config.McpGatewayProperties;
 import io.github.kxng0109.cacherelay.mcp.contracts.McpServerConfig;
+import io.github.kxng0109.cacherelay.mcp.security.McpToolRbacPolicyEngine;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -58,10 +59,11 @@ public class McpRouter {
 			String serverPrefix = trimmed.substring(0, delimiterIdx);
 			String rawToolName = trimmed.substring(delimiterIdx + 2);
 			McpServerConfig config = servers.get(serverPrefix);
-			if (config != null && config.enabled()) {
+			if (config != null && config.enabled() && isServerPolicyAllowed(config, rawToolName)) {
 				return Optional.of(new McpResolvedRoute(config, rawToolName, trimmed));
 			}
-			log.warn("MCP routing failed: server prefix '{}' is unknown or disabled", serverPrefix);
+			log.warn("MCP routing failed: server prefix '{}' is unknown, disabled, or policy-denied",
+					serverPrefix);
 			return Optional.empty();
 		}
 
@@ -71,8 +73,7 @@ public class McpRouter {
 			if (!config.enabled()) {
 				continue;
 			}
-			// If server has explicit allowedTools, check if it contains this tool
-			if (config.allowedTools().isEmpty() || config.allowedTools().contains(trimmed)) {
+			if (isServerPolicyAllowed(config, trimmed)) {
 				candidates.add(new McpResolvedRoute(config, trimmed, formatNamespacedName(config.name(), trimmed)));
 			}
 		}
@@ -82,12 +83,43 @@ public class McpRouter {
 		}
 		if (candidates.size() > 1) {
 			log.warn(
-					"MCP routing collision: un-namespaced tool '{}' matches multiple servers: {}; returning first resolved route as fail-safe",
+					"MCP routing collision: un-namespaced tool '{}' matches multiple servers: {}; refusing to guess",
 					requestedToolName,
 					candidates.stream().map(c -> c.serverConfig().name()).toList()
 			);
-			return Optional.of(candidates.getFirst());
+			return Optional.empty();
 		}
 		return Optional.empty();
+	}
+
+	/**
+	 * Server-level tool policy: deny list wins absolutely (glob matched), then the allow list
+	 * admits (glob matched, empty admits all). Shared linear glob matcher, no regex involved.
+	 *
+	 * @param config        server configuration carrying the policy sets
+	 * @param nativeToolName un-namespaced upstream tool name
+	 * @return {@code true} when the server policy admits the tool
+	 */
+	static boolean isServerPolicyAllowed(McpServerConfig config, String nativeToolName) {
+		if (nativeToolName == null || nativeToolName.isBlank()) {
+			return false;
+		}
+		String target = nativeToolName.trim();
+		if (config.deniedTools() != null) {
+			for (String denied : config.deniedTools()) {
+				if (McpToolRbacPolicyEngine.matchesPattern(target, denied)) {
+					return false;
+				}
+			}
+		}
+		if (config.allowedTools() == null || config.allowedTools().isEmpty()) {
+			return true;
+		}
+		for (String allowed : config.allowedTools()) {
+			if (McpToolRbacPolicyEngine.matchesPattern(target, allowed)) {
+				return true;
+			}
+		}
+		return false;
 	}
 }

@@ -53,4 +53,25 @@ class BackfillHttpTest {
 		assertThat(result.header("LINK")).containsExactly("<https://idp.example/n>; rel=\"next\"");
 		assertThat(result.header("absent")).isEmpty();
 	}
+
+	@Test
+	@DisplayName("FS-B10: pagination stays on the API origin and rejects look-alikes")
+	void sameOriginRejectsLookAlikes() {
+		assertThat(BackfillHttp.sameOrigin("https://api.github.com",
+				"https://api.github.com/user/memberships?page=2")).isTrue();
+		assertThat(BackfillHttp.sameOrigin("https://api.github.com/",
+				"https://api.github.com/x")).isTrue();
+		assertThat(BackfillHttp.sameOrigin("https://api.github.com",
+				"https://api.github.com:443/x")).isFalse();
+		assertThat(BackfillHttp.sameOrigin("https://api.github.com",
+				"https://api.github.com.evil.example/x")).isFalse();
+		assertThat(BackfillHttp.sameOrigin("https://api.github.com",
+				"http://api.github.com/x")).isFalse();
+		assertThat(BackfillHttp.sameOrigin("https://api.github.com",
+				"https://other.example/x")).isFalse();
+		assertThat(BackfillHttp.sameOrigin("https://api.github.com", null)).isFalse();
+		assertThat(BackfillHttp.sameOrigin("https://api.github.com", "not a url %%")).isFalse();
+		assertThat(BackfillHttp.sameOrigin(null, "https://api.github.com/x")).isFalse();
+		assertThat(BackfillHttp.sameOrigin("api.github.com", "https://api.github.com/x")).isFalse();
+	}
 }

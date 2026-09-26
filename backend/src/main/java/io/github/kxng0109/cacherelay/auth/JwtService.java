@@ -5,6 +5,7 @@ import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.UUID;
 
 import javax.crypto.Mac;
@@ -30,6 +31,14 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class JwtService {
+
+	/**
+	 * Audience stamped on every self-issued access token and enforced on validation.
+	 * A single fleet-wide service identifier: tokens minted for any other audience
+	 * (or none) fail closed, so a token from a foreign issuer sharing the secret
+	 * can never authenticate here.
+	 */
+	public static final String AUDIENCE = "cacherelay-gateway";
 
 	private final JwtEncoder jwtEncoder;
 	private final JwtDecoder jwtDecoder;
@@ -64,6 +73,7 @@ public class JwtService {
 				.subject(userId.toString())
 				.issuedAt(now)
 				.expiresAt(now.plusSeconds(ttlSeconds))
+				.audience(List.of(AUDIENCE))
 				.id(UUID.randomUUID().toString())
 				.claim("preferred_username", username)
 				.claim("admin", admin)

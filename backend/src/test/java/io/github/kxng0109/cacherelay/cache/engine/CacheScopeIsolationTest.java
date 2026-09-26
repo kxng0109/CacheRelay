@@ -1,6 +1,8 @@
 package io.github.kxng0109.cacherelay.cache.engine;
 
 import io.github.kxng0109.cacherelay.cache.config.CacheRelayCacheProperties;
+import io.github.kxng0109.cacherelay.cache.contracts.CacheEntry;
+import io.github.kxng0109.cacherelay.cache.contracts.CacheLookupResult;
 import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
 import io.github.kxng0109.cacherelay.cache.contracts.CompoundCacheKey;
 import io.github.kxng0109.cacherelay.cache.engine.l0.InMemoryExactCache;
@@ -23,6 +25,8 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -123,6 +127,50 @@ class CacheScopeIsolationTest {
 				chatRequest(), "tenant-b", CacheScope.TENANT, null, 4);
 		assertThat(keyA.ownerId()).isNotEqualTo(keyB.ownerId());
 		assertThat(keyA.exactHash()).isNotEqualTo(keyB.exactHash());
+	}
+
+	@Test
+	@DisplayName("identical prompts stored by one tenant miss and never overwrite for another")
+	void crossTenantStoreNeverOverwrites() {
+		MockHttpServletRequest httpReq = new MockHttpServletRequest();
+		when(l0Cache.get(any())).thenReturn(null);
+		when(l1Cache.get(any())).thenReturn(null);
+		when(l2Cache.findSemanticMatch(any(), any())).thenReturn(null);
+
+		cacheService.storeResponse(chatRequest(), httpReq, "tenant-a",
+				key("tenant-a", Set.of(CacheScope.TENANT)), "{\"a\":1}", 10, 5);
+		ArgumentCaptor<CompoundCacheKey> storedKeys = ArgumentCaptor.forClass(CompoundCacheKey.class);
+		ArgumentCaptor<CacheEntry> storedEntries = ArgumentCaptor.forClass(CacheEntry.class);
+		verify(l1Cache).put(storedKeys.capture(), storedEntries.capture(), any());
+		assertThat(storedKeys.getValue().ownerId()).isEqualTo("tenant-a");
+
+		CacheLookupResult resultB = cacheService.evaluateCache(
+				chatRequest(), httpReq, "tenant-b", key("tenant-b", Set.of(CacheScope.TENANT)));
+		assertThat(resultB.isHit()).as("cross-tenant lookup misses").isFalse();
+		ArgumentCaptor<CompoundCacheKey> lookupKeys = ArgumentCaptor.forClass(CompoundCacheKey.class);
+		verify(l1Cache, atLeastOnce()).get(lookupKeys.capture());
+		assertThat(lookupKeys.getAllValues())
+				.as("every lookup stays in the caller's namespace")
+				.allSatisfy(lookupKey -> assertThat(lookupKey.ownerId()).isEqualTo("tenant-b"));
+
+		cacheService.storeResponse(chatRequest(), httpReq, "tenant-b",
+				key("tenant-b", Set.of(CacheScope.TENANT)), "{\"b\":2}", 10, 5);
+		verify(l1Cache, atLeast(2)).put(storedKeys.capture(), storedEntries.capture(), any());
+		assertThat(storedKeys.getAllValues()).extracting(CompoundCacheKey::ownerId)
+				.as("every write stays in the writer's namespace")
+				.allSatisfy(owner -> assertThat(owner).isIn("tenant-a", "tenant-b"));
+		assertThat(storedKeys.getAllValues()).extracting(CompoundCacheKey::ownerId)
+				.as("both namespaces written, neither clobbered")
+				.contains("tenant-a", "tenant-b");
+		assertThat(storedEntries.getAllValues())
+				.as("no cross-tenant payload under any key")
+				.allSatisfy(entry -> {
+					if ("tenant-a".equals(entry.ownerId())) {
+						assertThat(entry.responsePayloadJson()).contains("{\"a\":1}");
+					} else {
+						assertThat(entry.responsePayloadJson()).contains("{\"b\":2}");
+					}
+				});
 	}
 
 	@Test

@@ -19,8 +19,12 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -47,12 +51,13 @@ class KeyAuthFilterTest {
 	private final KeyManagementService kms = mock(KeyManagementService.class);
 	private final RateLimitEngine engine = mock(RateLimitEngine.class);
 	private final ObjectMapper objectMapper = new ObjectMapper();
+	private final GatewayProperties gatewayProperties = new GatewayProperties();
 
 	private KeyAuthFilter filter;
 
 	@BeforeEach
 	void setUp() {
-		filter = new KeyAuthFilter(kms, engine, objectMapper);
+		filter = new KeyAuthFilter(kms, engine, objectMapper, gatewayProperties);
 		when(kms.isOwnerActive(any())).thenReturn(true);
 	}
 
@@ -431,6 +436,95 @@ class KeyAuthFilterTest {
 		MockHttpServletResponse response = new MockHttpServletResponse();
 		filter.doFilterInternal(
 				request("Bearer " + VALID_KEY, "{\"model\":\"gpt-a\"}"), response, chain.chain());
+		assertEquals(200, response.getStatus());
+	}
+
+	@Test
+	@DisplayName("FS-B09: alias chain with no allowed provider -> 403 PROVIDER_NOT_ALLOWED")
+	void providerNotAllowedWhenChainFilteredEmpty() throws Exception {
+		GatewayProperties props = new GatewayProperties();
+		props.setProviders(Map.of("openai-main", new ProviderConfig(
+				"openai-main", ProviderType.OPENAI,
+				URI.create("https://api.openai.com/v1"), null,
+				Duration.ofSeconds(5), Duration.ofSeconds(30))));
+		props.setAliases(Map.of("gpt-a", new ModelAlias(
+				List.of(new ProviderRef("openai-main", null)), FailoverStrategy.SEQUENTIAL)));
+		KeyAuthFilter providerFilter = new KeyAuthFilter(kms, engine, objectMapper, props);
+		when(kms.findByHash(any())).thenReturn(Optional.of(new VirtualApiKey(
+				SHA256Hash.fromRawKey(VALID_KEY),
+				KeyAuthFilter.KEY_PREFIX,
+				OWNER,
+				"test",
+				10,
+				1000,
+				Set.of(),
+				Set.of("ollama-local"),
+				true,
+				Instant.parse("2026-08-28T00:00:00Z"))));
+		MockHttpServletResponse response = invoke(
+				request("Bearer " + VALID_KEY, "{\"model\":\"gpt-a\"}"), providerFilter);
+		assertEquals(403, response.getStatus());
+		assertEquals(
+				RejectionReason.PROVIDER_NOT_ALLOWED.name(),
+				parse(response).get("error").get("code").asString()
+		);
+	}
+
+	@Test
+	@DisplayName("FS-B09: alias chain with a surviving allowed provider -> proceeds")
+	void providerAllowedSurvivorProceeds() throws Exception {
+		GatewayProperties props = new GatewayProperties();
+		props.setProviders(Map.of("openai-main", new ProviderConfig(
+				"openai-main", ProviderType.OPENAI,
+				URI.create("https://api.openai.com/v1"), null,
+				Duration.ofSeconds(5), Duration.ofSeconds(30))));
+		props.setAliases(Map.of("gpt-a", new ModelAlias(
+				List.of(new ProviderRef("openai-main", null)), FailoverStrategy.SEQUENTIAL)));
+		KeyAuthFilter providerFilter = new KeyAuthFilter(kms, engine, objectMapper, props);
+		when(kms.findByHash(any())).thenReturn(Optional.of(new VirtualApiKey(
+				SHA256Hash.fromRawKey(VALID_KEY),
+				KeyAuthFilter.KEY_PREFIX,
+				OWNER,
+				"test",
+				10,
+				1000,
+				Set.of(),
+				Set.of("openai-main"),
+				true,
+				Instant.parse("2026-08-28T00:00:00Z"))));
+		stubAllowed(10, 9, 1000, 900);
+		MockClientChain chain = new MockClientChain();
+		MockHttpServletResponse response = new MockHttpServletResponse();
+		providerFilter.doFilterInternal(
+				request("Bearer " + VALID_KEY, "{\"model\":\"gpt-a\"}"), response, chain.chain());
+		assertEquals(200, response.getStatus());
+	}
+
+	@Test
+	@DisplayName("FS-B12: unknown models skip provider enforcement without failing")
+	void unknownModelSkipsProviderEnforcement() throws Exception {
+		GatewayProperties props = new GatewayProperties();
+		props.setProviders(Map.of("openai-main", new ProviderConfig(
+				"openai-main", ProviderType.OPENAI,
+				URI.create("https://api.openai.com/v1"), null,
+				Duration.ofSeconds(5), Duration.ofSeconds(30))));
+		KeyAuthFilter providerFilter = new KeyAuthFilter(kms, engine, objectMapper, props);
+		when(kms.findByHash(any())).thenReturn(Optional.of(new VirtualApiKey(
+				SHA256Hash.fromRawKey(VALID_KEY),
+				KeyAuthFilter.KEY_PREFIX,
+				OWNER,
+				"test",
+				10,
+				1000,
+				Set.of(),
+				Set.of("openai-main"),
+				true,
+				Instant.parse("2026-08-28T00:00:00Z"))));
+		stubAllowed(10, 9, 1000, 900);
+		MockClientChain chain = new MockClientChain();
+		MockHttpServletResponse response = new MockHttpServletResponse();
+		providerFilter.doFilterInternal(
+				request("Bearer " + VALID_KEY, "{\"model\":\"no-such-alias\"}"), response, chain.chain());
 		assertEquals(200, response.getStatus());
 	}
 

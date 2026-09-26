@@ -321,6 +321,40 @@ class ProviderCircuitBreakerTest {
 		assertFalse(breaker.halfOpenProbeInFlight());
 	}
 
+	@Test
+	@DisplayName("abandoned probe slot is re-acquirable without a verdict")
+	void abandonedProbeSlotReacquirable() {
+		MutableClock clock = mutableClock();
+		ProviderCircuitBreaker breaker = new ProviderCircuitBreaker("p1", clock, 1, Duration.ofSeconds(30));
+		breaker.recordFailure();
+		clock.advance(Duration.ofSeconds(31));
+		assertTrue(breaker.tryAcquire());
+		assertTrue(breaker.halfOpenProbeInFlight());
+
+		breaker.abandonProbe();
+
+		assertFalse(breaker.halfOpenProbeInFlight());
+		assertTrue(breaker.tryAcquire());
+		breaker.recordSuccess();
+	}
+
+	@Test
+	@DisplayName("expired probe lease is reclaimable by the next caller")
+	void expiredProbeLeaseReclaimed() throws Exception {
+		MutableClock clock = mutableClock();
+		ProviderCircuitBreaker breaker = new ProviderCircuitBreaker(
+				"p1", clock, 1, Duration.ofSeconds(30), Duration.ofMillis(50));
+		breaker.recordFailure();
+		clock.advance(Duration.ofSeconds(31));
+		assertTrue(breaker.tryAcquire());
+		assertFalse(breaker.tryAcquire());
+
+		Thread.sleep(150L);
+
+		assertTrue(breaker.tryAcquire(), "expired lease reclaimed");
+		breaker.recordSuccess();
+	}
+
 	/**
 	 * A clock whose current instant tests can move forward deterministically.
 	 */

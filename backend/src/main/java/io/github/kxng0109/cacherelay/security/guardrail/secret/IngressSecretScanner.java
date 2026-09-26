@@ -62,43 +62,70 @@ public class IngressSecretScanner {
 				continue;
 			}
 
+			// Structural rules bypass backtracking-prone patterns while flowing through the same
+			// corroboration below (currently JWT only; extend this branch for future locators).
+			if (JwtTokenMatcher.RULE_ID.equals(rule.id())) {
+				SecretScanResult structural = scanStructural(rule, text);
+				if (structural != null) {
+					return structural;
+				}
+				continue;
+			}
+
 			Matcher matcher = rule.pattern().matcher(text);
 			while (matcher.find()) {
 				String matchedToken = (matcher.groupCount() >= 1 && matcher.group(1) != null)
 						? matcher.group(1) : matcher.group();
 
-				// Signal 2: Branchless Shannon entropy verification
-				if (rule.checkEntropy()) {
-					double entropy = ShannonEntropyCalculator.calculate(matchedToken);
-					if (entropy < rule.minEntropy()) {
-						continue; // Low-entropy false positive (e.g., test placeholders, English words)
-					}
+				SecretScanResult corroborated = corroborate(rule, matchedToken, matcher.start(), text);
+				if (corroborated != null) {
+					return corroborated;
 				}
-
-				// Signal 3: Algorithmic Checksum (if configured)
-				if (rule.checkLuhn()) {
-					if (!LuhnValidator.isValid(matchedToken)) {
-						continue; // Failed Luhn mod-10
-					}
-				}
-
-				// All signals corroborated: verified secret leakage
-				String maskedToken = maskToken(matchedToken);
-				String fingerprint = sha256Hex(matchedToken);
-				String jsonPath = locateJsonPath(text, matcher.start());
-
-				return new SecretScanResult(
-						true,
-						rule.id(),
-						rule.description(),
-						maskedToken,
-						fingerprint,
-						jsonPath
-				);
 			}
 		}
 
 		return SecretScanResult.clean();
+	}
+
+	private SecretScanResult scanStructural(SecretRule rule, String text) {
+		for (JwtTokenMatcher.Candidate candidate : JwtTokenMatcher.findCandidates(text)) {
+			SecretScanResult corroborated = corroborate(rule, candidate.token(), candidate.start(), text);
+			if (corroborated != null) {
+				return corroborated;
+			}
+		}
+		return null;
+	}
+
+	private SecretScanResult corroborate(SecretRule rule, String matchedToken, int start, String text) {
+		// Signal 2: Branchless Shannon entropy verification
+		if (rule.checkEntropy()) {
+			double entropy = ShannonEntropyCalculator.calculate(matchedToken);
+			if (entropy < rule.minEntropy()) {
+				return null; // Low-entropy false positive (e.g., test placeholders, English words)
+			}
+		}
+
+		// Signal 3: Algorithmic Checksum (if configured)
+		if (rule.checkLuhn()) {
+			if (!LuhnValidator.isValid(matchedToken)) {
+				return null; // Failed Luhn mod-10
+			}
+		}
+
+		// All signals corroborated: verified secret leakage
+		String maskedToken = maskToken(matchedToken);
+		String fingerprint = sha256Hex(matchedToken);
+		String jsonPath = locateJsonPath(text, start);
+
+		return new SecretScanResult(
+				true,
+				rule.id(),
+				rule.description(),
+				maskedToken,
+				fingerprint,
+				jsonPath
+		);
 	}
 
 	private String maskToken(String token) {

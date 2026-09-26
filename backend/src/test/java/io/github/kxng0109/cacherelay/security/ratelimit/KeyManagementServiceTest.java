@@ -14,6 +14,7 @@ import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.SetOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.security.oauth2.jwt.Jwt;
 
 import java.time.Instant;
@@ -472,6 +473,33 @@ class KeyManagementServiceTest {
 	}
 
 	@Test
+	void createKeyRejectsMalformedTenant() {
+		KeyManagementService service = newService();
+
+		assertThrows(IllegalArgumentException.class, () -> service.createKey(
+				"Victim Tenant!", "key-name", 60, 5000, Set.of("m1"), Set.of("p1"),
+				Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(),
+				null, null, Set.of(), Set.of(), UUID.randomUUID()
+		));
+	}
+
+	@Test
+	void createKeyRejectsReservedTenants() {
+		KeyManagementService service = newService();
+
+		assertThrows(IllegalArgumentException.class, () -> service.createKey(
+				"global", "key-name", 60, 5000, Set.of(), Set.of(),
+				Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(),
+				null, null, Set.of(), Set.of(), UUID.randomUUID()
+		));
+		assertThrows(IllegalArgumentException.class, () -> service.createKey(
+				"unknown", "key-name", 60, 5000, Set.of(), Set.of(),
+				Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(),
+				null, null, Set.of(), Set.of(), UUID.randomUUID()
+		));
+	}
+
+	@Test
 	void listKeysReturnsAllAndFilteredByOwner() {
 		KeyManagementService service = newService();
 
@@ -558,7 +586,10 @@ class KeyManagementServiceTest {
 	}
 
 	@Test
-	void deleteKeyRemovesFromRedisAndIndexSet() {		KeyManagementService service = newService();
+	void deleteKeyRemovesFromRedisAndIndexSet() {
+		ValueOperations<String, String> valueOps = mock(ValueOperations.class);
+		when(redisTemplate.opsForValue()).thenReturn(valueOps);
+		KeyManagementService service = newService();
 
 		SHA256Hash hash = hashOf("gw-key11111111111111111111111111111");
 		when(redisTemplate.delete(redisKey(hash))).thenReturn(Boolean.TRUE);
@@ -935,5 +966,71 @@ class KeyManagementServiceTest {
 				"tenant-a", "seed", "gw-seed-key-00000000000000000001", 5, 50,
 				Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(),
 				null, ownerUsername);
+	}
+
+	@Test
+	void deleteKeyWritesPermanentTombstoneMarker() {
+		ValueOperations<String, String> valueOps = mock(ValueOperations.class);
+		when(redisTemplate.opsForValue()).thenReturn(valueOps);
+		KeyManagementService service = newService();
+		SHA256Hash hash = hashOf(FIXED_PLAINTEXT);
+		when(redisTemplate.delete(redisKey(hash))).thenReturn(Boolean.TRUE);
+
+		assertTrue(service.deleteKey(hash));
+		verify(valueOps).set("deleted-key:" + hash.hex(), "1");
+	}
+
+	@Test
+	void deleteKeyWithoutRemovalWritesNoMarker() {
+		ValueOperations<String, String> valueOps = mock(ValueOperations.class);
+		when(redisTemplate.opsForValue()).thenReturn(valueOps);
+		KeyManagementService service = newService();
+		SHA256Hash hash = hashOf(FIXED_PLAINTEXT);
+		when(redisTemplate.delete(redisKey(hash))).thenReturn(Boolean.FALSE);
+
+		assertFalse(service.deleteKey(hash));
+		verify(valueOps, never()).set(anyString(), anyString());
+	}
+
+	@Test
+	void seedBootstrapKeysNeverResurrectsTombstonedKeys() {
+		KeyManagementService service = newService();
+		BootstrapKey doomed = new BootstrapKey(
+				"owner", "doomed", "gw-dddddddddddddddddddddddddddddddd", 1, 1, Set.of(), Set.of());
+		String marker = "deleted-key:" + hashOf(doomed.plaintextKey()).hex();
+		when(redisTemplate.hasKey(marker)).thenReturn(Boolean.TRUE);
+
+		GatewayProperties properties = new GatewayProperties();
+		properties.setBootstrapKeys(List.of(doomed));
+
+		service.seedBootstrapKeys(properties);
+
+		verify(redisTemplate, never()).execute(any(), anyList(), any(Object[].class));
+	}
+
+	@Test
+	void assignOwnerValidatesLegacyStoredOwner() {
+		KeyManagementService service = newService();
+		SHA256Hash hash = hashOf(FIXED_PLAINTEXT);
+		Map<String, String> stored = fields("tenant-legacy", "name", "5", "50", "true",
+				"", "", CREATED_AT, "gw-");
+		stored.put("ownerId", "tenant-legacy");
+		stubPresent(hash, stored);
+		when(hashOps.get(redisKey(hash), "ownerId")).thenReturn("tenant-legacy");
+		UUID owner = UUID.randomUUID();
+
+		assertTrue(service.assignOwner(hash, owner).isPresent());
+		verify(hashOps).put(redisKey(hash), "ownerUserId", owner.toString());
+	}
+
+	@Test
+	void assignOwnerRejectsInvalidLegacyStoredOwner() {
+		KeyManagementService service = newService();
+		SHA256Hash hash = hashOf(FIXED_PLAINTEXT);
+		stubPresent(hash, fields("x", "name", "5", "50", "true", "", "", CREATED_AT, "gw-"));
+		when(hashOps.get(redisKey(hash), "ownerId")).thenReturn("NOT A TENANT!!");
+
+		assertThatThrownBy(() -> service.assignOwner(hash, UUID.randomUUID()))
+				.isInstanceOf(IllegalArgumentException.class);
 	}
 }

@@ -17,6 +17,14 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class DefaultSseLineGuardFactory implements SseLineGuardAutoConfig.SseLineGuardFactory {
 
+	/**
+	 * Line ceiling for non-streaming (single JSON document) responses. JSON completions legitimately
+	 * exceed the per-line SSE ceiling (long single lines, pretty-printed bodies); the relay still
+	 * joins lines into one document, and the bounded line queue caps total buffered memory, so this
+	 * ceiling only rejects absurd single lines, fail-fast.
+	 */
+	static final int NON_STREAMING_MAX_LINE_BYTES = 1024 * 1024;
+
 	private volatile SseLineGuardProperties properties;
 	private final MeterRegistry registry;
 	private final ObjectMapper objectMapper;
@@ -80,6 +88,11 @@ public final class DefaultSseLineGuardFactory implements SseLineGuardAutoConfig.
 	) {
 		int ceilingBytes = resolveCeilingBytes(providerType);
 		return new BoundedLineBodyHandler(ceilingBytes, StandardCharsets.UTF_8);
+	}
+
+	@Override
+	public BoundedLineBodyHandler bodyHandlerForNonStreaming() {
+		return new BoundedLineBodyHandler(NON_STREAMING_MAX_LINE_BYTES, StandardCharsets.UTF_8);
 	}
 
 	@Override

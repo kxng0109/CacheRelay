@@ -10,6 +10,7 @@ import io.github.kxng0109.cacherelay.security.ratelimit.RateLimitUnavailableExce
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.Nullable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -44,6 +45,7 @@ import java.util.Set;
  * including unlimited).</p>
  */
 @Service
+@Slf4j
 public class BudgetEnforcer {
 
 	/**
@@ -222,6 +224,61 @@ public class BudgetEnforcer {
 		return "budget:" + SLOT_TAG + ":hold-expiry";
 	}
 
+	/**
+	 * Settled-flag TTL in {@code settle.lua} (24h idempotency lifecycle, mirroring the dedupe claim TTL).
+	 */
+	static final long SETTLED_FLAG_TTL_SECONDS = 86_400L;
+
+	/**
+	 * Safety margin keeping every hold record strictly shorter-lived than the settled flag, so a late settle
+	 * can never move money twice.
+	 */
+	static final long SETTLED_FLAG_SAFETY_MARGIN_SECONDS = 300L;
+
+	static String dedupeKey(String claimId) {
+		return "budget:" + SLOT_TAG + ":dedupe:" + claimId;
+	}
+
+	/**
+	 * Composes the idempotency claim id namespaced by tenant, KEY-level subject, request body hash, and client
+	 * key. The same key with a different body (or from another tenant) is a different operation and must be
+	 * charged separately; the body hash binds them. Missing components degrade to empty segments (still
+	 * tenant- and subject-scoped); full collision-freedom for crafted tenant strings arrives with server-side
+	 * tenant binding.
+	 *
+	 * @param ownerId        authenticated tenant, possibly {@code null}
+	 * @param keyHex         KEY-level subject (key sha256 hex), possibly {@code null}
+	 * @param bodyHashHex    sha256 of the canonical request bytes, possibly {@code null}
+	 * @param idempotencyKey client-minted idempotency key, possibly {@code null}
+	 * @return namespaced claim id (empty segments for missing components, never {@code null})
+	 */
+	public static String dedupeClaimId(@Nullable String ownerId, @Nullable String keyHex,
+	                                   @Nullable String bodyHashHex, @Nullable String idempotencyKey) {
+		String tenant = ownerId == null || ownerId.isBlank() ? "" : ownerId;
+		String subject = keyHex == null ? "" : keyHex;
+		String bodyHash = bodyHashHex == null ? "" : bodyHashHex;
+		String key = idempotencyKey == null ? "" : idempotencyKey;
+		return tenant + ":" + subject + ":" + bodyHash + ":" + key;
+	}
+
+	/**
+	 * Releases an idempotency claim when its flight fails or aborts, so a retry claims fresh instead of
+	 * colliding with a dead attempt. Best-effort: a failed release only leaves the claim to its 24h TTL, and
+	 * a colliding retry still evaluates caps and charges (fail-closed), so money is never lost either way.
+	 *
+	 * @param claimId composed claim id from {@link #dedupeClaimId}, possibly {@code null}
+	 */
+	public void releaseIdempotencyClaim(@Nullable String claimId) {
+		if (claimId == null || claimId.isBlank()) {
+			return;
+		}
+		try {
+			redisTemplate.delete(dedupeKey(claimId));
+		} catch (RuntimeException ex) {
+			log.debug("Idempotency claim release failed; TTL bounds the stale claim: {}", ex.getMessage());
+		}
+	}
+
 	static long secondsToMonthEnd() {
 		ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
 		ZonedDateTime end = YearMonth.from(now)
@@ -263,15 +320,21 @@ public class BudgetEnforcer {
 	 * @param type            provider type for the price estimate
 	 * @param model           model id for the price estimate
 	 * @param estimatedTokens prompt tokens the request is expected to add
-	 * @param idempotencyKey client-minted idempotency key, or {@code null} when the caller has none. A retried key
-	 *                       is admitted without double-debiting (the script claims it first); {@code null} skips the
-	 *                       claim (internal callers such as the semantic-cache warmer).
+	 * @param idempotencyKey client-minted idempotency key, or {@code null} when the caller has none. The claim is
+	 *                       namespaced by tenant, subject, and body hash and records the attempt, but a duplicate
+	 *                       claim never admits for free: without a replay hit it still evaluates caps and charges
+	 *                       (retried upstream work is new spend); {@code null} skips the claim (internal callers
+	 *                       such as the semantic-cache warmer).
+	 * @param bodyHashHex    sha256 of the canonical request bytes binding the claim to one operation, or
+	 *                       {@code null} when the caller cannot fingerprint (claim stays tenant- and
+	 *                       subject-scoped)
 	 * @return allowed with remaining spend, or denied with the binding level, window, and retry horizon
 	 * @throws RateLimitUnavailableException when Redis is unreachable (fail-closed for every key class)
 	 */
 	public BudgetDecision checkBudget(
 			SHA256Hash keyHash, @Nullable String ownerId,
-			ProviderType type, String model, int estimatedTokens, @Nullable String idempotencyKey
+			ProviderType type, String model, int estimatedTokens, @Nullable String idempotencyKey,
+			@Nullable String bodyHashHex
 	) {
 		String hex = keyHash.hex();
 		Boolean known = budgetedKeys.getIfPresent(hex);
@@ -281,7 +344,7 @@ public class BudgetEnforcer {
 		}
 		long estimatedMicros = estimateCostMicros(type, model, estimatedTokens);
 		Instant now = Instant.now();
-		return decide(hex, ownerId, estimatedMicros, idempotencyKey,
+		return decide(hex, ownerId, estimatedMicros, idempotencyKey, bodyHashHex,
 				now.toEpochMilli() / 60_000L, YearMonth.from(now.atZone(ZoneOffset.UTC)).toString());
 	}
 
@@ -298,12 +361,15 @@ public class BudgetEnforcer {
 	 * @param promptTokens   measured prompt tokens
 	 * @param maxTokens      server-side effective output bound (already ceiled by the caller)
 	 * @param idempotencyKey client-minted idempotency key, or {@code null}
+	 * @param bodyHashHex    sha256 of the canonical request bytes binding the claim to one operation, or
+	 *                       {@code null} when the caller cannot fingerprint
 	 * @return gate verdict plus the hold cost and admission month
 	 * @throws RateLimitUnavailableException when Redis is unreachable (fail-closed for every key class)
 	 */
 	public HoldAuthorization authorizeHold(
 			SHA256Hash keyHash, @Nullable String ownerId,
-			ProviderType type, String model, int promptTokens, int maxTokens, @Nullable String idempotencyKey
+			ProviderType type, String model, int promptTokens, int maxTokens, @Nullable String idempotencyKey,
+			@Nullable String bodyHashHex
 	) {
 		String hex = keyHash.hex();
 		Boolean known = budgetedKeys.getIfPresent(hex);
@@ -316,13 +382,14 @@ public class BudgetEnforcer {
 		long holdMicros = holdCostMicros(type, model, promptTokens, maxTokens);
 		Instant now = Instant.now();
 		String month = YearMonth.from(now.atZone(ZoneOffset.UTC)).toString();
-		BudgetDecision decision = decide(hex, ownerId, holdMicros, idempotencyKey,
+		BudgetDecision decision = decide(hex, ownerId, holdMicros, idempotencyKey, bodyHashHex,
 				now.toEpochMilli() / 60_000L, month);
 		return new HoldAuthorization(decision, holdMicros, month);
 	}
 
 	private BudgetDecision decide(String hex, @Nullable String ownerId, long micros,
-	                              @Nullable String idempotencyKey, long epochMinute, String month) {
+	                              @Nullable String idempotencyKey, @Nullable String bodyHashHex,
+	                              long epochMinute, String month) {
 		String team = ownerId == null || ownerId.isBlank() ? "" : ownerId;
 		List<String> keys = List.of(
 				minuteKey("KEY", hex, epochMinute),
@@ -339,7 +406,7 @@ public class BudgetEnforcer {
 		try {
 			result = assertFive(redisTemplate.execute(
 					budgetScript, keys, Long.toString(micros),
-					idempotencyKey == null ? "" : idempotencyKey));
+					idempotencyKey == null ? "" : dedupeClaimId(ownerId, hex, bodyHashHex, idempotencyKey)));
 		} catch (RuntimeException ex) {
 			throw new RateLimitUnavailableException("Budget service unavailable", ex);
 		}
@@ -414,19 +481,24 @@ public class BudgetEnforcer {
 	 * @param holdMicros   hold cost H from the authorization
 	 * @param origMonth    admission month {@code YYYY-MM}
 	 * @param createdEpochSec engine clock seconds (liveness bound only, never money)
-	 * @param ttlSeconds   hold-record TTL
+	 * @param ttlSeconds   hold-record TTL; clamped to {@code SETTLED_FLAG_TTL_SECONDS -
+	 *                     SETTLED_FLAG_SAFETY_MARGIN_SECONDS} so the hold always dies before the settled flag
+	 *                     (no double-move window). Non-positive values reach the script, which rejects them.
 	 * @return {@code true} when this call created the record, {@code false} on duplicate hold id
 	 * @throws RateLimitUnavailableException when Redis is unreachable
 	 */
 	public boolean createHold(String holdId, String subjectScope, long holdMicros, String origMonth,
 	                          long createdEpochSec, long ttlSeconds) {
 		List<String> keys = List.of(holdKey(holdId), holdExpiryKey());
+		long effectiveTtl = ttlSeconds > 0
+				? Math.min(ttlSeconds, SETTLED_FLAG_TTL_SECONDS - SETTLED_FLAG_SAFETY_MARGIN_SECONDS)
+				: ttlSeconds;
 		try {
 			List<Long> result = assertTwo(redisTemplate.execute(
 					holdScript, keys,
 					Long.toString(Math.min(MAX_EXACT_LUA_INTEGER, Math.max(0L, holdMicros))),
 					subjectScope, origMonth,
-					Long.toString(ttlSeconds), Long.toString(createdEpochSec)));
+					Long.toString(effectiveTtl), Long.toString(createdEpochSec)));
 			return result.get(0) == 1L;
 		} catch (RuntimeException ex) {
 			throw new RateLimitUnavailableException("Budget hold unavailable", ex);

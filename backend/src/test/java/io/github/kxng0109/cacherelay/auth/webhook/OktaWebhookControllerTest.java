@@ -36,7 +36,7 @@ class OktaWebhookControllerTest {
 
 	private OktaWebhookController controller() {
 		SsoWebhookProperties props = new SsoWebhookProperties(List.of(
-				new SsoWebhookProperties.RegistrationWebhook("okta", "", SECRET, "", "")));
+				new SsoWebhookProperties.RegistrationWebhook("okta", "", SECRET, "", "", "", "")));
 		return new OktaWebhookController(props, invalidator, audit);
 	}
 
@@ -67,6 +67,15 @@ class OktaWebhookControllerTest {
 				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
 				.isEqualTo(HttpStatus.BAD_REQUEST);
 		assertThatThrownBy(() -> controller().verify("  "))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
+	@DisplayName("FS-B12: oversized challenges answer 400 instead of echoing unbounded input")
+	void oversizedChallengeAnswers400() {
+		assertThatThrownBy(() -> controller().verify("c".repeat(3000)))
 				.isInstanceOf(ResponseStatusException.class)
 				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
 				.isEqualTo(HttpStatus.BAD_REQUEST);

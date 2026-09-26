@@ -15,6 +15,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -88,6 +89,17 @@ class LoginServiceTest {
 				.isInstanceOf(LoginService.LoginRejected.class);
 		assertThat(service.login("sso", "x", null, null))
 				.isInstanceOf(LoginService.LoginRejected.class);
+		verifyNoInteractions(jwt, refresh);
+	}
+
+	@Test
+	@DisplayName("FS-B10: unknown user still runs a password verify (no timing oracle)")
+	void unknownUserStillVerifies() {
+		when(users.findByUsernameIgnoreCase("ghost")).thenReturn(Optional.empty());
+
+		assertThat(service.login("ghost", "x", null, null))
+				.isInstanceOf(LoginService.LoginRejected.class);
+		verify(passwords, times(1)).matches(eq("x"), any());
 		verifyNoInteractions(jwt, refresh);
 	}
 

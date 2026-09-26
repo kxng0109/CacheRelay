@@ -2,6 +2,7 @@ package io.github.kxng0109.cacherelay.a2a.protocol;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
@@ -31,6 +32,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 import io.github.kxng0109.cacherelay.a2a.config.A2aAgentConfig;
 import io.github.kxng0109.cacherelay.a2a.config.A2aGatewayProperties;
@@ -462,6 +464,25 @@ class A2aProxyControllerTest {
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(body(response)).isEmpty();
+	}
+
+	@Test
+	@DisplayName("a stalled SSE stream ends at the stream deadline instead of hanging")
+	void stalledStreamEndsAtDeadline() {
+		properties.setStreamMaxDuration(Duration.ofMillis(300));
+		upstream.enqueue(new MockResponse()
+				.setResponseCode(200)
+				.setHeader("Content-Type", "text/event-stream")
+				.setBody("data: {\"partial\":true}\n\n" + "x".repeat(32768))
+				.throttleBody(1024, 1, TimeUnit.SECONDS));
+
+		ResponseEntity<StreamingResponseBody> response = controller.relay(
+				AGENT, STREAM_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertTimeoutPreemptively(Duration.ofSeconds(15),
+				() -> body(response),
+				() -> "stalled stream must end at the deadline");
 	}
 
 	@Test

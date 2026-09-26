@@ -13,6 +13,8 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -69,6 +71,10 @@ public class SpillwayJournalManager {
 	/**
 	 * Appends a batch of usage events to the durable disk journal.
 	 *
+	 * <p>Spill counters increment only after the bytes reach the file; a
+	 * failed append increments the spill-failure counter instead, so counters
+	 * always reflect actual writes.</p>
+	 *
 	 * @param events the batch of events to persist
 	 * @param error  optional error description
 	 */
@@ -85,21 +91,17 @@ public class SpillwayJournalManager {
 			for (TokenUsageEvent event : events) {
 				String line = serializeEvent(event, error);
 				sb.append(line).append('\n');
+			}
+			writeBatch(journalPath, sb.toString());
+			for (TokenUsageEvent event : events) {
 				recordSpillwayMetric(event.provider());
 			}
-			Files.writeString(
-					journalPath,
-					sb.toString(),
-					StandardCharsets.UTF_8,
-					StandardOpenOption.CREATE,
-					StandardOpenOption.APPEND,
-					StandardOpenOption.WRITE
-			);
 		} catch (IOException ex) {
 			log.error(
 					"Catastrophic failure: Unable to append {} events to spillway journal at {}: {}",
 					events.size(), journalPath, ex.getMessage()
 			);
+			recordSpillWriteFailureMetric();
 		} finally {
 			lock.unlock();
 		}
@@ -108,68 +110,131 @@ public class SpillwayJournalManager {
 	/**
 	 * Replays pending journal entries through a consumer and clears the replayed entries.
 	 *
+	 * <p>Zero-loss semantics: the staging file is deleted only when every
+	 * recovered record is accepted. Any consumer failure preserves the staging
+	 * file as a durable {@code .dead-letter.<nanos>} sibling that is retried
+	 * on later passes. Crash orphans ({@code .replay.*}) and dead letters are
+	 * scanned and replayed on every pass, so the scheduled replay is also the
+	 * startup recovery path. Lines that cannot be parsed are preserved in a
+	 * {@code .quarantine} file instead of reaching the ledger.</p>
+	 *
 	 * @param consumer processor for deserialized usage events
 	 * @return count of successfully replayed records
 	 */
 	public int replayPendingRecords(Consumer<TokenUsageEvent> consumer) {
-		if (!Files.exists(journalPath)) {
-			return 0;
-		}
-
 		lock.lock();
 		try {
-			if (!Files.exists(journalPath) || Files.size(journalPath) == 0) {
-				return 0;
+			int totalReplayed = 0;
+			for (Path orphan : listSiblingFiles(".replay.")) {
+				totalReplayed += replayFile(orphan, consumer);
 			}
-
-			Path stagingPath = Path.of(journalPath + ".replay." + System.nanoTime());
-			Files.move(journalPath, stagingPath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-
-			List<TokenUsageEvent> recovered = new ArrayList<>();
-			try (BufferedReader reader = Files.newBufferedReader(stagingPath, StandardCharsets.UTF_8)) {
-				String line;
-				while ((line = reader.readLine()) != null) {
-					String trimmed = line.trim();
-					if (trimmed.isEmpty()) {
-						continue;
-					}
-					TokenUsageEvent event = deserializeEvent(trimmed);
-					if (event != null) {
-						recovered.add(event);
-					}
-				}
+			if (Files.exists(journalPath) && Files.size(journalPath) > 0) {
+				Path stagingPath = Path.of(journalPath + ".replay." + System.nanoTime());
+				Files.move(journalPath, stagingPath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+				totalReplayed += replayFile(stagingPath, consumer);
 			}
-
-			int replayedCount = 0;
-			try {
-				for (int i = 0; i < recovered.size(); i++) {
-					TokenUsageEvent event = recovered.get(i);
-					try {
-						consumer.accept(event);
-						replayedCount++;
-						recordReplayMetric(event.provider());
-					} catch (RuntimeException ex) {
-						log.warn(
-								"Replay failed for request {}: {}; skipping dead-letter record and continuing replay",
-								event.requestId(),
-								ex.getMessage()
-						);
-						recordDeadLetterMetric(event.provider());
-						continue;
-					}
-				}
-			} finally {
-				// The staging file must always be removed, even when replay defers events.
-				Files.deleteIfExists(stagingPath);
+			for (Path deadLetter : listSiblingFiles(".dead-letter.")) {
+				totalReplayed += replayFile(deadLetter, consumer);
 			}
-
-			log.info("Successfully replayed {} usage records from spillway journal", replayedCount);
-			return replayedCount;
+			return totalReplayed;
 		} catch (IOException ex) {
 			log.error("Failed to process replay on journal {}: {}", journalPath, ex.getMessage());
 			return 0;
 		} finally {
 			lock.unlock();
+		}
+	}
+
+	private int replayFile(Path file, Consumer<TokenUsageEvent> consumer) throws IOException {
+		if (!Files.exists(file) || Files.size(file) == 0) {
+			return 0;
+		}
+		List<TokenUsageEvent> recovered = new ArrayList<>();
+		try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+			String line;
+			while ((line = reader.readLine()) != null) {
+				String trimmed = line.trim();
+				if (trimmed.isEmpty()) {
+					continue;
+				}
+				TokenUsageEvent event = deserializeEvent(trimmed);
+				if (event != null) {
+					recovered.add(event);
+				} else {
+					quarantineLine(trimmed);
+				}
+			}
+		}
+
+		int replayedCount = 0;
+		for (TokenUsageEvent event : recovered) {
+			try {
+				consumer.accept(event);
+				replayedCount++;
+				recordReplayMetric(event.provider());
+			} catch (RuntimeException ex) {
+				log.warn(
+						"Replay failed for request {}: {}; preserving the staging file as a dead letter",
+						event.requestId(),
+						ex.getMessage()
+				);
+				recordDeadLetterMetric(event.provider());
+			}
+		}
+		if (replayedCount == recovered.size()) {
+			Files.deleteIfExists(file);
+		} else {
+			Path deadLetter = Path.of(journalPath + ".dead-letter." + System.nanoTime());
+			Files.move(file, deadLetter, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+		}
+
+		log.info("Successfully replayed {} usage records from spillway journal", replayedCount);
+		return replayedCount;
+	}
+
+	private List<Path> listSiblingFiles(String infix) throws IOException {
+		Path dir = journalPath.getParent() != null
+				? journalPath.getParent()
+				: journalPath.toAbsolutePath().getParent();
+		if (dir == null || !Files.isDirectory(dir)) {
+			return List.of();
+		}
+		String prefix = journalPath.getFileName().toString() + infix;
+		try (var paths = Files.list(dir)) {
+			return paths.filter(p -> p.getFileName().toString().startsWith(prefix)).toList();
+		}
+	}
+
+	private void quarantineLine(String rawLine) {
+		try {
+			Path quarantine = Path.of(journalPath + ".quarantine");
+			writeBatch(quarantine, rawLine + '\n');
+			recordQuarantineMetric();
+		} catch (IOException ex) {
+			log.error("Failed to quarantine unparseable journal line: {}", ex.getMessage());
+		}
+	}
+
+	/**
+	 * Appends one batch to the journal file and forces it to stable storage. Batching amortizes
+	 * the fsync across the whole batch; without the force an OS crash could lose acknowledged
+	 * spill records the ledger assumes durable.
+	 *
+	 * @param path    journal file (parent directories are created)
+	 * @param content batch bytes (already newline-terminated per record)
+	 * @throws IOException when the bytes cannot be persisted
+	 */
+	static void writeBatch(Path path, String content) throws IOException {
+		if (path.getParent() != null) {
+			Files.createDirectories(path.getParent());
+		}
+		ByteBuffer buffer = StandardCharsets.UTF_8.encode(content);
+		try (FileChannel channel = FileChannel.open(
+				path, StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE)) {
+			while (buffer.hasRemaining()) {
+				channel.write(buffer);
+			}
+			channel.force(false);
 		}
 	}
 
@@ -204,6 +269,9 @@ public class SpillwayJournalManager {
 		try {
 			JsonNode node = objectMapper.readTree(jsonLine);
 			if (!node.has("requestId")) {
+				return null;
+			}
+			if ("serialization_failed".equals(node.path("error").asString(""))) {
 				return null;
 			}
 			UUID requestId = UUID.fromString(node.get("requestId").asString());
@@ -261,6 +329,22 @@ public class SpillwayJournalManager {
 		Counter.builder("cacherelay.ledger.spillway.replayed")
 		       .baseUnit("records")
 		       .tag("provider", provider != null && !provider.isBlank() ? provider : "unknown")
+		       .register(meterRegistry)
+		       .increment();
+	}
+
+	private void recordSpillWriteFailureMetric() {
+		Counter.builder("cacherelay.ledger.deadletter.failures")
+		       .description("Spillway journal append failures leaving records memory-only")
+		       .baseUnit("records")
+		       .register(meterRegistry)
+		       .increment();
+	}
+
+	private void recordQuarantineMetric() {
+		Counter.builder("cacherelay.ledger.quarantined")
+		       .description("Unparseable spillway journal lines preserved in quarantine")
+		       .baseUnit("records")
 		       .register(meterRegistry)
 		       .increment();
 	}

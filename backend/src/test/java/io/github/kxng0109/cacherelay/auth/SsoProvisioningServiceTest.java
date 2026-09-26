@@ -81,19 +81,21 @@ class SsoProvisioningServiceTest {
 	}
 
 	@Test
-	@DisplayName("unmapped registrations keep legacy behavior without teams")
+	@DisplayName("FS-B10: unmapped registrations deny login with an audit record (fail closed)")
 	void legacyRegistrationKeepsAccount() {
 		SsoProvisioningService service = serviceWith();
 		UserAccount account = user();
 
 		Optional<UserAccount> resolved = service.provision(account, "azure",
 				"https://login.example.com/tid-1", attributes(List.of("eng-a"), List.of()),
-				idToken("tid-1"), null, null);
+				idToken("tid-1"), "10.0.0.2", "req-1");
 
-		assertThat(resolved).contains(account);
+		assertThat(resolved).isEmpty();
+		verify(audit).record(AuthAuditService.ACTION_SSO_TEAMS_SYNC,
+				AuthAuditService.SEVERITY_WARN, "op", "/oauth2/callback",
+				AuthAuditService.OUTCOME_FAILURE, "10.0.0.2", "req-1");
 		verify(teams, never()).save(any());
 		verify(memberships, never()).save(any());
-		verify(audit, never()).record(any(), any(), any(), any(), any(), any(), any());
 	}
 
 	@Test
@@ -611,7 +613,7 @@ class SsoProvisioningServiceTest {
 	}
 
 	@Test
-	@DisplayName("backfill without a claim mapping keeps legacy behavior")
+	@DisplayName("FS-B10: backfill without a claim mapping denies (fail closed)")
 	void backfillWithoutMappingLegacy() {
 		SsoProvisioningService service = new SsoProvisioningService(orgs, teams, memberships,
 				new SsoClaimProperties(List.of()),
@@ -622,9 +624,9 @@ class SsoProvisioningServiceTest {
 		UserAccount account = user();
 
 		Optional<UserAccount> resolved = service.provisionWithBackfill(account, "azure", "iss",
-				Map.of(), Map.of(), Map.of("eng-a", "Engineering"), null, null);
+				Map.of(), Map.of(), Map.of("eng-a", "Engineering"), "10.0.0.2", "req-1");
 
-		assertThat(resolved).contains(account);
+		assertThat(resolved).isEmpty();
 		verify(teams, never()).save(any());
 		verify(memberships, never()).save(any());
 	}

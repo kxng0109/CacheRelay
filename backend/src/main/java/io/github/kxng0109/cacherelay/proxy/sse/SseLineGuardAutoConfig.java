@@ -76,6 +76,17 @@ public class SseLineGuardAutoConfig {
 		);
 
 		/**
+		 * Creates a body handler for non-streaming (single JSON document) responses.
+		 *
+		 * <p>JSON completions are one document, not a line stream: pretty-printed or long
+		 * single-line bodies legitimately exceed the per-line SSE ceiling. This handler enforces
+		 * the separate non-streaming ceiling instead (still bounded, still fail-fast).</p>
+		 *
+		 * @return a body handler that enforces the non-streaming ceiling
+		 */
+		BoundedLineBodyHandler bodyHandlerForNonStreaming();
+
+		/**
 		 * @return the current properties snapshot
 		 */
 		SseLineGuardProperties properties();

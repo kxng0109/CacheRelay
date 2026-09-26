@@ -4,6 +4,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -53,14 +54,23 @@ public final class ProviderCircuitBreaker implements CircuitBreaker {
 	 */
 	public static final Duration DEFAULT_COOLDOWN = Duration.ofSeconds(30);
 
+	/**
+	 * How long a HALF_OPEN probe slot may be held before another caller may reclaim it,
+	 * when not configured otherwise. A holder that suspends indefinitely (e.g. awaiting
+	 * human approval) must not wedge recovery forever.
+	 */
+	public static final Duration DEFAULT_PROBE_LEASE = Duration.ofSeconds(30);
+
 	private final String providerName;
 	private final int failureThreshold;
 	private final Duration cooldown;
+	private final Duration probeLease;
 	private final Clock clock;
 
 	private final AtomicReference<CircuitBreaker.State> state = new AtomicReference<>(CircuitBreaker.State.CLOSED);
 	private final AtomicInteger consecutiveFailures = new AtomicInteger();
 	private final AtomicInteger halfOpenProbes = new AtomicInteger();
+	private final AtomicLong probeDeadlineNanos = new AtomicLong(0);
 
 	private volatile Instant openedAt = Instant.EPOCH;
 
@@ -99,6 +109,27 @@ public final class ProviderCircuitBreaker implements CircuitBreaker {
 			int failureThreshold,
 			Duration cooldown
 	) {
+		this(providerName, clock, failureThreshold, cooldown, DEFAULT_PROBE_LEASE);
+	}
+
+	/**
+	 * Creates a breaker with explicit tuning, clock, and probe lease. Intended for tests and
+	 * operator tuning.
+	 *
+	 * @param providerName     label used for logging
+	 * @param clock            time source used for the cooldown
+	 * @param failureThreshold consecutive failures before the circuit opens, must be positive
+	 * @param cooldown         how long the circuit stays open, must not be negative
+	 * @param probeLease       how long a HALF_OPEN probe may be held before reclaim, must not be negative
+	 * @throws IllegalArgumentException when the tuning values are invalid
+	 */
+	public ProviderCircuitBreaker(
+			String providerName,
+			Clock clock,
+			int failureThreshold,
+			Duration cooldown,
+			Duration probeLease
+	) {
 		if (providerName == null || providerName.isBlank()) {
 			throw new IllegalArgumentException("providerName must not be blank");
 		}
@@ -111,19 +142,25 @@ public final class ProviderCircuitBreaker implements CircuitBreaker {
 		if (cooldown == null || cooldown.isNegative()) {
 			throw new IllegalArgumentException("cooldown must not be negative");
 		}
+		if (probeLease == null || probeLease.isNegative()) {
+			throw new IllegalArgumentException("probeLease must not be negative");
+		}
 		this.providerName = providerName;
 		this.clock = clock;
 		this.failureThreshold = failureThreshold;
 		this.cooldown = cooldown;
+		this.probeLease = probeLease;
 	}
 
 	/**
 	 * Asks whether a call may proceed right now.
 	 *
 	 * <p>Returns {@code true} when the circuit is CLOSED, or when this caller
-	 * wins the single probe slot in HALF_OPEN. Returns {@code false} when the circuit is OPEN and the cooldown has not
-	 * elapsed, when the cooldown just elapsed but another caller already took the probe, or when a probe is already in
-	 * flight.</p>
+	 * wins the single probe slot in HALF_OPEN. A probe slot held past its lease (a holder that
+	 * suspended indefinitely instead of recording an outcome) may be reclaimed by the next
+	 * caller. Returns {@code false} when the circuit is OPEN and the cooldown has not
+	 * elapsed, when the cooldown just elapsed but another caller holds a live probe, or when a
+	 * live probe is already in flight.</p>
 	 *
 	 * @return {@code true} when the caller is permitted to attempt the call
 	 */
@@ -138,17 +175,56 @@ public final class ProviderCircuitBreaker implements CircuitBreaker {
 				case OPEN -> {
 					if (cooldownElapsed()) {
 						if (state.compareAndSet(CircuitBreaker.State.OPEN, CircuitBreaker.State.HALF_OPEN)) {
-							return halfOpenProbes.compareAndSet(0, 1);
+							if (takeProbeSlot()) {
+								return true;
+							}
+							continue;
 						}
 					} else {
 						return false;
 					}
 				}
 				case HALF_OPEN -> {
-					return halfOpenProbes.compareAndSet(0, 1);
+					if (takeProbeSlot()) {
+						return true;
+					}
+					if (reclaimExpiredProbe()) {
+						continue;
+					}
+					return false;
 				}
 			}
 		}
+	}
+
+	/**
+	 * Releases a held probe slot without recording a verdict. For paths that acquired a probe
+	 * but will produce no outcome (e.g. a call parked for human approval): the next probe may
+	 * then proceed instead of waiting out the lease. No state change, no cooldown restart.
+	 */
+	public void abandonProbe() {
+		if (state.get() == CircuitBreaker.State.HALF_OPEN
+				&& halfOpenProbes.compareAndSet(1, 0)) {
+			probeDeadlineNanos.set(0L);
+		}
+	}
+
+	private boolean takeProbeSlot() {
+		if (halfOpenProbes.compareAndSet(0, 1)) {
+			probeDeadlineNanos.set(System.nanoTime() + probeLease.toNanos());
+			return true;
+		}
+		return false;
+	}
+
+	private boolean reclaimExpiredProbe() {
+		long deadline = probeDeadlineNanos.get();
+		if (deadline != 0L && System.nanoTime() - deadline >= 0
+				&& halfOpenProbes.compareAndSet(1, 0)) {
+			probeDeadlineNanos.compareAndSet(deadline, 0L);
+			return true;
+		}
+		return false;
 	}
 
 	/**
@@ -164,6 +240,7 @@ public final class ProviderCircuitBreaker implements CircuitBreaker {
 			if (current == CircuitBreaker.State.HALF_OPEN) {
 				if (state.compareAndSet(CircuitBreaker.State.HALF_OPEN, CircuitBreaker.State.CLOSED)) {
 					halfOpenProbes.set(0);
+					probeDeadlineNanos.set(0L);
 					consecutiveFailures.set(0);
 					return;
 				}
@@ -191,6 +268,7 @@ public final class ProviderCircuitBreaker implements CircuitBreaker {
 			if (current == CircuitBreaker.State.CLOSED) {
 				consecutiveFailures.set(0);
 				halfOpenProbes.set(0);
+				probeDeadlineNanos.set(0L);
 				if (state.get() == CircuitBreaker.State.CLOSED) {
 					return;
 				}
@@ -199,6 +277,7 @@ public final class ProviderCircuitBreaker implements CircuitBreaker {
 			if (state.compareAndSet(current, CircuitBreaker.State.CLOSED)) {
 				consecutiveFailures.set(0);
 				halfOpenProbes.set(0);
+				probeDeadlineNanos.set(0L);
 				openedAt = Instant.EPOCH;
 				return;
 			}
@@ -230,6 +309,7 @@ public final class ProviderCircuitBreaker implements CircuitBreaker {
 					if (state.compareAndSet(CircuitBreaker.State.HALF_OPEN, CircuitBreaker.State.OPEN)) {
 						openedAt = clock.instant();
 						halfOpenProbes.set(0);
+						probeDeadlineNanos.set(0L);
 						return;
 					}
 				}

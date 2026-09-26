@@ -15,13 +15,17 @@ import org.springframework.core.env.Environment;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
+import org.springframework.security.oauth2.jwt.JwtAudienceValidator;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
-import org.springframework.security.oauth2.jwt.JwtValidators;
+import org.springframework.security.oauth2.jwt.JwtIssuerValidator;
+import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 
@@ -162,7 +166,9 @@ public class AuthConfig {
 	}
 
 	/**
-	 * Creates the JWT decoder over the same secret, enforcing issuer and timestamps.
+	 * Creates the JWT decoder over the same secret, enforcing issuer, audience, and
+	 * timestamps with a tight 30-second clock skew (half Spring's 60-second default:
+	 * access tokens live minutes, so a full minute of replay slop is unjustified).
 	 *
 	 * @return decoder for presented access tokens
 	 */
@@ -170,7 +176,10 @@ public class AuthConfig {
 	JwtDecoder authJwtDecoder() {
 		SecretKey key = new SecretKeySpec(secret, "HmacSHA256");
 		NimbusJwtDecoder decoder = NimbusJwtDecoder.withSecretKey(key).build();
-		decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer(issuer));
+		decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
+				new JwtTimestampValidator(Duration.ofSeconds(30)),
+				new JwtIssuerValidator(issuer),
+				new JwtAudienceValidator(JwtService.AUDIENCE)));
 		return decoder;
 	}
 

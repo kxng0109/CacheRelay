@@ -47,7 +47,8 @@ class McpAeadResumptionTokenServiceTest {
 		Optional<McpResumptionClaims> extracted = tokenService.verifyAndExtract(
 				mintedToken,
 				argsSha,
-				"tenant-corp"
+				"tenant-corp",
+				"postgres__run_query"
 		);
 
 		assertThat(extracted).isPresent();
@@ -79,7 +80,7 @@ class McpAeadResumptionTokenServiceTest {
 		char corruptedChar = origChar == 'A' ? 'B' : 'A';
 		String tampered = minted.substring(0, tamperIdx) + corruptedChar + minted.substring(tamperIdx + 1);
 
-		assertThat(tokenService.verifyAndExtract(tampered, argsSha, "tenant-corp")).isEmpty();
+		assertThat(tokenService.verifyAndExtract(tampered, argsSha, "tenant-corp", "postgres__run_query")).isEmpty();
 	}
 
 	@Test
@@ -104,7 +105,7 @@ class McpAeadResumptionTokenServiceTest {
 		String token = tokenService.mintToken(claims);
 
 		// Attempt verification with modified argument hash
-		assertThat(tokenService.verifyAndExtract(token, tamperedSha, "tenant-corp")).isEmpty();
+		assertThat(tokenService.verifyAndExtract(token, tamperedSha, "tenant-corp", "postgres__run_query")).isEmpty();
 	}
 
 	@Test
@@ -125,7 +126,29 @@ class McpAeadResumptionTokenServiceTest {
 		String token = tokenService.mintToken(claims);
 
 		// Attacker tenant-bravo attempts to use tenant-alpha's token
-		assertThat(tokenService.verifyAndExtract(token, argsSha, "tenant-bravo")).isEmpty();
+		assertThat(tokenService.verifyAndExtract(token, argsSha, "tenant-bravo", "postgres__query")).isEmpty();
+	}
+
+	@Test
+	@DisplayName("Rejects resumption when the tool does not match the token binding")
+	void rejectsToolMismatch() {
+		String argsSha = McpAeadResumptionTokenService.computeArgsSha256("{}");
+		Instant now = Instant.now();
+
+		McpResumptionClaims claims = new McpResumptionClaims(
+				"tok-tool",
+				"tenant-alpha",
+				"postgres__query",
+				argsSha,
+				now,
+				now.plusSeconds(300)
+		);
+
+		String token = tokenService.mintToken(claims);
+
+		// Same tenant and args, but a different tool: the approval must not transfer.
+		assertThat(tokenService.verifyAndExtract(token, argsSha, "tenant-alpha", "postgres__other")).isEmpty();
+		assertThat(tokenService.verifyAndExtract(token, argsSha, "tenant-alpha", "postgres__query")).isPresent();
 	}
 
 	@Test
@@ -144,7 +167,7 @@ class McpAeadResumptionTokenServiceTest {
 		);
 
 		String token = tokenService.mintToken(expiredClaims);
-		assertThat(tokenService.verifyAndExtract(token, argsSha, "tenant-corp")).isEmpty();
+		assertThat(tokenService.verifyAndExtract(token, argsSha, "tenant-corp", "postgres__run_query")).isEmpty();
 
 		// computeArgsSha256 with null
 		assertThat(McpAeadResumptionTokenService.computeArgsSha256(null)).isNotBlank();

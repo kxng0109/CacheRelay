@@ -89,6 +89,16 @@ groups:
           summary: "Usage ledger records spilling to dead-letter log"
           description: "Database writes for token accounting failed and are writing to dead-letter file."
 
+      - alert: LedgerDeadLetterSkip
+        expr: increase(cacherelay_ledger_dead_letter_skip_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          team: billing-ops
+        annotations:
+          summary: "Spillway replay failures preserving records as dead letters"
+          description: "Replay consumers rejected journal records; every record is preserved durably. Investigate the downstream outage before the dead-letter backlog grows."
+
       # -----------------------------------------------------------------------
       # 7. Redis Exporter & Memory Pressure
       # -----------------------------------------------------------------------

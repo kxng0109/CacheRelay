@@ -18,6 +18,8 @@ import io.github.kxng0109.cacherelay.auth.backfill.SsoBackfillOrchestrator;
 import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
 import org.springframework.security.oauth2.client.OAuth2AuthorizedClientService;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
+import org.springframework.security.oauth2.client.registration.ClientRegistration;
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
@@ -43,6 +45,8 @@ public class SsoSuccessHandler implements AuthenticationSuccessHandler {
 	private final RefreshService refresh;
 	private final AuthCookieService cookies;
 	private final AuthProperties properties;
+	private final Optional<ClientRegistrationRepository> registrations;
+	private final AuthAuditService audit;
 
 	@Override
 	public void onAuthenticationSuccess(HttpServletRequest request, HttpServletResponse response,
@@ -59,6 +63,13 @@ public class SsoSuccessHandler implements AuthenticationSuccessHandler {
 		if (principal instanceof OidcUser oidc && oidc.getIdToken() != null) {
 			issuer = oidc.getIdToken().getIssuer().toString();
 			subject = oidc.getSubject();
+			if (!issuerPermitted(registrationId, issuer)) {
+				audit.record(AuthAuditService.ACTION_SSO_LOGIN, AuthAuditService.SEVERITY_WARN,
+						subject, "/oauth2/callback", AuthAuditService.OUTCOME_FAILURE,
+						request.getRemoteAddr(), request.getHeader("X-Request-ID"));
+				response.sendError(HttpServletResponse.SC_FORBIDDEN);
+				return;
+			}
 		} else {
 			issuer = "https://" + registrationId + ".oauth";
 			subject = principal.getName();
@@ -97,6 +108,34 @@ public class SsoSuccessHandler implements AuthenticationSuccessHandler {
 		String fragment = "access_token=" + URLEncoder.encode(access, StandardCharsets.UTF_8)
 				+ "&admin=" + user.isAdmin();
 		response.sendRedirect(request.getContextPath() + "/?sso=1#" + fragment);
+	}
+
+	/**
+	 * Validates an OIDC issuer against the registration's configured issuer URI before
+	 * any account linking. A missing repository, unknown registration, or blank issuer
+	 * URI all deny: an ID token whose issuer cannot be validated must never mint a
+	 * session, even when Spring's own token validator was bypassed upstream.
+	 *
+	 * @param registrationId Spring registration id
+	 * @param issuer         presented token issuer
+	 * @return {@code true} only on an exact match with a configured issuer URI
+	 */
+	private boolean issuerPermitted(String registrationId, String issuer) {
+		ClientRegistrationRepository repository = registrations.orElse(null);
+		if (repository == null || issuer == null) {
+			return false;
+		}
+		ClientRegistration registration;
+		try {
+			registration = repository.findByRegistrationId(registrationId);
+		} catch (RuntimeException missing) {
+			return false;
+		}
+		if (registration == null || registration.getProviderDetails() == null) {
+			return false;
+		}
+		String expected = registration.getProviderDetails().getIssuerUri();
+		return expected != null && !expected.isBlank() && expected.equals(issuer);
 	}
 
 	private Map<String, Object> idTokenClaims(OAuth2User principal) {

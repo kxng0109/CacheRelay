@@ -20,6 +20,7 @@ import io.github.kxng0109.cacherelay.auth.UserAccount;
 import io.github.kxng0109.cacherelay.auth.UserAccountRepository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -32,7 +33,7 @@ class AdminAuthFilterTest {
 	private final FilterChain filterChain = mock(FilterChain.class);
 
 	@Test
-	@DisplayName("fails closed with 403 Forbidden when master admin key is null or blank")
+	@DisplayName("FS-B10: unconfigured console is indistinguishable from a missing route (stealth 404)")
 	void failsClosedWhenMasterKeyUnconfigured() throws ServletException, IOException {
 		AdminAuthFilter filterNull = new AdminAuthFilter(null, objectMapper);
 		AdminAuthFilter filterBlank = new AdminAuthFilter("   ", objectMapper);
@@ -44,12 +45,11 @@ class AdminAuthFilterTest {
 		filterNull.doFilter(request, response1, filterChain);
 		filterBlank.doFilter(request, response2, filterChain);
 
-		assertThat(response1.getStatus()).isEqualTo(403);
-		assertThat(response1.getContentType()).contains("application/problem+json");
-		assertThat(response1.getContentAsString()).contains("Admin Interface Disabled");
+		assertThat(response1.getStatus()).isEqualTo(404);
+		assertThat(response1.getContentAsString()).contains("No such endpoint");
 
-		assertThat(response2.getStatus()).isEqualTo(403);
-		assertThat(response2.getContentAsString()).contains("Admin Interface Disabled");
+		assertThat(response2.getStatus()).isEqualTo(404);
+		assertThat(response2.getContentAsString()).contains("No such endpoint");
 
 		verifyNoInteractions(filterChain);
 	}
@@ -208,7 +208,7 @@ class AdminAuthFilterTest {
 	}
 
 	@Test
-	@DisplayName("audits admin mutations but not reads")
+	@DisplayName("FS-B10: admin mutations and reads are both attributed (reads at INFO)")
 	void auditsMutations() throws ServletException, IOException {
 		AuthAuditService audit = mock(AuthAuditService.class);
 		AdminAuthFilter filter = new AdminAuthFilter("master-secret-12345", objectMapper, null,
@@ -222,9 +222,23 @@ class AdminAuthFilterTest {
 		read.addHeader("X-Admin-Key", "master-secret-12345");
 		filter.doFilter(read, new MockHttpServletResponse(), filterChain);
 
-		verify(audit).record(
+		verify(audit, times(2)).record(
 				eq(AuthAuditService.ACTION_ADMIN_MUTATION),
 				any(), any(), any(), any(), any(), any());
+		verify(audit).record(
+				eq(AuthAuditService.ACTION_ADMIN_MUTATION),
+				eq(AuthAuditService.SEVERITY_WARN),
+				eq("master-key"),
+				eq("/v1/admin/keys"),
+				eq(AuthAuditService.OUTCOME_SUCCESS),
+				any(), any());
+		verify(audit).record(
+				eq(AuthAuditService.ACTION_ADMIN_MUTATION),
+				eq(AuthAuditService.SEVERITY_INFO),
+				eq("master-key"),
+				eq("/v1/admin/keys"),
+				eq(AuthAuditService.OUTCOME_SUCCESS),
+				any(), any());
 	}
 
 	@Test
@@ -323,7 +337,7 @@ class AdminAuthFilterTest {
 	}
 
 	@Test
-	@DisplayName("reads skip the mutation audit")
+	@DisplayName("FS-B10: reads audit at INFO with the true actor")
 	void readsSkipAudit() throws ServletException, IOException {
 		AuthAuditService audit = mock(AuthAuditService.class);
 		AdminAuthFilter filter = new AdminAuthFilter("master-secret-12345", objectMapper, null,
@@ -338,7 +352,34 @@ class AdminAuthFilterTest {
 		options.addHeader("X-Admin-Key", "master-secret-12345");
 		filter.doFilter(options, new MockHttpServletResponse(), filterChain);
 
-		verifyNoInteractions(audit);
+		verify(audit, times(2)).record(
+				eq(AuthAuditService.ACTION_ADMIN_MUTATION),
+				eq(AuthAuditService.SEVERITY_INFO),
+				eq("master-key"),
+				eq("/v1/admin/keys"),
+				eq(AuthAuditService.OUTCOME_SUCCESS),
+				any(), any());
+	}
+
+	@Test
+	@DisplayName("FS-B10: a throwing controller still records the audit (try/finally)")
+	void throwingControllerStillAudits() throws ServletException, IOException {
+		AuthAuditService audit = mock(AuthAuditService.class);
+		AdminAuthFilter filter = new AdminAuthFilter("master-secret-12345", objectMapper, null,
+				null, audit);
+		FilterChain exploding = mock(FilterChain.class);
+		doThrow(new RuntimeException("boom")).when(exploding)
+				.doFilter(any(), any());
+
+		MockHttpServletRequest mutation = new MockHttpServletRequest("POST", "/v1/admin/keys");
+		mutation.addHeader("X-Admin-Key", "master-secret-12345");
+
+		assertThatThrownBy(() -> filter.doFilter(mutation, new MockHttpServletResponse(), exploding))
+				.isInstanceOf(RuntimeException.class)
+				.hasMessageContaining("boom");
+		verify(audit).record(
+				eq(AuthAuditService.ACTION_ADMIN_MUTATION),
+				any(), eq("master-key"), eq("/v1/admin/keys"), any(), any(), any());
 	}
 
 	@Test

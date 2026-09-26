@@ -80,18 +80,20 @@ if estimated > MAX_EXACT_INTEGER then
 	return { 0, 1, 0, 60, countConfigured() }
 end
 
--- Idempotency: a retried client key must not double-debit. Claim-first with a 24h
--- TTL (Stripe idempotency lifecycle); the loser of a duplicate claim is admitted
--- without spending. The claim key shares the fleet slot tag so the whole script
--- stays single-slot. Absent id means no dedupe (internal callers, legacy clients).
--- Client keys are length- and charset-bounded at the controllers (<= 255 printable
--- ASCII), so the composed key cannot bloat the keyspace per call.
+-- Idempotency: a retried client key must not double-debit when the first flight
+-- already stored its completion (served from the replay store before reaching
+-- this gate), and concurrent duplicates are fenced by the replay fill lock.
+-- The claim records every attempt (namespaced by the engine as
+-- tenant:subject:bodyHash:key; 24h Stripe-style lifecycle) but NEVER admits
+-- for free: a duplicate claim with no replay hit is retried upstream work, so
+-- it falls through to full cap evaluation and charging (fail-closed). Absent
+-- id means no dedupe (internal callers, legacy clients). Client keys are
+-- length- and charset-bounded at the controllers (<= 255 printable ASCII), so
+-- the composed key cannot bloat the keyspace per call.
 local dedupeId = ARGV[2]
 if dedupeId ~= nil and dedupeId ~= '' then
 	local dedupeKey = 'budget:{b:global}:dedupe:' .. dedupeId
-	if redis.call('SET', dedupeKey, '1', 'NX', 'EX', 86400) == false then
-		return { 1, 0, 0, 0, countConfigured() }
-	end
+	redis.call('SET', dedupeKey, '1', 'NX', 'EX', 86400)
 end
 
 local rejected = 0

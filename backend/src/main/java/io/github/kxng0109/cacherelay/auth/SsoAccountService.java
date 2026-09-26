@@ -8,8 +8,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Links external IdP identities to local accounts. Identity is the {@code (issuer,
- * subject)} pair — never email, which is mutable and not universally verified. Unknown
- * identities get a fresh non-admin shadow account; known ones return linked, with profile
+ * subject)} pair — never email, which is mutable and not universally verified.
+ * First-sight identities get a fresh non-admin shadow account, but only when the
+ * Spring registration has a teams mapping: unmapped registrations fail closed
+ * (no allowlist, no account). Known identities return linked, with profile
  * fields refreshed from claims. Re-linking an existing local account by email is never
  * automatic (merge attacks); an operator invites instead.
  */
@@ -19,6 +21,7 @@ public class SsoAccountService {
 	private final SsoLinkRepository links;
 	private final UserAccountRepository users;
 	private final AuthAuditService audit;
+	private final SsoClaimProperties claimProperties;
 
 	/**
 	 * Creates the service.
@@ -26,17 +29,23 @@ public class SsoAccountService {
 	 * @param links link persistence
 	 * @param users account persistence
 	 * @param audit audit log
+	 * @param claimProperties per-registration allowlist; registrations without a mapping deny
 	 */
 	public SsoAccountService(SsoLinkRepository links, UserAccountRepository users,
-			AuthAuditService audit) {
+			AuthAuditService audit, SsoClaimProperties claimProperties) {
 		this.links = links;
 		this.users = users;
 		this.audit = audit;
+		this.claimProperties = claimProperties;
 	}
 
 	/**
 	 * Resolves an authenticated external identity to a local account, creating a shadow
 	 * account on first sight.
+	 *
+	 * <p>Fail-closed: registrations without a teams mapping deny every login (linked or
+	 * not) — an IdP account must never gain an API-capable account without an explicit
+	 * per-registration allowlist entry.</p>
 	 *
 	 * @param issuer         IdP issuer ({@code iss})
 	 * @param subject        IdP subject ({@code sub})
@@ -44,11 +53,17 @@ public class SsoAccountService {
 	 * @param registrationId Spring registration id
 	 * @param ip             remote address, or {@code null}
 	 * @param requestId      correlation id, or {@code null}
-	 * @return linked account, or empty when the linked account is disabled
+	 * @return linked account, or empty when denied or the linked account is disabled
 	 */
 	@Transactional
 	public Optional<UserAccount> resolve(String issuer, String subject, String email,
 			String registrationId, String ip, String requestId) {
+		if (claimProperties.forRegistration(registrationId).isEmpty()) {
+			audit.record(AuthAuditService.ACTION_SSO_LOGIN, AuthAuditService.SEVERITY_WARN,
+					subject, "/oauth2/callback", AuthAuditService.OUTCOME_FAILURE, ip,
+					requestId);
+			return Optional.empty();
+		}
 		Optional<SsoLink> link = links.findByIssuerAndSubject(issuer, subject);
 		if (link.isPresent()) {
 			Optional<UserAccount> account = users.findById(link.get().getUserId());

@@ -157,7 +157,12 @@ public final class SecretScannerRuleDatabase {
 					"pki-private-key",
 					"PKI Asymmetric Private Key Block",
 					"-----BEGIN",
-					Pattern.compile("(?i)-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----"),
+					// Window bound: the longest standard PEM label gap between BEGIN and
+					// PRIVATE KEY is 11 chars (" ENCRYPTED "); 48 keeps 4x margin over
+					// reality while keeping adversarial rejection linear-fast inside the
+					// 250 ms/rule gate (a 100-char window burns ~100 ms/MiB isolated and
+					// exceeds budget under suite load with zero extra recall).
+					Pattern.compile("(?i)-----BEGIN[ A-Z0-9_-]{0,48}PRIVATE KEY(?: BLOCK)?-----"),
 					0.0,
 					false,
 					false

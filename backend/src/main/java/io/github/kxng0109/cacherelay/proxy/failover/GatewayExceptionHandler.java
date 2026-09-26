@@ -43,7 +43,8 @@ public class GatewayExceptionHandler {
 		log.warn("Data sovereignty violation: {}", exception.getMessage());
 		Map<String, Object> error = new LinkedHashMap<>();
 		error.put("code", "DATA_SOVEREIGNTY_VIOLATION");
-		error.put("message", exception.getMessage());
+		error.put("message",
+				"Request cannot be served within the required data residency zone.");
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("error", error);
 		return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)

@@ -25,13 +25,21 @@ public enum Jurisdiction {
 	/**
 	 * Determines if a target jurisdiction satisfies adequacy requirements for the given origin.
 	 *
+	 * <p>An unknown ({@code GLOBAL}-fallback) target never satisfies a regulated
+	 * origin: providers that cannot be placed in a jurisdiction must not serve
+	 * residency-constrained tenants. An unconstrained ({@code GLOBAL}) origin
+	 * accepts every target.</p>
+	 *
 	 * @param origin source regulatory jurisdiction
 	 * @param target destination provider jurisdiction
 	 * @return {@code true} if legally compliant
 	 */
 	public static boolean isAdequate(Jurisdiction origin, Jurisdiction target) {
-		if (origin == null || target == null || origin == GLOBAL || target == GLOBAL) {
+		if (origin == null || target == null || origin == GLOBAL) {
 			return true;
+		}
+		if (target == GLOBAL) {
+			return false;
 		}
 		if (origin == target) {
 			return true;

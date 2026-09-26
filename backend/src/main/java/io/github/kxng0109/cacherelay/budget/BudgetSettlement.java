@@ -50,10 +50,11 @@ public class BudgetSettlement {
 	public BudgetEnforcer.HoldAuthorization authorize(SHA256Hash keyHash, @Nullable String ownerId,
 	                                                  ProviderType type, String model,
 	                                                  int promptChars, @Nullable Integer maxTokensOpt,
-	                                                  @Nullable String idempotencyKey) {
+	                                                  @Nullable String idempotencyKey,
+	                                                  @Nullable String bodyHashHex) {
 		if (!properties.enabled()) {
 			BudgetDecision decision = enforcer.checkBudget(keyHash, ownerId, type, model,
-					BudgetEnforcer.estimatePromptTokens(promptChars), idempotencyKey);
+					BudgetEnforcer.estimatePromptTokens(promptChars), idempotencyKey, bodyHashHex);
 			Instant now = Instant.now();
 			return new BudgetEnforcer.HoldAuthorization(decision, -1L,
 					YearMonth.from(now.atZone(ZoneOffset.UTC)).toString());
@@ -62,7 +63,7 @@ public class BudgetSettlement {
 				? Math.min(maxTokensOpt, properties.maxTokensCeiling())
 				: properties.maxTokensCeiling();
 		return enforcer.authorizeHold(keyHash, ownerId, type, model,
-				BudgetEnforcer.estimatePromptTokens(promptChars), maxTokens, idempotencyKey);
+				BudgetEnforcer.estimatePromptTokens(promptChars), maxTokens, idempotencyKey, bodyHashHex);
 	}
 
 	/**

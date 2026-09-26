@@ -35,7 +35,7 @@ class EntraWebhookControllerTest {
 	private EntraWebhookController controller() {
 		SsoWebhookProperties props = new SsoWebhookProperties(List.of(
 				new SsoWebhookProperties.RegistrationWebhook("azure", "", "", CLIENT_STATE,
-						"")));
+						"", "", "")));
 		return new EntraWebhookController(props, invalidator, audit);
 	}
 
@@ -56,6 +56,45 @@ class EntraWebhookControllerTest {
 		assertThat(response.getHeaders().getContentType()).isNotNull();
 		assertThat(response.getHeaders().getContentType().toString()).contains("text/plain");
 		assertThat(response.getBody()).isEqualTo("token-abc-123");
+		verify(invalidator, never()).invalidate(any(), any());
+	}
+
+	@Test
+	@DisplayName("FS-B12: oversized validation tokens answer 400 instead of echoing unbounded input")
+	void oversizedValidationTokenAnswers400() {
+		assertThatThrownBy(() -> controller().receive("t".repeat(3000), new MockHttpServletRequest()))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+		verify(invalidator, never()).invalidate(any(), any());
+	}
+
+	@Test
+	@DisplayName("FS-B12: blank validation tokens answer 400")
+	void blankValidationTokenAnswers400() {
+		assertThatThrownBy(() -> controller().receive("   ", new MockHttpServletRequest()))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+		verify(invalidator, never()).invalidate(any(), any());
+	}
+
+	@Test
+	@DisplayName("FS-B12: unshaped resources never invalidate")
+	void unshapedResourcesIgnored() {
+		String body = "{\"value\":["
+				+ "{\"subscriptionId\":\"s\",\"clientState\":\"" + CLIENT_STATE + "\","
+				+ "\"changeType\":\"updated\",\"resource\":\"\"},"
+				+ "{\"subscriptionId\":\"s\",\"clientState\":\"" + CLIENT_STATE + "\","
+				+ "\"changeType\":\"updated\",\"resource\":\"a/b/c\"},"
+				+ "{\"subscriptionId\":\"s\",\"clientState\":\"" + CLIENT_STATE + "\","
+				+ "\"changeType\":\"updated\",\"resource\":\"a/b/c/d\"},"
+				+ "{\"subscriptionId\":\"s\",\"clientState\":\"" + CLIENT_STATE + "\","
+				+ "\"changeType\":\"updated\"}]}";
+
+		ResponseEntity<String> response = controller().receive(null, request(body));
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 		verify(invalidator, never()).invalidate(any(), any());
 	}
 
@@ -85,6 +124,25 @@ class EntraWebhookControllerTest {
 		verify(audit).record(AuthAuditService.ACTION_WEBHOOK_AUTH,
 				AuthAuditService.SEVERITY_WARN, "webhook:entra", "/v1/sso/webhooks/entra",
 				AuthAuditService.OUTCOME_FAILURE, null, null);
+		verify(invalidator, never()).invalidate(any(), any());
+	}
+
+	@Test
+	@DisplayName("FS-B10: wrong-length and absent client states deny without matching")
+	void wrongLengthAndAbsentClientStateDenied() {
+		String shortBody = "{\"value\":[{\"subscriptionId\":\"s\",\"clientState\":\"short\","
+				+ "\"changeType\":\"updated\",\"resource\":\"users/oid-1\"}]}";
+		assertThatThrownBy(() -> controller().receive(null, request(shortBody)))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.UNAUTHORIZED);
+
+		String absentBody = "{\"value\":[{\"subscriptionId\":\"s\","
+				+ "\"changeType\":\"updated\",\"resource\":\"users/oid-1\"}]}";
+		assertThatThrownBy(() -> controller().receive(null, request(absentBody)))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.UNAUTHORIZED);
 		verify(invalidator, never()).invalidate(any(), any());
 	}
 

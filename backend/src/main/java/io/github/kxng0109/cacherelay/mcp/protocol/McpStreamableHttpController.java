@@ -12,6 +12,7 @@ import io.github.kxng0109.cacherelay.mcp.router.McpAggregatedCatalog;
 import io.github.kxng0109.cacherelay.mcp.router.McpCatalogAggregator;
 import io.github.kxng0109.cacherelay.mcp.router.McpResolvedRoute;
 import io.github.kxng0109.cacherelay.mcp.router.McpRouter;
+import io.github.kxng0109.cacherelay.mcp.security.GuardrailScanException;
 import io.github.kxng0109.cacherelay.mcp.security.McpEgressMetrics;
 import io.github.kxng0109.cacherelay.mcp.security.McpGuardrailScanner;
 import io.github.kxng0109.cacherelay.mcp.security.McpJsonSchemaValidator;
@@ -75,6 +76,7 @@ public class McpStreamableHttpController {
 	private final HttpClient httpClient;
 	private final ObjectMapper objectMapper;
 	private final McpEgressMetrics egressMetrics;
+	private final LegacySseSessionRegistry legacySseSessions;
 
 	public McpStreamableHttpController(
 			McpGatewayProperties properties,
@@ -104,6 +106,17 @@ public class McpStreamableHttpController {
 		this.httpClient = httpClient;
 		this.objectMapper = objectMapper;
 		this.egressMetrics = egressMetrics;
+		this.legacySseSessions = new LegacySseSessionRegistry(
+				Duration.ofMinutes(Math.max(1, properties.getLegacySseEmitterTimeoutMinutes())));
+	}
+
+	/**
+	 * Session registry for legacy SSE streams (test seam and session introspection).
+	 *
+	 * @return the live session registry
+	 */
+	LegacySseSessionRegistry legacySseSessions() {
+		return legacySseSessions;
 	}
 
 	/**
@@ -255,6 +268,29 @@ public class McpStreamableHttpController {
 	}
 
 	/**
+	 * Screens one egress text unit for indirect prompt injection markers, recording
+	 * the detection metric and the warning log shared by every text-carrying shape.
+	 *
+	 * @param namespacedTool namespaced tool name for telemetry
+	 * @param apiKey         calling key (block/warn mode and tenant attribution)
+	 * @param text           text unit to screen
+	 * @return {@code true} when injection markers were detected
+	 */
+	private boolean screenEgressText(String namespacedTool, VirtualApiKey apiKey, String text) {
+		if (!guardrailScanner.containsIndirectPromptInjection(text)) {
+			return false;
+		}
+		egressMetrics.injectionDetected(namespacedTool,
+				apiKey.injectionBlock() ? "block" : "warn");
+		log.warn(
+				"MCP egress signal: indirect prompt injection markers in tool '{}' output for tenant '{}'",
+				namespacedTool,
+				apiKey.ownerId()
+		);
+		return true;
+	}
+
+	/**
 	 * Legacy Server-Sent Events (SSE) streaming endpoint for 2024-11-05 clients (e.g. Claude Desktop).
 	 */
 	@Operation(
@@ -276,13 +312,23 @@ public class McpStreamableHttpController {
 		if (!keyManagementService.isUsable(streamKey)) {
 			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid or disabled API key");
 		}
+		String keyId = sessionKeyId(streamKey);
 
 		response.setHeader("X-Accel-Buffering", "no");
 		response.setHeader("Cache-Control", "no-cache");
 
 		ResponseBodyEmitter emitter = new ResponseBodyEmitter(
 				Duration.ofMinutes(Math.max(1, properties.getLegacySseEmitterTimeoutMinutes())).toMillis());
-		String sessionId = UUID.randomUUID().toString().replace("-", "");
+		// Bound per key before spawning any thread: unauthenticated or over-limit callers hold nothing.
+		LegacySseSessionRegistry.Session session =
+				legacySseSessions.create(keyId, emitter).orElse(null);
+		if (session == null) {
+			throw new ResponseStatusException(
+					HttpStatus.TOO_MANY_REQUESTS, "Too many legacy SSE streams for this key");
+		}
+		String sessionId = session.id();
+		emitter.onCompletion(() -> removeLegacySession(sessionId));
+		emitter.onTimeout(() -> removeLegacySession(sessionId));
 		String endpointUri = "/v1/mcp/message?sessionId=" + sessionId;
 
 		Thread.ofVirtual().name("mcp-sse-legacy-", 0).start(() -> {
@@ -297,14 +343,85 @@ public class McpStreamableHttpController {
 	}
 
 	/**
+	 * Drops a legacy SSE session (emitter completed, timed out, or delivery failed).
+	 * Package-visible seam so the container-only completion wiring stays a one-line
+	 * delegation with the cleanup itself unit-tested.
+	 *
+	 * @param sessionId session id, ignored when unknown
+	 */
+	void removeLegacySession(String sessionId) {
+		legacySseSessions.remove(sessionId);
+	}
+
+	/**
+	 * Derives the session-binding identity for a key (hash hex, owner fallback for unattributed keys).
+	 *
+	 * @param key authenticated key, possibly {@code null}
+	 * @return stable key identity, or {@code null} when the key carries none
+	 */
+	private @Nullable String sessionKeyId(@Nullable VirtualApiKey key) {
+		if (key == null) {
+			return null;
+		}
+		if (key.keyHash() != null) {
+			return key.keyHash().hex();
+		}
+		return key.ownerId();
+	}
+
+	/**
 	 * Legacy message POST endpoint for 2024-11-05 clients.
 	 */
 	@PostMapping(value = "/message", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<String> handleLegacyMessage(
 			@RequestBody String rawBody,
+			@RequestParam(value = "sessionId", required = false) @Nullable String sessionId,
 			HttpServletRequest httpRequest
 	) {
+		if (sessionId != null && !sessionId.isBlank()) {
+			return handleSessionMessage(rawBody, sessionId, httpRequest);
+		}
 		return handleStreamableHttp(rawBody, McpProtocolVersion.V2024_11_05, null, httpRequest);
+	}
+
+	/**
+	 * Delivers a session-bound message result on the session's SSE stream and acknowledges with 202.
+	 * Errors stay synchronous (auth, validation, rate limits); only completed results stream.
+	 * Unknown, foreign, or expired sessions are indistinguishable (404, no oracle).
+	 *
+	 * @param rawBody   JSON-RPC request body
+	 * @param sessionId session id from the endpoint event
+	 * @param httpRequest current request (session ownership check)
+	 * @return 202 when accepted for stream delivery, 404 for unknown sessions
+	 */
+	private ResponseEntity<String> handleSessionMessage(
+			String rawBody, String sessionId, HttpServletRequest httpRequest
+	) {
+		VirtualApiKey apiKey = resolveApiKey(httpRequest);
+		if (!keyManagementService.isUsable(apiKey)) {
+			return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+					.body("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32603,\"message\":\"Unauthorized: Invalid or disabled API key\"}}");
+		}
+		Optional<LegacySseSessionRegistry.Session> session =
+				legacySseSessions.find(sessionId, sessionKeyId(apiKey));
+		if (session.isEmpty()) {
+			return ResponseEntity.status(HttpStatus.NOT_FOUND)
+					.body("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32001,\"message\":\"Unknown SSE session\"}}");
+		}
+		ResponseEntity<String> result =
+				handleStreamableHttp(rawBody, McpProtocolVersion.V2024_11_05, null, httpRequest);
+		if (!result.getStatusCode().is2xxSuccessful() || result.getBody() == null) {
+			return result;
+		}
+		try {
+			session.get().emitter().send(
+					"event: message\ndata: " + result.getBody() + "\n\n", MediaType.TEXT_PLAIN);
+		} catch (Exception ex) {
+			legacySseSessions.remove(sessionId);
+			return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+					.body("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32603,\"message\":\"SSE session delivery failed\"}}");
+		}
+		return ResponseEntity.accepted().build();
 	}
 
 	/**
@@ -475,9 +592,10 @@ public class McpStreamableHttpController {
 		ObjectNode result = objectMapper.createObjectNode();
 		ArrayNode toolsArr = result.putArray("tools");
 		for (McpToolDefinition tool : filteredCatalog.tools()) {
-			// Auto-prune tools if server circuit breaker is tripped
+			// Auto-prune tools if server circuit breaker is tripped. Non-mutating read: listing
+			// must never consume the single HALF_OPEN probe slot (it would latch recovery).
 			Optional<McpResolvedRoute> route = router.resolveToolRoute(tool.name());
-			if (route.isPresent() && !circuitBreakerManager.tryAcquire(route.get().serverConfig().name())) {
+			if (route.isPresent() && !circuitBreakerManager.isAvailable(route.get().serverConfig().name())) {
 				continue; // Skip offline server tools
 			}
 			toolsArr.add(tool.toJsonNode(objectMapper));
@@ -572,8 +690,19 @@ public class McpStreamableHttpController {
 			}
 		}
 
-		// 4. Ingress Credential & Secret Leakage Guardrail Scan
-		SecretScanResult secretScan = guardrailScanner.scanArguments(args);
+		// 4. Ingress Credential & Secret Leakage Guardrail Scan (fail-closed: an
+		// unscreenable invocation never executes)
+		SecretScanResult secretScan;
+		try {
+			secretScan = guardrailScanner.scanArguments(args);
+		} catch (GuardrailScanException failed) {
+			log.warn("MCP guardrail scan failed closed for '{}': {}", route.namespacedName(),
+					failed.getMessage());
+			return McpJsonRpcResponse.failure(
+					request.id(),
+					McpJsonRpcError.internalError("Guardrail evaluation failed")
+			);
+		}
 		if (secretScan.detected()) {
 			log.warn(
 					"MCP Guardrail violation: leaked secret ({}) in tool arguments for '{}'",
@@ -603,6 +732,9 @@ public class McpStreamableHttpController {
 				apiKey
 		);
 		if (hitlSuspension.isPresent()) {
+			// The acquired probe produces no verdict while parked for approval: release the
+			// slot so recovery is not held hostage by the admin queue.
+			circuitBreakerManager.abandonProbe(server.name());
 			return hitlSuspension.get();
 		}
 
@@ -656,32 +788,57 @@ public class McpStreamableHttpController {
 				circuitBreakerManager.recordSuccess(server.name());
 				JsonNode respNode = objectMapper.readTree(upstreamResponse.body());
 
-				// Egress Sanitization & Nonced Tag Wrapping
+				// Egress Sanitization & Nonced Tag Wrapping: every text-carrying shape
+				// is screened (plain text, embedded resource text, structured content);
+				// binary/image/audio blocks carry no scannable text and are counted only.
 				if (respNode.has("result")) {
 					JsonNode resultNode = respNode.get("result");
+					boolean injectionDetected = false;
 					if (resultNode.has("content") && resultNode.path("content").isArray()) {
-						boolean injectionDetected = false;
-					for (JsonNode contentItem : resultNode.path("content")) {
-						if ("text".equals(contentItem.path("type").asString()) && contentItem.has("text")) {
-							String originalText = contentItem.path("text").asString();
-							if (guardrailScanner.containsIndirectPromptInjection(originalText)) {
-								injectionDetected = true;
-								egressMetrics.injectionDetected(route.namespacedName(),
-										apiKey.injectionBlock() ? "block" : "warn");
-								log.warn(
-										"MCP egress signal: indirect prompt injection markers in tool '{}' output for tenant '{}'",
-										route.namespacedName(),
-										apiKey.ownerId()
-								);
+						for (JsonNode contentItem : resultNode.path("content")) {
+							if (!(contentItem instanceof ObjectNode mutableItem)) {
+								egressMetrics.unscanned(contentItem.path("type").asString("unknown"));
+								continue;
 							}
-							String wrapped = guardrailScanner.wrapToolOutputWithNonce(
-									route.namespacedName(),
-									originalText
-							);
-							((ObjectNode) contentItem).put("text", wrapped);
-						} else {
-							// Binary/image/audio blocks carry no scannable text: counted, documented as unscreened.
-							egressMetrics.unscanned(contentItem.path("type").asString("unknown"));
+							String itemType = contentItem.path("type").asString();
+							if ("text".equals(itemType) && contentItem.has("text")) {
+								String originalText = contentItem.path("text").asString();
+								if (screenEgressText(route.namespacedName(), apiKey, originalText)) {
+									injectionDetected = true;
+								}
+								String wrapped = guardrailScanner.wrapToolOutputWithNonce(
+										route.namespacedName(),
+										originalText
+								);
+								mutableItem.put("text", wrapped);
+							} else if ("resource".equals(itemType)
+									&& contentItem.path("resource").has("text")) {
+								String resourceText =
+										contentItem.path("resource").path("text").asString();
+								if (screenEgressText(route.namespacedName(), apiKey, resourceText)) {
+									injectionDetected = true;
+								}
+								String wrapped = guardrailScanner.wrapToolOutputWithNonce(
+										route.namespacedName(),
+										resourceText
+								);
+								((ObjectNode) contentItem.path("resource")).put("text", wrapped);
+							} else {
+								egressMetrics.unscanned(contentItem.path("type").asString("unknown"));
+							}
+						}
+					if (resultNode.has("structuredContent")
+							&& resultNode.path("structuredContent").isObject()) {
+						String serialized = null;
+						try {
+							serialized = objectMapper.writeValueAsString(
+									resultNode.path("structuredContent"));
+						} catch (RuntimeException unserializable) {
+							egressMetrics.unscanned("structuredContent");
+						}
+						if (serialized != null && screenEgressText(
+								route.namespacedName(), apiKey, serialized)) {
+							injectionDetected = true;
 						}
 					}
 					if (injectionDetected && apiKey.injectionBlock()) {
@@ -691,7 +848,7 @@ public class McpStreamableHttpController {
 								McpJsonRpcError.policyBlocked(route.namespacedName())
 						);
 					}
-						return McpJsonRpcResponse.success(request.id(), resultNode);
+					return McpJsonRpcResponse.success(request.id(), resultNode);
 					}
 					return McpJsonRpcResponse.success(request.id(), resultNode);
 				} else if (respNode.has("error")) {

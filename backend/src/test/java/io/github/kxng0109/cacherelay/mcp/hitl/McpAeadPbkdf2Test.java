@@ -40,6 +40,22 @@ class McpAeadPbkdf2Test {
 	}
 
 	@Test
+	@DisplayName("sealed strings round-trip and reject foreign keys and tampering")
+	void sealRoundTrip() {
+		McpAeadResumptionTokenService first = serviceFor(SECRET_A);
+
+		String sealed = first.sealString("{\"sql\":\"SELECT 1\"}");
+
+		assertThat(sealed).startsWith("v1.aead.args.");
+		assertThat(sealed).doesNotContain("SELECT 1");
+		assertThat(first.openString(sealed)).contains("{\"sql\":\"SELECT 1\"}");
+		assertThat(first.openString(null)).isEmpty();
+		assertThat(first.openString("plaintext")).isEmpty();
+		assertThat(serviceFor(SECRET_B).openString(sealed)).as("wrong key fails closed").isEmpty();
+		assertThat(first.openString(sealed + "tamper")).as("tampered blob fails closed").isEmpty();
+	}
+
+	@Test
 	@Timeout(value = 30, unit = TimeUnit.SECONDS)
 	@DisplayName("construction with 600K PBKDF2 iterations completes within CI budget")
 	void constructionCompletesInCiBudget() {
@@ -54,7 +70,7 @@ class McpAeadPbkdf2Test {
 		McpResumptionClaims original = claims("owner-1");
 		String token = first.mintToken(original);
 		Optional<McpResumptionClaims> back =
-				second.verifyAndExtract(token, original.argsSha256(), "owner-1");
+				second.verifyAndExtract(token, original.argsSha256(), "owner-1", original.toolName());
 		assertThat(back).isPresent();
 		assertThat(back.get().tokenId()).isEqualTo(original.tokenId());
 	}
@@ -66,12 +82,12 @@ class McpAeadPbkdf2Test {
 		McpAeadResumptionTokenService second = serviceFor(SECRET_B);
 		McpResumptionClaims original = claims("owner-1");
 		String tokenFromFirst = first.mintToken(original);
-		assertThat(second.verifyAndExtract(tokenFromFirst, original.argsSha256(), "owner-1")).isEmpty();
-		assertThat(first.verifyAndExtract(tokenFromFirst, "0".repeat(64), "owner-1")).isEmpty();
-		assertThat(first.verifyAndExtract(tokenFromFirst, original.argsSha256(), "other-owner")).isEmpty();
-		assertThat(first.verifyAndExtract(tokenFromFirst + "x", original.argsSha256(), "owner-1")).isEmpty();
-		assertThat(first.verifyAndExtract(null, original.argsSha256(), "owner-1")).isEmpty();
-		assertThat(first.verifyAndExtract("garbage", original.argsSha256(), "owner-1")).isEmpty();
+		assertThat(second.verifyAndExtract(tokenFromFirst, original.argsSha256(), "owner-1", original.toolName())).isEmpty();
+		assertThat(first.verifyAndExtract(tokenFromFirst, "0".repeat(64), "owner-1", original.toolName())).isEmpty();
+		assertThat(first.verifyAndExtract(tokenFromFirst, original.argsSha256(), "other-owner", original.toolName())).isEmpty();
+		assertThat(first.verifyAndExtract(tokenFromFirst + "x", original.argsSha256(), "owner-1", original.toolName())).isEmpty();
+		assertThat(first.verifyAndExtract(null, original.argsSha256(), "owner-1", original.toolName())).isEmpty();
+		assertThat(first.verifyAndExtract("garbage", original.argsSha256(), "owner-1", original.toolName())).isEmpty();
 	}
 
 	@Test

@@ -567,6 +567,15 @@ All configuration lives in `backend/src/main/resources/application.yml`. The mos
   recalibrate the similarity threshold (0.77 local ⇔ 0.80 Ollama) before enabling on a populated index.
 - `gateway.redis.cache.host/port` points the cache tier at its dedicated evictable Redis
   (`REDIS_CACHE_HOST`/`REDIS_CACHE_PORT`, default `localhost:6380`); accounting stays on `spring.data.redis.*`.
+- `gateway.provider-jurisdictions` maps provider names to regulatory jurisdictions
+  (`EU`, `US`, `NG`, `UK`, `CH`, `CA`, `ZA`, `GH`) seeding the data-residency router.
+  Unregistered providers fail closed under `STRICT_SOVEREIGN`/`SOVEREIGN_CASCADE`.
+- SSO logins require a per-registration teams mapping and a configured IdP issuer:
+  `SSO_GOOGLE_ISSUER_URI` (default `https://accounts.google.com`),
+  `SSO_AZURE_ISSUER_URI`, `SSO_AZURE_B2C_ISSUER_URI`, `SSO_OKTA_ISSUER`,
+  `SSO_GENERIC_ISSUER_URI` (no default - logins for that IdP deny until set).
+  Google watch channels may additionally pin channel/resource ids in
+  `gateway.sso.webhooks` registrations.
 - `gateway.notify.email.graph.*` configures Microsoft Graph mail (`tenant-id`, `client-id`, `secret-ref`,
   `mailbox`, `per-minute-cap`); all blank disables the email channel.
 - `gateway.maintenance.*` controls the monthly retention janitor (`retention-enabled`, `retention-batch`,

@@ -2,9 +2,11 @@ package io.github.kxng0109.cacherelay.mcp.security;
 
 import io.github.kxng0109.cacherelay.security.guardrail.secret.IngressSecretScanner;
 import io.github.kxng0109.cacherelay.security.guardrail.secret.SecretScanResult;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.Nullable;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -30,11 +32,29 @@ public class McpGuardrailScanner {
 	private final IngressSecretScanner secretScanner;
 	private final ObjectMapper objectMapper;
 
+	private volatile @Nullable MeterRegistry meterRegistry;
+
+	/**
+	 * Wires Micrometer telemetry when present. Optional on purpose: unit-constructed
+	 * scanners keep working with failure counting silently skipped.
+	 *
+	 * @param meterRegistry the registry, if available
+	 */
+	@Autowired(required = false)
+	public void setMeterRegistry(MeterRegistry meterRegistry) {
+		this.meterRegistry = meterRegistry;
+	}
+
 	/**
 	 * Scans tool argument payload for leaked credentials, API keys, and high-entropy secrets.
 	 *
+	 * <p>Fail-closed: a serialization failure throws {@link GuardrailScanException}
+	 * (counted) instead of returning clean — an unscreenable invocation must never
+	 * execute.</p>
+	 *
 	 * @param arguments tool arguments JSON node
 	 * @return scan result indicating whether a secret was detected
+	 * @throws GuardrailScanException when the arguments cannot be serialized for scanning
 	 */
 	public SecretScanResult scanArguments(@Nullable JsonNode arguments) {
 		if (arguments == null || arguments.isNull() || arguments.isEmpty()) {
@@ -45,8 +65,13 @@ public class McpGuardrailScanner {
 			byte[] bytes = serialized.getBytes(StandardCharsets.UTF_8);
 			return secretScanner.scan(bytes, serialized);
 		} catch (Exception e) {
-			log.warn("Error serializing tool arguments for guardrail scan: {}", e.getMessage());
-			return SecretScanResult.clean();
+			log.warn("Guardrail argument scan failed closed: {}", e.getMessage());
+			MeterRegistry registry = this.meterRegistry;
+			if (registry != null) {
+				registry.counter("mcp_guardrail_scan_failures_total", "stage", "arguments")
+						.increment();
+			}
+			throw new GuardrailScanException("arguments", e);
 		}
 	}
 

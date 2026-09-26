@@ -66,6 +66,16 @@ public class KeyManagementService {
 	private static final boolean SEED_INJECTION_BLOCK = true;
 
 	/**
+	 * Permanent deletion tombstone prefix. {@link #deleteKey} writes
+	 * {@code deleted-key:{hex}} whenever it removes a key, and
+	 * {@link #seedBootstrapKeys} skips tombstoned hashes, so an admin deletion
+	 * can never resurrect on the next reboot. Markers never expire (a TTL would
+	 * reopen the resurrection window) and double as the deletion audit record;
+	 * one tiny key per deletion ever is the bounded cost.
+	 */
+	static final String DELETED_MARKER_PREFIX = "deleted-key:";
+
+	/**
 	 * Atomically claims a bootstrap-key slot: stores the full metadata hash plus the index entry only when the
 	 * digest key does not exist yet, and reports whether this caller won the claim. The check and the write execute
 	 * inside one Lua script, so any number of instances booting concurrently converge on a single deterministic
@@ -391,6 +401,7 @@ public class KeyManagementService {
 	 * @throws IllegalArgumentException when a wired repository cannot resolve the template owner to an active account
 	 */
 	public String generateKey(BootstrapKey template) {
+		TenantIds.requireValidTenant(template.ownerId());
 		String plaintext = randomPlaintext();
 		storeKey(
 				plaintext,
@@ -479,6 +490,7 @@ public class KeyManagementService {
 			Set<String> deniedAgents,
 			UUID ownerUserId
 	) {
+		TenantIds.requireValidTenant(ownerId);
 		requireActiveOwner(ownerUserId);
 		String plaintext = randomPlaintext();
 		Instant now = Instant.now();
@@ -842,6 +854,8 @@ public class KeyManagementService {
 
 	/**
 	 * Permanently deletes a virtual API key from Redis and removes it from the index set.
+	 * Writes a permanent deletion tombstone (see {@link #DELETED_MARKER_PREFIX}) so a
+	 * later bootstrap re-seed can never resurrect the key.
 	 *
 	 * @param hash key hash to delete
 	 * @return true if key was deleted, false if not found
@@ -850,6 +864,9 @@ public class KeyManagementService {
 		String key = redisKey(hash);
 		Boolean deleted = redisTemplate.delete(key);
 		redisTemplate.opsForSet().remove(INDEX_KEY, hash.hex());
+		if (Boolean.TRUE.equals(deleted)) {
+			redisTemplate.opsForValue().set(DELETED_MARKER_PREFIX + hash.hex(), "1");
+		}
 		cache.invalidate(hash);
 		return Boolean.TRUE.equals(deleted);
 	}
@@ -976,6 +993,10 @@ public class KeyManagementService {
 		String key = redisKey(hash);
 		if (Boolean.FALSE.equals(redisTemplate.hasKey(key))) {
 			return Optional.empty();
+		}
+		Object storedOwner = redisTemplate.opsForHash().get(key, "ownerId");
+		if (storedOwner != null) {
+			TenantIds.requireValidTenant(storedOwner.toString());
 		}
 		redisTemplate.opsForHash().put(key, "ownerUserId", ownerUserId.toString());
 		cache.invalidate(hash);
@@ -1169,7 +1190,8 @@ public class KeyManagementService {
 
 	/**
 	 * Seeds configured bootstrap keys so they exist at runtime. Idempotent: entries with a null or blank
-	 * {@code plaintextKey} are skipped, and a key whose hash is already present is never overwritten. Never logs
+	 * {@code plaintextKey} are skipped, a key whose hash is already present is never overwritten, and a hash
+	 * carrying a deletion tombstone (see {@link #DELETED_MARKER_PREFIX}) is never resurrected. Never logs
 	 * plaintexts.
 	 *
 	 * <p>Race-safe across any number of concurrently booting instances: each key is claimed by the atomic
@@ -1183,6 +1205,10 @@ public class KeyManagementService {
 	public void seedBootstrapKeys(GatewayProperties properties) {
 		for (BootstrapKey bootstrapKey : properties.getBootstrapKeys()) {
 			if (bootstrapKey.plaintextKey() == null || bootstrapKey.plaintextKey().isBlank()) {
+				continue;
+			}
+			SHA256Hash hash = SHA256Hash.fromRawKey(bootstrapKey.plaintextKey());
+			if (Boolean.TRUE.equals(redisTemplate.hasKey(DELETED_MARKER_PREFIX + hash.hex()))) {
 				continue;
 			}
 			UUID seedOwner = resolveSeedOwner(bootstrapKey.ownerUsername(), bootstrapKey.name());

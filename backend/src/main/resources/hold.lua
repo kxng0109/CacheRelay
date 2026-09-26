@@ -10,6 +10,11 @@
 -- KEYS:
 --   KEYS[1] = hold hash key  (budget:{b:global}:hold:<holdId>)
 --   KEYS[2] = expiry index   (budget:{b:global}:hold-expiry, ZSET score = epoch seconds)
+-- Both KEYS are mandatory: unlike budget_limit.lua there is no empty-string
+-- level-skipping sentinel here; a missing key is a caller bug. TTLs are
+-- rejected (never defaulted): a non-positive ARGV[4] aborts the script with an
+-- error, which the engine surfaces fail-closed, so misconfiguration can never
+-- silently widen the hold window into the settled-flag TTL.
 --
 -- ARGV:
 --   ARGV[1] = held micros H (integer >= 0, already clamped by the engine)
@@ -32,7 +37,7 @@ end
 
 local ttl = tonumber(ARGV[4])
 if ttl == nil or ttl <= 0 then
-	ttl = 3600
+	return redis.error_reply('ERR hold TTL must be a positive integer')
 end
 local created = tonumber(ARGV[5]) or 0
 

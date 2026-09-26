@@ -13,7 +13,7 @@ import java.util.Map;
 /**
  * Gateway configuration bound from the {@code gateway} prefix.
  *
- * <p>Owns three things:</p>
+ * <p>Owns four things:</p>
  * <ul>
  *   <li>{@code providers} — the pool of configured upstream providers, keyed
  *       by name.</li>
@@ -23,6 +23,9 @@ import java.util.Map;
  *       so requests can be authenticated before an admin API exists. Plaintext
  *       keys must only ever be injected via environment variables (never
  *       committed to the repository).</li>
+ *   <li>{@code providerJurisdictions} — physical regulatory jurisdiction per
+ *       provider name, seeding the sovereignty router (unregistered providers
+ *       fail closed under strict residency policies).</li>
  * </ul>
  */
 @Validated
@@ -34,6 +37,8 @@ public class GatewayProperties {
 	private Map<String, ModelAlias> aliases = new LinkedHashMap<>();
 
 	private List<@Valid BootstrapKey> bootstrapKeys = new ArrayList<>();
+
+	private Map<String, String> providerJurisdictions = new LinkedHashMap<>();
 
 	/**
 	 * @return the configured providers, keyed by {@link ProviderConfig#name()}
@@ -81,5 +86,22 @@ public class GatewayProperties {
 		this.bootstrapKeys = bootstrapKeys == null
 				? List.of()
 				: Collections.unmodifiableList(new ArrayList<>(bootstrapKeys));
+	}
+
+	/**
+	 * @return provider name to jurisdiction code (e.g. {@code EU}), bound from
+	 * {@code gateway.provider-jurisdictions}; empty when unconfigured
+	 */
+	public Map<String, String> getProviderJurisdictions() {
+		return providerJurisdictions;
+	}
+
+	/**
+	 * @param providerJurisdictions provider name to jurisdiction code seed
+	 */
+	public void setProviderJurisdictions(Map<String, String> providerJurisdictions) {
+		this.providerJurisdictions = providerJurisdictions == null
+				? Map.of()
+				: Collections.unmodifiableMap(new LinkedHashMap<>(providerJurisdictions));
 	}
 }

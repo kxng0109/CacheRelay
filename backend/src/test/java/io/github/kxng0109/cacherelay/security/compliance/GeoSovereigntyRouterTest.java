@@ -1,6 +1,7 @@
 package io.github.kxng0109.cacherelay.security.compliance;
 
 import io.github.kxng0109.cacherelay.config.SensitiveString;
+import io.github.kxng0109.cacherelay.contracts.GatewayProperties;
 import io.github.kxng0109.cacherelay.contracts.ProviderConfig;
 import io.github.kxng0109.cacherelay.contracts.ProviderRef;
 import io.github.kxng0109.cacherelay.contracts.ProviderType;
@@ -9,6 +10,7 @@ import org.junit.jupiter.api.Test;
 
 import java.net.URI;
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -18,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @DisplayName("GeoSovereigntyRouter Tests")
 class GeoSovereigntyRouterTest {
 
-	private final GeoSovereigntyRouter router = new GeoSovereigntyRouter();
+	private final GeoSovereigntyRouter router = new GeoSovereigntyRouter(new GatewayProperties());
 
 	private ProviderConfig createConfig(String name, String uriStr) {
 		return new ProviderConfig(
@@ -174,7 +176,7 @@ class GeoSovereigntyRouterTest {
 	}
 
 	@Test
-	@DisplayName("STRICT_SOVEREIGN allows matching origin or GLOBAL and fails closed with HTTP 503 exception when none remain")
+	@DisplayName("FS-B11: STRICT_SOVEREIGN keeps only the origin and fails closed on unknown GLOBAL fallbacks")
 	void strictSovereignPolicyFiltering() {
 		ProviderConfig euConfig = createConfig("eu-1", "https://api.provider.eu");
 		ProviderConfig usConfig = createConfig("us-1", "https://api.openai.com");
@@ -234,17 +236,17 @@ class GeoSovereigntyRouterTest {
 				.isInstanceOf(DataResidencyBreachException.class)
 				.hasMessageContaining("designated sovereign zone [EU]");
 
-		// STRICT_SOVEREIGN keeps Jurisdiction.GLOBAL providers (line 112)
+		// STRICT_SOVEREIGN drops unknown GLOBAL-fallback providers instead of keeping them
 		ProviderConfig globalConfig = createConfig("global-1", "https://api.example.com");
 		Map<String, ProviderConfig> withGlobal = Map.of("global-1", globalConfig);
-		List<ProviderRef> keptGlobal = router.filterChain(
+		assertThatThrownBy(() -> router.filterChain(
 				List.of(new ProviderRef("global-1", null)),
 				withGlobal,
 				ResidencyPolicy.STRICT_SOVEREIGN,
 				Jurisdiction.EU,
 				"gpt-4o"
-		);
-		assertThat(keptGlobal).hasSize(1);
+		))
+				.isInstanceOf(DataResidencyBreachException.class);
 	}
 
 	@Test
@@ -272,5 +274,99 @@ class GeoSovereigntyRouterTest {
 				"gpt-4o"
 		);
 		assertThat(unregFiltered).hasSize(1);
+	}
+
+	@Test
+	@DisplayName("FS-B11: provider jurisdictions seed from gateway configuration and win over heuristics")
+	void seededRegistryFromConfiguration() {
+		GatewayProperties seeded = new GatewayProperties();
+		seeded.setProviderJurisdictions(Map.of("openai-main", "eu"));
+		GeoSovereigntyRouter seededRouter = new GeoSovereigntyRouter(seeded);
+
+		assertThat(seededRouter.resolveJurisdiction("openai-main",
+				createConfig("openai-main", "https://api.openai.com/v1")))
+				.isEqualTo(Jurisdiction.EU);
+		assertThat(router.resolveJurisdiction("openai-main",
+				createConfig("openai-main", "https://api.openai.com/v1")))
+				.isEqualTo(Jurisdiction.US);
+	}
+
+	@Test
+	@DisplayName("FS-B11: invalid seed codes are ignored without breaking resolution")
+	void invalidSeedCodesIgnored() {
+		GatewayProperties seeded = new GatewayProperties();
+		seeded.setProviderJurisdictions(Map.of("weird-1", "ATLANTIS", "eu-1", "EU"));
+		GeoSovereigntyRouter seededRouter = new GeoSovereigntyRouter(seeded);
+
+		assertThat(seededRouter.resolveJurisdiction("weird-1",
+				createConfig("weird-1", "https://api.example.com")))
+				.isEqualTo(Jurisdiction.GLOBAL);
+		assertThat(seededRouter.resolveJurisdiction("eu-1",
+				createConfig("eu-1", "https://api.example.com")))
+				.isEqualTo(Jurisdiction.EU);
+	}
+
+	@Test
+	@DisplayName("FS-B11: look-alike hosts never match a jurisdiction (exact or dot-suffix only)")
+	void lookAlikeHostsDoNotMatch() {
+		assertThat(router.resolveJurisdiction("m",
+				createConfig("m", "https://api.openai.com.evil.example/v1")))
+				.isEqualTo(Jurisdiction.GLOBAL);
+		assertThat(router.resolveJurisdiction("m",
+				createConfig("m", "https://notopenai.com/v1")))
+				.isEqualTo(Jurisdiction.GLOBAL);
+		assertThat(router.resolveJurisdiction("m",
+				createConfig("m", "http://openai.com/v1")))
+				.isEqualTo(Jurisdiction.US);
+		assertThat(router.resolveJurisdiction("m",
+				createConfig("m", "https://api.openai.com/v1")))
+				.isEqualTo(Jurisdiction.US);
+		assertThat(router.resolveJurisdiction("m",
+				createConfig("m", "https://api.anthropic.com.evil.example/v1")))
+				.isEqualTo(Jurisdiction.GLOBAL);
+	}
+
+	@Test
+	@DisplayName("FS-B11: CASCADE drops unknown GLOBAL-fallback providers instead of treating them adequate")
+	void cascadeDropsUnknownFallback() {		ProviderConfig globalConfig = createConfig("global-1", "https://api.example.com");
+		Map<String, ProviderConfig> providers = Map.of("global-1", globalConfig);
+
+		assertThatThrownBy(() -> router.filterChain(
+				List.of(new ProviderRef("global-1", null)),
+				providers,
+				ResidencyPolicy.SOVEREIGN_CASCADE,
+				Jurisdiction.EU,
+				"gpt-4o"
+		))
+				.isInstanceOf(DataResidencyBreachException.class);
+	}
+
+	@Test
+	@DisplayName("FS-B11: null configuration seeds nothing and never throws")
+	void nullConfigurationSeedsNothing() {
+		GeoSovereigntyRouter bare = new GeoSovereigntyRouter(null);
+
+		assertThat(bare.resolveJurisdiction("openai-main",
+				createConfig("openai-main", "https://api.openai.com/v1")))
+				.isEqualTo(Jurisdiction.US);
+	}
+
+	@Test
+	@DisplayName("FS-B11: null seed entries are skipped without breaking valid seeds")
+	void nullSeedEntriesSkipped() {
+		GatewayProperties seeded = new GatewayProperties();
+		Map<String, String> seeds = new HashMap<>();
+		seeds.put(null, "EU");
+		seeds.put("null-value", null);
+		seeds.put("eu-1", "EU");
+		seeded.setProviderJurisdictions(seeds);
+		GeoSovereigntyRouter seededRouter = new GeoSovereigntyRouter(seeded);
+
+		assertThat(seededRouter.resolveJurisdiction("eu-1",
+				createConfig("eu-1", "https://api.example.com")))
+				.isEqualTo(Jurisdiction.EU);
+		assertThat(seededRouter.resolveJurisdiction("null-value",
+				createConfig("null-value", "https://api.example.com")))
+				.isEqualTo(Jurisdiction.GLOBAL);
 	}
 }

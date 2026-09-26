@@ -22,7 +22,7 @@ class SsoWebhookConfigTest {
 			String githubSecret, String oktaSecret, String entraClientState,
 			String googleChannelToken) {
 		return new SsoWebhookProperties.RegistrationWebhook(registrationId, githubSecret,
-				oktaSecret, entraClientState, googleChannelToken);
+				oktaSecret, entraClientState, googleChannelToken, "", "");
 	}
 
 	private SsoWebhookProperties props(SsoWebhookProperties.RegistrationWebhook... entries) {
@@ -84,7 +84,7 @@ class SsoWebhookConfigTest {
 	@DisplayName("null secrets normalize to blank and fail")
 	void nullSecretsNormalize() {
 		SsoWebhookProperties.RegistrationWebhook entry = new SsoWebhookProperties
-				.RegistrationWebhook("github", null, null, null, null);
+				.RegistrationWebhook("github", null, null, null, null, null, null);
 
 		assertThat(entry.githubSecret()).isEmpty();
 		assertThatThrownBy(() -> new SsoWebhookConfig(props(entry)).validate())

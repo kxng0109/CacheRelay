@@ -35,12 +35,13 @@ class JurisdictionAdequacyTest {
 	}
 
 	@Test
-	@DisplayName("isAdequate returns true when origin, target, or either is null or GLOBAL")
+	@DisplayName("FS-B11: unknown (GLOBAL-fallback) targets never satisfy adequacy")
 	void nullOrGlobalAdequacy() {
 		assertThat(Jurisdiction.isAdequate(null, Jurisdiction.EU)).isTrue();
 		assertThat(Jurisdiction.isAdequate(Jurisdiction.EU, null)).isTrue();
 		assertThat(Jurisdiction.isAdequate(Jurisdiction.GLOBAL, Jurisdiction.EU)).isTrue();
-		assertThat(Jurisdiction.isAdequate(Jurisdiction.EU, Jurisdiction.GLOBAL)).isTrue();
+		assertThat(Jurisdiction.isAdequate(Jurisdiction.EU, Jurisdiction.GLOBAL)).isFalse();
+		assertThat(Jurisdiction.isAdequate(Jurisdiction.US, Jurisdiction.GLOBAL)).isFalse();
 		assertThat(Jurisdiction.isAdequate(Jurisdiction.GLOBAL, Jurisdiction.GLOBAL)).isTrue();
 	}
 

@@ -175,7 +175,8 @@ class McpStressAndConcurrencyHarnessTest {
 						Optional<McpResumptionClaims> verified = tokenService.verifyAndExtract(
 								token,
 								argsSha,
-								"tenant-stress"
+								"tenant-stress",
+								targetTool
 						);
 						if (verified.isEmpty()) {
 							throw new IllegalStateException("Failed to verify token for task " + idx);

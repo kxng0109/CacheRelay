@@ -1,5 +1,6 @@
 package io.github.kxng0109.cacherelay.proxy;
 
+import io.github.kxng0109.cacherelay.cache.engine.CacheRelayCacheService;
 import io.github.kxng0109.cacherelay.config.SensitiveString;
 import io.github.kxng0109.cacherelay.contracts.*;
 import io.github.kxng0109.cacherelay.ledger.CostCalculator;
@@ -19,6 +20,7 @@ import io.github.kxng0109.cacherelay.security.guardrail.pii.EphemeralPiiVault;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -38,8 +40,12 @@ import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @DisplayName("ProxyController Guardrails & Compliance Streaming Tests")
@@ -121,7 +127,7 @@ class ProxyControllerGuardrailStreamingTest {
 	void decoratesHeadersWithAuditReceiptAndZdr() {
 		Stream<String> lines = Stream.of("data: [DONE]");
 		ProviderResponse providerResp = mockProviderResponse(lines);
-		when(orchestrator.execute(any(), anyString()))
+		when(orchestrator.execute(any(), anyString(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(providerResp));
 
 		String requestJson = "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"Hi\"}]}";
@@ -146,7 +152,7 @@ class ProxyControllerGuardrailStreamingTest {
 				"data: [DONE]"
 		);
 		ProviderResponse providerResp = mockProviderResponse(lines);
-		when(orchestrator.execute(any(), anyString()))
+		when(orchestrator.execute(any(), anyString(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(providerResp));
 
 		String requestJson = "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"Greet user\"}]}";
@@ -181,7 +187,7 @@ class ProxyControllerGuardrailStreamingTest {
 				"data: [DONE]"
 		);
 		ProviderResponse providerResp = mockProviderResponse(lines);
-		when(orchestrator.execute(any(), anyString()))
+		when(orchestrator.execute(any(), anyString(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(providerResp));
 
 		MockHttpServletRequest request = new MockHttpServletRequest();
@@ -195,6 +201,98 @@ class ProxyControllerGuardrailStreamingTest {
 				.contains("event: error")
 				.contains("guardrail_violation")
 				.contains("Stream terminated by CacheRelay guardrail");
+	}
+
+	@Test
+	@DisplayName("FS-B12: leftover past the accumulation cap truncates instead of storing")
+	void leftoverOverflowTruncatesAccumulation() throws Exception {
+		CacheRelayCacheService cacheService = mock(CacheRelayCacheService.class);
+		ProxyController cachingController = cachingController(cacheService);
+		EphemeralPiiVault vault = new EphemeralPiiVault();
+		vault.store("<PERSON_1>", "Alice Smith");
+
+		String big = "A".repeat(ProxyController.ACCUMULATED_CONTENT_MAX_BYTES) + "<PER";
+		Stream<String> lines = Stream.of(
+				"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"" + big + "\"}}]}",
+				"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":20}}",
+				"data: [DONE]"
+		);
+		ProviderResponse providerResp = mockProviderResponse(lines);
+		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+				.thenReturn(CompletableFuture.completedFuture(providerResp));
+
+		String requestJson = "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"Hi\"}]}";
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute(IngressSecurityFilter.PII_VAULT_ATTRIBUTE, vault);
+
+		ResponseEntity<StreamingResponseBody> response =
+				cachingController.proxyChatCompletions(requestJson, request);
+		ByteArrayOutputStream out = new ByteArrayOutputStream();
+		response.getBody().writeTo(out);
+
+		assertThat(response.getStatusCode().value()).isEqualTo(200);
+		assertThat(out.toString(StandardCharsets.UTF_8)).contains("AAAA");
+		verify(cacheService, never()).storeResponse(
+				any(), any(), any(), any(), any(), anyInt(), anyInt());
+	}
+
+	@Test
+	@DisplayName("FS-B12: small leftover appends to the stored completion")
+	void leftoverAppendStoresCompletion() throws Exception {
+		CacheRelayCacheService cacheService = mock(CacheRelayCacheService.class);
+		ProxyController cachingController = cachingController(cacheService);
+		EphemeralPiiVault vault = new EphemeralPiiVault();
+		vault.store("<PERSON_1>", "Alice Smith");
+
+		Stream<String> lines = Stream.of(
+				"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello <PER\"}}]}",
+				"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":20}}",
+				"data: [DONE]"
+		);
+		ProviderResponse providerResp = mockProviderResponse(lines);
+		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+				.thenReturn(CompletableFuture.completedFuture(providerResp));
+
+		String requestJson = "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"Hi\"}]}";
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute(IngressSecurityFilter.PII_VAULT_ATTRIBUTE, vault);
+
+		ResponseEntity<StreamingResponseBody> response =
+				cachingController.proxyChatCompletions(requestJson, request);
+		ByteArrayOutputStream out = new ByteArrayOutputStream();
+		response.getBody().writeTo(out);
+
+		assertThat(response.getStatusCode().value()).isEqualTo(200);
+		ArgumentCaptor<String> completionCaptor = ArgumentCaptor.forClass(String.class);
+		verify(cacheService).storeResponse(
+				any(), any(), any(), any(), completionCaptor.capture(), anyInt(), anyInt());
+		assertThat(completionCaptor.getValue()).contains("Hello ");
+	}
+
+	private ProxyController cachingController(CacheRelayCacheService cacheService) {
+		ProtocolAdapterResolver adapters = new ProtocolAdapterResolver(
+				new OpenAiPassthroughAdapter(objectMapper),
+				new AnthropicAdapter(objectMapper),
+				new GeminiAdapter(objectMapper),
+				new DeepSeekAdapter(objectMapper),
+				new OllamaAdapter(objectMapper)
+		);
+		return new ProxyController(
+				orchestrator,
+				gatewayProperties,
+				objectMapper,
+				adapters,
+				costCalculator,
+				eventPublisher,
+				flushStrategy,
+				lineGuardFactory,
+				cacheService,
+				null,
+				auditLedger,
+				systemPromptProtectionEngine,
+				guardrailProperties,
+				zdrEnforcer
+		);
 	}
 
 	@Test
@@ -237,7 +335,7 @@ class ProxyControllerGuardrailStreamingTest {
 				"data: [DONE]"
 		);
 		ProviderResponse providerResp = mockProviderResponse(lines);
-		when(orchestrator.execute(any(), anyString()))
+		when(orchestrator.execute(any(), anyString(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(providerResp));
 
 		// Short system prompt (< 5 words) -> empty hashes branch
@@ -263,7 +361,7 @@ class ProxyControllerGuardrailStreamingTest {
 				"data: [DONE]"
 		);
 		ProviderResponse providerResp = mockProviderResponse(lines);
-		when(orchestrator.execute(any(), anyString()))
+		when(orchestrator.execute(any(), anyString(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(providerResp));
 
 		String requestJson = "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"Hi\"}]}";
@@ -307,7 +405,7 @@ class ProxyControllerGuardrailStreamingTest {
 				"data: [DONE]"
 		);
 		ProviderResponse providerResp = mockProviderResponse(lines);
-		when(orchestrator.execute(any(), anyString()))
+		when(orchestrator.execute(any(), anyString(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(providerResp));
 
 		// Non-textual message content (e.g. array node)
@@ -334,7 +432,7 @@ class ProxyControllerGuardrailStreamingTest {
 				"data: [DONE]"
 		);
 		ProviderResponse providerResp = mockProviderResponse(lines);
-		when(orchestrator.execute(any(), anyString()))
+		when(orchestrator.execute(any(), anyString(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(providerResp));
 
 		// Body where parseChatRequest returns null (e.g. messages not an array)
@@ -357,7 +455,7 @@ class ProxyControllerGuardrailStreamingTest {
 				"data: [DONE]"
 		);
 		ProviderResponse providerResp = mockProviderResponse(lines);
-		when(orchestrator.execute(any(), anyString()))
+		when(orchestrator.execute(any(), anyString(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(providerResp));
 
 		// Messages with system role but null content, plus messages null check

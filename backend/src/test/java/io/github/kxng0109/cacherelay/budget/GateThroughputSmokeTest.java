@@ -99,7 +99,7 @@ class GateThroughputSmokeTest extends SharedContainersBase {
 
 	private static void decide(BudgetEnforcer enforcer, int salt) {
 		SHA256Hash hash = SHA256Hash.fromRawKey("gw-smoke-" + salt + "-" + UUID.randomUUID());
-		BudgetDecision decision = enforcer.checkBudget(hash, null, ProviderType.OPENAI, "fast", 10, null);
+		BudgetDecision decision = enforcer.checkBudget(hash, null, ProviderType.OPENAI, "fast", 10, null, null);
 		assertThat(decision).isInstanceOf(BudgetDecision.Allowed.class);
 	}
 }

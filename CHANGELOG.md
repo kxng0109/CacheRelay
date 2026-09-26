@@ -98,6 +98,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **P1 backend hardening (FS-B09..FS-B12, fail-closed):** embeddings resolve
+  alias-only (unknown models 404, no provider steering) and honor key
+  `allowedProviders` (403) on chat and embeddings; SSO logins require a
+  per-registration teams mapping and a configured IdP issuer (`SSO_*_ISSUER_URI`,
+  Google defaults to `https://accounts.google.com`) with `aud`-stamped,
+  30s-skew JWTs; admin console hides unconfigured (stealth 404), audits reads,
+  and requires explicit `disabled` flags; deleted keys never re-seed; residency
+  fails closed for unregistered providers (`gateway.provider-jurisdictions`
+  seeds the router); ingress guardrails cover embeddings and scanner failures
+  deny with metrics; MCP egress screens resource text + structured content;
+  webhook challenges capped at 2048 chars; proxy/MCP error bodies serialize via
+  `ObjectMapper`. Full `verify` green (2,980 tests, JaCoCo 97.61% line /
+  95.75% branch, pom 95% gate holds).
 - **Console: probes honesty + empty-state + models/login consistency:** header
   chip and signal rail read `probes:up/down` (actuator reachability alone never
   proved gateway liveness); unreachable probes render muted with retry while

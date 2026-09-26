@@ -73,7 +73,7 @@ public class OktaWebhookController {
 		if (secret.isEmpty()) {
 			throw new ResponseStatusException(HttpStatus.NOT_FOUND, "receiver unconfigured");
 		}
-		if (challenge == null || challenge.isBlank()) {
+		if (challenge == null || challenge.isBlank() || challenge.length() > 2048) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "missing challenge");
 		}
 		return ResponseEntity.ok(Map.of("verification", challenge));

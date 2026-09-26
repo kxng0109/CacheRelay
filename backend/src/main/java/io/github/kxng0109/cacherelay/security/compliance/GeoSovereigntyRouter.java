@@ -1,7 +1,9 @@
 package io.github.kxng0109.cacherelay.security.compliance;
 
+import io.github.kxng0109.cacherelay.contracts.GatewayProperties;
 import io.github.kxng0109.cacherelay.contracts.ProviderConfig;
 import io.github.kxng0109.cacherelay.contracts.ProviderRef;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
@@ -17,13 +19,40 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>Enforces national and international data boundary regulations (such as GDPR Art. 44-49,
  * HIPAA Domestic Boundary, and NDPA 2023 Sec. 41-43) by validating upstream provider jurisdictions before invoking
  * circuit breakers or initiating network requests.</p>
+ *
+ * <p>Jurisdiction sources in precedence order: the explicit registry (seeded from
+ * {@code gateway.provider-jurisdictions} at startup, overridable at runtime),
+ * then best-effort URI/name heuristics, then the {@code GLOBAL} fallback. The
+ * fallback means "unknown": strict policies never treat it as compliant, so an
+ * unregistered provider cannot silently serve a regulated tenant.</p>
  */
 @Component
+@Slf4j
 public class GeoSovereigntyRouter {
 
 	private final Map<String, Jurisdiction> providerJurisdictions = new ConcurrentHashMap<>();
 
-	public GeoSovereigntyRouter() {
+	/**
+	 * Creates the router, seeding the registry from gateway configuration.
+	 * Invalid jurisdiction codes are skipped with a warning, never fatal.
+	 *
+	 * @param properties gateway configuration carrying the jurisdiction seed map
+	 */
+	public GeoSovereigntyRouter(GatewayProperties properties) {
+		if (properties != null && properties.getProviderJurisdictions() != null) {
+			for (Map.Entry<String, String> seed : properties.getProviderJurisdictions().entrySet()) {
+				if (seed.getKey() == null || seed.getValue() == null) {
+					continue;
+				}
+				try {
+					registerJurisdiction(seed.getKey(),
+							Jurisdiction.valueOf(seed.getValue().trim().toUpperCase(Locale.ROOT)));
+				} catch (IllegalArgumentException unknown) {
+					log.warn("Ignoring unknown jurisdiction '{}' for provider '{}'",
+							seed.getValue(), seed.getKey());
+				}
+			}
+		}
 	}
 
 	/**
@@ -63,13 +92,27 @@ public class GeoSovereigntyRouter {
 			if (matchesJurisdiction(host, name, "ch")) {
 				return Jurisdiction.CH;
 			}
-			if (name.contains("-us") || name.contains("_us") || name.contains("us-") || host.contains("openai.com")
-					|| host.contains("anthropic.com")) {
+			if (name.contains("-us") || name.contains("_us") || name.contains("us-")
+					|| hostEqualsOrSubdomain(host, "openai.com")
+					|| hostEqualsOrSubdomain(host, "anthropic.com")) {
 				return Jurisdiction.US;
 			}
 		}
 
 		return Jurisdiction.GLOBAL;
+	}
+
+	/**
+	 * Matches a host against a base domain with registrable-domain discipline:
+	 * exact equality or a dot-boundary suffix. Bare substring checks would accept
+	 * look-alikes such as {@code openai.com.evil.example}.
+	 *
+	 * @param host   lower-cased request host, never {@code null}
+	 * @param domain lower-cased base domain, never {@code null}
+	 * @return {@code true} only on exact or dot-suffix match
+	 */
+	static boolean hostEqualsOrSubdomain(String host, String domain) {
+		return host.equals(domain) || host.endsWith("." + domain);
 	}
 
 	private static boolean matchesJurisdiction(String host, String name, String code) {
@@ -110,7 +153,7 @@ public class GeoSovereigntyRouter {
 			Jurisdiction target = resolveJurisdiction(ref.providerName(), config);
 
 			boolean allowed = switch (policy) {
-				case STRICT_SOVEREIGN -> target == originJurisdiction || target == Jurisdiction.GLOBAL;
+				case STRICT_SOVEREIGN -> target == originJurisdiction;
 				case SOVEREIGN_CASCADE -> Jurisdiction.isAdequate(originJurisdiction, target);
 				case PERMISSIVE_FAILOVER_WITH_AUDIT -> true;
 			};

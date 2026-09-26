@@ -18,6 +18,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -54,6 +55,7 @@ public class MicroBatchLedgerWriter implements SmartLifecycle {
 	private final AtomicBoolean running = new AtomicBoolean(false);
 	private @Nullable ScheduledExecutorService scheduler;
 	private volatile @Nullable LedgerStagingRepository stagingRepository;
+	private volatile @Nullable ThreadPoolTaskExecutor ledgerExecutor;
 
 	/**
 	 * Wires the shared staging table for cross-instance replay of failed batches.
@@ -65,6 +67,23 @@ public class MicroBatchLedgerWriter implements SmartLifecycle {
 	@Autowired
 	public void setStagingRepository(@Nullable LedgerStagingRepository stagingRepository) {
 		this.stagingRepository = stagingRepository;
+	}
+
+	/**
+	 * Wires the producer executor for shutdown ordering. Optional on purpose: without it, stop
+	 * cannot quiesce producers first (unit-test contexts), and the final flush races late offers.
+	 *
+	 * <p>Stop drains the underlying pool directly ({@code shutdown} plus {@code awaitTermination}),
+	 * never Spring's flag-dependent {@code shutdown()}: under the default
+	 * {@code waitForTasksToCompleteOnShutdown=false} that call drops queued tasks via
+	 * {@code shutdownNow()}. (Production {@code LedgerConfig} sets the flag regardless; this path
+	 * does not rely on it.) Pass an initialized executor.</p>
+	 *
+	 * @param ledgerExecutor the {@code ledgerExecutor} feeding the ring via the usage listener
+	 */
+	@Autowired
+	public void setLedgerExecutor(@Nullable ThreadPoolTaskExecutor ledgerExecutor) {
+		this.ledgerExecutor = ledgerExecutor;
 	}
 
 	/**
@@ -109,11 +128,12 @@ public class MicroBatchLedgerWriter implements SmartLifecycle {
 	@Override
 	public void start() {
 		if (running.compareAndSet(false, true)) {
+			queue.setAccepting(true);
 			scheduler = Executors.newSingleThreadScheduledExecutor(Thread.ofVirtual().name("ledger-microbatch-", 0)
 			                                                             .factory());
-			scheduler.scheduleWithFixedDelay(this::flushCycle, flushIntervalMs, flushIntervalMs, TimeUnit.MILLISECONDS);
+			scheduler.scheduleWithFixedDelay(this::safeFlushCycle, flushIntervalMs, flushIntervalMs, TimeUnit.MILLISECONDS);
 			scheduler.scheduleWithFixedDelay(
-					this::replayCycle, replayInitialDelayMs, replayIntervalMs, TimeUnit.MILLISECONDS);
+					this::safeReplayCycle, replayInitialDelayMs, replayIntervalMs, TimeUnit.MILLISECONDS);
 			log.info(
 					"MicroBatchLedgerWriter started with maxBatchSize={}, interval={}ms",
 					maxBatchSize,
@@ -125,6 +145,25 @@ public class MicroBatchLedgerWriter implements SmartLifecycle {
 	@Override
 	public void stop() {
 		if (running.compareAndSet(true, false) && scheduler != null) {
+			// Quiesce producers first: offers accepted after this point would strand in the
+			// ring with no scheduler left to drain them. Drains the underlying pool directly:
+			// Spring's shutdown() drops queued tasks unless waitForTasksToCompleteOnShutdown
+			// is set, which cannot be assumed here.
+			ThreadPoolTaskExecutor producers = this.ledgerExecutor;
+			if (producers != null) {
+				try {
+					producers.getThreadPoolExecutor().shutdown();
+					if (!producers.getThreadPoolExecutor()
+							.awaitTermination(shutdownAwaitSeconds, TimeUnit.SECONDS)) {
+						log.warn("Ledger producer executor did not quiesce; late offers spill to the journal");
+					}
+				} catch (IllegalStateException unstarted) {
+					log.warn("Ledger producer executor unusable at shutdown; late offers spill to the journal");
+				} catch (InterruptedException ex) {
+					Thread.currentThread().interrupt();
+				}
+			}
+			queue.setAccepting(false);
 			scheduler.shutdown();
 			try {
 				if (!scheduler.awaitTermination(shutdownAwaitSeconds, TimeUnit.SECONDS)) {
@@ -136,8 +175,42 @@ public class MicroBatchLedgerWriter implements SmartLifecycle {
 			}
 			// Final drain
 			flushCycle();
+			queue.drainSpillover();
 			log.info("MicroBatchLedgerWriter stopped cleanly");
 		}
+	}
+
+	/**
+	 * Scheduler guard: an uncaught flush failure must never cancel the periodic loop (a single
+	 * poisoned flush would otherwise silence the ledger forever).
+	 */
+	private void safeFlushCycle() {
+		try {
+			flushCycle();
+		} catch (Throwable ex) {
+			recordFlushFailure();
+			log.warn("Ledger flush cycle failed; scheduler continues: {}", ex.toString());
+		}
+	}
+
+	/**
+	 * Scheduler guard for the replay pass, mirroring {@link #safeFlushCycle}.
+	 */
+	private void safeReplayCycle() {
+		try {
+			replayCycle();
+		} catch (Throwable ex) {
+			recordFlushFailure();
+			log.warn("Ledger replay cycle failed; scheduler continues: {}", ex.toString());
+		}
+	}
+
+	private void recordFlushFailure() {
+		Counter.builder("cacherelay.ledger.flush.failures")
+		       .description("Uncaught ledger flush/replay failures absorbed by the scheduler guard")
+		       .baseUnit("errors")
+		       .register(meterRegistry)
+		       .increment();
 	}
 
 	@Override

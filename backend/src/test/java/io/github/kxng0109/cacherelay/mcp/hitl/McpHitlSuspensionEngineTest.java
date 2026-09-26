@@ -97,6 +97,187 @@ class McpHitlSuspensionEngineTest {
 	}
 
 	@Test
+	@DisplayName("Approval for one tool never clears a different tool")
+	void approvalBoundToTool() {
+		String argsJson = "{\"sql\":\"SELECT 1\"}";
+		String argsSha = McpAeadResumptionTokenService.computeArgsSha256(argsJson);
+		Instant now = Instant.now();
+
+		McpResumptionClaims claims = new McpResumptionClaims(
+				"tok-tool-a",
+				"tenant-corp",
+				"postgres__tool_a",
+				argsSha,
+				now,
+				now.plusSeconds(300)
+		);
+		String token = tokenService.mintToken(claims);
+
+		McpServerConfig toolBServer = new McpServerConfig(
+				"postgres",
+				McpTransportType.STREAMABLE_HTTP,
+				URI.create("http://localhost:8081"),
+				null,
+				null,
+				null,
+				Set.of(),
+				Set.of(),
+				Set.of("tool_b"),
+				100,
+				true
+		);
+		ObjectNode params = objectMapper.createObjectNode();
+		params.put("name", "postgres__tool_b");
+		params.put("requestState", token);
+		params.putObject("arguments").put("sql", "SELECT 1");
+
+		McpJsonRpcRequest request = new McpJsonRpcRequest(
+				"2.0",
+				objectMapper.getNodeFactory().numberNode(9),
+				"tools/call",
+				params
+		);
+
+		Optional<McpJsonRpcResponse> result = suspensionEngine.evaluateOrSuspend(
+				request,
+				toolBServer,
+				"tool_b",
+				"postgres__tool_b",
+				apiKey
+		);
+
+		assertThat(result).as("cross-tool token must not clear").isPresent();
+	}
+
+	@Test
+	@DisplayName("Resumption with a rejected token is terminally denied, never re-suspended")
+	void rejectedTokenTerminallyDenied() {
+		String argsJson = "{\"sql\":\"DROP TABLE users\"}";
+		String argsSha = McpAeadResumptionTokenService.computeArgsSha256(argsJson);
+		Instant now = Instant.now();
+
+		McpResumptionClaims claims = new McpResumptionClaims(
+				"tok-rejected-1",
+				"tenant-corp",
+				"postgres__execute_sql",
+				argsSha,
+				now,
+				now.plusSeconds(300)
+		);
+		String token = tokenService.mintToken(claims);
+		when(redisTemplate.hasKey("mcp:hitl:rejected:tok-rejected-1")).thenReturn(true);
+
+		ObjectNode params = objectMapper.createObjectNode();
+		params.put("name", "postgres__execute_sql");
+		params.put("requestState", token);
+		params.putObject("arguments").put("sql", "DROP TABLE users");
+
+		McpJsonRpcRequest request = new McpJsonRpcRequest(
+				"2.0",
+				objectMapper.getNodeFactory().numberNode(11),
+				"tools/call",
+				params
+		);
+
+		Optional<McpJsonRpcResponse> result = suspensionEngine.evaluateOrSuspend(
+				request,
+				hitlServer,
+				"execute_sql",
+				"postgres__execute_sql",
+				apiKey
+		);
+
+		assertThat(result).as("rejected token terminally denied").isPresent();
+		assertThat(result.get().isSuccess()).isFalse();
+	}
+
+	@Test
+	@DisplayName("Re-suspension refreshes createdAt instead of preserving the original issue time")
+	void resuspensionRefreshesCreatedAt() throws Exception {
+		String argsJson = "{\"sql\":\"DROP TABLE users\"}";
+		String argsSha = McpAeadResumptionTokenService.computeArgsSha256(argsJson);
+		Instant issuedAnHourAgo = Instant.now().minusSeconds(3600);
+
+		McpResumptionClaims claims = new McpResumptionClaims(
+				"tok-stale-1",
+				"tenant-corp",
+				"postgres__execute_sql",
+				argsSha,
+				issuedAnHourAgo,
+				Instant.now().plusSeconds(300)
+		);
+		String token = tokenService.mintToken(claims);
+		when(redisTemplate.execute(any(), anyList(), any(Object[].class))).thenReturn(0L);
+
+		ObjectNode params = objectMapper.createObjectNode();
+		params.put("name", "postgres__execute_sql");
+		params.put("requestState", token);
+		params.putObject("arguments").put("sql", "DROP TABLE users");
+
+		McpJsonRpcRequest request = new McpJsonRpcRequest(
+				"2.0",
+				objectMapper.getNodeFactory().numberNode(12),
+				"tools/call",
+				params
+		);
+
+		Optional<McpJsonRpcResponse> result = suspensionEngine.evaluateOrSuspend(
+				request,
+				hitlServer,
+				"execute_sql",
+				"postgres__execute_sql",
+				apiKey
+		);
+
+		assertThat(result).as("unapproved token re-suspends").isPresent();
+		ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
+		ArgumentCaptor<String> valueCaptor = ArgumentCaptor.forClass(String.class);
+		verify(valueOperations, times(1)).set(
+				keyCaptor.capture(), valueCaptor.capture(), anyLong(), any());
+		assertThat(keyCaptor.getValue()).isEqualTo("mcp:hitl:pending:tok-stale-1");
+		Instant storedCreatedAt = Instant.parse(
+				((ObjectNode) objectMapper.readTree(valueCaptor.getValue())).get("createdAt").asString());
+		assertThat(storedCreatedAt)
+				.as("re-suspension refreshes createdAt")
+				.isAfter(issuedAnHourAgo.plusSeconds(3500));
+	}
+
+	@Test
+	@DisplayName("pending metadata stores sealed args, never plaintext")
+	void pendingArgsSealed() throws Exception {
+		ObjectNode params = objectMapper.createObjectNode();
+		params.put("name", "postgres__execute_sql");
+		params.putObject("arguments").put("sql", "DROP TABLE users");
+
+		McpJsonRpcRequest request = new McpJsonRpcRequest(
+				"2.0",
+				objectMapper.getNodeFactory().numberNode(21),
+				"tools/call",
+				params
+		);
+
+		Optional<McpJsonRpcResponse> suspendedOpt = suspensionEngine.evaluateOrSuspend(
+				request,
+				hitlServer,
+				"execute_sql",
+				"postgres__execute_sql",
+				apiKey
+		);
+
+		assertThat(suspendedOpt).isPresent();
+		ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
+		ArgumentCaptor<String> valueCaptor = ArgumentCaptor.forClass(String.class);
+		verify(valueOperations, times(1)).set(
+				keyCaptor.capture(), valueCaptor.capture(), anyLong(), any());
+		assertThat(keyCaptor.getValue()).startsWith("mcp:hitl:pending:");
+		String storedArgs = ((ObjectNode) objectMapper.readTree(valueCaptor.getValue())).get("args").asString();
+		assertThat(storedArgs)
+				.as("pending args sealed at rest")
+				.startsWith("v1.aead.args.")
+				.doesNotContain("DROP TABLE");
+	}
+
+	@Test
 	@DisplayName("Suspends privileged tool execution when no resumption token is present")
 	void suspendsExecutionWithoutToken() {
 		ObjectNode params = objectMapper.createObjectNode();
@@ -228,18 +409,21 @@ class McpHitlSuspensionEngineTest {
 		// client holds and no stale pending entry is orphaned in Redis.
 		String returnedToken = resultNode.get("requestState").asString();
 		Optional<McpResumptionClaims> reClaims = tokenService.verifyAndExtract(
-				returnedToken, argsSha, "tenant-corp");
+				returnedToken, argsSha, "tenant-corp", "postgres__execute_sql");
 		assertThat(reClaims).isPresent();
 		assertThat(reClaims.get().tokenId()).isEqualTo("tok-pending-1");
 
-		// Exactly one pending write, under the reused id, preserving the original wait time.
+		// Exactly one pending write, under the reused id, with a refreshed createdAt
+		// tracking the latest activity.
 		ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
 		ArgumentCaptor<String> valueCaptor = ArgumentCaptor.forClass(String.class);
 		verify(valueOperations, times(1)).set(
 				keyCaptor.capture(), valueCaptor.capture(), anyLong(), any());
 		assertThat(keyCaptor.getValue()).isEqualTo("mcp:hitl:pending:tok-pending-1");
 		ObjectNode pendingMeta = (ObjectNode) objectMapper.readTree(valueCaptor.getValue());
-		assertThat(pendingMeta.get("createdAt").asString()).isEqualTo(now.toString());
+		assertThat(Instant.parse(pendingMeta.get("createdAt").asString()))
+				.as("re-suspension refreshes createdAt")
+				.isAfterOrEqualTo(now);
 	}
 
 	@Test

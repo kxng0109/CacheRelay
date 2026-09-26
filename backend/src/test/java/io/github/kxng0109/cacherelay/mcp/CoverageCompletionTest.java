@@ -426,7 +426,7 @@ class CoverageCompletionTest {
 		when(router.resolveToolRoute("srv__ok"))
 				.thenReturn(Optional.of(new McpResolvedRoute(serverConfig("srv"), "ok", "srv__ok")));
 		when(router.resolveToolRoute("gone__missing")).thenReturn(Optional.empty());
-		when(circuitBreakerManager.tryAcquire("srv")).thenReturn(true);
+		when(circuitBreakerManager.isAvailable("srv")).thenReturn(true);
 
 		ResponseEntity<String> response = controller.handleStreamableHttp(
 				"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{\"tools\":{}}}}}",

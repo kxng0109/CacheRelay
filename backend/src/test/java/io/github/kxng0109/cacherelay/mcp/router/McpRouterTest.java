@@ -14,6 +14,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DisplayName("MCP Router Unit Tests")
 class McpRouterTest {
@@ -81,6 +82,92 @@ class McpRouterTest {
 	}
 
 	@Test
+	@DisplayName("ambiguous un-namespaced tool resolves empty instead of first-match")
+	void ambiguousToolResolvesEmpty() {
+		Optional<McpResolvedRoute> route = router.resolveToolRoute("shared_tool");
+
+		assertThat(route).as("ambiguous tool must not route").isEmpty();
+	}
+
+	@Test
+	@DisplayName("server-level denied tools are not invocable by name")
+	void serverDeniedToolsNotInvocable() {
+		McpGatewayProperties props = new McpGatewayProperties();
+		McpServerConfig denying = new McpServerConfig(
+				"postgres",
+				McpTransportType.STREAMABLE_HTTP,
+				URI.create("http://localhost:8081"),
+				null,
+				null,
+				null,
+				Set.of(),
+				Set.of("run_query"),
+				Set.of(),
+				100,
+				true
+		);
+		props.setServers(Map.of("postgres", denying));
+		McpRouter denyingRouter = new McpRouter(props);
+
+		assertThat(denyingRouter.resolveToolRoute("postgres__run_query"))
+				.as("explicit denied tool").isEmpty();
+		assertThat(denyingRouter.resolveToolRoute("run_query"))
+				.as("un-namespaced denied tool").isEmpty();
+	}
+
+	@Test
+	@DisplayName("server-level deny wins over glob allows")
+	void serverDenyWinsOverGlobAllow() {
+		McpGatewayProperties props = new McpGatewayProperties();
+		McpServerConfig guarded = new McpServerConfig(
+				"postgres",
+				McpTransportType.STREAMABLE_HTTP,
+				URI.create("http://localhost:8081"),
+				null,
+				null,
+				null,
+				Set.of("run_*"),
+				Set.of("run_query"),
+				Set.of(),
+				100,
+				true
+		);
+		props.setServers(Map.of("postgres", guarded));
+		McpRouter guardedRouter = new McpRouter(props);
+
+		assertThat(guardedRouter.resolveToolRoute("postgres__run_query"))
+				.as("deny beats glob allow").isEmpty();
+		assertThat(guardedRouter.resolveToolRoute("postgres__run_stats"))
+				.as("glob allow admits").isPresent();
+	}
+
+	@Test
+	@DisplayName("server names containing the namespace delimiter are rejected at config load")
+	void doubleUnderscoreServerNameRejected() {
+		McpGatewayProperties props = new McpGatewayProperties();
+		McpServerConfig badName = new McpServerConfig(
+				"bad__server",
+				McpTransportType.STREAMABLE_HTTP,
+				URI.create("http://localhost:8089"),
+				null,
+				null,
+				null,
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				100,
+				true
+		);
+
+		assertThatThrownBy(() -> props.setServers(Map.of("bad__server", badName)))
+				.as("delimiter in map key")
+				.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> props.setServers(Map.of("alias", badName)))
+				.as("delimiter in config name")
+				.isInstanceOf(IllegalArgumentException.class);
+	}
+
+	@Test
 	@DisplayName("formatNamespacedName combines server and tool identifiers cleanly")
 	void formatNamespacedNameScenarios() {
 		assertThat(McpRouter.formatNamespacedName("postgres", "run_query")).isEqualTo("postgres__run_query");
@@ -123,10 +210,10 @@ class McpRouterTest {
 	}
 
 	@Test
-	@DisplayName("resolveToolRoute returns the first resolved route as fail-safe on naming collisions")
+	@DisplayName("resolveToolRoute refuses to guess on naming collisions")
 	void resolveUnnamespacedCollision() {
-		// "shared_tool" is declared in both postgres and github
+		// "shared_tool" is declared in both postgres and github: fail closed, not first-match.
 		Optional<McpResolvedRoute> route = router.resolveToolRoute("shared_tool");
-		assertThat(route).isPresent();
+		assertThat(route).isEmpty();
 	}
 }

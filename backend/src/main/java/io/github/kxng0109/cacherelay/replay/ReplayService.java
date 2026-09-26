@@ -20,8 +20,8 @@ import org.springframework.stereotype.Service;
 /**
  * Exact replay for idempotent retries, distinct from the semantic cache (similar-prompt reuse).
  *
- * <p>Two tiers: Redis hot (24h TTL, this instance is evictable — a hot miss re-proxies and the budget dedupe
- * still prevents double-charge) and PostgreSQL durable (forensics and re-warm, never on the latency path).
+ * <p>Two tiers: Redis hot (24h TTL, evictable — a hot miss re-proxies and is charged as new spend, the
+ * safe over-count direction) and PostgreSQL durable (forensics and re-warm, never on the latency path).
  * A first request claims the fill lock for the whole upstream flight; concurrent duplicates see
  * {@link InFlight} (HTTP 409); the same key with a different body is {@link FingerprintMismatch} (HTTP 422).
  * Stored payloads above {@link #MAX_BODY_BYTES} are skipped, never truncated.</p>
@@ -86,18 +86,23 @@ public class ReplayService {
 	 *
 	 * @param idempotencyKey validated client key (bounded length/charset by the caller)
 	 * @param bodyHashHex    sha256 of the current request body
+	 * @param tenant         owning tenant for key namespacing (unscoped callers pass {@code null},
+	 *                       which maps to the reserved {@code unknown} bucket, never a real tenant)
+	 * @param keyHashHex     calling key digest hex for key namespacing, possibly {@code null}
 	 * @return hit, miss, mismatch, or in-flight
 	 */
-	public Lookup lookup(String idempotencyKey, String bodyHashHex) {
+	public Lookup lookup(String idempotencyKey, String bodyHashHex,
+	                     @Nullable String tenant, @Nullable String keyHashHex) {
+		String namespacedKey = scopedKey(PREFIX, tenant, keyHashHex, idempotencyKey);
 		Map<Object, Object> fields;
 		try {
-			fields = cacheTemplate.opsForHash().entries(PREFIX + idempotencyKey);
+			fields = cacheTemplate.opsForHash().entries(namespacedKey);
 		} catch (RuntimeException ex) {
 			// Cache tier down: degrade to re-proxy (budget dedupe still prevents double-charge).
 			return new Miss();
 		}
 		if (fields == null || fields.isEmpty()) {
-			Boolean filling = cacheTemplate.hasKey(FILL_PREFIX + idempotencyKey);
+			Boolean filling = cacheTemplate.hasKey(fillKey(tenant, keyHashHex, idempotencyKey));
 			return Boolean.TRUE.equals(filling) ? new InFlight() : new Miss();
 		}
 		if (!bodyHashHex.equals(stringField(fields, "body_hash"))) {
@@ -111,18 +116,65 @@ public class ReplayService {
 		count("hit");
 		return new Hit(payload.getBytes(StandardCharsets.UTF_8),
 				"1".equals(stringField(fields, "sse")),
-				Instant.now().plus(HOT_TTL));
+				resolveExpiresAt(namespacedKey));
+	}
+
+	/**
+	 * Composes the tenant- and key-scoped Redis key. Segments that are missing map to the
+	 * reserved {@code unknown} bucket, which can never collide with a validated tenant.
+	 *
+	 * @param prefix       key prefix (hot tier or fill locks)
+	 * @param tenant       owning tenant, possibly {@code null}
+	 * @param keyHashHex   calling key digest hex, possibly {@code null}
+	 * @param idempotencyKey validated client key
+	 * @return namespaced key
+	 */
+	private static String scopedKey(String prefix, @Nullable String tenant, @Nullable String keyHashHex,
+	                                String idempotencyKey) {
+		return prefix + scope(tenant, keyHashHex, idempotencyKey);
+	}
+
+	private static String scope(@Nullable String tenant, @Nullable String keyHashHex, String idempotencyKey) {
+		String tenantSegment = tenant == null || tenant.isBlank() ? "unknown" : tenant;
+		String hashSegment = keyHashHex == null || keyHashHex.isBlank() ? "unknown" : keyHashHex;
+		return tenantSegment + ":" + hashSegment + ":" + idempotencyKey;
+	}
+
+	private static String fillKey(@Nullable String tenant, @Nullable String keyHashHex, String idempotencyKey) {
+		return scopedKey(FILL_PREFIX, tenant, keyHashHex, idempotencyKey);
+	}
+
+	/**
+	 * Resolves the hit expiry from the live hot-tier TTL, falling back to the configured horizon only when
+	 * Redis reports no usable TTL (eviction races, persistence without expiry).
+	 *
+	 * @param namespacedKey full hot-tier key
+	 * @return instant the hot-tier entry expires
+	 */
+	private Instant resolveExpiresAt(String namespacedKey) {
+		try {
+			Long ttlSeconds = cacheTemplate.getExpire(namespacedKey);
+			if (ttlSeconds != null && ttlSeconds > 0) {
+				return Instant.now().plusSeconds(ttlSeconds);
+			}
+		} catch (RuntimeException ex) {
+			log.debug("Replay TTL probe failed; falling back to the configured horizon");
+		}
+		return Instant.now().plus(HOT_TTL);
 	}
 
 	/**
 	 * Claims the fill for one idempotency key before starting upstream.
 	 *
+	 * @param idempotencyKey validated client key
+	 * @param tenant         owning tenant for lock namespacing, possibly {@code null}
+	 * @param keyHashHex     calling key digest hex for lock namespacing, possibly {@code null}
 	 * @return {@code true} when this caller owns the flight, {@code false} on a concurrent duplicate
 	 */
-	public boolean beginFill(String idempotencyKey) {
+	public boolean beginFill(String idempotencyKey, @Nullable String tenant, @Nullable String keyHashHex) {
 		try {
 			Boolean won = cacheTemplate.opsForValue()
-			                           .setIfAbsent(FILL_PREFIX + idempotencyKey, "1", FILL_TTL);
+			                           .setIfAbsent(fillKey(tenant, keyHashHex, idempotencyKey), "1", FILL_TTL);
 			return Boolean.TRUE.equals(won);
 		} catch (RuntimeException ex) {
 			// Cache tier down: allow the flight (no replay coordination, still correct).
@@ -132,10 +184,14 @@ public class ReplayService {
 
 	/**
 	 * Releases a fill claim without storing (abort, upstream failure, over-cap payload).
+	 *
+	 * @param idempotencyKey validated client key
+	 * @param tenant         owning tenant for lock namespacing, possibly {@code null}
+	 * @param keyHashHex     calling key digest hex for lock namespacing, possibly {@code null}
 	 */
-	public void releaseFill(String idempotencyKey) {
+	public void releaseFill(String idempotencyKey, @Nullable String tenant, @Nullable String keyHashHex) {
 		try {
-			cacheTemplate.delete(FILL_PREFIX + idempotencyKey);
+			cacheTemplate.delete(fillKey(tenant, keyHashHex, idempotencyKey));
 		} catch (RuntimeException ex) {
 			log.debug("Replay fill release failed for key; TTL bounds the stale claim");
 		}
@@ -149,35 +205,49 @@ public class ReplayService {
 	 * @param bodyHashHex    sha256 of the request body (fingerprint for future retries)
 	 * @param body           exact bytes to re-deliver
 	 * @param sseFramed      whether the payload needs SSE re-framing on serve
-	 * @return {@code true} when stored (or cache tier down but PG stored), {@code false} when skipped
+	 * @param tenant         owning tenant for entry namespacing, possibly {@code null}
+	 * @param keyHashHex     calling key digest hex for entry namespacing, possibly {@code null}
+	 * @return {@code true} when at least one tier persisted, {@code false} when neither did (a retry will
+	 *         re-proxy and be charged as new spend). Never throws: persistence failure must not fail the
+	 *         already-completed response.
 	 */
-	public boolean store(String idempotencyKey, String bodyHashHex, byte[] body, boolean sseFramed) {
+	public boolean store(String idempotencyKey, String bodyHashHex, byte[] body, boolean sseFramed,
+	                     @Nullable String tenant, @Nullable String keyHashHex) {
 		if (body.length > MAX_BODY_BYTES) {
 			count("oversized");
-			releaseFill(idempotencyKey);
+			releaseFill(idempotencyKey, tenant, keyHashHex);
 			return false;
 		}
+		String namespacedKey = scopedKey(PREFIX, tenant, keyHashHex, idempotencyKey);
 		Instant expiresAt = Instant.now().plus(HOT_TTL).truncatedTo(ChronoUnit.MILLIS);
+		boolean hotOk = false;
 		try {
-			cacheTemplate.opsForHash().putAll(PREFIX + idempotencyKey, Map.of(
+			cacheTemplate.opsForHash().putAll(namespacedKey, Map.of(
 					"body", new String(body, StandardCharsets.UTF_8),
 					"body_hash", bodyHashHex,
 					"sse", sseFramed ? "1" : "0"));
-			cacheTemplate.expire(PREFIX + idempotencyKey, HOT_TTL);
+			cacheTemplate.expire(namespacedKey, HOT_TTL);
+			hotOk = true;
 		} catch (RuntimeException ex) {
 			log.debug("Replay hot-tier store failed; falling back to durable tier only");
 		}
+		boolean durableOk = false;
 		try {
 			UUID id = UUID.nameUUIDFromBytes(
-					("replay:" + idempotencyKey).getBytes(StandardCharsets.UTF_8));
+					("replay:" + scope(tenant, keyHashHex, idempotencyKey)).getBytes(StandardCharsets.UTF_8));
 			repository.save(new ReplayRecord(new ReplayId(id, expiresAt), body, bodyHashHex));
+			durableOk = true;
 		} catch (RuntimeException ex) {
 			log.warn("Replay durable-tier store failed for key");
 		} finally {
-			releaseFill(idempotencyKey);
+			releaseFill(idempotencyKey, tenant, keyHashHex);
 		}
-		count("stored");
-		return true;
+		if (hotOk || durableOk) {
+			count("stored");
+			return true;
+		}
+		count("store_failed");
+		return false;
 	}
 
 	private static String stringField(Map<Object, Object> fields, String name) {

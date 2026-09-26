@@ -13,11 +13,12 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Wraps eligible {@code POST /v1/chat/completions} requests in a {@link CachedBodyHttpServletRequest} so the body can
+ * Wraps eligible {@code POST} requests in a {@link CachedBodyHttpServletRequest} so the body can
  * be read multiple times: once by the auth/rate-limit filter and again by the controller's {@code @RequestBody}.
  *
  * <p>The response is deliberately never touched: SSE streaming downstream must
- * remain zero-buffer. Bodies larger than the configured cap are rejected with HTTP {@code 413 Payload Too Large}.</p>
+ * remain zero-buffer. Bodies larger than the configured cap are rejected with HTTP {@code 413 Payload Too Large}
+ * before buffering completes (declared length is checked first; unknown lengths abort past the cap).</p>
  *
  * <p>Registered at {@link #ORDER} (0), the maximum order allowed for a
  * request-wrapping filter (see the Boot reference: wrapping filters must be ordered
@@ -31,12 +32,15 @@ public class RequestBodyCachingFilter extends OncePerRequestFilter {
 	public static final int ORDER = 0;
 
 	/**
-	 * The only paths this filter applies to. Both are wrapped so the body can be
-	 * read multiple times: once by the auth/rate-limit filter and again by the
-	 * controller's {@code @RequestBody}.
+	 * The paths this filter applies to. Chat and embeddings are wrapped so the body can be
+	 * read multiple times (auth/rate-limit filter, then the controller). MCP and A2A are wrapped
+	 * for the same cap, which must hold pre-auth: their controllers buffer {@code @RequestBody}
+	 * with no bound otherwise (MCP-B04).
 	 */
 	public static final String TARGET_PATH_CHAT = "/v1/chat/completions";
 	public static final String TARGET_PATH_EMBEDDINGS = "/v1/embeddings";
+	public static final String TARGET_PATH_MCP = "/v1/mcp";
+	public static final String TARGET_PATH_A2A = "/v1/a2a";
 
 	/**
 	 * Default body cap, matching {@link CachedBodyHttpServletRequest#DEFAULT_MAX_BODY_BYTES}.
@@ -65,9 +69,16 @@ public class RequestBodyCachingFilter extends OncePerRequestFilter {
 
 	@Override
 	protected boolean shouldNotFilter(HttpServletRequest request) {
-		return !HttpMethod.POST.matches(request.getMethod())
-				|| (!TARGET_PATH_CHAT.equals(request.getServletPath())
-						&& !TARGET_PATH_EMBEDDINGS.equals(request.getServletPath()));
+		if (!HttpMethod.POST.matches(request.getMethod())) {
+			return true;
+		}
+		String path = request.getServletPath();
+		return !TARGET_PATH_CHAT.equals(path)
+				&& !TARGET_PATH_EMBEDDINGS.equals(path)
+				&& !TARGET_PATH_MCP.equals(path)
+				&& !TARGET_PATH_A2A.equals(path)
+				&& !path.startsWith(TARGET_PATH_MCP + "/")
+				&& !path.startsWith(TARGET_PATH_A2A + "/");
 	}
 
 	@Override

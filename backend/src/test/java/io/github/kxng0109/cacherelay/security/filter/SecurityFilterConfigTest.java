@@ -1,5 +1,6 @@
 package io.github.kxng0109.cacherelay.security.filter;
 
+import io.github.kxng0109.cacherelay.contracts.GatewayProperties;
 import io.github.kxng0109.cacherelay.security.guardrail.common.GuardrailProperties;
 import io.github.kxng0109.cacherelay.security.guardrail.injection.PromptInjectionScanner;
 import io.github.kxng0109.cacherelay.security.guardrail.pii.PiiAnonymizer;
@@ -22,7 +23,7 @@ class SecurityFilterConfigTest {
 	private final SecurityFilterConfig config = new SecurityFilterConfig();
 
 	@Test
-	@DisplayName("registers RequestBodyCachingFilter at order 0 for chat and embeddings")
+	@DisplayName("registers RequestBodyCachingFilter at order 0 for chat, embeddings, MCP, and A2A")
 	void registersRequestBodyCachingFilter() {
 		FilterRegistrationBean<RequestBodyCachingFilter> reg =
 				config.requestBodyCachingFilterRegistration(1_048_576);
@@ -31,7 +32,10 @@ class SecurityFilterConfigTest {
 		assertThat(reg.getUrlPatterns())
 				.containsExactlyInAnyOrder(
 						RequestBodyCachingFilter.TARGET_PATH_CHAT,
-						RequestBodyCachingFilter.TARGET_PATH_EMBEDDINGS);
+						RequestBodyCachingFilter.TARGET_PATH_EMBEDDINGS,
+						RequestBodyCachingFilter.TARGET_PATH_MCP,
+						RequestBodyCachingFilter.TARGET_PATH_MCP + "/*",
+						RequestBodyCachingFilter.TARGET_PATH_A2A + "/*");
 		assertThat(reg.getFilter()).isInstanceOf(RequestBodyCachingFilter.class);
 	}
 
@@ -43,7 +47,7 @@ class SecurityFilterConfigTest {
 		ObjectMapper objectMapper = new ObjectMapper();
 
 		FilterRegistrationBean<KeyAuthFilter> reg = config.keyAuthFilterRegistration(
-				keyManagementService, rateLimitEngine, objectMapper
+				keyManagementService, rateLimitEngine, objectMapper, new GatewayProperties()
 		);
 
 		assertThat(reg.getOrder()).isEqualTo(1);
@@ -55,7 +59,7 @@ class SecurityFilterConfigTest {
 	}
 
 	@Test
-	@DisplayName("registers IngressSecurityFilter at order 2 for chat only")
+	@DisplayName("registers IngressSecurityFilter at order 2 for chat and embeddings")
 	void registersIngressSecurityFilter() {
 		IngressSecretScanner secretScanner = mock(IngressSecretScanner.class);
 		PromptInjectionScanner injectionScanner = mock(PromptInjectionScanner.class);
@@ -68,7 +72,9 @@ class SecurityFilterConfigTest {
 		);
 
 		assertThat(reg.getOrder()).isEqualTo(2);
-		assertThat(reg.getUrlPatterns()).containsExactly(IngressSecurityFilter.TARGET_PATH);
+		assertThat(reg.getUrlPatterns()).containsExactlyInAnyOrder(
+				IngressSecurityFilter.TARGET_PATH_CHAT,
+				IngressSecurityFilter.TARGET_PATH_EMBEDDINGS);
 		assertThat(reg.getFilter()).isInstanceOf(IngressSecurityFilter.class);
 	}
 
@@ -80,7 +86,8 @@ class SecurityFilterConfigTest {
 				RequestBodyCachingFilter.TARGET_PATH_EMBEDDINGS,
 				KeyAuthFilter.TARGET_PATH_CHAT,
 				KeyAuthFilter.TARGET_PATH_EMBEDDINGS,
-				IngressSecurityFilter.TARGET_PATH))
+				IngressSecurityFilter.TARGET_PATH_CHAT,
+				IngressSecurityFilter.TARGET_PATH_EMBEDDINGS))
 				.contains("/v1/chat/completions", "/v1/embeddings")
 				.doesNotContain("/v1/admin", "/actuator", "/v3/api-docs");
 	}

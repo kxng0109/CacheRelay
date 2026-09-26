@@ -194,7 +194,7 @@ public class OktaBackfillClient {
 				return Optional.of(new BackfillResult(
 						Collections.unmodifiableMap(new LinkedHashMap<>(groups)), false));
 			}
-			if (page + 1 >= MAX_PAGES || !next.startsWith(domain)) {
+			if (page + 1 >= MAX_PAGES || !BackfillHttp.sameOrigin(domain, next)) {
 				return Optional.empty();
 			}
 			url = next;

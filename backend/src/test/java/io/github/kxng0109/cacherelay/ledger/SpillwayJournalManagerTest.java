@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -125,29 +126,88 @@ class SpillwayJournalManagerTest {
 	}
 
 	@Test
-	@DisplayName("Replay skips the poisoned record and continues with the rest")
-	void shouldBreakReplayOnConsumerFailure() {
-		TokenUsageEvent e1 = new TokenUsageEvent(
-				UUID.randomUUID(), null, "", "",
-				10, 5, 15, 20, 100, Instant.now()
-		);
-		TokenUsageEvent e2 = new TokenUsageEvent(
-				UUID.randomUUID(), "tenant-2", "openai", "gpt-4o",
-				20, 10, 30, 40, 200, Instant.now()
-		);
-		journalManager.appendBatch(List.of(e1, e2), null);
+	@DisplayName("FS-B12: empty orphan replay files are skipped without error")
+	void shouldSkipEmptyOrphanReplayFiles() throws IOException {
+		Files.createFile(tempDir.resolve("spillway-test.log.replay.123"));
 
-		List<TokenUsageEvent> replayed = new ArrayList<>();
-		int count = journalManager.replayPendingRecords(e -> {
-			if (e.requestId().equals(e1.requestId())) {
-				throw new RuntimeException("DB still unreachable");
-			}
-			replayed.add(e);
+		int replayed = journalManager.replayPendingRecords(e -> {
 		});
 
-		assertThat(count).isEqualTo(1);
-		assertThat(replayed).hasSize(1);
-		assertThat(replayed.getFirst().requestId()).isEqualTo(e2.requestId());
+		assertThat(replayed).isEqualTo(0);
+	}
+
+	@Test
+	@DisplayName("Consumer failure preserves every record durably for replay after recovery")
+	void shouldPreserveFailedRecordsDurablyAndReplayAfterRecovery() throws IOException {
+		List<TokenUsageEvent> events = List.of(
+				createEvent("tenant-1"),
+				createEvent("tenant-2"),
+				createEvent("tenant-3")
+		);
+		journalManager.appendBatch(events, "Database outage");
+
+		int failedReplay = journalManager.replayPendingRecords(e -> {
+			throw new RuntimeException("DB still unreachable");
+		});
+
+		assertThat(failedReplay).as("replayed count on total failure").isEqualTo(0);
+		assertThat(Files.exists(journalPath)).as("journal consumed").isFalse();
+		assertThat(findSiblingFiles(".dead-letter.")).as("durable dead-letter files").hasSize(1);
+
+		List<TokenUsageEvent> recovered = new ArrayList<>();
+		int recoveredCount = journalManager.replayPendingRecords(recovered::add);
+
+		assertThat(recoveredCount).as("replayed count after recovery").isEqualTo(3);
+		assertThat(recovered).extracting(TokenUsageEvent::requestId)
+				.containsExactlyInAnyOrder(
+						events.get(0).requestId(),
+						events.get(1).requestId(),
+						events.get(2).requestId()
+				);
+		assertThat(findSiblingFiles(".dead-letter.")).as("dead-letter drained").isEmpty();
+	}
+
+	@Test
+	@DisplayName("Orphaned replay staging from a crash is recovered on the next pass")
+	void shouldRecoverOrphanedReplayFilesAtStartup() throws IOException {
+		TokenUsageEvent e1 = createEvent("tenant-1");
+		TokenUsageEvent e2 = createEvent("tenant-2");
+		journalManager.appendBatch(List.of(e1, e2), "outage");
+		// Simulate a crash between the atomic move and staging cleanup.
+		Path orphan = Path.of(journalPath + ".replay.12345");
+		Files.move(journalPath, orphan);
+
+		List<TokenUsageEvent> replayed = new ArrayList<>();
+		int count = journalManager.replayPendingRecords(replayed::add);
+
+		assertThat(count).as("replayed count").isEqualTo(2);
+		assertThat(replayed).extracting(TokenUsageEvent::requestId)
+				.containsExactlyInAnyOrder(e1.requestId(), e2.requestId());
+		assertThat(Files.exists(orphan)).as("orphan consumed").isFalse();
+	}
+
+	@Test
+	@DisplayName("Malformed lines are quarantined, never fabricated into ledger rows")
+	void shouldQuarantineMalformedLinesInsteadOfFabricatingRows() throws IOException {
+		UUID fabricatedId = UUID.randomUUID();
+		TokenUsageEvent valid = createEvent("tenant-valid");
+		journalManager.append(valid, "outage");
+		String fabricatedLine = "{\"requestId\":\"" + fabricatedId + "\",\"error\":\"serialization_failed\"}";
+		Files.writeString(
+				journalPath,
+				"not-json\n{\"foo\":\"bar\"}\n" + fabricatedLine + "\n",
+				StandardCharsets.UTF_8,
+				StandardOpenOption.APPEND
+		);
+
+		List<TokenUsageEvent> replayed = new ArrayList<>();
+		int count = journalManager.replayPendingRecords(replayed::add);
+
+		assertThat(count).as("replayed count").isEqualTo(1);
+		assertThat(replayed).extracting(TokenUsageEvent::requestId).containsExactly(valid.requestId());
+		Path quarantine = Path.of(journalPath + ".quarantine");
+		assertThat(Files.exists(quarantine)).as("quarantine exists").isTrue();
+		assertThat(Files.readAllLines(quarantine)).as("quarantined lines").hasSize(3);
 	}
 
 	@Test
@@ -167,6 +227,9 @@ class SpillwayJournalManagerTest {
 		assertThat(count).isEqualTo(1);
 		assertThat(replayed.getFirst().requestId()).isEqualTo(reqId);
 		assertThat(replayed.getFirst().timestamp()).isNotNull();
+		Path quarantine = Path.of(journalPath + ".quarantine");
+		assertThat(Files.exists(quarantine)).as("quarantine exists").isTrue();
+		assertThat(Files.readAllLines(quarantine)).as("quarantined lines").hasSize(2);
 	}
 
 	@Test
@@ -239,6 +302,20 @@ class SpillwayJournalManagerTest {
 			});
 		} finally {
 			Files.deleteIfExists(relativePath);
+		}
+	}
+
+	private static TokenUsageEvent createEvent(String tenant) {
+		return new TokenUsageEvent(
+				UUID.randomUUID(), tenant, "openai", "gpt-5.6-luna",
+				100, 50, 150, 200, 1500, Instant.now()
+		);
+	}
+
+	private List<Path> findSiblingFiles(String infix) throws IOException {
+		String prefix = journalPath.getFileName().toString() + infix;
+		try (var paths = Files.list(tempDir)) {
+			return paths.filter(p -> p.getFileName().toString().startsWith(prefix)).toList();
 		}
 	}
 }

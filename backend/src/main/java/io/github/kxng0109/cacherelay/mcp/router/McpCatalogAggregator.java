@@ -2,6 +2,7 @@ package io.github.kxng0109.cacherelay.mcp.router;
 
 import io.github.kxng0109.cacherelay.mcp.config.McpGatewayProperties;
 import io.github.kxng0109.cacherelay.mcp.contracts.*;
+import io.github.kxng0109.cacherelay.mcp.protocol.BoundedResultBodyHandler;
 import io.github.kxng0109.cacherelay.mcp.protocol.McpHeaderNormalizer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -32,6 +33,13 @@ public class McpCatalogAggregator {
 	private final McpCatalogCache catalogCache;
 	private final HttpClient httpClient;
 	private final ObjectMapper objectMapper;
+
+	/**
+	 * Upper bound for one upstream catalog payload (tools, resources, or prompts list). Catalogs are
+	 * kilobytes in practice; anything larger is a misbehaving server, failed fast so it can never
+	 * OOM the gateway (MCP-B12). Over-cap fetches degrade to empty partials via the existing catch.
+	 */
+	static final int MAX_CATALOG_BYTES = 1024 * 1024;
 
 	public McpCatalogAggregator(
 			McpGatewayProperties properties,
@@ -136,7 +144,8 @@ public class McpCatalogAggregator {
 		try {
 			String rpcRequest = "{\"jsonrpc\":\"2.0\",\"id\":\"cat-tools\",\"method\":\"tools/list\"}";
 			HttpRequest request = buildRpcRequest(server, "tools/list", rpcRequest);
-			HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+			HttpResponse<String> response = httpClient.send(request,
+					new BoundedResultBodyHandler(MAX_CATALOG_BYTES));
 
 			if (response.statusCode() >= 200 && response.statusCode() < 300) {
 				JsonNode root = objectMapper.readTree(response.body());
@@ -177,7 +186,8 @@ public class McpCatalogAggregator {
 		try {
 			String rpcRequest = "{\"jsonrpc\":\"2.0\",\"id\":\"cat-res\",\"method\":\"resources/list\"}";
 			HttpRequest request = buildRpcRequest(server, "resources/list", rpcRequest);
-			HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+			HttpResponse<String> response = httpClient.send(request,
+					new BoundedResultBodyHandler(MAX_CATALOG_BYTES));
 
 			if (response.statusCode() >= 200 && response.statusCode() < 300) {
 				JsonNode root = objectMapper.readTree(response.body());
@@ -206,7 +216,8 @@ public class McpCatalogAggregator {
 		try {
 			String rpcRequest = "{\"jsonrpc\":\"2.0\",\"id\":\"cat-prm\",\"method\":\"prompts/list\"}";
 			HttpRequest request = buildRpcRequest(server, "prompts/list", rpcRequest);
-			HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+			HttpResponse<String> response = httpClient.send(request,
+					new BoundedResultBodyHandler(MAX_CATALOG_BYTES));
 
 			if (response.statusCode() >= 200 && response.statusCode() < 300) {
 				JsonNode root = objectMapper.readTree(response.body());

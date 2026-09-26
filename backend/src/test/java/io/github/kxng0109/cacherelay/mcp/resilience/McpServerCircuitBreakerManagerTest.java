@@ -90,6 +90,37 @@ class McpServerCircuitBreakerManagerTest {
 		assertThat(breaker.getFailureCount()).isEqualTo(0);
 	}
 
+	@Test
+	@DisplayName("isAvailable prunes OPEN without consuming the probe slot")
+	void isAvailableDoesNotConsumeProbeSlot() {
+		String server = "postgres";
+
+		assertThat(manager.isAvailable(server)).as("CLOSED lists").isTrue();
+
+		manager.recordFailure(server);
+		manager.recordFailure(server);
+		manager.recordFailure(server);
+		assertThat(manager.isAvailable(server)).as("OPEN pruned").isFalse();
+
+		clock.advance(Duration.ofSeconds(31));
+		assertThat(manager.tryAcquire(server)).as("probe taken").isTrue();
+		assertThat(manager.isAvailable(server)).as("HALF_OPEN lists").isTrue();
+		assertThat(manager.tryAcquire(server))
+				.as("slot still held: the read mutated nothing")
+				.isFalse();
+
+		manager.abandonProbe(server);
+		assertThat(manager.tryAcquire(server)).as("abandoned slot re-acquirable").isTrue();
+		manager.recordSuccess(server);
+	}
+
+	@Test
+	@DisplayName("abandonProbe on unknown servers is a silent no-op")
+	void abandonUnknownServerNoOp() {
+		manager.abandonProbe("no-such-server");
+		assertThat(manager.isAvailable("no-such-server")).isTrue();
+	}
+
 	private static final class MutableClock extends Clock {
 		private Instant current;
 

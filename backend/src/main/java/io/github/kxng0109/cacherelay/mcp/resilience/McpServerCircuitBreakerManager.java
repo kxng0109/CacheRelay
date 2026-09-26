@@ -59,6 +59,32 @@ public class McpServerCircuitBreakerManager {
 	}
 
 	/**
+	 * Non-mutating availability read for display paths (catalog listing): prunes only hard-OPEN
+	 * servers and never consumes a HALF_OPEN probe slot. A post-cooldown OPEN still reads OPEN
+	 * until a real call probes it.
+	 *
+	 * @param serverName upstream MCP server name
+	 * @return {@code false} only when the breaker is OPEN
+	 */
+	public boolean isAvailable(String serverName) {
+		return getBreaker(serverName).getState() != ProviderCircuitBreaker.State.OPEN;
+	}
+
+	/**
+	 * Releases a probe slot held across a path that produces no verdict (e.g. a call parked for
+	 * human approval): the next probe may proceed instead of waiting out the lease. No state
+	 * change when no probe is held.
+	 *
+	 * @param serverName upstream MCP server name
+	 */
+	public void abandonProbe(String serverName) {
+		ProviderCircuitBreaker breaker = breakers.get(serverName);
+		if (breaker != null) {
+			breaker.abandonProbe();
+		}
+	}
+
+	/**
 	 * Records a successful execution against the named MCP server.
 	 */
 	public void recordSuccess(String serverName) {

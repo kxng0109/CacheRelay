@@ -376,6 +376,11 @@ class ProtocolNormalizationIntegrationTest {
 			}
 
 			@Override
+			public BoundedLineBodyHandler bodyHandlerForNonStreaming() {
+				return base.bodyHandlerForNonStreaming();
+			}
+
+			@Override
 			public SseLineGuardProperties properties() {
 				return props;
 			}

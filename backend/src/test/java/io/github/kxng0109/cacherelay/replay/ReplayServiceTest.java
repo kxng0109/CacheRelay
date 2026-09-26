@@ -2,13 +2,16 @@ package io.github.kxng0109.cacherelay.replay;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
@@ -16,6 +19,7 @@ import org.springframework.data.redis.core.ValueOperations;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -48,6 +52,25 @@ class ReplayServiceTest {
 	}
 
 	@Test
+	@DisplayName("replay entries never cross tenant boundaries")
+	void replayDoesNotCrossTenants() {
+		Harness harness = harness();
+		Map<Object, Object> fields = new HashMap<>();
+		fields.put("body", "{\"ok\":true}");
+		fields.put("body_hash", "abc123");
+		fields.put("sse", "0");
+		when(harness.hashOps().entries(ReplayService.PREFIX + "tenant-a:hash-a:rk-1")).thenReturn(fields);
+
+		ReplayService.Lookup sameTenant =
+				harness.service().lookup("rk-1", "abc123", "tenant-a", "hash-a");
+		ReplayService.Lookup otherTenant =
+				harness.service().lookup("rk-1", "abc123", "tenant-b", "hash-b");
+
+		assertThat(sameTenant).isInstanceOf(ReplayService.Hit.class);
+		assertThat(otherTenant).as("cross-tenant lookup misses").isInstanceOf(ReplayService.Miss.class);
+	}
+
+	@Test
 	@DisplayName("lookup serves a hit when the fingerprint matches")
 	void lookupServesHit() {
 		Harness harness = harness();
@@ -55,9 +78,9 @@ class ReplayServiceTest {
 		fields.put("body", "{\"ok\":true}");
 		fields.put("body_hash", "abc123");
 		fields.put("sse", "0");
-		when(harness.hashOps().entries(ReplayService.PREFIX + "rk-1")).thenReturn(fields);
+		when(harness.hashOps().entries(ReplayService.PREFIX + "unknown:unknown:rk-1")).thenReturn(fields);
 
-		ReplayService.Lookup lookup = harness.service().lookup("rk-1", "abc123");
+		ReplayService.Lookup lookup = harness.service().lookup("rk-1", "abc123", null, null);
 
 		assertThat(lookup).isInstanceOf(ReplayService.Hit.class);
 		ReplayService.Hit hit = (ReplayService.Hit) lookup;
@@ -69,10 +92,10 @@ class ReplayServiceTest {
 	@DisplayName("lookup reports mismatch on a reused key with another body")
 	void lookupReportsMismatch() {
 		Harness harness = harness();
-		when(harness.hashOps().entries(ReplayService.PREFIX + "rk-1"))
+		when(harness.hashOps().entries(ReplayService.PREFIX + "unknown:unknown:rk-1"))
 				.thenReturn(Map.<Object, Object>of("body", "{}", "body_hash", "other"));
 
-		assertThat(harness.service().lookup("rk-1", "abc123"))
+		assertThat(harness.service().lookup("rk-1", "abc123", null, null))
 				.isInstanceOf(ReplayService.FingerprintMismatch.class);
 	}
 
@@ -80,10 +103,10 @@ class ReplayServiceTest {
 	@DisplayName("lookup reports in-flight when only the fill claim exists")
 	void lookupReportsInFlight() {
 		Harness harness = harness();
-		when(harness.hashOps().entries(ReplayService.PREFIX + "rk-1")).thenReturn(Map.of());
-		when(harness.template().hasKey(ReplayService.FILL_PREFIX + "rk-1")).thenReturn(true);
+		when(harness.hashOps().entries(ReplayService.PREFIX + "unknown:unknown:rk-1")).thenReturn(Map.of());
+		when(harness.template().hasKey(ReplayService.FILL_PREFIX + "unknown:unknown:rk-1")).thenReturn(true);
 
-		assertThat(harness.service().lookup("rk-1", "abc123"))
+		assertThat(harness.service().lookup("rk-1", "abc123", null, null))
 				.isInstanceOf(ReplayService.InFlight.class);
 	}
 
@@ -91,10 +114,10 @@ class ReplayServiceTest {
 	@DisplayName("lookup misses on empty store without a fill claim")
 	void lookupMissesCleanly() {
 		Harness harness = harness();
-		when(harness.hashOps().entries(ReplayService.PREFIX + "rk-1")).thenReturn(Map.of());
-		when(harness.template().hasKey(ReplayService.FILL_PREFIX + "rk-1")).thenReturn(false);
+		when(harness.hashOps().entries(ReplayService.PREFIX + "unknown:unknown:rk-1")).thenReturn(Map.of());
+		when(harness.template().hasKey(ReplayService.FILL_PREFIX + "unknown:unknown:rk-1")).thenReturn(false);
 
-		assertThat(harness.service().lookup("rk-1", "abc123"))
+		assertThat(harness.service().lookup("rk-1", "abc123", null, null))
 				.isInstanceOf(ReplayService.Miss.class);
 	}
 
@@ -104,7 +127,7 @@ class ReplayServiceTest {
 		Harness harness = harness();
 		when(harness.hashOps().entries(anyString())).thenThrow(new RuntimeException("redis down"));
 
-		assertThat(harness.service().lookup("rk-1", "abc123"))
+		assertThat(harness.service().lookup("rk-1", "abc123", null, null))
 				.isInstanceOf(ReplayService.Miss.class);
 	}
 
@@ -115,8 +138,8 @@ class ReplayServiceTest {
 		when(harness.valueOps().setIfAbsent(anyString(), anyString(), any(Duration.class)))
 				.thenReturn(true, false);
 
-		assertThat(harness.service().beginFill("rk-1")).isTrue();
-		assertThat(harness.service().beginFill("rk-1")).isFalse();
+		assertThat(harness.service().beginFill("rk-1", null, null)).isTrue();
+		assertThat(harness.service().beginFill("rk-1", null, null)).isFalse();
 	}
 
 	@Test
@@ -126,7 +149,63 @@ class ReplayServiceTest {
 		when(harness.valueOps().setIfAbsent(anyString(), anyString(), any(Duration.class)))
 				.thenThrow(new RuntimeException("redis down"));
 
-		assertThat(harness.service().beginFill("rk-1")).isTrue();
+		assertThat(harness.service().beginFill("rk-1", null, null)).isTrue();
+	}
+
+	@Test
+	@DisplayName("hot-tier keys are namespaced by tenant and key hash")
+	void hotTierKeysNamespaced() {
+		Harness harness = harness();
+		byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
+
+		assertThat(harness.service().store("rk-1", "abc123", body, false, "tenant-1", "keyhash-1")).isTrue();
+
+		ArgumentCaptor<String> keys = ArgumentCaptor.forClass(String.class);
+		verify(harness.hashOps()).putAll(keys.capture(), any(Map.class));
+		assertThat(keys.getValue())
+				.as("namespaced hot-tier key")
+				.startsWith(ReplayService.PREFIX + "tenant-1:");
+		ArgumentCaptor<String> expireKeys = ArgumentCaptor.forClass(String.class);
+		verify(harness.template()).expire(expireKeys.capture(), eq(ReplayService.HOT_TTL));
+		assertThat(expireKeys.getValue())
+				.as("namespaced hot-tier expiry")
+				.startsWith(ReplayService.PREFIX + "tenant-1:");
+	}
+
+	@Test
+	@DisplayName("fill locks are namespaced by tenant and key hash")
+	void fillLocksNamespaced() {
+		Harness harness = harness();
+		when(harness.valueOps().setIfAbsent(anyString(), anyString(), any(Duration.class)))
+				.thenReturn(true);
+
+		assertThat(harness.service().beginFill("rk-1", "tenant-1", "keyhash-1")).isTrue();
+
+		ArgumentCaptor<String> keys = ArgumentCaptor.forClass(String.class);
+		verify(harness.valueOps()).setIfAbsent(keys.capture(), anyString(), any(Duration.class));
+		assertThat(keys.getValue())
+				.as("namespaced fill lock")
+				.startsWith(ReplayService.FILL_PREFIX + "tenant-1:");
+	}
+
+	@Test
+	@DisplayName("durable ids are namespaced, not globally predictable")
+	void durableIdsNamespaced() {
+		Harness harness = harness();
+		byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
+
+		harness.service().store("rk-1", "abc123", body, false, "tenant-1", "keyhash-1");
+
+		ArgumentCaptor<ReplayRecord> records = ArgumentCaptor.forClass(ReplayRecord.class);
+		verify(harness.repository()).save(records.capture());
+		UUID predictable = UUID.nameUUIDFromBytes(
+				("replay:rk-1").getBytes(StandardCharsets.UTF_8));
+		UUID namespaced = UUID.nameUUIDFromBytes(
+				("replay:tenant-1:keyhash-1:rk-1").getBytes(StandardCharsets.UTF_8));
+		assertThat(records.getValue().getId().id())
+				.as("namespaced durable id")
+				.isNotEqualTo(predictable)
+				.isEqualTo(namespaced);
 	}
 
 	@Test
@@ -135,11 +214,12 @@ class ReplayServiceTest {
 		Harness harness = harness();
 		byte[] body = "{\"ok\":true}".getBytes(StandardCharsets.UTF_8);
 
-		assertThat(harness.service().store("rk-1", "abc123", body, false)).isTrue();
+		assertThat(harness.service().store("rk-1", "abc123", body, false, null, null)).isTrue();
 
-		verify(harness.template()).expire(ReplayService.PREFIX + "rk-1", ReplayService.HOT_TTL);
+		verify(harness.template()).expire(
+				ReplayService.PREFIX + "unknown:unknown:rk-1", ReplayService.HOT_TTL);
 		verify(harness.repository()).save(any(ReplayRecord.class));
-		verify(harness.template()).delete(ReplayService.FILL_PREFIX + "rk-1");
+		verify(harness.template()).delete(ReplayService.FILL_PREFIX + "unknown:unknown:rk-1");
 	}
 
 	@Test
@@ -148,22 +228,42 @@ class ReplayServiceTest {
 		Harness harness = harness();
 		byte[] body = new byte[ReplayService.MAX_BODY_BYTES + 1];
 
-		assertThat(harness.service().store("rk-1", "abc123", body, false)).isFalse();
+		assertThat(harness.service().store("rk-1", "abc123", body, false, null, null)).isFalse();
 
 		verify(harness.repository(), never()).save(any());
-		verify(harness.template()).delete(ReplayService.FILL_PREFIX + "rk-1");
+		verify(harness.template()).delete(ReplayService.FILL_PREFIX + "unknown:unknown:rk-1");
 	}
 
 	@Test
-	@DisplayName("store survives tier outages without failing the response")
-	void storeSurvivesOutages() {
+	@DisplayName("lookup Hit carries the real Redis TTL, not a fabricated horizon")
+	void lookupHitCarriesRealTtl() {
+		Harness harness = harness();
+		Map<Object, Object> fields = new HashMap<>();
+		fields.put("body", "{\"ok\":true}");
+		fields.put("body_hash", "abc123");
+		fields.put("sse", "0");
+		when(harness.hashOps().entries(ReplayService.PREFIX + "unknown:unknown:rk-1")).thenReturn(fields);
+		when(harness.template().getExpire(
+				ReplayService.PREFIX + "unknown:unknown:rk-1")).thenReturn(7_100L);
+
+		ReplayService.Lookup lookup = harness.service().lookup("rk-1", "abc123", null, null);
+
+		assertThat(lookup).isInstanceOf(ReplayService.Hit.class);
+		ReplayService.Hit hit = (ReplayService.Hit) lookup;
+		long skewSeconds = Duration.between(Instant.now(), hit.expiresAt()).getSeconds();
+		assertThat(skewSeconds).as("seconds until expiry").isBetween(7_000L, 7_200L);
+	}
+
+	@Test
+	@DisplayName("store reports false when neither tier persists, still releasing the fill")
+	void storeReportsFalseWhenBothTiersFail() {
 		Harness harness = harness();
 		doThrow(new RuntimeException("redis down")).when(harness.hashOps()).putAll(anyString(), any(Map.class));
 		when(harness.repository().save(any())).thenThrow(new RuntimeException("db down"));
 		byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
 
-		assertThat(harness.service().store("rk-1", "abc123", body, true)).isTrue();
-		verify(harness.template()).delete(ReplayService.FILL_PREFIX + "rk-1");
+		assertThat(harness.service().store("rk-1", "abc123", body, true, null, null)).isFalse();
+		verify(harness.template()).delete(ReplayService.FILL_PREFIX + "unknown:unknown:rk-1");
 	}
 
 	@Test
@@ -172,7 +272,7 @@ class ReplayServiceTest {
 		Harness harness = harness();
 		doThrow(new RuntimeException("redis down")).when(harness.template()).delete(anyString());
 
-		harness.service().releaseFill("rk-1");
+		harness.service().releaseFill("rk-1", null, null);
 	}
 
 	@Test
@@ -181,17 +281,17 @@ class ReplayServiceTest {
 		StringRedisTemplate template = mock(StringRedisTemplate.class);
 		ReplayService service = new ReplayService(template, mock(ReplayRepository.class), null);
 
-		assertThat(service.lookup("rk-1", "abc123")).isInstanceOf(ReplayService.Miss.class);
+		assertThat(service.lookup("rk-1", "abc123", null, null)).isInstanceOf(ReplayService.Miss.class);
 	}
 
 	@Test
 	@DisplayName("null entries degrade to miss")
 	void nullEntriesDegradeToMiss() {
 		Harness harness = harness();
-		when(harness.hashOps().entries(ReplayService.PREFIX + "rk-1")).thenReturn(null);
-		when(harness.template().hasKey(ReplayService.FILL_PREFIX + "rk-1")).thenReturn(false);
+		when(harness.hashOps().entries(ReplayService.PREFIX + "unknown:unknown:rk-1")).thenReturn(null);
+		when(harness.template().hasKey(ReplayService.FILL_PREFIX + "unknown:unknown:rk-1")).thenReturn(false);
 
-		assertThat(harness.service().lookup("rk-1", "abc123"))
+		assertThat(harness.service().lookup("rk-1", "abc123", null, null))
 				.isInstanceOf(ReplayService.Miss.class);
 	}
 
@@ -202,9 +302,9 @@ class ReplayServiceTest {
 		Map<Object, Object> fields = new HashMap<>();
 		fields.put("body", "");
 		fields.put("body_hash", "abc123");
-		when(harness.hashOps().entries(ReplayService.PREFIX + "rk-1")).thenReturn(fields);
+		when(harness.hashOps().entries(ReplayService.PREFIX + "unknown:unknown:rk-1")).thenReturn(fields);
 
-		assertThat(harness.service().lookup("rk-1", "abc123"))
+		assertThat(harness.service().lookup("rk-1", "abc123", null, null))
 				.isInstanceOf(ReplayService.Miss.class);
 	}
 
@@ -215,9 +315,9 @@ class ReplayServiceTest {
 		Map<Object, Object> fields = new HashMap<>();
 		fields.put("body", null);
 		fields.put("body_hash", null);
-		when(harness.hashOps().entries(ReplayService.PREFIX + "rk-1")).thenReturn(fields);
+		when(harness.hashOps().entries(ReplayService.PREFIX + "unknown:unknown:rk-1")).thenReturn(fields);
 
-		assertThat(harness.service().lookup("rk-1", "abc123"))
+		assertThat(harness.service().lookup("rk-1", "abc123", null, null))
 				.isInstanceOf(ReplayService.FingerprintMismatch.class);
 	}
 
@@ -234,6 +334,6 @@ class ReplayServiceTest {
 		ReplayService service = new ReplayService(template, mock(ReplayRepository.class),
 				mock(MeterRegistry.class));
 
-		assertThat(service.lookup("rk-1", "abc123")).isInstanceOf(ReplayService.Hit.class);
+		assertThat(service.lookup("rk-1", "abc123", null, null)).isInstanceOf(ReplayService.Hit.class);
 	}
 }

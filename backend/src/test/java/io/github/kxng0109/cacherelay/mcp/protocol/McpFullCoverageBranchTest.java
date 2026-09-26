@@ -237,9 +237,9 @@ class McpFullCoverageBranchTest {
 		McpGatewayProperties props = new McpGatewayProperties();
 		props.setHitlSecret(new SensitiveString("test-hitl-secret-32-bytes-minimum!!"));
 		McpAeadResumptionTokenService tokenService = new McpAeadResumptionTokenService(props, objectMapper);
-		assertThat(tokenService.verifyAndExtract("not-aead-token", "hash", "owner")).isEmpty();
-		assertThat(tokenService.verifyAndExtract("v2.aead.c2hvcnQ=", "hash", "owner")).isEmpty();
-		assertThat(tokenService.verifyAndExtract(null, "hash", "owner")).isEmpty();
+		assertThat(tokenService.verifyAndExtract("not-aead-token", "hash", "owner", "tool")).isEmpty();
+		assertThat(tokenService.verifyAndExtract("v2.aead.c2hvcnQ=", "hash", "owner", "tool")).isEmpty();
+		assertThat(tokenService.verifyAndExtract(null, "hash", "owner", "tool")).isEmpty();
 	}
 
 	@Test

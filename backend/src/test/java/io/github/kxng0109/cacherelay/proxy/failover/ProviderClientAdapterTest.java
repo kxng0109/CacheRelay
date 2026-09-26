@@ -75,6 +75,11 @@ class ProviderClientAdapterTest {
 			}
 
 			@Override
+			public BoundedLineBodyHandler bodyHandlerForNonStreaming() {
+				return baseFactory.bodyHandlerForNonStreaming();
+			}
+
+			@Override
 			public SseLineGuardProperties properties() {
 				return props;
 			}
@@ -192,6 +197,40 @@ class ProviderClientAdapterTest {
 				.setResponseCode(200)
 				.addHeader("Content-Type", "text/event-stream")
 				.setBody(body);
+	}
+
+	@Test
+	@DisplayName("non-streaming mode yields long single-line JSON bodies intact")
+	void nonStreamingYieldsLongJsonLines() {
+		String bigLine = "{\"choices\":[{\"message\":{\"content\":\"" + "x".repeat(30000) + "\"}}]}";
+		server.enqueue(new MockResponse()
+				.setResponseCode(200)
+				.addHeader("Content-Type", "application/json")
+				.setBody(bigLine + "\n"));
+		ProviderConfig config = providerConfig(server, "sk-test", Duration.ofSeconds(5));
+
+		HttpResponse<Stream<String>> response =
+				adapter.sendAsync(config, "{\"model\":\"gpt-x\",\"stream\":false}", null, false).join();
+
+		assertEquals(200, response.statusCode());
+		assertEquals(bigLine, response.body().collect(Collectors.joining("\n")));
+	}
+
+	@Test
+	@DisplayName("streaming mode keeps the tight per-line ceiling")
+	void streamingKeepsTightCeiling() {
+		String bigLine = "x".repeat(30000);
+		server.enqueue(new MockResponse()
+				.setResponseCode(200)
+				.addHeader("Content-Type", "text/event-stream")
+				.setBody(bigLine + "\n"));
+		ProviderConfig config = providerConfig(server, "sk-test", Duration.ofSeconds(5));
+
+		HttpResponse<Stream<String>> response =
+				adapter.sendAsync(config, "{\"model\":\"gpt-x\",\"stream\":true}", null, true).join();
+
+		assertEquals(200, response.statusCode());
+		assertThrows(LineTooLongException.class, () -> response.body().collect(Collectors.joining("\n")));
 	}
 
 	private static HttpClient httpClient() {

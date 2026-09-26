@@ -16,6 +16,7 @@ import java.util.concurrent.Flow;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -64,6 +65,38 @@ class BoundedLineBodyHandlerTest {
 	void constructorDefaultsCharset() {
 		BoundedLineBodyHandler handler = new BoundedLineBodyHandler(100, null);
 		assertThat(handler.maxLineBytes()).isEqualTo(100);
+	}
+
+	@Test
+	@DisplayName("stalled consumer bounds producer memory: feed blocks at capacity, then drains losslessly")
+	void stalledConsumerBoundsMemory() throws Exception {
+		BoundedLineBodyHandler handler = new BoundedLineBodyHandler(4096, StandardCharsets.UTF_8);
+		HttpResponse.BodySubscriber<Stream<String>> sub = handler.apply(INFO);
+		sub.onSubscribe(new MockSubscription());
+		byte[] payload = ("x".repeat(4000) + "\n").getBytes(StandardCharsets.UTF_8);
+		int total = 100;
+		AtomicReference<Throwable> producerError = new AtomicReference<>();
+		Thread producer = Thread.ofPlatform().daemon().start(() -> {
+			try {
+				for (int i = 0; i < total; i++) {
+					sub.onNext(List.of(ByteBuffer.wrap(payload)));
+				}
+				sub.onComplete();
+			} catch (Throwable t) {
+				producerError.set(t);
+			}
+		});
+		// Stalled: the producer must block once the bounded queue fills (an unbounded
+		// queue would swallow all 100 lines instantly).
+		producer.join(2000);
+		assertThat(producer.isAlive()).as("producer blocks when the queue fills").isTrue();
+
+		Stream<String> stream = sub.getBody().toCompletableFuture().get(5, TimeUnit.SECONDS);
+		List<String> lines = stream.toList();
+		producer.join(5000);
+
+		assertThat(producerError.get()).as("producer error").isNull();
+		assertThat(lines).as("drained lines").hasSize(total);
 	}
 
 	@Test

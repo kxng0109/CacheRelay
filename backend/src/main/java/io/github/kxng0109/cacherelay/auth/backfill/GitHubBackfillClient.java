@@ -144,7 +144,7 @@ public class GitHubBackfillClient {
 				return Optional.of(new BackfillResult(
 						Collections.unmodifiableMap(new LinkedHashMap<>(teams)), false));
 			}
-			if (page + 1 >= MAX_PAGES || !next.startsWith(apiBase)) {
+			if (page + 1 >= MAX_PAGES || !BackfillHttp.sameOrigin(apiBase, next)) {
 				return Optional.empty();
 			}
 			url = next;

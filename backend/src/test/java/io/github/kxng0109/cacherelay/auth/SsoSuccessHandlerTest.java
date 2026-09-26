@@ -21,6 +21,8 @@ import io.github.kxng0109.cacherelay.auth.backfill.SsoBackfillOrchestrator;
 import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
 import org.springframework.security.oauth2.client.OAuth2AuthorizedClientService;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
+import org.springframework.security.oauth2.client.registration.ClientRegistration;
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
 import org.springframework.security.oauth2.core.OAuth2AccessToken;
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
@@ -46,6 +48,8 @@ class SsoSuccessHandlerTest {
 	private JwtService jwt;
 	private RefreshService refresh;
 	private AuthCookieService cookies;
+	private ClientRegistrationRepository registrations;
+	private AuthAuditService audit;
 	private SsoSuccessHandler handler;
 
 	@BeforeEach
@@ -57,8 +61,11 @@ class SsoSuccessHandlerTest {
 		jwt = mock(JwtService.class);
 		refresh = mock(RefreshService.class);
 		cookies = mock(AuthCookieService.class);
+		registrations = mock(ClientRegistrationRepository.class);
+		audit = mock(AuthAuditService.class);
 		handler = new SsoSuccessHandler(accounts, provisioning, backfill, Optional.empty(),
-				jwt, refresh, cookies, AuthProperties.defaults());
+				jwt, refresh, cookies, AuthProperties.defaults(), Optional.of(registrations),
+				audit);
 		when(provisioning.provision(any(), any(), any(), any(), any(), any(), any()))
 				.thenAnswer(invocation -> Optional.ofNullable(invocation.getArgument(0)));
 		when(jwt.issueAccessToken(any(), any(), anyBoolean(), anyLong()))
@@ -67,6 +74,17 @@ class SsoSuccessHandlerTest {
 		when(cookies.createCookie(any(), anyBoolean())).thenReturn(
 				ResponseCookie.from("refresh", "session").httpOnly(true).secure(false)
 						.path("/").maxAge(100).sameSite("Lax").build());
+		stubIssuer("google", "https://accounts.google.com");
+		stubIssuer("azure", "https://login.example.com/tid-1");
+	}
+
+	private void stubIssuer(String registrationId, String issuerUri) {
+		ClientRegistration registration = mock(ClientRegistration.class);
+		ClientRegistration.ProviderDetails details =
+				mock(ClientRegistration.ProviderDetails.class);
+		when(registration.getProviderDetails()).thenReturn(details);
+		when(details.getIssuerUri()).thenReturn(issuerUri);
+		when(registrations.findByRegistrationId(registrationId)).thenReturn(registration);
 	}
 
 	@Test
@@ -387,7 +405,8 @@ class SsoSuccessHandlerTest {
 				any(), any(), any())).thenReturn(Optional.of(account));
 		MockHttpServletResponse response = new MockHttpServletResponse();
 		SsoSuccessHandler githubHandler = new SsoSuccessHandler(accounts, provisioning, backfill,
-				Optional.of(authorizedClients), jwt, refresh, cookies, AuthProperties.defaults());
+				Optional.of(authorizedClients), jwt, refresh, cookies, AuthProperties.defaults(),
+				Optional.of(registrations), audit);
 
 		githubHandler.onAuthenticationSuccess(new MockHttpServletRequest(), response,
 				authentication);
@@ -415,7 +434,8 @@ class SsoSuccessHandlerTest {
 				.thenReturn(BackfillOutcome.failed());
 		MockHttpServletResponse response = new MockHttpServletResponse();
 		SsoSuccessHandler githubHandler = new SsoSuccessHandler(accounts, provisioning, backfill,
-				Optional.of(authorizedClients), jwt, refresh, cookies, AuthProperties.defaults());
+				Optional.of(authorizedClients), jwt, refresh, cookies, AuthProperties.defaults(),
+				Optional.of(registrations), audit);
 
 		githubHandler.onAuthenticationSuccess(new MockHttpServletRequest(), response,
 				authentication);
@@ -442,7 +462,8 @@ class SsoSuccessHandlerTest {
 				.thenReturn(BackfillOutcome.failed());
 		MockHttpServletResponse response = new MockHttpServletResponse();
 		SsoSuccessHandler githubHandler = new SsoSuccessHandler(accounts, provisioning, backfill,
-				Optional.of(authorizedClients), jwt, refresh, cookies, AuthProperties.defaults());
+				Optional.of(authorizedClients), jwt, refresh, cookies, AuthProperties.defaults(),
+				Optional.of(registrations), audit);
 
 		githubHandler.onAuthenticationSuccess(new MockHttpServletRequest(), response,
 				authentication);
@@ -452,8 +473,147 @@ class SsoSuccessHandlerTest {
 				any(), any());
 	}
 
-	private UserAccount account(UUID id, String username, boolean admin) {
-		UserAccount account = new UserAccount(username, "hash", null, admin);
+	@Test
+	@DisplayName("FS-B10: OIDC token with a foreign iss is rejected before linking")
+	void foreignIssuerRejected() throws Exception {
+		OidcIdToken idToken = mock(OidcIdToken.class);
+		when(idToken.getIssuer()).thenReturn(new URL("https://evil.example.com"));
+		when(idToken.getSubject()).thenReturn("sub-1");
+
+		OidcUser principal = mock(OidcUser.class);
+		when(principal.getIdToken()).thenReturn(idToken);
+		when(principal.getSubject()).thenReturn("sub-1");
+
+		OAuth2AuthenticationToken authentication = new OAuth2AuthenticationToken(principal,
+				List.of(), "google");
+		MockHttpServletResponse response = new MockHttpServletResponse();
+
+		handler.onAuthenticationSuccess(new MockHttpServletRequest(), response, authentication);
+
+		assertThat(response.getStatus()).isEqualTo(403);
+		verify(accounts, never()).resolve(any(), any(), any(), any(), any(), any());
+		verify(audit).record(eq(AuthAuditService.ACTION_SSO_LOGIN),
+				eq(AuthAuditService.SEVERITY_WARN), eq("sub-1"), eq("/oauth2/callback"),
+				eq(AuthAuditService.OUTCOME_FAILURE), any(), any());
+	}
+
+	@Test
+	@DisplayName("FS-B10: OIDC login without a configured issuer is rejected (fail closed)")
+	void missingIssuerConfigurationRejected() throws Exception {
+		stubIssuer("google", null);
+
+		OidcIdToken idToken = mock(OidcIdToken.class);
+		when(idToken.getIssuer()).thenReturn(new URL("https://accounts.google.com"));
+		when(idToken.getSubject()).thenReturn("sub-1");
+
+		OidcUser principal = mock(OidcUser.class);
+		when(principal.getIdToken()).thenReturn(idToken);
+		when(principal.getSubject()).thenReturn("sub-1");
+
+		OAuth2AuthenticationToken authentication = new OAuth2AuthenticationToken(principal,
+				List.of(), "google");
+		MockHttpServletResponse response = new MockHttpServletResponse();
+
+		handler.onAuthenticationSuccess(new MockHttpServletRequest(), response, authentication);
+
+		assertThat(response.getStatus()).isEqualTo(403);
+		verify(accounts, never()).resolve(any(), any(), any(), any(), any(), any());
+	}
+
+	@Test
+	@DisplayName("FS-B10: OIDC login without a registration repository is rejected (fail closed)")
+	void missingRepositoryRejected() throws Exception {
+		SsoSuccessHandler bareHandler = new SsoSuccessHandler(accounts, provisioning, backfill,
+				Optional.empty(), jwt, refresh, cookies, AuthProperties.defaults(),
+				Optional.empty(), audit);
+
+		OidcIdToken idToken = mock(OidcIdToken.class);
+		when(idToken.getIssuer()).thenReturn(new URL("https://accounts.google.com"));
+		when(idToken.getSubject()).thenReturn("sub-1");
+
+		OidcUser principal = mock(OidcUser.class);
+		when(principal.getIdToken()).thenReturn(idToken);
+		when(principal.getSubject()).thenReturn("sub-1");
+
+		OAuth2AuthenticationToken authentication = new OAuth2AuthenticationToken(principal,
+				List.of(), "google");
+		MockHttpServletResponse response = new MockHttpServletResponse();
+
+		bareHandler.onAuthenticationSuccess(new MockHttpServletRequest(), response, authentication);
+
+		assertThat(response.getStatus()).isEqualTo(403);
+		verify(accounts, never()).resolve(any(), any(), any(), any(), any(), any());
+	}
+
+	@Test
+	@DisplayName("FS-B10: OIDC login for an unknown registration is rejected (fail closed)")
+	void unknownRegistrationRejected() throws Exception {
+		OidcIdToken idToken = mock(OidcIdToken.class);
+		when(idToken.getIssuer()).thenReturn(new URL("https://login.example.com/tid-1"));
+		when(idToken.getSubject()).thenReturn("sub-1");
+
+		OidcUser principal = mock(OidcUser.class);
+		when(principal.getIdToken()).thenReturn(idToken);
+		when(principal.getSubject()).thenReturn("sub-1");
+
+		OAuth2AuthenticationToken authentication = new OAuth2AuthenticationToken(principal,
+				List.of(), "azure-unknown");
+		MockHttpServletResponse response = new MockHttpServletResponse();
+
+		handler.onAuthenticationSuccess(new MockHttpServletRequest(), response, authentication);
+
+		assertThat(response.getStatus()).isEqualTo(403);
+		verify(accounts, never()).resolve(any(), any(), any(), any(), any(), any());
+	}
+
+	@Test
+	@DisplayName("FS-B10: blank issuer URIs never match a presented issuer")
+	void blankIssuerUriRejected() throws Exception {
+		stubIssuer("google", "   ");
+
+		OidcIdToken idToken = mock(OidcIdToken.class);
+		when(idToken.getIssuer()).thenReturn(new URL("https://accounts.google.com"));
+		when(idToken.getSubject()).thenReturn("sub-1");
+
+		OidcUser principal = mock(OidcUser.class);
+		when(principal.getIdToken()).thenReturn(idToken);
+		when(principal.getSubject()).thenReturn("sub-1");
+
+		OAuth2AuthenticationToken authentication = new OAuth2AuthenticationToken(principal,
+				List.of(), "google");
+		MockHttpServletResponse response = new MockHttpServletResponse();
+
+		handler.onAuthenticationSuccess(new MockHttpServletRequest(), response, authentication);
+
+		assertThat(response.getStatus()).isEqualTo(403);
+		verify(accounts, never()).resolve(any(), any(), any(), any(), any(), any());
+	}
+
+	@Test
+	@DisplayName("FS-B10: registration lookup failures deny instead of throwing")
+	void registrationLookupFailureRejected() throws Exception {
+		when(registrations.findByRegistrationId("google"))
+				.thenThrow(new RuntimeException("repo down"));
+
+		OidcIdToken idToken = mock(OidcIdToken.class);
+		when(idToken.getIssuer()).thenReturn(new URL("https://accounts.google.com"));
+		when(idToken.getSubject()).thenReturn("sub-1");
+
+		OidcUser principal = mock(OidcUser.class);
+		when(principal.getIdToken()).thenReturn(idToken);
+		when(principal.getSubject()).thenReturn("sub-1");
+
+		OAuth2AuthenticationToken authentication = new OAuth2AuthenticationToken(principal,
+				List.of(), "google");
+		MockHttpServletResponse response = new MockHttpServletResponse();
+
+		handler.onAuthenticationSuccess(new MockHttpServletRequest(), response, authentication);
+
+		assertThat(response.getStatus()).isEqualTo(403);
+		verify(accounts, never()).resolve(any(), any(), any(), any(), any(), any());
+	}
+
+	private UserAccount account(UUID id, String username, boolean admin) {		UserAccount account = new UserAccount(username, "hash", null, admin);
 		try {
 			Field field = UserAccount.class.getDeclaredField("id");
 			field.setAccessible(true);

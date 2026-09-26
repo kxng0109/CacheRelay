@@ -55,7 +55,7 @@ class BudgetEnforcerTest {
 				.thenReturn(List.of(1L, 0L, 500L, 60L, 2L));
 		when(costCalculator.calculate(any(), any(), anyLong(), anyLong())).thenReturn(4_000L);
 
-		BudgetDecision decision = enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null);
+		BudgetDecision decision = enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
 
 		assertTrue(decision instanceof BudgetDecision.Allowed allowed
 				           && allowed.remainingMicros() == 500L
@@ -69,7 +69,7 @@ class BudgetEnforcerTest {
 				.thenReturn(List.of(0L, 3L, 0L, 45L, 2L));
 		when(costCalculator.calculate(any(), any(), anyLong(), anyLong())).thenReturn(4_000L);
 
-		BudgetDecision decision = enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null);
+		BudgetDecision decision = enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
 
 		assertTrue(decision instanceof BudgetDecision.Denied denied
 				           && "TEAM".equals(denied.level())
@@ -84,7 +84,7 @@ class BudgetEnforcerTest {
 				.thenReturn(List.of(0L, 4L, 0L, 0L, 1L));
 		when(costCalculator.calculate(any(), any(), anyLong(), anyLong())).thenReturn(4_000L);
 
-		BudgetDecision decision = enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null);
+		BudgetDecision decision = enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
 
 		assertTrue(decision instanceof BudgetDecision.Denied denied
 				           && "TEAM".equals(denied.level())
@@ -100,7 +100,7 @@ class BudgetEnforcerTest {
 				.thenReturn(List.of("1", "0", "500", "60", "2"));
 		when(costCalculator.calculate(any(), any(), anyLong(), anyLong())).thenReturn(4_000L);
 
-		BudgetDecision decision = enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null);
+		BudgetDecision decision = enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
 
 		assertTrue(decision instanceof BudgetDecision.Allowed);
 	}
@@ -112,7 +112,7 @@ class BudgetEnforcerTest {
 
 		assertThrows(
 				RateLimitUnavailableException.class, () ->
-						enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null)
+						enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null)
 		);
 	}
 
@@ -124,7 +124,7 @@ class BudgetEnforcerTest {
 
 		assertThrows(
 				RateLimitUnavailableException.class, () ->
-						enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null)
+						enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null)
 		);
 	}
 
@@ -135,8 +135,8 @@ class BudgetEnforcerTest {
 				.thenReturn(List.of(1L, 0L, -1L, 0L, 0L));
 		when(costCalculator.calculate(any(), any(), anyLong(), anyLong())).thenReturn(4_000L);
 
-		enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null);
-		enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null);
+		enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
+		enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
 
 		verify(redisTemplate, times(1)).execute(any(), anyList(), any(), any());
 	}
@@ -170,7 +170,7 @@ class BudgetEnforcerTest {
 
 		BudgetDecision decision = local.checkBudget(
 				SHA256Hash.fromRawKey("gw-cccccccccccccccccccccccccccccccc"), "owner-1",
-				ProviderType.OPENAI, "gpt-5.6-luna", 10, null);
+				ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
 
 		assertTrue(decision instanceof BudgetDecision.Allowed);
 	}
@@ -184,7 +184,7 @@ class BudgetEnforcerTest {
 				RateLimitUnavailableException.class, () ->
 						enforcer.checkBudget(
 								SHA256Hash.fromRawKey("gw-dddddddddddddddddddddddddddddddd"), "owner-1",
-								ProviderType.OPENAI, "gpt-5.6-luna", 10, null)
+								ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null)
 		);
 	}
 
@@ -198,7 +198,7 @@ class BudgetEnforcerTest {
 				RateLimitUnavailableException.class, () ->
 						enforcer.checkBudget(
 								SHA256Hash.fromRawKey("gw-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"), "owner-1",
-								ProviderType.OPENAI, "gpt-5.6-luna", 10, null)
+								ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null)
 		);
 	}
 
@@ -213,7 +213,7 @@ class BudgetEnforcerTest {
 
 		BudgetDecision decision = enforcer.checkBudget(
 				SHA256Hash.fromRawKey("gw-ffffffffffffffffffffffffffffffff"), null,
-				ProviderType.OPENAI, "gpt-5.6-luna", 10, null);
+				ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
 
 		assertTrue(decision instanceof BudgetDecision.Allowed);
 		verify(redisTemplate, atLeastOnce()).execute(any(), keysCaptor.capture(), any(Object[].class));
@@ -232,7 +232,7 @@ class BudgetEnforcerTest {
 
 		BudgetDecision decision = enforcer.checkBudget(
 				SHA256Hash.fromRawKey("gw-11111111111111111111111111111111"), "  ",
-				ProviderType.OPENAI, "gpt-5.6-luna", 10, null);
+				ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
 
 		assertTrue(decision instanceof BudgetDecision.Allowed);
 	}
@@ -246,7 +246,7 @@ class BudgetEnforcerTest {
 
 		BudgetDecision decision = enforcer.checkBudget(
 				SHA256Hash.fromRawKey("gw-22222222222222222222222222222222"), "owner-1",
-				ProviderType.OPENAI, "gpt-5.6-luna", 10, null);
+				ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
 
 		assertTrue(decision instanceof BudgetDecision.Denied denied
 				           && "ORG".equals(denied.level())
@@ -264,7 +264,7 @@ class BudgetEnforcerTest {
 				RateLimitUnavailableException.class, () ->
 						enforcer.checkBudget(
 								SHA256Hash.fromRawKey("gw-33333333333333333333333333333333"), "owner-1",
-								ProviderType.OPENAI, "gpt-5.6-luna", 10, null)
+								ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null)
 		);
 		verify(redisTemplate, never()).execute(any(), anyList(), any(), any());
 	}
@@ -280,7 +280,7 @@ class BudgetEnforcerTest {
 
 		enforcer.checkBudget(
 				SHA256Hash.fromRawKey("gw-44444444444444444444444444444444"), "owner-1",
-				ProviderType.OPENAI, "gpt-5.6-luna", 10, null);
+				ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
 
 		verify(redisTemplate).execute(any(), keysCaptor.capture(), any(Object[].class));
 		List<String> keys = keysCaptor.getValue();
@@ -321,17 +321,36 @@ class BudgetEnforcerTest {
 	}
 
 	@Test
-	@DisplayName("idempotency key is forwarded to the script")
+	@DisplayName("idempotency key is forwarded to the script as a namespaced claim")
 	void idempotencyKeyForwarded() {
 		when(redisTemplate.execute(any(), anyList(), anyString(), anyString()))
 				.thenReturn(List.of(1L, 0L, 500L, 60L, 3L));
 		when(costCalculator.calculate(any(), any(), anyLong(), anyLong())).thenReturn(4_000L);
+		SHA256Hash hash = SHA256Hash.fromRawKey("gw-55555555555555555555555555555555");
 
 		BudgetDecision decision = enforcer.checkBudget(
-				SHA256Hash.fromRawKey("gw-55555555555555555555555555555555"), "owner-1",
-				ProviderType.OPENAI, "gpt-5.6-luna", 10, "idem-1");
+				hash, "owner-1",
+				ProviderType.OPENAI, "gpt-5.6-luna", 10, "idem-1", "body-sha-1");
 
 		assertTrue(decision instanceof BudgetDecision.Allowed);
-		verify(redisTemplate).execute(any(), anyList(), eq("4000"), eq("idem-1"));
+		verify(redisTemplate).execute(any(), anyList(), eq("4000"),
+				eq(BudgetEnforcer.dedupeClaimId("owner-1", hash.hex(), "body-sha-1", "idem-1")));
+	}
+
+	@Test
+	@DisplayName("FS-B12: claim ids namespace blanks and nulls without throwing")
+	void dedupeClaimIdNamespacesMissingComponents() {
+		assertEquals(":k:b:i", BudgetEnforcer.dedupeClaimId("  ", "k", "b", "i"));
+		assertEquals(":::", BudgetEnforcer.dedupeClaimId(null, null, null, null));
+		assertEquals("t::b:", BudgetEnforcer.dedupeClaimId("t", null, "b", null));
+	}
+
+	@Test
+	@DisplayName("FS-B12: releasing absent claims is a silent no-op")
+	void releaseAbsentClaimNoOp() {
+		enforcer.releaseIdempotencyClaim(null);
+		enforcer.releaseIdempotencyClaim("   ");
+
+		verify(redisTemplate, never()).delete(anyString());
 	}
 }

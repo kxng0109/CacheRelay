@@ -129,6 +129,26 @@ public class FailoverOrchestrator {
 			@Nullable ResidencyPolicy residencyPolicy,
 			@Nullable Jurisdiction originJurisdiction
 	) {
+		return execute(alias, requestBody, residencyPolicy, originJurisdiction, true);
+	}
+
+	/**
+	 * Executes the request against the chain described by the alias, enforcing data residency if active.
+	 *
+	 * @param alias              the routing plan for the requested model
+	 * @param requestBody        the client request body, OpenAI shaped
+	 * @param residencyPolicy    tenant residency policy override
+	 * @param originJurisdiction tenant origin jurisdiction
+	 * @param streaming          {@code true} for SSE line framing, {@code false} for a single JSON document
+	 * @return a future completing with the winning provider response
+	 */
+	public CompletableFuture<ProviderResponse> execute(
+			ModelAlias alias,
+			String requestBody,
+			@Nullable ResidencyPolicy residencyPolicy,
+			@Nullable Jurisdiction originJurisdiction,
+			boolean streaming
+	) {
 		List<ProviderRef> chain = alias.chain();
 		if (sovereigntyRouter != null && guardrailProperties != null && guardrailProperties.isDataResidencyEnabled()) {
 			ResidencyPolicy policy = residencyPolicy != null ? residencyPolicy
@@ -144,9 +164,9 @@ public class FailoverOrchestrator {
 		}
 
 		if (alias.strategy() == FailoverStrategy.RACE) {
-			return executeRace(chain, requestBody);
+			return executeRace(chain, requestBody, streaming);
 		}
-		return executeSequential(chain, requestBody);
+		return executeSequential(chain, requestBody, streaming);
 	}
 
 	/**
@@ -161,20 +181,36 @@ public class FailoverOrchestrator {
 		return execute(alias, requestBody, null, null);
 	}
 
+	/**
+	 * Executes the request with an explicit streaming mode, so non-streaming responses are fetched
+	 * with the JSON ceiling instead of tripping the SSE line guard.
+	 *
+	 * @param alias       the routing plan for the requested model
+	 * @param requestBody the client request body, OpenAI shaped
+	 * @param streaming   {@code true} for SSE line framing, {@code false} for a single JSON document
+	 * @return a future completing with the winning provider response, or completing exceptionally with
+	 * {@link UpstreamUnavailableException}
+	 */
+	public CompletableFuture<ProviderResponse> execute(ModelAlias alias, String requestBody, boolean streaming) {
+		return execute(alias, requestBody, null, null, streaming);
+	}
+
 	// ---------------------------------------------------------------------
 	// SEQUENTIAL
 	// ---------------------------------------------------------------------
 
-	private CompletableFuture<ProviderResponse> executeSequential(List<ProviderRef> chain, String requestBody) {
+	private CompletableFuture<ProviderResponse> executeSequential(List<ProviderRef> chain, String requestBody,
+	                                                         boolean streaming) {
 		AttemptContext ctx = new AttemptContext();
 		try {
-			return CompletableFuture.completedFuture(attemptChain(chain, requestBody, ctx));
+			return CompletableFuture.completedFuture(attemptChain(chain, requestBody, ctx, streaming));
 		} catch (UpstreamUnavailableException ex) {
 			return CompletableFuture.failedFuture(ex);
 		}
 	}
 
-	private ProviderResponse attemptChain(List<ProviderRef> chain, String requestBody, AttemptContext ctx) {
+	private ProviderResponse attemptChain(List<ProviderRef> chain, String requestBody, AttemptContext ctx,
+	                                boolean streaming) {
 		for (ProviderRef ref : chain) {
 			String name = ref.providerName();
 			ProviderConfig config = gatewayProperties.getProviders().get(name);
@@ -195,7 +231,7 @@ public class FailoverOrchestrator {
 
 			try {
 				HttpResponse<Stream<String>> response =
-						clientAdapter.sendAsync(config, requestBody, ref.modelOverride()).join();
+						clientAdapter.sendAsync(config, requestBody, ref.modelOverride(), streaming).join();
 				AttemptOutcome outcome = classify(response);
 				switch (outcome) {
 					case SUCCESS -> {
@@ -245,7 +281,8 @@ public class FailoverOrchestrator {
 	// RACE
 	// ---------------------------------------------------------------------
 
-	private CompletableFuture<ProviderResponse> executeRace(List<ProviderRef> chain, String requestBody) {
+	private CompletableFuture<ProviderResponse> executeRace(List<ProviderRef> chain, String requestBody,
+	                                                     boolean streaming) {
 		AttemptContext ctx = new AttemptContext();
 		List<ProviderAttempt> attempts = new ArrayList<>();
 
@@ -268,7 +305,7 @@ public class FailoverOrchestrator {
 			ctx.callsStarted.incrementAndGet();
 			attempts.add(new ProviderAttempt(
 					config, breaker,
-					clientAdapter.sendAsync(config, requestBody, ref.modelOverride())
+					clientAdapter.sendAsync(config, requestBody, ref.modelOverride(), streaming)
 			));
 		}
 

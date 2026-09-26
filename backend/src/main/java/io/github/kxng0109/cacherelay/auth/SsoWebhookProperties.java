@@ -64,13 +64,19 @@ public record SsoWebhookProperties(
 	 * @param oktaSecret        Okta event-hook header secret
 	 * @param entraClientState  Entra subscription client state
 	 * @param googleChannelToken Google watch channel token
+	 * @param googleChannelId   expected Google channel id; blank leaves it unpinned
+	 *                          (presented id must still be non-blank)
+	 * @param googleResourceId  expected Google resource id; blank leaves it unpinned
+	 *                          (presented id must still be non-blank)
 	 */
 	public record RegistrationWebhook(
 			@NotBlank String registrationId,
 			@DefaultValue("") String githubSecret,
 			@DefaultValue("") String oktaSecret,
 			@DefaultValue("") String entraClientState,
-			@DefaultValue("") String googleChannelToken
+			@DefaultValue("") String googleChannelToken,
+			@DefaultValue("") String googleChannelId,
+			@DefaultValue("") String googleResourceId
 	) {
 
 		/**
@@ -81,6 +87,8 @@ public record SsoWebhookProperties(
 			oktaSecret = oktaSecret == null ? "" : oktaSecret;
 			entraClientState = entraClientState == null ? "" : entraClientState;
 			googleChannelToken = googleChannelToken == null ? "" : googleChannelToken;
+			googleChannelId = googleChannelId == null ? "" : googleChannelId;
+			googleResourceId = googleResourceId == null ? "" : googleResourceId;
 		}
 	}
 }

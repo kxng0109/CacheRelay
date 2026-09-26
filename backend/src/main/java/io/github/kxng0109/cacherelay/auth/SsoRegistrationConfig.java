@@ -60,11 +60,16 @@ public class SsoRegistrationConfig {
 		if (id.isBlank()) {
 			return;
 		}
-		registrations.add(CommonOAuth2Provider.GOOGLE.getBuilder("google")
+		String issuerUri = environment.getProperty("SSO_GOOGLE_ISSUER_URI",
+				"https://accounts.google.com");
+		ClientRegistration.Builder builder = CommonOAuth2Provider.GOOGLE.getBuilder("google")
 				.clientId(id)
 				.clientSecret(secret)
-				.scope("openid", "profile", "email")
-				.build());
+				.scope("openid", "profile", "email");
+		// Explicit blank clears the provider default: without a configured issuer the
+		// login flow cannot validate iss, so the registration must carry none (deny).
+		builder.issuerUri(issuerUri.isBlank() ? null : issuerUri);
+		registrations.add(builder.build());
 	}
 
 	private void github(List<ClientRegistration> registrations) {
@@ -88,11 +93,13 @@ public class SsoRegistrationConfig {
 		}
 		String tenant = environment.getProperty("SSO_AZURE_TENANT", "common");
 		String base = "https://login.microsoftonline.com/" + tenant;
+		String issuerUri = environment.getProperty("SSO_AZURE_ISSUER_URI", "");
 		registrations.add(baseRegistration("azure", "Microsoft", id, secret,
 				base + "/oauth2/v2.0/authorize",
 				base + "/oauth2/v2.0/token",
 				"https://graph.microsoft.com/oidc/userinfo",
 				base + "/discovery/v2.0/keys",
+				issuerUri,
 				"openid", "profile", "email"));
 	}
 
@@ -106,11 +113,13 @@ public class SsoRegistrationConfig {
 		String policy = environment.getProperty("SSO_AZURE_B2C_POLICY", "policy");
 		String base = "https://" + tenant + ".b2clogin.com/" + tenant + ".onmicrosoft.com/"
 				+ policy;
+		String issuerUri = environment.getProperty("SSO_AZURE_B2C_ISSUER_URI", "");
 		registrations.add(baseRegistration("azure-b2c", "Microsoft B2C", id, secret,
 				base + "/oauth2/v2.0/authorize",
 				base + "/oauth2/v2.0/token",
 				base + "/openid/v2.0/userinfo",
 				base + "/discovery/v2.0/keys",
+				issuerUri,
 				"openid", "profile", "email"));
 	}
 
@@ -127,6 +136,7 @@ public class SsoRegistrationConfig {
 				issuer + "/v1/token",
 				issuer + "/v1/userinfo",
 				issuer + "/v1/keys",
+				issuer,
 				"openid", "profile", "email"));
 	}
 
@@ -141,14 +151,15 @@ public class SsoRegistrationConfig {
 				|| jwks.isBlank()) {
 			return;
 		}
+		String issuerUri = environment.getProperty("SSO_GENERIC_ISSUER_URI", "");
 		registrations.add(baseRegistration("generic", "SSO", id, secret, authorization, token,
-				userInfo, jwks, "openid", "profile", "email"));
+				userInfo, jwks, issuerUri, "openid", "profile", "email"));
 	}
 
 	private ClientRegistration baseRegistration(String registrationId, String clientName,
 			String clientId, String clientSecret, String authorizationUri, String tokenUri,
-			String userInfoUri, String jwkSetUri, String... scopes) {
-		return ClientRegistration.withRegistrationId(registrationId)
+			String userInfoUri, String jwkSetUri, String issuerUri, String... scopes) {
+		ClientRegistration.Builder builder = ClientRegistration.withRegistrationId(registrationId)
 				.clientId(clientId)
 				.clientSecret(clientSecret)
 				.clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
@@ -162,7 +173,10 @@ public class SsoRegistrationConfig {
 				.userInfoUri(userInfoUri)
 				.userNameAttributeName("sub")
 				.jwkSetUri(jwkSetUri)
-				.clientName(clientName)
-				.build();
+				.clientName(clientName);
+		if (issuerUri != null && !issuerUri.isBlank()) {
+			builder.issuerUri(issuerUri);
+		}
+		return builder.build();
 	}
 }

@@ -101,6 +101,13 @@ import java.util.concurrent.CompletionException;
 @Tag(name = "Proxy - Chat Completions", description = "OpenAI-compatible chat completions proxy with rate-limiting, failover, and multi-tier caching")
 public class ProxyController {
 
+	/**
+	 * Upper bound for the retained completion text accumulated during an SSE relay for cache and
+	 * replay persistence (~4 MiB, roughly a million tokens). The client always receives the full
+	 * stream; past this bound persistence is skipped rather than storing a truncated artifact.
+	 */
+	static final int ACCUMULATED_CONTENT_MAX_BYTES = 4 * 1024 * 1024;
+
 	private final FailoverOrchestrator failoverOrchestrator;
 	private final GatewayProperties gatewayProperties;
 	private final ObjectMapper objectMapper;
@@ -399,6 +406,13 @@ public class ProxyController {
 		@Nullable String ownerId = (String) request.getAttribute(KeyAuthFilter.OWNER_ID_ATTRIBUTE);
 		@Nullable VirtualApiKey apiKey =
 				(VirtualApiKey) request.getAttribute(KeyAuthFilter.VIRTUAL_KEY_ATTRIBUTE);
+		if (apiKey != null && !apiKey.allowedProviders().isEmpty()) {
+			Optional<ModelAlias> filtered = ProviderAccess.filterAlias(alias, apiKey.allowedProviders());
+			if (filtered.isEmpty()) {
+				return errorResponse(HttpStatus.FORBIDDEN, "No allowed providers for this key");
+			}
+			alias = filtered.get();
+		}
 		OpenAiChatRequest chatRequest = parseChatRequest(bodyTree);
 		// PERF-04: the body fingerprint feeds idempotency only — skip the SHA-256
 		// when no Idempotency-Key is present (resolveRequestId ignores it then).
@@ -411,7 +425,10 @@ public class ProxyController {
 		@Nullable ReplayFlight claimedFlight = null;
 		ReplayService replay = this.replayService;
 		if (idempotencyKey != null && replay != null) {
-			ReplayService.Lookup lookup = replay.lookup(idempotencyKey, bodyHashHex);
+			String replayKeyHashHex =
+					(String) request.getAttribute(KeyAuthFilter.KEY_HASH_ATTRIBUTE);
+			ReplayService.Lookup lookup =
+					replay.lookup(idempotencyKey, bodyHashHex, ownerId, replayKeyHashHex);
 			if (lookup instanceof ReplayService.FingerprintMismatch) {
 				return errorResponse(HttpStatus.UNPROCESSABLE_ENTITY,
 						"idempotency key already used with a different request");
@@ -428,8 +445,12 @@ public class ProxyController {
 			if (lookup instanceof ReplayService.Hit hit) {
 				return serveReplay(hit);
 			}
-			if (replay.beginFill(idempotencyKey)) {
-				claimedFlight = new ReplayFlight(idempotencyKey, bodyHashHex);
+			if (replay.beginFill(idempotencyKey, ownerId, replayKeyHashHex)) {
+				String keyHashHex =
+						(String) request.getAttribute(KeyAuthFilter.KEY_HASH_ATTRIBUTE);
+				claimedFlight = new ReplayFlight(idempotencyKey, bodyHashHex,
+						BudgetEnforcer.dedupeClaimId(ownerId, keyHashHex, bodyHashHex, idempotencyKey),
+						ownerId, replayKeyHashHex);
 			} else {
 				HttpHeaders conflictHeaders = new HttpHeaders();
 				conflictHeaders.setContentType(MediaType.APPLICATION_JSON);
@@ -483,14 +504,19 @@ public class ProxyController {
 		// On allow, an admission hold H is charged and recorded for stream-end true-up.
 		BudgetAdmission admission = admitWithBudget(
 				alias, model, ownerId, trimmed, chatRequest, requestId,
-				(String) request.getAttribute(KeyAuthFilter.KEY_HASH_ATTRIBUTE), idempotencyKey);
+				(String) request.getAttribute(KeyAuthFilter.KEY_HASH_ATTRIBUTE), idempotencyKey, bodyHashHex);
 		if (admission.denied() != null) {
 			return admission.denied();
 		}
 		@Nullable SettlementContext settlementContext = admission.context();
 
 		ProviderResponse providerResponse;
-		try {			providerResponse = failoverOrchestrator.execute(alias, trimmed).join();
+		// The fetch ceiling follows client intent: explicit stream:false responses are single JSON
+		// documents (loose ceiling); everything else keeps the tight SSE line ceiling. A streaming
+		// fetch that turns out to be JSON still relays through relayJson — with the SSE ceiling.
+		boolean streaming = chatRequest == null || !Boolean.FALSE.equals(chatRequest.stream());
+		try {
+			providerResponse = failoverOrchestrator.execute(alias, trimmed, streaming).join();
 		} catch (CompletionException ex) {
 			recordDecision(alias, model, routingContext, null);
 			Throwable cause = ex.getCause();
@@ -602,7 +628,7 @@ public class ProxyController {
 			return;
 		}
 		try {
-			replay.store(flight.key(), flight.bodyHash(), payload, sseFramed);
+			replay.store(flight.key(), flight.bodyHash(), payload, sseFramed, flight.tenant(), flight.keyHashHex());
 		} catch (RuntimeException ex) {
 			log.warn("Replay store failed; fill released for a later retry");
 			replayReleaseQuietly(flight);
@@ -610,7 +636,9 @@ public class ProxyController {
 	}
 
 	/**
-	 * Releases an owned fill claim without storing (abort, upstream failure, unmeasurable usage).
+	 * Releases an owned fill claim without storing (abort, upstream failure, unmeasurable usage), and releases
+	 * the matching budget idempotency claim so a retry claims fresh. A stale budget claim is harmless either
+	 * way: colliding retries still evaluate caps and charge (fail-closed).
 	 */
 	private void replayReleaseQuietly(@Nullable ReplayFlight flight) {
 		ReplayService replay = this.replayService;
@@ -618,9 +646,13 @@ public class ProxyController {
 			return;
 		}
 		try {
-			replay.releaseFill(flight.key());
+			replay.releaseFill(flight.key(), flight.tenant(), flight.keyHashHex());
 		} catch (RuntimeException ex) {
 			log.warn("Replay fill release failed; TTL bounds the stale claim");
+		}
+		BudgetEnforcer enforcer = this.budgetEnforcer;
+		if (enforcer != null) {
+			enforcer.releaseIdempotencyClaim(flight.budgetClaimId());
 		}
 	}
 
@@ -678,7 +710,16 @@ public class ProxyController {
 			}
 		}
 
-		StringBuilder accumulatedContent = new StringBuilder();
+		StringBuilder accumulatedContent = null;
+		// The accumulation exists only to persist the completion (cache store + replay); when
+		// neither is armed it is pure per-stream heap growth (PRX-B19), so it is skipped entirely.
+		// The cap bounds the retained artifact: past it the client still receives the full stream,
+		// but nothing is persisted (a truncated artifact must never be cached or replayed).
+		boolean accumulateContent = (cacheService != null || replayFlight != null) && chatRequest != null;
+		if (accumulateContent) {
+			accumulatedContent = new StringBuilder();
+		}
+		boolean accumulationTruncated = false;
 		try {
 			try (var lines = providerResponse.response().body()) {
 				for (String line : (Iterable<String>) lines::iterator) {
@@ -733,8 +774,15 @@ public class ProxyController {
 
 					// PERF-06: delta was parsed once above for this exact line (or rebased
 					// by the de-anonymizer); reusing it avoids a second full JSON parse.
-					if (delta != null) {
-						accumulatedContent.append(delta);
+					if (delta != null && accumulateContent && !accumulationTruncated) {
+						if (accumulatedContent.length() + delta.length()
+								> ACCUMULATED_CONTENT_MAX_BYTES) {
+							accumulationTruncated = true;
+							accumulatedContent.setLength(0);
+							log.debug("Completion exceeded the accumulation cap; skipping cache/replay persist");
+						} else {
+							accumulatedContent.append(delta);
+						}
 					}
 					byte[] bytes = toWrite.getBytes(StandardCharsets.UTF_8);
 						out.write(bytes);
@@ -752,8 +800,14 @@ public class ProxyController {
 					if (normalizer.isDone()) {
 						if (deAnonymizer != null) {
 							String leftover = deAnonymizer.flush();
-							if (!leftover.isEmpty()) {
-								accumulatedContent.append(leftover);
+							if (!leftover.isEmpty() && accumulateContent && !accumulationTruncated) {
+								if (accumulatedContent.length() + leftover.length()
+										> ACCUMULATED_CONTENT_MAX_BYTES) {
+									accumulationTruncated = true;
+									accumulatedContent.setLength(0);
+								} else {
+									accumulatedContent.append(leftover);
+								}
 							}
 						}
 						break;
@@ -820,8 +874,7 @@ public class ProxyController {
 			// Stream completed with measured usage: true the hold up to actual spend.
 			settleQuietly(settlementContext, costUsdMicros, false);
 
-			boolean cacheBlock = (cacheService != null || replayFlight != null)
-					&& chatRequest != null;
+			boolean cacheBlock = accumulateContent && !accumulationTruncated;
 			String completionJson = null;
 			int pt = 0;
 			int ct = 0;
@@ -886,22 +939,49 @@ public class ProxyController {
 	}
 
 	private String buildCompletionJson(String model, String content, int promptTokens, int completionTokens) {
+		return completionBody(objectMapper, model, content, promptTokens, completionTokens);
+	}
+
+	/**
+	 * Builds the cached/stream-end completion document with the mapper, never by
+	 * string concatenation: client-influenced values (notably {@code model}) are
+	 * always escaped, so a quoted model string stays well-formed JSON.
+	 * Serialization failures reject with 500 rather than serving a degraded or
+	 * truncated document.
+	 *
+	 * @param mapper           Jackson mapper, never {@code null}
+	 * @param model            served model id
+	 * @param content          completion text
+	 * @param promptTokens     prompt tokens (already clamped)
+	 * @param completionTokens completion tokens (already clamped)
+	 * @return serialized completion JSON
+	 * @throws ResponseStatusException 500 when serialization fails
+	 */
+	static String completionBody(ObjectMapper mapper, String model, String content,
+			int promptTokens, int completionTokens) {
 		long created = Instant.now().getEpochSecond();
 		String id = "chatcmpl-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
 		try {
-			String escapedContent = objectMapper.writeValueAsString(content);
-			return "{\"id\":\"" + id + "\",\"object\":\"chat.completion\",\"created\":" + created
-					+ ",\"model\":\"" + model
-					+ "\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":"
-					+ escapedContent + "},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":"
-					+ promptTokens + ",\"completion_tokens\":" + completionTokens + ",\"total_tokens\":"
-					+ (promptTokens + completionTokens) + "}}";
-		} catch (Exception ex) {
-			return "{\"id\":\"" + id + "\",\"object\":\"chat.completion\",\"created\":" + created
-					+ ",\"model\":\"" + model
-					+ "\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":"
-					+ promptTokens + ",\"completion_tokens\":" + completionTokens + ",\"total_tokens\":"
-					+ (promptTokens + completionTokens) + "}}";
+			ObjectNode root = mapper.createObjectNode();
+			root.put("id", id);
+			root.put("object", "chat.completion");
+			root.put("created", created);
+			root.put("model", model);
+			ArrayNode choices = root.putArray("choices");
+			ObjectNode choice = choices.addObject();
+			choice.put("index", 0);
+			ObjectNode message = choice.putObject("message");
+			message.put("role", "assistant");
+			message.put("content", content);
+			choice.put("finish_reason", "stop");
+			ObjectNode usage = root.putObject("usage");
+			usage.put("prompt_tokens", promptTokens);
+			usage.put("completion_tokens", completionTokens);
+			usage.put("total_tokens", promptTokens + completionTokens);
+			return mapper.writeValueAsString(root);
+		} catch (RuntimeException failed) {
+			throw new ResponseStatusException(
+					HttpStatus.INTERNAL_SERVER_ERROR, "completion serialization failed", failed);
 		}
 	}
 
@@ -942,6 +1022,15 @@ public class ProxyController {
 			for (String line : (Iterable<String>) lines::iterator) {
 				payload.append(line).append('\n');
 			}
+		} catch (LineTooLongException tooLong) {
+			// A streaming fetch that turned out to be JSON exceeded the SSE line ceiling: settle
+			// the input-known portion, release the flight, and fail clean (502) instead of leaking
+			// the raw guard exception with no usage recorded.
+			log.warn("Upstream JSON body exceeded the line ceiling from provider {}: {}",
+					providerName, tooLong.getMessage());
+			settlePromptKnown(settlementContext, false);
+			replayReleaseQuietly(replayFlight);
+			throw new UpstreamUnavailableException("upstream response too large", tooLong, false, false);
 		}
 		String json = payload.toString().trim();
 		JsonNode root;
@@ -969,6 +1058,11 @@ public class ProxyController {
 				out.write(line.getBytes(StandardCharsets.UTF_8));
 				out.write('\n');
 			}
+		}
+		catch (LineTooLongException tooLong) {
+			// Error bodies relay with the caller's error status already committed; truncate and
+			// close rather than leaking the guard exception mid-stream.
+			log.debug("Upstream error body exceeded the line ceiling; truncating the relay");
 		}
 		catch (IOException ex) {
 			// The downstream client went away; the upstream stream is closed by
@@ -1148,7 +1242,8 @@ public class ProxyController {
 	 * An owned replay fill: this request won the claim and will store (or release) it. {@code null} when
 	 * replay is unavailable, the key is absent, or another flight owns the key.
 	 */
-	private record ReplayFlight(String key, String bodyHash) {
+	private record ReplayFlight(String key, String bodyHash, @Nullable String budgetClaimId,
+	                            @Nullable String tenant, @Nullable String keyHashHex) {
 	}
 
 	/**
@@ -1246,7 +1341,7 @@ public class ProxyController {
 	private BudgetAdmission admitWithBudget(
 			ModelAlias alias, String model, @Nullable String ownerId, String trimmed,
 			@Nullable OpenAiChatRequest chatRequest, UUID requestId,
-			@Nullable String keyHashHex, @Nullable String idempotencyKey) {
+			@Nullable String keyHashHex, @Nullable String idempotencyKey, @Nullable String bodyHashHex) {
 		BudgetEnforcer enforcer = this.budgetEnforcer;
 		if (enforcer == null || keyHashHex == null || keyHashHex.isBlank()) {
 			return new BudgetAdmission(null, null);
@@ -1274,11 +1369,12 @@ public class ProxyController {
 		try {
 			if (settlement != null) {
 				auth = settlement.authorize(
-						keyHash, ownerId, budgetType, model, trimmed.length(), maxTokens, idempotencyKey);
+						keyHash, ownerId, budgetType, model, trimmed.length(), maxTokens, idempotencyKey,
+						bodyHashHex);
 				decision = auth.decision();
 			} else {
 				decision = enforcer.checkBudget(
-						keyHash, ownerId, budgetType, model, promptTokens, idempotencyKey);
+						keyHash, ownerId, budgetType, model, promptTokens, idempotencyKey, bodyHashHex);
 				auth = null;
 			}
 		} catch (RateLimitUnavailableException unavailable) {
@@ -1364,10 +1460,31 @@ public class ProxyController {
 	}
 
 	private ResponseEntity<StreamingResponseBody> errorResponse(HttpStatus status, String message) {
-		String body = "{\"error\":{\"message\":\"" + message + "\"}}";
+		String body = errorBody(objectMapper, message);
 		return ResponseEntity.status(status)
 		                     .contentType(MediaType.APPLICATION_JSON)
 		                     .body(out -> out.write(body.getBytes(StandardCharsets.UTF_8)));
+	}
+
+	/**
+	 * Serializes an error body with the mapper, never by concatenation: messages
+	 * frequently embed client input (model ids, header values), and raw
+	 * interpolation would let a quote break the JSON shape. A serialization
+	 * failure degrades to a static body — the failure path itself must never
+	 * throw.
+	 *
+	 * @param mapper  Jackson mapper, never {@code null}
+	 * @param message client-facing message
+	 * @return serialized error JSON
+	 */
+	static String errorBody(ObjectMapper mapper, String message) {
+		try {
+			ObjectNode error = mapper.createObjectNode();
+			error.putObject("error").put("message", message);
+			return mapper.writeValueAsString(error);
+		} catch (RuntimeException failed) {
+			return "{\"error\":{\"message\":\"request failed\"}}";
+		}
 	}
 
 	private void writeSse(OutputStream out, String line) throws IOException {
@@ -1376,9 +1493,14 @@ public class ProxyController {
 	}
 
 	private void writeSseError(OutputStream out, int limitBytes, int actualBytes, String provider) throws IOException {
-		String json = "{\"code\":\"LINE_TOO_LONG\",\"message\":\"SSE line exceeds configured maximum of " + limitBytes
-				+ " bytes (actual: " + actualBytes + ")\",\"limit\":" + limitBytes + ",\"actual\":" + actualBytes
-				+ ",\"provider\":\"" + provider + "\"}";
+		ObjectNode error = objectMapper.createObjectNode();
+		error.put("code", "LINE_TOO_LONG");
+		error.put("message", "SSE line exceeds configured maximum of " + limitBytes
+				+ " bytes (actual: " + actualBytes + ")");
+		error.put("limit", limitBytes);
+		error.put("actual", actualBytes);
+		error.put("provider", provider);
+		String json = objectMapper.writeValueAsString(error);
 		writeSse(out, "event: error");
 		writeSse(out, "data: " + json);
 		writeSse(out, "");

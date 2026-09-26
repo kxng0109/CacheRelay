@@ -29,9 +29,11 @@ import org.springframework.web.server.ResponseStatusException;
  * that invalidate revalidation watermarks.
  *
  * <p>Directory push carries no signature; trust comes from matching the
- * channel id, channel token, and resource id against the configured entry.
- * Sync messages and unknown channels answer 200 without touching stores.
- * Event bodies carry the immutable user id, which links store as subject.</p>
+ * channel token (constant-time, digest-then-compare) plus the channel id and
+ * resource id against the configured entry. Unconfigured secrets accept
+ * nothing; pinned channel/resource ids must match exactly. Sync messages and
+ * unknown channels answer 200 without touching stores. Event bodies carry the
+ * immutable user id, which links store as subject.</p>
  */
 @RestController
 @RequestMapping("/v1/sso/webhooks/google")
@@ -99,9 +101,17 @@ public class GoogleWebhookController {
 
 	private boolean matches(SsoWebhookProperties.RegistrationWebhook entry, String channelId,
 			String token, String resourceId) {
-		return channelId != null && !channelId.isBlank()
-				&& resourceId != null && !resourceId.isBlank()
-				&& entry.googleChannelToken().equals(token);
+		if (channelId == null || channelId.isBlank()
+				|| resourceId == null || resourceId.isBlank()
+				|| !WebhookSecrets.constantTimeEquals(entry.googleChannelToken(), token)) {
+			return false;
+		}
+		if (!entry.googleChannelId().isBlank()
+				&& !WebhookSecrets.constantTimeEquals(entry.googleChannelId(), channelId)) {
+			return false;
+		}
+		return entry.googleResourceId().isBlank()
+				|| WebhookSecrets.constantTimeEquals(entry.googleResourceId(), resourceId);
 	}
 
 	private byte[] rawBody(HttpServletRequest request) {

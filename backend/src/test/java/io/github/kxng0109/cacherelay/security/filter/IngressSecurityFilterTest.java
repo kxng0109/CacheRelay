@@ -15,12 +15,17 @@ import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 @DisplayName("IngressSecurityFilter Tests")
 class IngressSecurityFilterTest {
@@ -75,9 +80,11 @@ class IngressSecurityFilterTest {
 	}
 
 	@Test
-	@DisplayName("bypasses non-target URIs")
+	@DisplayName("FS-B12: embeddings bodies are guarded, not bypassed")
 	void bypassesNonTargetUri() throws ServletException, IOException {
-		IngressSecurityFilter filter = createFilter(new GuardrailProperties());
+		GuardrailProperties props = new GuardrailProperties();
+		props.setMode(GuardrailMode.ENFORCE);
+		IngressSecurityFilter filter = createFilter(props);
 		CachedBodyHttpServletRequest request = wrap("POST", "/v1/embeddings", "{\"input\":\"test\"}");
 		MockHttpServletResponse response = new MockHttpServletResponse();
 		MockFilterChain chain = new MockFilterChain();
@@ -86,6 +93,54 @@ class IngressSecurityFilterTest {
 
 		assertThat(chain.getRequest()).isNotNull();
 		assertThat(response.getStatus()).isEqualTo(200);
+	}
+
+	@Test
+	@DisplayName("FS-B12: leaked secret in an embeddings body is blocked in ENFORCE mode")
+	void blocksSecretOnEmbeddingsInEnforceMode() throws ServletException, IOException {
+		GuardrailProperties props = new GuardrailProperties();
+		props.setMode(GuardrailMode.ENFORCE);
+		IngressSecurityFilter filter = createFilter(props);
+
+		String leakPayload = "{\"model\":\"text-embedding-3-small\",\"input\":\"my secret is sk-proj-aB9zY1kL0pQ8wE2rT5yU7iO4aS6dF8gH1jK3lZ5xX7cV9bN0mQ2wE4rT6yU8iO0\"}";
+		CachedBodyHttpServletRequest request = wrap("POST", "/v1/embeddings", leakPayload);
+		MockHttpServletResponse response = new MockHttpServletResponse();
+		MockFilterChain chain = new MockFilterChain();
+
+		filter.doFilter(request, response, chain);
+
+		assertThat(response.getStatus()).isEqualTo(422);
+		assertThat(chain.getRequest()).isNull();
+	}
+
+	@Test
+	@DisplayName("FS-B12: scanner failures fail closed with 500 and a failure metric")
+	void scannerFailureFailsClosed() throws ServletException, IOException {		GuardrailProperties props = new GuardrailProperties();
+		props.setMode(GuardrailMode.ENFORCE);
+		IngressSecretScanner failing = mock(IngressSecretScanner.class);
+		when(failing.scan(any(byte[].class), anyString()))
+				.thenThrow(new RuntimeException("scanner down"));
+		SimpleMeterRegistry registry = new SimpleMeterRegistry();
+		IngressSecurityFilter filter = new IngressSecurityFilter(
+				failing,
+				new PromptInjectionScanner(),
+				new PiiAnonymizer(new PiiScanner()),
+				props,
+				objectMapper
+		);
+		filter.setMeterRegistry(registry);
+
+		CachedBodyHttpServletRequest request =
+				wrap("POST", "/v1/chat/completions", "{\"prompt\":\"hello\"}");
+		MockHttpServletResponse response = new MockHttpServletResponse();
+		MockFilterChain chain = new MockFilterChain();
+
+		filter.doFilter(request, response, chain);
+
+		assertThat(response.getStatus()).isEqualTo(500);
+		assertThat(chain.getRequest()).isNull();
+		assertThat(registry.get("guardrail_scan_failures_total")
+				.tag("stage", "secret").counter().count()).isEqualTo(1.0);
 	}
 
 	@Test
@@ -277,5 +332,103 @@ class IngressSecurityFilterTest {
 		assertThat(response.getStatus()).isEqualTo(200);
 		assertThat(chain.getRequest()).isSameAs(request);
 		assertThat(request.getAttribute(IngressSecurityFilter.PII_VAULT_ATTRIBUTE)).isNull();
+	}
+
+	@Test
+	@DisplayName("FS-B12: POSTs to unguarded paths pass through untouched")
+	void postsToUnguardedPathsPassThrough() throws ServletException, IOException {
+		IngressSecurityFilter filter = createFilter(new GuardrailProperties());
+		CachedBodyHttpServletRequest request = wrap("POST", "/v1/models", "{\"model\":\"x\"}");
+		MockHttpServletResponse response = new MockHttpServletResponse();
+		MockFilterChain chain = new MockFilterChain();
+
+		filter.doFilter(request, response, chain);
+
+		assertThat(chain.getRequest()).isNotNull();
+		assertThat(response.getStatus()).isEqualTo(200);
+	}
+
+	@Test
+	@DisplayName("FS-B12: injection scanner failures fail closed with 500")
+	void injectionScannerFailureFailsClosed() throws ServletException, IOException {
+		GuardrailProperties props = new GuardrailProperties();
+		props.setMode(GuardrailMode.ENFORCE);
+		PromptInjectionScanner failing = mock(PromptInjectionScanner.class);
+		when(failing.scan(anyString())).thenThrow(new RuntimeException("injection down"));
+		SimpleMeterRegistry registry = new SimpleMeterRegistry();
+		IngressSecurityFilter filter = new IngressSecurityFilter(
+				new IngressSecretScanner(),
+				failing,
+				new PiiAnonymizer(new PiiScanner()),
+				props,
+				objectMapper
+		);
+		filter.setMeterRegistry(registry);
+
+		CachedBodyHttpServletRequest request =
+				wrap("POST", "/v1/chat/completions", "{\"prompt\":\"hello\"}");
+		MockHttpServletResponse response = new MockHttpServletResponse();
+		MockFilterChain chain = new MockFilterChain();
+
+		filter.doFilter(request, response, chain);
+
+		assertThat(response.getStatus()).isEqualTo(500);
+		assertThat(chain.getRequest()).isNull();
+		assertThat(registry.get("guardrail_scan_failures_total")
+				.tag("stage", "injection").counter().count()).isEqualTo(1.0);
+	}
+
+	@Test
+	@DisplayName("FS-B12: PII failures close the vault and fail closed with 500")
+	void piiScannerFailureFailsClosed() throws ServletException, IOException {
+		GuardrailProperties props = new GuardrailProperties();
+		props.setMode(GuardrailMode.ENFORCE);
+		PiiAnonymizer failing = mock(PiiAnonymizer.class);
+		when(failing.anonymize(anyString(), any(EphemeralPiiVault.class)))
+				.thenThrow(new RuntimeException("pii down"));
+		IngressSecurityFilter filter = new IngressSecurityFilter(
+				new IngressSecretScanner(),
+				new PromptInjectionScanner(),
+				failing,
+				props,
+				objectMapper
+		);
+
+		CachedBodyHttpServletRequest request =
+				wrap("POST", "/v1/chat/completions", "{\"prompt\":\"hello\"}");
+		MockHttpServletResponse response = new MockHttpServletResponse();
+		MockFilterChain chain = new MockFilterChain();
+
+		filter.doFilter(request, response, chain);
+
+		assertThat(response.getStatus()).isEqualTo(500);
+		assertThat(chain.getRequest()).isNull();
+	}
+
+	@Test
+	@DisplayName("FS-B12: failures deny even without a wired registry")
+	void failureWithoutRegistryStillDenies() throws ServletException, IOException {
+		GuardrailProperties props = new GuardrailProperties();
+		props.setMode(GuardrailMode.ENFORCE);
+		IngressSecretScanner failing = mock(IngressSecretScanner.class);
+		when(failing.scan(any(byte[].class), anyString()))
+				.thenThrow(new RuntimeException("scanner down"));
+		IngressSecurityFilter filter = new IngressSecurityFilter(
+				failing,
+				new PromptInjectionScanner(),
+				new PiiAnonymizer(new PiiScanner()),
+				props,
+				objectMapper
+		);
+
+		CachedBodyHttpServletRequest request =
+				wrap("POST", "/v1/chat/completions", "{\"prompt\":\"hello\"}");
+		MockHttpServletResponse response = new MockHttpServletResponse();
+		MockFilterChain chain = new MockFilterChain();
+
+		filter.doFilter(request, response, chain);
+
+		assertThat(response.getStatus()).isEqualTo(500);
+		assertThat(chain.getRequest()).isNull();
 	}
 }

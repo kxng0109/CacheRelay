@@ -2,6 +2,7 @@ package io.github.kxng0109.cacherelay.mcp.security;
 
 import io.github.kxng0109.cacherelay.security.guardrail.secret.IngressSecretScanner;
 import io.github.kxng0109.cacherelay.security.guardrail.secret.SecretScanResult;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -9,6 +10,10 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 @DisplayName("MCP Guardrail Scanner Unit Tests")
 class McpGuardrailScannerTest {
@@ -105,5 +110,37 @@ class McpGuardrailScannerTest {
 		assertThat(guardrailScanner.containsIndirectPromptInjection("Query executed successfully. 42 rows returned.")).isFalse();
 		assertThat(guardrailScanner.containsIndirectPromptInjection("")).isFalse();
 		assertThat(guardrailScanner.containsIndirectPromptInjection(null)).isFalse();
+	}
+
+	@Test
+	@DisplayName("FS-B12: serialization failures throw instead of returning clean (fail closed)")
+	void scanArgumentsSerializationFailureThrows() {		ObjectMapper failingMapper = mock(ObjectMapper.class);
+		McpGuardrailScanner failingScanner =
+				new McpGuardrailScanner(new IngressSecretScanner(), failingMapper);
+		SimpleMeterRegistry registry = new SimpleMeterRegistry();
+		failingScanner.setMeterRegistry(registry);
+		ObjectNode args = objectMapper.createObjectNode();
+		args.put("query", "SELECT 1");
+		when(failingMapper.writeValueAsString(any())).thenThrow(new RuntimeException("boom"));
+
+		assertThatThrownBy(() -> failingScanner.scanArguments(args))
+				.isInstanceOf(GuardrailScanException.class)
+				.hasMessageContaining("arguments");
+		assertThat(registry.get("mcp_guardrail_scan_failures_total")
+				.tag("stage", "arguments").counter().count()).isEqualTo(1.0);
+	}
+
+	@Test
+	@DisplayName("FS-B12: scan failures throw even without a wired registry")
+	void scanArgumentsFailureWithoutRegistry() {
+		ObjectMapper failingMapper = mock(ObjectMapper.class);
+		McpGuardrailScanner failingScanner =
+				new McpGuardrailScanner(new IngressSecretScanner(), failingMapper);
+		ObjectNode args = objectMapper.createObjectNode();
+		args.put("query", "SELECT 1");
+		when(failingMapper.writeValueAsString(any())).thenThrow(new RuntimeException("boom"));
+
+		assertThatThrownBy(() -> failingScanner.scanArguments(args))
+				.isInstanceOf(GuardrailScanException.class);
 	}
 }

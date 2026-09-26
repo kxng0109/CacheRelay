@@ -304,6 +304,12 @@ gateway:
         - provider-name: ollama
           model-override: nomic-embed-text:latest
       strategy: SEQUENTIAL
+  # Physical regulatory jurisdiction per provider name (EU, US, NG, UK, CH, CA,
+  # ZA, GH). Seeds the sovereignty router and wins over URI heuristics.
+  # Unregistered providers fail closed under STRICT_SOVEREIGN/SOVEREIGN_CASCADE.
+  # provider-jurisdictions:
+  #   openai: US
+  #   eu-proxy: EU
   bootstrap-keys:
   # Bootstrap keys are provisioned exclusively through environment variables.
   # Example for the first key:

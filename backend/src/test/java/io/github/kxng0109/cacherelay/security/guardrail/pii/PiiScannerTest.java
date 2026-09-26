@@ -58,6 +58,42 @@ class PiiScannerTest {
 	}
 
 	@Test
+	@DisplayName("FS-B12: 16- and 19-digit Verve cards verify by prefix and Luhn")
+	void sixteenAndNineteenDigitVerve() {
+		assertThat(scanner.scan("card " + luhn("506012345678901") + " here"))
+				.extracting(PiiEntity::type).contains(PiiType.VERVE_CARD);
+		assertThat(scanner.scan("card " + luhn("506012345678901234") + " here"))
+				.extracting(PiiEntity::type).contains(PiiType.VERVE_CARD);
+	}
+
+	@Test
+	@DisplayName("FS-B12: plus and percent survive in email local parts")
+	void emailLocalSpecials() {
+		List<PiiEntity> plus = scanner.scan("mail user+tag@example.com now");
+		assertThat(plus).extracting(PiiEntity::originalValue).contains("user+tag@example.com");
+
+		List<PiiEntity> percent = scanner.scan("mail user%40@example.com now");
+		assertThat(percent).extracting(PiiEntity::originalValue).contains("user%40@example.com");
+	}
+
+	private static String luhn(String prefix) {
+		int sum = 0;
+		boolean alternate = true;
+		for (int i = prefix.length() - 1; i >= 0; i--) {
+			int digit = prefix.charAt(i) - '0';
+			if (alternate) {
+				digit *= 2;
+				if (digit > 9) {
+					digit -= 9;
+				}
+			}
+			sum += digit;
+			alternate = !alternate;
+		}
+		return prefix + ((10 - (sum % 10)) % 10);
+	}
+
+	@Test
 	@DisplayName("18-digit Verve cards verify by prefix and Luhn")
 	void eighteenDigitVerve() {
 		String prefix17 = "50601234567890123";
@@ -104,6 +140,25 @@ class PiiScannerTest {
 		assertThat(entities.get(0).originalValue()).isEqualTo("support@cacherelay.io");
 		assertThat(entities.get(1).type()).isEqualTo(PiiType.EMAIL);
 		assertThat(entities.get(1).originalValue()).isEqualTo("sales-ops@example.com");
+	}
+
+	@Test
+	@DisplayName("mid-run TLD ends the match where the regex backtrack settles")
+	void emailMidRunTld() {
+		List<PiiEntity> entities = scanner.scan("x@ab.cdef.gh12");
+
+		assertThat(entities).hasSize(1);
+		assertThat(entities.getFirst().originalValue()).isEqualTo("x@ab.cdef");
+		assertThat(entities.getFirst().startOffset()).isEqualTo(0);
+		assertThat(entities.getFirst().endOffset()).isEqualTo(9);
+	}
+
+	@Test
+	@DisplayName("dot-heavy domain without a valid TLD matches nothing")
+	void emailDotHeavyNoMatch() {
+		String text = "a".repeat(1000) + "@" + "a.".repeat(500);
+
+		assertThat(scanner.scan(text)).isEmpty();
 	}
 
 	@Test
@@ -230,5 +285,35 @@ class PiiScannerTest {
 
 		assertThat(entities.get(2).type()).isEqualTo(PiiType.PERSON_NAME);
 		assertThat(entities.get(2).originalValue()).isEqualTo("Musa Bello");
+	}
+
+	@Test
+	@DisplayName("FS-B12: email boundary shapes (leading punctuation, empty local, long TLD)")
+	void emailBoundaryShapes() {
+		List<PiiEntity> dotted = scanner.scan("mail .john@example.com now");
+		assertThat(dotted).extracting(PiiEntity::originalValue).contains("john@example.com");
+
+		List<PiiEntity> emptyLocal = scanner.scan("contact @example.com now");
+		assertThat(emptyLocal).extracting(PiiEntity::type).doesNotContain(PiiType.EMAIL);
+
+		List<PiiEntity> longTld = scanner.scan("mail a@b." + "c".repeat(63) + " now");
+		assertThat(longTld).extracting(PiiEntity::originalValue)
+				.contains("a@b." + "c".repeat(63));
+
+		List<PiiEntity> backtrack = scanner.scan("mail a@b.com1 now");
+		assertThat(backtrack).extracting(PiiEntity::type).doesNotContain(PiiType.EMAIL);
+	}
+
+	@Test
+	@DisplayName("FS-B12: email domain alphabet (hyphen, uppercase, digits, underscore)")
+	void emailDomainAlphabet() {
+		List<PiiEntity> hyphen = scanner.scan("mail a@my-domain.com now");
+		assertThat(hyphen).extracting(PiiEntity::originalValue).contains("a@my-domain.com");
+
+		List<PiiEntity> upper = scanner.scan("mail USER@EXAMPLE.COM now");
+		assertThat(upper).extracting(PiiEntity::type).contains(PiiType.EMAIL);
+
+		List<PiiEntity> alnum = scanner.scan("mail user_1@example.com now");
+		assertThat(alnum).extracting(PiiEntity::originalValue).contains("user_1@example.com");
 	}
 }

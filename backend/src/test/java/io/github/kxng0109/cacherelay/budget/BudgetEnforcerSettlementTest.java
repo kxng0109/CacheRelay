@@ -64,7 +64,7 @@ class BudgetEnforcerSettlementTest {
 		when(redisTemplate.execute(any(), anyList(), any(), any()))
 				.thenReturn(List.of(1L, 0L, 100L, 60L, 2L));
 
-		enforcer().authorizeHold(keyHash(), "owner-1", ProviderType.OPENAI, "m", 10, 20, null);
+		enforcer().authorizeHold(keyHash(), "owner-1", ProviderType.OPENAI, "m", 10, 20, null, null);
 
 		// H = 10*2 (prompt) + 20*5 (output) = 120, charged through the same gate.
 		verify(redisTemplate).execute(any(), anyList(), eq("120"), any());
@@ -79,7 +79,7 @@ class BudgetEnforcerSettlementTest {
 				.thenReturn(List.of(1L, 0L, 100L, 60L, 2L));
 
 		BudgetEnforcer.HoldAuthorization auth =
-				enforcer().authorizeHold(keyHash(), "owner-1", ProviderType.OPENAI, "m", 10, 20, null);
+				enforcer().authorizeHold(keyHash(), "owner-1", ProviderType.OPENAI, "m", 10, 20, null, null);
 
 		assertThat(auth.decision()).isInstanceOf(BudgetDecision.Allowed.class);
 		assertThat(auth.holdMicros()).isEqualTo(30L);
@@ -93,7 +93,7 @@ class BudgetEnforcerSettlementTest {
 				.thenThrow(new RuntimeException("catalog down"));
 
 		assertThatThrownBy(() ->
-				enforcer().authorizeHold(keyHash(), "owner-1", ProviderType.OPENAI, "m", 10, 20, null))
+				enforcer().authorizeHold(keyHash(), "owner-1", ProviderType.OPENAI, "m", 10, 20, null, null))
 				.isInstanceOf(RateLimitUnavailableException.class);
 	}
 
@@ -103,7 +103,7 @@ class BudgetEnforcerSettlementTest {
 		when(costCalculator.calculate(any(), anyString(), anyLong(), anyLong())).thenReturn(Long.MAX_VALUE);
 
 		assertThatThrownBy(() ->
-				enforcer().authorizeHold(keyHash(), null, ProviderType.OPENAI, "m", 10, 20, null))
+				enforcer().authorizeHold(keyHash(), null, ProviderType.OPENAI, "m", 10, 20, null, null))
 				.isInstanceOf(RateLimitUnavailableException.class);
 	}
 
@@ -114,10 +114,10 @@ class BudgetEnforcerSettlementTest {
 		when(redisTemplate.execute(any(), anyList(), any(), any()))
 				.thenReturn(List.of(1L, 0L, -1L, 0L, 0L));
 		BudgetEnforcer enforcer = enforcer();
-		enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "m", 10, null);
+		enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "m", 10, null, null);
 
 		BudgetEnforcer.HoldAuthorization auth =
-				enforcer.authorizeHold(keyHash(), "owner-1", ProviderType.OPENAI, "m", 10, 20, null);
+				enforcer.authorizeHold(keyHash(), "owner-1", ProviderType.OPENAI, "m", 10, 20, null, null);
 
 		assertThat(auth.decision()).isInstanceOf(BudgetDecision.Allowed.class);
 		assertThat(auth.holdMicros()).isZero();

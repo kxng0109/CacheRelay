@@ -301,13 +301,12 @@ public class A2aProxyController {
 	/**
 	 * Relays a {@code message/stream} exchange as a byte-transparent SSE pass-through.
 	 *
-	 * <p>No {@code HttpRequest} timeout is set: JDK behavior for request timeouts on
-	 * streaming bodies is implementation-dependent (headers-only vs whole-exchange), so
-	 * stream lifetime is bounded by the servlet async timeout and the client connection
-	 * instead. A pre-stream failure answers a normal JSON-RPC error; a mid-stream
-	 * upstream failure closes the SSE body (clients detect truncation by the missing
-	 * {@code final:true} event). A client disconnect closes the upstream stream and is
-	 * never counted as an upstream failure.</p>
+	 * <p>Two bounds apply: the request timeout covers the headers phase (JDK semantics bound
+	 * time-to-first-byte, not the stream), and an explicit stream deadline caps total lifetime
+	 * (the servlet container cannot be relied on to do it). A pre-stream failure answers a normal
+	 * JSON-RPC error; a mid-stream upstream failure closes the SSE body (clients detect truncation
+	 * by the missing {@code final:true} event). A client disconnect closes the upstream stream and
+	 * is never counted as an upstream failure.</p>
 	 *
 	 * @param agentName       registered agent name
 	 * @param agent           resolved agent configuration
@@ -325,6 +324,7 @@ public class A2aProxyController {
 	) {
 		HttpRequest request = baseRequest(agent, rawBody, protocolVersion)
 				.header("Accept", "text/event-stream")
+				.timeout(properties.getClientRequestTimeout())
 				.POST(HttpRequest.BodyPublishers.ofString(rawBody))
 				.build();
 
@@ -362,7 +362,9 @@ public class A2aProxyController {
 			}
 		}
 
-		StreamingResponseBody stream = out -> copyStream(agentName, upstream.body(), out);
+		StreamingResponseBody stream = out -> copyStream(
+				agentName, upstream.body(), out,
+				System.nanoTime() + properties.getStreamMaxDuration().toNanos());
 		return ResponseEntity.ok()
 				.contentType(MediaType.TEXT_EVENT_STREAM)
 				.header("Cache-Control", "no-cache")
@@ -371,16 +373,24 @@ public class A2aProxyController {
 	}
 
 	/**
-	 * Copies the upstream SSE body to the client with per-chunk flush and a byte cap.
+	 * Copies the upstream SSE body to the client with per-chunk flush, a byte cap, and a stream
+	 * deadline.
 	 *
 	 * <p>Read failures are upstream faults (breaker failure); write failures mean the
-	 * client is gone (no breaker penalty). The upstream stream is always closed.</p>
+	 * client is gone (no breaker penalty). A stalled stream past the deadline is an upstream
+	 * fault too (the agent stopped producing). The upstream stream is always closed.</p>
 	 */
-	private void copyStream(String agentName, InputStream upstream, OutputStream out) {
+	private void copyStream(String agentName, InputStream upstream, OutputStream out, long deadlineNanos) {
 		byte[] buffer = new byte[STREAM_COPY_BUFFER_BYTES];
 		long total = 0;
 		try (upstream) {
 			while (true) {
+				if (System.nanoTime() > deadlineNanos) {
+					circuitBreakerManager.recordFailure(agentName);
+					log.warn("A2A stream from agent '{}' exceeded the stream deadline; closing stream",
+							agentName);
+					return;
+				}
 				int read;
 				try {
 					read = upstream.read(buffer);

@@ -51,6 +51,28 @@ public class ProviderClientAdapter {
 			String requestBody,
 			@Nullable String modelOverride
 	) {
+		return sendAsync(config, requestBody, modelOverride, true);
+	}
+
+	/**
+	 * Sends the chat completion request with an explicit streaming mode.
+	 *
+	 * <p>Non-streaming responses are single JSON documents whose lines legitimately exceed the per-line
+	 * SSE ceiling, so they are fetched with the separate non-streaming ceiling (still bounded,
+	 * still fail-fast) instead of tripping the SSE guard.</p>
+	 *
+	 * @param config        the provider to contact
+	 * @param requestBody   the client request body, OpenAI shaped
+	 * @param modelOverride optional model remapping for this step, may be {@code null}
+	 * @param streaming     {@code true} for SSE line framing, {@code false} for a single JSON document
+	 * @return the future of the response body stream
+	 */
+	public CompletableFuture<HttpResponse<Stream<String>>> sendAsync(
+			ProviderConfig config,
+			String requestBody,
+			@Nullable String modelOverride,
+			boolean streaming
+	) {
 		ProtocolAdapter adapter = adapterResolver.resolve(config.type());
 
 		HttpRequest.Builder builder = HttpRequest.newBuilder(adapter.buildUpstreamUrl(config))
@@ -61,9 +83,10 @@ public class ProviderClientAdapter {
 		                                         ));
 		adapter.buildRequestHeaders(config).forEach(builder::header);
 
-		BoundedLineBodyHandler handler = lineGuardFactory.bodyHandlerForProvider(
-				SseLineGuard.ProviderType.from(config.type())
-		);
+		BoundedLineBodyHandler handler = streaming
+				? lineGuardFactory.bodyHandlerForProvider(
+						SseLineGuard.ProviderType.from(config.type()))
+				: lineGuardFactory.bodyHandlerForNonStreaming();
 		return proxyHttpClient.sendAsync(builder.build(), handler);
 	}
 }

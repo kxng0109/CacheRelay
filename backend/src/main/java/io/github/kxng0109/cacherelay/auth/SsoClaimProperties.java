@@ -16,9 +16,9 @@ import org.springframework.validation.annotation.Validated;
  *
  * <p>Each entry binds one Spring registration id to its org, the claim names
  * carrying groups, roles, and tenant, the tenant allowlist, and the group
- * patterns that materialize teams. Registrations without an entry keep legacy
- * behavior (shadow account, no teams) so existing SSO keeps working until the
- * operator configures teams.</p>
+ * patterns that materialize teams. Registrations without an entry deny every
+ * login (fail closed): the mapping is the per-registration allowlist, and an
+ * IdP account must never gain an API-capable account without one.</p>
  *
  * @param registrations per-registration mappings, never {@code null}
  */

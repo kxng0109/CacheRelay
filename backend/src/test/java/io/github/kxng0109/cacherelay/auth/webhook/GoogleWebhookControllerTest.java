@@ -33,7 +33,7 @@ class GoogleWebhookControllerTest {
 
 	private GoogleWebhookController controller() {
 		SsoWebhookProperties props = new SsoWebhookProperties(List.of(
-				new SsoWebhookProperties.RegistrationWebhook("google", "", "", "", TOKEN)));
+				new SsoWebhookProperties.RegistrationWebhook("google", "", "", "", TOKEN, "", "")));
 		return new GoogleWebhookController(props, invalidator, audit);
 	}
 
@@ -128,10 +128,73 @@ class GoogleWebhookControllerTest {
 
 	@Test
 	@DisplayName("malformed bodies answer 200 without invalidating")
-	void malformedIgnored() {		ResponseEntity<Void> response = controller().receive("chan-1", TOKEN, "res-1", "update",
+	void malformedIgnored() {
+		ResponseEntity<Void> response = controller().receive("chan-1", TOKEN, "res-1", "update",
 				request("chan-1", TOKEN, "res-1", "update", "not-json"));
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		verify(invalidator, never()).invalidate(any(), any());
+	}
+
+	private GoogleWebhookController pinnedController() {
+		SsoWebhookProperties props = new SsoWebhookProperties(List.of(
+				new SsoWebhookProperties.RegistrationWebhook("google", "", "", "", TOKEN,
+						"chan-1", "res-1")));
+		return new GoogleWebhookController(props, invalidator, audit);
+	}
+
+	@Test
+	@DisplayName("FS-B10: pinned channel and resource pass together")
+	void pinnedHappyPath() {
+		String body = "{\"kind\":\"admin#directory#user\",\"id\":\"987654\"}";
+
+		ResponseEntity<Void> response = pinnedController().receive("chan-1", TOKEN, "res-1",
+				"update", request("chan-1", TOKEN, "res-1", "update", body));
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		verify(invalidator).invalidate("google", "987654");
+	}
+
+	@Test
+	@DisplayName("FS-B10: pinned channel mismatch denies even with the right token")
+	void pinnedChannelMismatchDenied() {
+		assertThatThrownBy(() -> pinnedController().receive("chan-2", TOKEN, "res-1", "update",
+				request("chan-2", TOKEN, "res-1", "update", "{}")))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.UNAUTHORIZED);
+		verify(invalidator, never()).invalidate(any(), any());
+	}
+
+	@Test
+	@DisplayName("FS-B10: pinned resource mismatch denies even with the right token")
+	void pinnedResourceMismatchDenied() {
+		assertThatThrownBy(() -> pinnedController().receive("chan-1", TOKEN, "res-2", "update",
+				request("chan-1", TOKEN, "res-2", "update", "{}")))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.UNAUTHORIZED);
+		verify(invalidator, never()).invalidate(any(), any());
+	}
+
+	@Test
+	@DisplayName("FS-B10: blank configured token accepts nothing (fail closed)")
+	void blankTokenConfigAcceptsNothing() {
+		SsoWebhookProperties props = new SsoWebhookProperties(List.of(
+				new SsoWebhookProperties.RegistrationWebhook("google", "", "", "", "", "", "")));
+		GoogleWebhookController controller =
+				new GoogleWebhookController(props, invalidator, audit);
+
+		assertThatThrownBy(() -> controller.receive("chan-1", "", "res-1", "update",
+				request("chan-1", "", "res-1", "update", "{}")))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.UNAUTHORIZED);
+		assertThatThrownBy(() -> controller.receive("chan-1", null, "res-1", "update",
+				request("chan-1", null, "res-1", "update", "{}")))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.UNAUTHORIZED);
 		verify(invalidator, never()).invalidate(any(), any());
 	}
 }

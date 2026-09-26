@@ -1,5 +1,6 @@
 package io.github.kxng0109.cacherelay.security.filter;
 
+import io.github.kxng0109.cacherelay.contracts.GatewayProperties;
 import io.github.kxng0109.cacherelay.security.guardrail.common.GuardrailProperties;
 import io.github.kxng0109.cacherelay.security.guardrail.injection.PromptInjectionScanner;
 import io.github.kxng0109.cacherelay.security.guardrail.pii.PiiAnonymizer;
@@ -52,7 +53,10 @@ public class SecurityFilterConfig {
 		registration.setOrder(RequestBodyCachingFilter.ORDER);
 		registration.addUrlPatterns(
 				RequestBodyCachingFilter.TARGET_PATH_CHAT,
-				RequestBodyCachingFilter.TARGET_PATH_EMBEDDINGS
+				RequestBodyCachingFilter.TARGET_PATH_EMBEDDINGS,
+				RequestBodyCachingFilter.TARGET_PATH_MCP,
+				RequestBodyCachingFilter.TARGET_PATH_MCP + "/*",
+				RequestBodyCachingFilter.TARGET_PATH_A2A + "/*"
 		);
 		registration.setName("cacherelayRequestBodyCachingFilter");
 		return registration;
@@ -64,16 +68,18 @@ public class SecurityFilterConfig {
 	 * @param keyManagementService key lookup service
 	 * @param rateLimitEngine      rate-limit engine
 	 * @param objectMapper         Jackson mapper for body parsing
+	 * @param gatewayProperties    alias catalog for provider-allowlist admission
 	 * @return the filter registration
 	 */
 	@Bean
 	FilterRegistrationBean<KeyAuthFilter> keyAuthFilterRegistration(
 			KeyManagementService keyManagementService,
 			RateLimitEngine rateLimitEngine,
-			ObjectMapper objectMapper
+			ObjectMapper objectMapper,
+			GatewayProperties gatewayProperties
 	) {
 		FilterRegistrationBean<KeyAuthFilter> registration = new FilterRegistrationBean<>(
-				new KeyAuthFilter(keyManagementService, rateLimitEngine, objectMapper));
+				new KeyAuthFilter(keyManagementService, rateLimitEngine, objectMapper, gatewayProperties));
 		registration.setOrder(KeyAuthFilter.ORDER);
 		registration.addUrlPatterns(
 				KeyAuthFilter.TARGET_PATH_CHAT,
@@ -104,7 +110,9 @@ public class SecurityFilterConfig {
 		FilterRegistrationBean<IngressSecurityFilter> registration = new FilterRegistrationBean<>(
 				new IngressSecurityFilter(secretScanner, injectionScanner, piiAnonymizer, properties, objectMapper));
 		registration.setOrder(IngressSecurityFilter.ORDER);
-		registration.addUrlPatterns(IngressSecurityFilter.TARGET_PATH);
+		registration.addUrlPatterns(
+				IngressSecurityFilter.TARGET_PATH_CHAT,
+				IngressSecurityFilter.TARGET_PATH_EMBEDDINGS);
 		registration.setName("cacherelayIngressSecurityFilter");
 		return registration;
 	}

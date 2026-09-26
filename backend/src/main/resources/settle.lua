@@ -26,6 +26,11 @@
 --   KEYS[10] = expiry index  (budget:{b:global}:hold-expiry)
 --   KEYS[11] = KEY-level cfg hash ("" skips remaining computation)
 --
+-- Empty-key sentinel (shared with budget_limit.lua): an empty-string key means
+-- "level not configured" and that level is skipped entirely — never created,
+-- never charged, never refunded. The engine passes "" for TEAM whenever the
+-- request carries no tenant, and for KEYS[11] when no KEY-level budget exists.
+--
 -- ARGV:
 --   ARGV[1] = actual micros A (integer >= 0; -1 = expire-only, no settle)
 --   ARGV[2] = abort re-arm epoch seconds (0 = none; >0 marks ABORTED and re-arms)

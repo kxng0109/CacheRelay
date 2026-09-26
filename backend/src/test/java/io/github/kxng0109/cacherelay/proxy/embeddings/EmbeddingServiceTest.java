@@ -9,6 +9,8 @@ import io.github.kxng0109.cacherelay.ledger.TokenUsageEvent;
 import io.github.kxng0109.cacherelay.proxy.embeddings.dto.EmbeddingData;
 import io.github.kxng0109.cacherelay.proxy.embeddings.dto.EmbeddingRequest;
 import io.github.kxng0109.cacherelay.proxy.embeddings.dto.EmbeddingResponse;
+import io.github.kxng0109.cacherelay.proxy.failover.UpstreamUrlValidator;
+import io.github.kxng0109.cacherelay.security.SsrfViolationException;
 import io.github.kxng0109.cacherelay.security.ratelimit.RateLimitUnavailableException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
@@ -133,6 +135,32 @@ class EmbeddingServiceTest {
 	}
 
 	@Test
+	@DisplayName("FS-B09: unknown client model strings 404 without emitting any metric series")
+	void unboundedModelStringsCollapseToOneSeries() throws Exception {
+		SimpleMeterRegistry registry = new SimpleMeterRegistry();
+		service.setEmbeddingMetrics(new EmbeddingMetrics(registry));
+		ProviderConfig provider = new ProviderConfig(
+				"openai-main", ProviderType.OPENAI, URI.create("https://api.openai.com/v1"),
+				new SensitiveString("key"), Duration.ofSeconds(5), Duration.ofSeconds(30)
+		);
+		gatewayProperties.setProviders(Map.of("openai-main", provider));
+		gatewayProperties.setAliases(Map.of());
+
+		for (int i = 0; i < 100; i++) {
+			EmbeddingRequest request =
+					new EmbeddingRequest(List.of("hi"), "steered-model-" + i, null, null, null);
+			assertThatThrownBy(() -> service.processEmbedding(request, "tenant-1"))
+					.isInstanceOf(ResponseStatusException.class)
+					.hasMessageContaining("404");
+		}
+
+		verifyNoInteractions(adapterResolver, batchOrchestrator);
+		assertThat(registry.find("embedding_requests_total").meters())
+				.as("no metric series for unresolvable client models")
+				.isEmpty();
+	}
+
+	@Test
 	@DisplayName("processEmbedding applies alias model-override end to end")
 	void processEmbeddingAppliesModelOverride() throws Exception {
 		ProviderConfig provider = new ProviderConfig(
@@ -168,7 +196,7 @@ class EmbeddingServiceTest {
 	}
 
 	@Test
-	@DisplayName("processEmbedding falls back to provider matching name when no alias is configured")
+	@DisplayName("FS-B09: alias-less model 404s without provider steering (fallback removed)")
 	void processEmbeddingProviderFallback() throws Exception {
 		ProviderConfig provider = new ProviderConfig(
 				"ollama-local", ProviderType.OLLAMA, URI.create("http://localhost:11434"),
@@ -177,22 +205,11 @@ class EmbeddingServiceTest {
 		gatewayProperties.setProviders(Map.of("ollama-local", provider));
 		gatewayProperties.setAliases(Map.of());
 
-		EmbeddingAdapter adapter = mock(EmbeddingAdapter.class);
-		when(adapterResolver.resolve(ProviderType.OLLAMA)).thenReturn(adapter);
-
 		EmbeddingRequest request = new EmbeddingRequest(List.of("text"), "ollama/nomic-embed-text", null, null, null);
-		EmbeddingResponse mockResponse = EmbeddingResponse.of(
-				"ollama/nomic-embed-text",
-				List.of(EmbeddingData.of(0, new float[]{0.1f})),
-				5
-		);
-
-		when(batchOrchestrator.execute(any(), any(), any(), any())).thenReturn(mockResponse);
-
-		EmbeddingResponse response = service.processEmbedding(request, null);
-		assertThat(response).isEqualTo(mockResponse);
-		verify(eventPublisher).publishEvent(argThat((Object event) -> event instanceof TokenUsageEvent tue
-				&& "unknown".equals(tue.ownerId())));
+		assertThatThrownBy(() -> service.processEmbedding(request, null))
+				.isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("404");
+		verifyNoInteractions(adapterResolver, batchOrchestrator, eventPublisher);
 	}
 
 	@Test
@@ -238,6 +255,8 @@ class EmbeddingServiceTest {
 				new SensitiveString("key"), Duration.ofSeconds(5), Duration.ofSeconds(30)
 		);
 		gatewayProperties.setProviders(Map.of("openai", provider));
+		gatewayProperties.setAliases(Map.of("text-embedding-3-small",
+				new ModelAlias(List.of(new ProviderRef("openai", null)), FailoverStrategy.SEQUENTIAL)));
 
 		EmbeddingAdapter adapter = mock(EmbeddingAdapter.class);
 		when(adapterResolver.resolve(ProviderType.OPENAI)).thenReturn(adapter);
@@ -272,6 +291,8 @@ class EmbeddingServiceTest {
 				new SensitiveString("key"), Duration.ofSeconds(5), Duration.ofSeconds(30)
 		);
 		gatewayProperties.setProviders(Map.of("openai", provider));
+		gatewayProperties.setAliases(Map.of("openai",
+				new ModelAlias(List.of(new ProviderRef("openai", null)), FailoverStrategy.SEQUENTIAL)));
 
 		EmbeddingAdapter adapter = mock(EmbeddingAdapter.class);
 		when(adapterResolver.resolve(ProviderType.OPENAI)).thenReturn(adapter);
@@ -286,7 +307,7 @@ class EmbeddingServiceTest {
 		EmbeddingResponse response = service.processEmbedding(request, "tenant-1", "  ", null);
 
 		assertThat(response).isEqualTo(mockResponse);
-		verify(enforcer, never()).checkBudget(any(), any(), any(), any(), anyInt(), any());
+		verify(enforcer, never()).checkBudget(any(), any(), any(), any(), anyInt(), any(), any());
 	}
 
 	@Test
@@ -299,6 +320,8 @@ class EmbeddingServiceTest {
 				new SensitiveString("key"), Duration.ofSeconds(5), Duration.ofSeconds(30)
 		);
 		gatewayProperties.setProviders(Map.of("openai", provider));
+		gatewayProperties.setAliases(Map.of("openai",
+				new ModelAlias(List.of(new ProviderRef("openai", null)), FailoverStrategy.SEQUENTIAL)));
 
 		EmbeddingAdapter adapter = mock(EmbeddingAdapter.class);
 		when(adapterResolver.resolve(ProviderType.OPENAI)).thenReturn(adapter);
@@ -317,7 +340,7 @@ class EmbeddingServiceTest {
 	}
 
 	@Test
-	@DisplayName("empty alias chains and blank overrides fall back predictably")
+	@DisplayName("FS-B09: empty alias chains 404; blank overrides keep the requested name")
 	void aliasFallbacks() {
 		gatewayProperties.setProviders(Map.of(
 				"openai", new ProviderConfig(
@@ -331,7 +354,9 @@ class EmbeddingServiceTest {
 				"blank-override", blankOverride));
 
 		assertThat(service.resolveProviderName("blank-override")).isEqualTo("openai");
-		assertThat(service.resolveProviderName("empty-alias")).isEqualTo("openai");
+		assertThatThrownBy(() -> service.resolveProviderName("empty-alias"))
+				.isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("404");
 	}
 
 	@Test
@@ -356,6 +381,8 @@ class EmbeddingServiceTest {
 				new SensitiveString("key"), Duration.ofSeconds(5), Duration.ofSeconds(30)
 		);
 		gatewayProperties.setProviders(Map.of("openai", provider));
+		gatewayProperties.setAliases(Map.of("text-embedding-3-small",
+				new ModelAlias(List.of(new ProviderRef("openai", null)), FailoverStrategy.SEQUENTIAL)));
 
 		EmbeddingAdapter adapter = mock(EmbeddingAdapter.class);
 		when(adapterResolver.resolve(ProviderType.OPENAI)).thenReturn(adapter);
@@ -391,7 +418,7 @@ class EmbeddingServiceTest {
 	}
 
 	@Test
-	@DisplayName("processEmbedding handles blank ownerId and direct fallback provider")
+	@DisplayName("FS-B09: unaliased model 404s even with a blank owner (no first-provider fallback)")
 	void processEmbeddingBlankOwnerIdAndFirstProviderFallback() throws Exception {
 		ProviderConfig provider = new ProviderConfig(
 				"anthropic-main", ProviderType.ANTHROPIC, URI.create("https://api.anthropic.com"),
@@ -400,26 +427,15 @@ class EmbeddingServiceTest {
 		gatewayProperties.setProviders(Map.of("anthropic-main", provider));
 		gatewayProperties.setAliases(Map.of());
 
-		EmbeddingAdapter adapter = mock(EmbeddingAdapter.class);
-		when(adapterResolver.resolve(ProviderType.ANTHROPIC)).thenReturn(adapter);
-
 		EmbeddingRequest request = new EmbeddingRequest(List.of("text"), "generic-embedding", null, null, null);
-		EmbeddingResponse mockResponse = EmbeddingResponse.of(
-				"generic-embedding",
-				List.of(EmbeddingData.of(0, new float[]{0.1f})),
-				5
-		);
-
-		when(batchOrchestrator.execute(any(), any(), any(), any())).thenReturn(mockResponse);
-
-		EmbeddingResponse response = service.processEmbedding(request, "   ");
-		assertThat(response).isEqualTo(mockResponse);
-		verify(eventPublisher).publishEvent(argThat((Object event) -> event instanceof TokenUsageEvent tue
-				&& "unknown".equals(tue.ownerId())));
+		assertThatThrownBy(() -> service.processEmbedding(request, "   "))
+				.isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("404");
+		verifyNoInteractions(adapterResolver, batchOrchestrator, eventPublisher);
 	}
 
 	@Test
-	@DisplayName("processEmbedding handles alias with unconfigured provider and null model")
+	@DisplayName("FS-B09: alias pointing at an unconfigured provider 404s (no silent fallback)")
 	void processEmbeddingAliasProviderMissing() throws Exception {
 		ModelAlias alias = new ModelAlias(
 				List.of(new ProviderRef("missing-provider", "text-embedding-3-small")),
@@ -432,15 +448,11 @@ class EmbeddingServiceTest {
 		gatewayProperties.setAliases(Map.of("text-embedding-3-small", alias));
 		gatewayProperties.setProviders(Map.of("openai-fallback", fallbackProvider));
 
-		EmbeddingAdapter adapter = mock(EmbeddingAdapter.class);
-		when(adapterResolver.resolve(ProviderType.OPENAI)).thenReturn(adapter);
-
 		EmbeddingRequest request = new EmbeddingRequest(List.of("text"), "text-embedding-3-small", null, null, null);
-		EmbeddingResponse mockResponse = new EmbeddingResponse("list", List.of(), "text-embedding-3-small", null);
-		when(batchOrchestrator.execute(any(), any(), any(), any())).thenReturn(mockResponse);
-
-		EmbeddingResponse response = service.processEmbedding(request, "tenant-1");
-		assertThat(response).isEqualTo(mockResponse);
+		assertThatThrownBy(() -> service.processEmbedding(request, "tenant-1"))
+				.isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("404");
+		verifyNoInteractions(adapterResolver, batchOrchestrator);
 
 		// Null model
 		EmbeddingRequest nullModel = new EmbeddingRequest(List.of("text"), null, null, null, null);
@@ -456,7 +468,8 @@ class EmbeddingServiceTest {
 				null, Duration.ofSeconds(5), Duration.ofSeconds(30)
 		);
 		gatewayProperties.setProviders(Map.of("openai", provider));
-		gatewayProperties.setAliases(Map.of());
+		gatewayProperties.setAliases(Map.of("openai-emb",
+				new ModelAlias(List.of(new ProviderRef("openai", null)), FailoverStrategy.SEQUENTIAL)));
 
 		EmbeddingAdapter adapter = mock(EmbeddingAdapter.class);
 		when(adapterResolver.resolve(ProviderType.OPENAI)).thenReturn(adapter);
@@ -503,7 +516,10 @@ class EmbeddingServiceTest {
 					null, Duration.ofSeconds(5), Duration.ofSeconds(30)
 			);
 			gatewayProperties.setProviders(Map.of(type.name().toLowerCase() + "-main", provider));
-			gatewayProperties.setAliases(Map.of());
+			String aliasName = type.name().toLowerCase() + "-embed";
+			gatewayProperties.setAliases(Map.of(aliasName,
+					new ModelAlias(List.of(new ProviderRef(
+							type.name().toLowerCase() + "-main", null)), FailoverStrategy.SEQUENTIAL)));
 
 			EmbeddingAdapter adapter = mock(EmbeddingAdapter.class);
 			when(adapterResolver.resolve(type)).thenReturn(adapter);
@@ -540,7 +556,7 @@ class EmbeddingServiceTest {
 		when(adapterResolver.resolve(ProviderType.OPENAI)).thenReturn(adapter);
 		BudgetEnforcer mockEnforcer = mock(BudgetEnforcer.class);
 		service.setBudgetEnforcer(mockEnforcer);
-		when(mockEnforcer.checkBudget(any(), any(), any(), anyString(), anyInt(), any()))
+		when(mockEnforcer.checkBudget(any(), any(), any(), anyString(), anyInt(), any(), any()))
 				.thenReturn(new BudgetDecision.Denied("ORG", "MONTH", 3600L));
 
 		EmbeddingRequest request = new EmbeddingRequest(List.of("hello"), "text-embedding-3-small", null, null, null);
@@ -568,7 +584,7 @@ class EmbeddingServiceTest {
 		when(adapterResolver.resolve(ProviderType.OPENAI)).thenReturn(adapter);
 		BudgetEnforcer mockEnforcer = mock(BudgetEnforcer.class);
 		service.setBudgetEnforcer(mockEnforcer);
-		when(mockEnforcer.checkBudget(any(), any(), any(), anyString(), anyInt(), any()))
+		when(mockEnforcer.checkBudget(any(), any(), any(), anyString(), anyInt(), any(), any()))
 				.thenThrow(new RateLimitUnavailableException("budget down"));
 
 		EmbeddingRequest request = new EmbeddingRequest(List.of("hello"), "text-embedding-3-small", null, null, null);
@@ -643,7 +659,168 @@ class EmbeddingServiceTest {
 		assertThatThrownBy(() -> service.processEmbedding(request, "tenant-1", null, "!!!not-hex!!!"))
 				.isInstanceOf(ResponseStatusException.class)
 				.hasMessageContaining("503");
-		verify(mockEnforcer, never()).checkBudget(any(), any(), any(), anyString(), anyInt(), any());
+		verify(mockEnforcer, never()).checkBudget(any(), any(), any(), anyString(), anyInt(), any(), any());
 		verify(batchOrchestrator, never()).execute(any(), any(), any(), any());
+	}
+
+	@Test
+	@DisplayName("FS-B09: SSRF-rejected upstream target maps to 502 without touching adapters")
+	void ssrfRejectedTargetMaps502() throws Exception {
+		ProviderConfig provider = new ProviderConfig(
+				"openai-main", ProviderType.OPENAI, URI.create("http://169.254.169.254/v1"),
+				new SensitiveString("key"), Duration.ofSeconds(5), Duration.ofSeconds(30)
+		);
+		gatewayProperties.setProviders(Map.of("openai-main", provider));
+		gatewayProperties.setAliases(Map.of("secret-exfil",
+				new ModelAlias(List.of(new ProviderRef("openai-main", null)), FailoverStrategy.SEQUENTIAL)));
+		UpstreamUrlValidator validator = mock(UpstreamUrlValidator.class);
+		doThrow(new SsrfViolationException("blocked private target")).when(validator).validate(any(URI.class));
+		service.setUpstreamUrlValidator(validator);
+		try {
+			EmbeddingRequest request = new EmbeddingRequest(List.of("hello"), "secret-exfil", null, null, null);
+			assertThatThrownBy(() -> service.processEmbedding(request, "tenant-1"))
+					.isInstanceOf(ResponseStatusException.class)
+					.hasMessageContaining("502");
+			verify(batchOrchestrator, never()).execute(any(), any(), any(), any());
+		} finally {
+			service.setUpstreamUrlValidator(null);
+		}
+	}
+
+	@Test
+	@DisplayName("FS-B09: alias-less model 404s without touching any adapter (no client steering)")
+	void aliasLessModel404WithoutTouchingAdapter() {
+		gatewayProperties.setProviders(Map.of(
+				"openai-main", new ProviderConfig(
+						"openai-main", ProviderType.OPENAI, URI.create("https://api.openai.com/v1"),
+						new SensitiveString("key"), Duration.ofSeconds(5), Duration.ofSeconds(30))));
+		gatewayProperties.setAliases(Map.of());
+
+		EmbeddingRequest request = new EmbeddingRequest(List.of("hello"), "openai-steered-model", null, null, null);
+
+		assertThatThrownBy(() -> service.processEmbedding(request, "tenant-1"))
+				.isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("404");
+		verifyNoInteractions(adapterResolver, batchOrchestrator);
+	}
+
+	@Test
+	@DisplayName("FS-B09: token-id array input is rejected with 400, never coerced")
+	void tokenArrayInputRejected() {
+		EmbeddingRequest request = new EmbeddingRequest(List.of(1, 2, 3), "model", null, null, null);
+
+		assertThatThrownBy(() -> service.processEmbedding(request, "tenant-1"))
+				.isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("400");
+		verifyNoInteractions(batchOrchestrator);
+	}
+
+	@Test
+	@DisplayName("FS-B09: non-string input items are rejected with 400")
+	void nonStringInputItemsRejected() {
+		List<Object> mixed = new java.util.ArrayList<>();
+		mixed.add("hello");
+		mixed.add(42);
+		EmbeddingRequest request = new EmbeddingRequest(mixed, "model", null, null, null);
+
+		assertThatThrownBy(() -> service.processEmbedding(request, "tenant-1"))
+				.isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("400");
+		verifyNoInteractions(batchOrchestrator);
+	}
+
+	@Test
+	@DisplayName("FS-B09: invalid dimensions and encoding_format are rejected with 400")
+	void invalidDimensionsAndEncodingRejected() {
+		EmbeddingRequest badDims = new EmbeddingRequest(List.of("hello"), "model", 0, null, null);
+		assertThatThrownBy(() -> service.processEmbedding(badDims, "tenant-1"))
+				.isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("400");
+
+		EmbeddingRequest badEncoding = new EmbeddingRequest(List.of("hello"), "model", null, "xml", null);
+		assertThatThrownBy(() -> service.processEmbedding(badEncoding, "tenant-1"))
+				.isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("400");
+		verifyNoInteractions(batchOrchestrator);
+	}
+
+	@Test
+	@DisplayName("FS-B12: valid dimensions and encodings pass validation")
+	void validDimensionsAndEncodingPass() throws Exception {
+		ProviderConfig provider = new ProviderConfig(
+				"openai-main", ProviderType.OPENAI, URI.create("https://api.openai.com/v1"),
+				new SensitiveString("key"), Duration.ofSeconds(5), Duration.ofSeconds(30)
+		);
+		gatewayProperties.setProviders(Map.of("openai-main", provider));
+		gatewayProperties.setAliases(Map.of("text-embedding-3-small", new ModelAlias(
+				List.of(new ProviderRef("openai-main", "text-embedding-3-small")),
+				FailoverStrategy.SEQUENTIAL)));
+		EmbeddingAdapter adapter = mock(EmbeddingAdapter.class);
+		when(adapterResolver.resolve(ProviderType.OPENAI)).thenReturn(adapter);
+		EmbeddingResponse mockResponse = EmbeddingResponse.of(
+				"text-embedding-3-small",
+				List.of(EmbeddingData.of(0, new float[]{0.1f})),
+				5
+		);
+		when(batchOrchestrator.execute(any(), any(), any(), any())).thenReturn(mockResponse);
+
+		EmbeddingRequest request = new EmbeddingRequest(
+				List.of("hello"), "text-embedding-3-small", 512, "base64", null);
+
+		assertThat(service.processEmbedding(request, "tenant-1")).isEqualTo(mockResponse);
+	}
+
+	@Test
+	@DisplayName("FS-B12: upstream IOException releases the budget claim and maps to 502")
+	void upstreamIOExceptionReleasesClaim() throws Exception {
+		ProviderConfig provider = new ProviderConfig(
+				"openai-main", ProviderType.OPENAI, URI.create("https://api.openai.com/v1"),
+				new SensitiveString("key"), Duration.ofSeconds(5), Duration.ofSeconds(30)
+		);
+		gatewayProperties.setProviders(Map.of("openai-main", provider));
+		gatewayProperties.setAliases(Map.of("text-embedding-3-small", new ModelAlias(
+				List.of(new ProviderRef("openai-main", "text-embedding-3-small")),
+				FailoverStrategy.SEQUENTIAL)));
+		EmbeddingAdapter adapter = mock(EmbeddingAdapter.class);
+		when(adapterResolver.resolve(ProviderType.OPENAI)).thenReturn(adapter);
+		BudgetEnforcer enforcer = mock(BudgetEnforcer.class);
+		service.setBudgetEnforcer(enforcer);
+		when(enforcer.checkBudget(any(), any(), any(), anyString(), anyInt(), any(), any()))
+				.thenReturn(new BudgetDecision.Allowed(1000L, 60L));
+		when(batchOrchestrator.execute(any(), any(), any(), any()))
+				.thenThrow(new IOException("upstream reset"));
+
+		EmbeddingRequest request = new EmbeddingRequest(List.of("hello"), "text-embedding-3-small", null, null, null);
+
+		assertThatThrownBy(() -> service.processEmbedding(request, "tenant-1", null, "ab".repeat(32)))
+				.isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("502");
+		verify(enforcer).releaseIdempotencyClaim(anyString());
+	}
+
+	@Test
+	@DisplayName("FS-B12: upstream interrupts restore the thread flag and map to 502")
+	void upstreamInterruptRestoresFlag() throws Exception {
+		ProviderConfig provider = new ProviderConfig(
+				"openai-main", ProviderType.OPENAI, URI.create("https://api.openai.com/v1"),
+				new SensitiveString("key"), Duration.ofSeconds(5), Duration.ofSeconds(30)
+		);
+		gatewayProperties.setProviders(Map.of("openai-main", provider));
+		gatewayProperties.setAliases(Map.of("text-embedding-3-small", new ModelAlias(
+				List.of(new ProviderRef("openai-main", "text-embedding-3-small")),
+				FailoverStrategy.SEQUENTIAL)));
+		EmbeddingAdapter adapter = mock(EmbeddingAdapter.class);
+		when(adapterResolver.resolve(ProviderType.OPENAI)).thenReturn(adapter);
+		service.setBudgetEnforcer(null);
+		when(batchOrchestrator.execute(any(), any(), any(), any()))
+				.thenThrow(new InterruptedException("interrupted"));
+
+		EmbeddingRequest request = new EmbeddingRequest(List.of("hello"), "text-embedding-3-small", null, null, null);
+
+		assertThatThrownBy(() -> service.processEmbedding(request, "tenant-1"))
+				.isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("502");
+		assertThat(Thread.currentThread().isInterrupted()).isTrue();
+		Thread.interrupted();
 	}
 }

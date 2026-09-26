@@ -17,7 +17,7 @@ class GatewayExceptionHandlerDataResidencyTest {
 	private final GatewayExceptionHandler handler = new GatewayExceptionHandler();
 
 	@Test
-	@DisplayName("handleDataResidencyBreach maps to HTTP 503 with DATA_SOVEREIGNTY_VIOLATION code")
+	@DisplayName("FS-B11: breach maps to 503 with a fixed message free of policy detail")
 	void mapsDataResidencyBreachTo503() {
 		DataResidencyBreachException exception = new DataResidencyBreachException(Jurisdiction.NG, "gpt-4o");
 		ResponseEntity<Map<String, Object>> response = handler.handleDataResidencyBreach(exception);
@@ -27,9 +27,11 @@ class GatewayExceptionHandlerDataResidencyTest {
 
 		@SuppressWarnings("unchecked")
 		Map<String, Object> error = (Map<String, Object>) response.getBody().get("error");
-		assertThat(error)
-				.containsEntry("code", "DATA_SOVEREIGNTY_VIOLATION")
-				.containsKey("message");
-		assertThat((String) error.get("message")).contains("designated sovereign zone [NG]");
+		assertThat(error).containsEntry("code", "DATA_SOVEREIGNTY_VIOLATION");
+		String message = (String) error.get("message");
+		assertThat(message)
+				.doesNotContain("NG")
+				.doesNotContain("gpt-4o")
+				.doesNotContain("designated sovereign zone");
 	}
 }

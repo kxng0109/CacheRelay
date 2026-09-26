@@ -1,5 +1,5 @@
 # promtool unit tests for cacherelay_alerts.yml.
-# Run: docker run --rm -v <repo>/backend/monitoring/prometheus/rules:/rules prom/prometheus:v3.2.1 \
+# Run: docker run --rm -v <repo>/backend/monitoring/prometheus/rules:/rules prom/prometheus:v3.13.3 \
 #        promtool test rules /rules/tests/cacherelay_alerts_test.yml
 rule_files:
   - ../cacherelay_alerts.yml
@@ -129,6 +129,31 @@ tests:
             exp_annotations:
               summary: "Redis memory above 80% of maxmemory"
               description: "Redis holds pressure against its maxmemory cap. Evictions under noeviction fail writes."
+
+  - interval: 1m
+    input_series:
+      - series: 'cacherelay_ledger_dead_letter_skip_total{provider="openai"}'
+        values: 0+0x29
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: LedgerDeadLetterSkip
+        exp_alerts: [ ]
+
+  - interval: 1m
+    input_series:
+      - series: 'cacherelay_ledger_dead_letter_skip_total{provider="openai"}'
+        values: 0+1x29
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: LedgerDeadLetterSkip
+        exp_alerts:
+          - exp_labels:
+              provider: openai
+              severity: critical
+              team: billing-ops
+            exp_annotations:
+              summary: "Spillway replay failures preserving records as dead letters"
+              description: "Replay consumers rejected journal records; every record is preserved durably. Investigate the downstream outage before the dead-letter backlog grows."
 
   - interval: 1m
     input_series:

@@ -1,6 +1,8 @@
 package io.github.kxng0109.cacherelay.auth;
 
 import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -12,6 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -26,12 +29,21 @@ class SsoAccountServiceTest {
 	private AuthAuditService audit;
 	private SsoAccountService service;
 
+	private static SsoClaimProperties mappedProps(String... registrationIds) {
+		List<SsoClaimProperties.RegistrationTeams> mappings = new ArrayList<>();
+		for (String id : registrationIds) {
+			mappings.add(new SsoClaimProperties.RegistrationTeams(
+					id, "acme", "groups", "roles", "", List.of(), List.of()));
+		}
+		return new SsoClaimProperties(mappings);
+	}
+
 	@BeforeEach
 	void setUp() {
 		links = mock(SsoLinkRepository.class);
 		users = mock(UserAccountRepository.class);
 		audit = mock(AuthAuditService.class);
-		service = new SsoAccountService(links, users, audit);
+		service = new SsoAccountService(links, users, audit, mappedProps("google"));
 		when(audit.pseudonym(any())).thenReturn("hash");
 	}
 
@@ -122,7 +134,7 @@ class SsoAccountServiceTest {
 		when(users.findByUsernameIgnoreCase("sso-op-2")).thenReturn(Optional.empty());
 
 		Optional<UserAccount> resolved = service.resolve("https://idp", "sub-9",
-				"op@example.com", "okta", null, null);
+				"op@example.com", "google", null, null);
 
 		assertThat(resolved).isPresent();
 		assertThat(resolved.get().getUsername()).isEqualTo("sso-op-2");
@@ -150,11 +162,25 @@ class SsoAccountServiceTest {
 		when(users.findByUsernameIgnoreCase(any())).thenReturn(Optional.empty());
 
 		Optional<UserAccount> resolved = service.resolve("https://idp", "subject-42", null,
-				"generic", null, null);
+				"google", null, null);
 
 		assertThat(resolved).isPresent();
 		assertThat(resolved.get().getUsername()).isEqualTo("subject-42");
 		assertThat(resolved.get().getEmailHash()).isNull();
+	}
+
+	@Test
+	@DisplayName("FS-B10: unmapped registration denies login without creating anything (fail closed)")
+	void unmappedRegistrationDenied() {
+		SsoAccountService closed =
+				new SsoAccountService(links, users, audit, SsoClaimProperties.DEFAULTS);
+
+		Optional<UserAccount> resolved = closed.resolve(
+				"https://idp", "sub-1", "op@example.com", "google", null, null);
+
+		assertThat(resolved).isEmpty();
+		verify(users, never()).saveAndFlush(any(UserAccount.class));
+		verify(links, never()).save(any(SsoLink.class));
 	}
 
 	private static void set(Object target, String field, Object value) {

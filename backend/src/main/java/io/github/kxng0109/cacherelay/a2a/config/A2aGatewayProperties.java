@@ -87,6 +87,12 @@ public class A2aGatewayProperties {
 	private Duration clientRequestTimeout = Duration.ofSeconds(60);
 
 	/**
+	 * Total SSE stream lifetime bound (message/stream relay). Headers must arrive within
+	 * {@link #clientRequestTimeout}; the stream itself ends here at the latest.
+	 */
+	private Duration streamMaxDuration = Duration.ofMinutes(5);
+
+	/**
 	 * Registered upstream A2A agents, keyed by the name used in the proxy path.
 	 */
 	private Map<String, A2aAgentConfig> agents = new LinkedHashMap<>();

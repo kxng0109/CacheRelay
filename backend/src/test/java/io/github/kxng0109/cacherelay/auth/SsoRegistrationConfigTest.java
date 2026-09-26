@@ -62,6 +62,47 @@ class SsoRegistrationConfigTest {
 	}
 
 	@Test
+	@DisplayName("FS-B12: issuer URIs default per provider and stay unset without configuration")
+	void issuerUrisSeeded() {
+		MockEnvironment environment = new MockEnvironment()
+				.withProperty("SSO_GOOGLE_CLIENT_ID", "google-id")
+				.withProperty("SSO_GOOGLE_CLIENT_SECRET", "google-secret")
+				.withProperty("SSO_AZURE_CLIENT_ID", "azure-id")
+				.withProperty("SSO_AZURE_CLIENT_SECRET", "azure-secret")
+				.withProperty("SSO_GENERIC_CLIENT_ID", "generic-id")
+				.withProperty("SSO_GENERIC_CLIENT_SECRET", "generic-secret")
+				.withProperty("SSO_GENERIC_AUTHORIZATION_URI", "https://sso/auth")
+				.withProperty("SSO_GENERIC_TOKEN_URI", "https://sso/token")
+				.withProperty("SSO_GENERIC_USERINFO_URI", "https://sso/me")
+				.withProperty("SSO_GENERIC_JWKSET_URI", "https://sso/keys");
+		SsoRegistrationConfig config = new SsoRegistrationConfig(environment);
+
+		var repository = config.ssoClientRegistrationRepository();
+
+		assertThat(repository.findByRegistrationId("google").getProviderDetails().getIssuerUri())
+				.isEqualTo("https://accounts.google.com");
+		assertThat(repository.findByRegistrationId("azure").getProviderDetails().getIssuerUri())
+				.isNull();
+		assertThat(repository.findByRegistrationId("generic").getProviderDetails().getIssuerUri())
+				.isNull();
+	}
+
+	@Test
+	@DisplayName("FS-B12: blank issuer URIs leave the registration without one")
+	void blankIssuerUriSkipped() {
+		MockEnvironment environment = new MockEnvironment()
+				.withProperty("SSO_GOOGLE_CLIENT_ID", "google-id")
+				.withProperty("SSO_GOOGLE_CLIENT_SECRET", "google-secret")
+				.withProperty("SSO_GOOGLE_ISSUER_URI", "   ");
+		SsoRegistrationConfig config = new SsoRegistrationConfig(environment);
+
+		var repository = config.ssoClientRegistrationRepository();
+
+		assertThat(repository.findByRegistrationId("google").getProviderDetails().getIssuerUri())
+				.isNull();
+	}
+
+	@Test
 	@DisplayName("partial generic URIs fail fast until complete")
 	void partialGenericUris() {
 		MockEnvironment missingJwks = new MockEnvironment()

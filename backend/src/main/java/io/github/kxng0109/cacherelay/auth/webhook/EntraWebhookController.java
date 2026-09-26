@@ -74,6 +74,9 @@ public class EntraWebhookController {
 			throw new ResponseStatusException(HttpStatus.NOT_FOUND, "receiver unconfigured");
 		}
 		if (validationToken != null) {
+			if (validationToken.isBlank() || validationToken.length() > 2048) {
+				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "malformed payload");
+			}
 			return ResponseEntity.ok().contentType(MediaType.TEXT_PLAIN).body(validationToken);
 		}
 		byte[] body = rawBody(request);
@@ -88,7 +91,8 @@ public class EntraWebhookController {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "malformed payload");
 		}
 		for (JsonNode notification : values) {
-			if (!secret.get().equals(notification.path("clientState").asString(null))) {
+			if (!WebhookSecrets.constantTimeEquals(secret.get(),
+					notification.path("clientState").asString(null))) {
 				audit.record(AuthAuditService.ACTION_WEBHOOK_AUTH, AuthAuditService.SEVERITY_WARN,
 						"webhook:entra", "/v1/sso/webhooks/entra",
 						AuthAuditService.OUTCOME_FAILURE, null, null);

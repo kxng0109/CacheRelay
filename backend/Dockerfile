@@ -1,5 +1,12 @@
 # syntax=docker/dockerfile:1
 
+# FS-B06 provenance: builder image digest as pulled 2026-09-25
+# (eclipse-temurin:25-jdk-noble =
+# sha256:264fafc3390db78c93dc51da0109a0d66ad1fb59f7a893f12b7e3df1f15e52da).
+# Tags stay floating deliberately: PRX-B12 warns that the request-timeout scope
+# changes past this patch, so no JDK bump lands before the upstream-fault
+# handling it requires. Re-record the digest whenever the base is refreshed.
+
 # -----------------------------------------------------------------------------
 # Stage 1: Build Application
 # -----------------------------------------------------------------------------

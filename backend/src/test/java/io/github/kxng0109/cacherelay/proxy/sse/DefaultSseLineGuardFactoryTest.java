@@ -45,4 +45,12 @@ class DefaultSseLineGuardFactoryTest {
 		assertThat(factory.metersFor("openai", SseLineGuard.Action.REJECT_LINE_CONTINUE))
 				.isNotSameAs(base);
 	}
+
+	@Test
+	@DisplayName("non-streaming handler enforces the separate 1 MiB ceiling")
+	void nonStreamingHandlerCeiling() {
+		BoundedLineBodyHandler handler = factory.bodyHandlerForNonStreaming();
+
+		assertThat(handler.maxLineBytes()).isEqualTo(1024 * 1024);
+	}
 }

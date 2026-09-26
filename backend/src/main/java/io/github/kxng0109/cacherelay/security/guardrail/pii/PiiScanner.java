@@ -20,10 +20,6 @@ public class PiiScanner {
 			"\\b(?!000|666|9\\d{2})\\d{3}-(?!00)\\d{2}-(?!0000)\\d{4}\\b"
 	);
 
-	private static final Pattern EMAIL_PATTERN = Pattern.compile(
-			"\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,63}\\b"
-	);
-
 	private static final Pattern NIGERIAN_E164_PHONE = Pattern.compile(
 			"(?<!\\d)(?:\\+234|009234)(?:(?:70[1-9]|80[1-9]|81\\d|90[1-9]|91[1-6])[\\s\\-]?\\d{3}[\\s\\-]?\\d{4}|20[129][\\s\\-]?\\d{3}[\\s\\-]?\\d{4}|20[3-8]\\d[\\s\\-]?\\d{3}[\\s\\-]?\\d{3})(?!\\d)"
 	);
@@ -98,19 +94,10 @@ public class PiiScanner {
 			}
 		}
 
-		// 2. Email Address
+		// 2. Email Address (structural O(n) scan; the equivalent regex backtracks
+		// quadratically on long local/dot-heavy domains — SEC-B01).
 		if (hasAt) {
-			Matcher emailMatcher = EMAIL_PATTERN.matcher(text);
-			while (emailMatcher.find()) {
-				entities.add(new PiiEntity(
-						PiiType.EMAIL,
-						emailMatcher.group(),
-						null,
-						emailMatcher.start(),
-						emailMatcher.end(),
-						1.0
-				));
-			}
+			scanEmails(text, entities);
 		}
 
 		// 3. Nigerian E.164 Phone
@@ -246,6 +233,107 @@ public class PiiScanner {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * Structural email scan in linear time, matching the verdicts of the regex it replaces
+	 * ({@code \b[local]+@[domain]+\.[tld]{2,63}\b}) on realistic inputs.
+	 *
+	 * <p>For each {@code @}: expand the local part maximally over the local alphabet, shrink it to a
+	 * word-boundary start, expand the domain maximally, then take the rightmost dot yielding a 2-63
+	 * letter TLD with a boundary — exactly the split a greedy backtracking engine settles on. Every
+	 * character is visited a bounded number of times, so adversarial dot-heavy domains cannot blow up.
+	 *
+	 * @param text     input prompt text (contains {@code @}, checked by the caller)
+	 * @param entities accumulator for detected entities, in discovery order
+	 */
+	private static void scanEmails(String text, List<PiiEntity> entities) {
+		int length = text.length();
+		int from = 0;
+		while (true) {
+			int at = text.indexOf('@', from);
+			if (at < 0) {
+				return;
+			}
+			int start = at - 1;
+			while (start >= 0 && isLocalChar(text.charAt(start))) {
+				start--;
+			}
+			start++;
+			while (start < at && !isWordBoundaryAt(text, start)) {
+				start++;
+			}
+			if (start < at) {
+				int runEnd = at + 1;
+				while (runEnd < length && isDomainChar(text.charAt(runEnd))) {
+					runEnd++;
+				}
+				int end = matchTrailingTld(text, at + 1, runEnd);
+				if (end > 0) {
+					entities.add(new PiiEntity(
+							PiiType.EMAIL,
+							text.substring(start, end),
+							null,
+							start,
+							end,
+							1.0
+					));
+					from = end;
+					continue;
+				}
+			}
+			from = at + 1;
+		}
+	}
+
+	/**
+	 * Finds the match end for the rightmost dot in {@code [domStart, runEnd)} followed by a 2-63
+	 * letter TLD and a word boundary, mirroring greedy backtracking (longest domain first, longest
+	 * TLD first). Returns {@code -1} when no dot yields a valid TLD.
+	 *
+	 * @param text     input text
+	 * @param domStart start of the maximal domain run (exclusive of {@code @})
+	 * @param runEnd   end of the maximal domain run (exclusive)
+	 * @return match end offset, or {@code -1}
+	 */
+	private static int matchTrailingTld(String text, int domStart, int runEnd) {
+		for (int dot = runEnd - 1; dot >= domStart; dot--) {
+			if (text.charAt(dot) != '.') {
+				continue;
+			}
+			int letters = 0;
+			while (letters < 63 && dot + 1 + letters < runEnd && isAsciiLetter(text.charAt(dot + 1 + letters))) {
+				letters++;
+			}
+			for (int tldLen = Math.min(letters, 63); tldLen >= 2; tldLen--) {
+				if (isWordBoundaryAt(text, dot + 1 + tldLen)) {
+					return dot + 1 + tldLen;
+				}
+			}
+		}
+		return -1;
+	}
+
+	private static boolean isLocalChar(char c) {
+		return isAsciiWord(c) || c == '.' || c == '%' || c == '+' || c == '-';
+	}
+
+	private static boolean isDomainChar(char c) {
+		return isAsciiWord(c) || c == '.' || c == '-';
+	}
+
+	private static boolean isAsciiLetter(char c) {
+		return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+	}
+
+	private static boolean isAsciiWord(char c) {
+		return isAsciiLetter(c) || (c >= '0' && c <= '9') || c == '_';
+	}
+
+	private static boolean isWordBoundaryAt(String text, int pos) {
+		boolean leftWord = pos > 0 && isAsciiWord(text.charAt(pos - 1));
+		boolean rightWord = pos < text.length() && isAsciiWord(text.charAt(pos));
+		return leftWord != rightWord;
 	}
 
 	private boolean isVerve(String digits) {

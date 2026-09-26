@@ -77,6 +77,14 @@ class SecurityDenyAllBoundaryTest extends SharedContainersBase {
 	}
 
 	@Test
+	@DisplayName("public API docs UI is reachable")
+	void swaggerUiReachable() throws Exception {
+		// BE-DEP-03: the interactive docs are public by design (same posture as
+		// /v3/api-docs); deny-by-default must not 403 the UI bundle.
+		assertThat(status("GET", "/swagger-ui/index.html")).isEqualTo(200);
+	}
+
+	@Test
 	@DisplayName("delegated-auth routes pass through to the controller layer")
 	void delegatedAuthRoutesPassThrough() throws Exception {
 		// No key present: KeyAuthFilter rejects with 401, so the request reaches

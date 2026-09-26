@@ -14,6 +14,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 
 import org.springframework.http.HttpStatus;
@@ -67,9 +68,9 @@ public class AdminUserController {
 	public ResponseEntity<Void> setDisabled(
 			@Parameter(description = "Account UUID")
 			@PathVariable("id") String id,
-			@RequestBody SetDisabledRequest request) {
+			@Valid @RequestBody SetDisabledRequest request) {
 		UserAccount account = requireAccount(id);
-		if (request.disabled()) {
+		if (Boolean.TRUE.equals(request.disabled())) {
 			account.disable();
 		} else {
 			account.enable();
