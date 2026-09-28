@@ -904,6 +904,13 @@ tracking, syntax highlighting, and live Try-It-Out execution:
   (`/v1/**` fully, actuator health/prometheus read-only so the UI probes report truthfully).
 - Operator SPA shell (`/`, `/index.html`, `/assets/**` + extensionless deep links) is served with immutable
   caching on versioned assets and `no-store` on the shell; unknown `/v1/**` routes still refuse with 403.
+  The shell carries per-response CSP nonces substituted server-side (every `nonce=` equals the response
+  header's `nonce-` value).
+- Operator console probes reach the management base two ways: same-origin (proxied actuator, the safe
+  default) or a reachable cross-origin management URL. Cross-origin needs both `VITE_MANAGEMENT_BASE_URL`
+  pointed at that origin **and** the origin listed in `GATEWAY_CSP_EXTRA_CONNECT_SRC`
+  (`gateway.csp.extra-connect-src`, absolute `http(s)` origins, no path/query; blank keeps `connect-src
+  'self'` only). Malformed values fail startup.
 - Human sessions are hybrid: short-lived Bearer JWTs plus rotating `__Host-` refresh cookies with reuse
 - `GATEWAY_AUTH_JWT_SECRET` (32+ bytes) is mandatory outside the `dev`/`test` profiles — startup fails without it, so sessions survive restarts and validate across instances.
   revocation; admin paths deny with stealth-404 and audit every mutation.

@@ -71,7 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hydration with gone-receipt handling, jump-to-page, filter match counts, short dates, grouped
   micro-costs, and a ranked Top-models list on Overview. Shared Intl-only formatters
   (`shared/utils/format.ts`): compact counts, byte buckets, significant-decimal dollars.
-  Frontend: 42 suites / 502 tests, branch 95.02.
+  Frontend figures: see the frontend package (owned by the frontend session).
 - **Console: keys ownership + terminal revocation:** creation collects the required `ownerUserId`
   (validated UUID, backend 400s naming unknown/disabled owners surface at the field); inspector
   shows owner username, reversible enable/disable (PATCH, revoked-block message surfaced), and
@@ -85,6 +85,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when unset) and both probes validate content types, naming a wrong base URL instead of
   leaking parser errors or a false `scrape ok`. Debug chrome (route/theme footer, raw base
   URL) is dev-only; phantom `[x]` shortcut labels removed.
+- **Operator console served by the gateway (FE-02):** the image builds the console
+  (`node:24` frontend stage, `npm ci && npm run build`) and stages `frontend/dist` into
+  `backend/src/main/resources/static/` before `mvnw package`; the release workflow does the
+  same before building the JAR (the frontend tarball stays a documented artifact). `GET /`
+  forwards to `/index.html`, `/assets/**` serves immutable, SPA deep links fall back via the
+  existing `SpaFallbackController`. Compose build context is the repo root; `.dockerignore`
+  keeps local artifacts out.
+- **Per-response CSP nonce substitution (FE-01):** `CspNonceSubstitutionTransformer` replaces
+  both `__CSP_NONCE__` and `CSP_NONCE_PLACEHOLDER` with the request's `CspNonceFilter` nonce
+  on an uncached `no-store` chain, so every `nonce=` in the served shell (including the
+  `<meta property="csp-nonce">` value) equals the response header's `nonce-` value and no
+  placeholder survives.
+- **CSP `connect-src` posture (FE-17):** `gateway.csp.extra-connect-src`
+  (`GATEWAY_CSP_EXTRA_CONNECT_SRC`, blank = same-origin only) appends startup-validated
+  absolute `http(s)` origins to the policy's `connect-src`; malformed values fail startup.
+  Deployment contract in `README.md`: point `VITE_MANAGEMENT_BASE_URL` at a reachable
+  management origin **and** list it here, or proxy actuator same-origin.
+- **Alertmanager delivery by default (C5):** dedicated receiver `POST /v1/alerts/webhook`
+  (`AlertWebhookController`) validates a bearer credential constant-time against
+  `gateway.alerts.webhook-secret` (`GATEWAY_ALERTS_WEBHOOK_SECRET`, 32+ bytes, fail-fast
+  outside dev/test via `StartupGuard`); unconfigured answers 404, bad credentials 401, both
+  data-free; batches stay bounded. Compose mounts the init-env-generated credential file
+  read-only and `alertmanager.yml` presents it via `credentials_file`; the admin key is never
+  distributed. The `/v1/admin/alerts/webhook` operator receiver is unchanged.
+- **Coarse hold renewal for live streams (FIN-B20):** `BudgetEnforcer.renewHold` refreshes the
+  hold TTL + expiry-index score; `BudgetSettlement.renewHoldIfDue` gates it to one Redis round
+  trip per `renewal-interval-seconds` (default 300s, `GATEWAY_BUDGET_SETTLEMENT_RENEWAL_INTERVAL_SECONDS`),
+  checked every 64 written lines in `relaySse`, so streams longer than the hold TTL settle actuals
+  instead of lapsing to gaps; dead streams still lapse. Outcomes counted
+  (`budget.hold.renew.total{result=renewed|missing|failed}`); renewal never throws.
+  Residual follow-up (not in this change): truing counters from `usage_ledger` reconciliation.
 
 ### Removed
 
@@ -109,8 +140,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seeds the router); ingress guardrails cover embeddings and scanner failures
   deny with metrics; MCP egress screens resource text + structured content;
   webhook challenges capped at 2048 chars; proxy/MCP error bodies serialize via
-  `ObjectMapper`. Full `verify` green (2,980 tests, JaCoCo 97.61% line /
-  95.75% branch, pom 95% gate holds).
+  `ObjectMapper`. Full `verify` green (3,220 tests, JaCoCo 97.27% line /
+  95.06% branch, pom 95% gate holds).
+- **P0 backend remediation (spillway durability FIN-B01/B05/B06/B43, spend-gate
+  FIN-B12/B21/B24/B32):** staging files are deleted only on full replay success and
+  otherwise moved to durable `.dead-letter.<nanos>` (orphaned `.replay.*` recovered at
+  startup); spill counters increment after the write succeeds (new
+  `cacherelay.ledger.deadletter.failures` on append failure); malformed lines quarantine
+  instead of fabricating rows (lying survivor-only test replaced); the Lua free-pass return
+  is removed so duplicate claims fall through to cap evaluation + charging with
+  tenant/subject/body/key-namespaced claim ids released on flight fail/abort; hold TTLs
+  clamp below the settled-flag TTL and non-positive TTLs fail closed; replay `store`
+  reports the honest both-tiers outcome and `lookup` hits carry the live Redis TTL.
+- **Guardrail ReDoS timing gate (FS-B03):** the `pki-private-key` scan window narrows
+  `{0,100}` to `{0,48}` (measured ~100ms to ~46ms isolated on a 1MiB anchor-repeat;
+  longest standard PEM label gap is 11 chars), preserving detection of all standard key
+  blocks.
+- **P1 bounds/liveness/identity/MCP batch (FS-B04..FS-B08):** request/stream memory bounds
+  (64-deep SSE queue, 4MiB accumulation cap, legacy SSE registry cap 8 + TTL, pre-auth body
+  caps, bounded result handler, `LineTooLongException` to 502); ledger liveness (Disruptor
+  ring + async spill, direct pool quiesce on shutdown, `Throwable`-safe flush/replay, bounded
+  hole-skip); tenant binding (`TenantIds` charset + reserved names wired into key
+  create/owner/legacy paths, namespaced replay/router ids, ambiguity fails closed); MCP
+  authorization/HITL/breaker (deny-wins route resolution, namespaced HITL tokens, non-mutating
+  list availability, probe lease + abandon, terminal rejection marker, server-side
+  `decidedBy`, sealed pending args).
+- **Dependency upgrades (FS-B06):** Tomcat 11.0.26, springdoc 3.1.1, onnxruntime 1.30.0,
+  Prometheus v3.13.3 (rules + `promtool test rules` green; Swagger UI permitted and proven).
+- **Empty SSRF allow-list default (OPS-B11):** `.env.docker.example` ships
+  `GATEWAY_DEV_ALLOW_PRIVATE_HOSTS` empty (fail-closed on every private target) with an
+  opt-in comment for host-local models; `init-env.*` never copies a non-empty default.
 - **Console: probes honesty + empty-state + models/login consistency:** header
   chip and signal rail read `probes:up/down` (actuator reachability alone never
   proved gateway liveness); unreachable probes render muted with retry while
@@ -125,12 +184,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `jdk.virtualThreadScheduler.parallelism` — HotSpot derives all three from the cgroup CPU quota
   (verified: identical 2/1 at `--cpus=2`, scales to 8/2 at `--cpus=8`), so bigger iron scales
   without flag edits. The 2 vCPU / 2 GB profile (heap, direct memory, `ZUncommitDelay`) is unchanged.
+  (Supersedes the 1.8.0 PERF-15 pinned 2/1 threading: ergonomics now derive from the cgroup quota.)
 - **Model catalog act-as support:** `GET /v1/models` accepts a session JWT plus `X-Act-As-Key`
   exactly like the send paths, closing the account-key-mode dropdown gap; failure contract
   unchanged (dev CORS allow-list covers the header).
 - **Upstream-error rendering on streams:** the failover exception handler presets
   `Content-Type: application/json`, so streaming requests that fail pre-commit render the mapped
   JSON error instead of dying in content negotiation (raw 500).
+- **R3 backend remediation (FS-B13..FS-B25, correctness + conformance):** ledger/budget/replay
+  hygiene — `usage_ledger` 365-day retention purge (dashboard grains survive as history; the window
+  is the honest dedupe horizon); lapsed-hold settlement charges measured actuals with gap-row
+  over-count documentation; settled dashboard buckets recompute when late rows arrive;
+  watermark merges exclude boundaries (no double-count); pricing skips negative catalog entries
+  and retries 429/5xx (4xx fails fast); MCP era-conditional 404+`-32601`, grandfathered
+  `-32000..-32019` forwarding, A2A version pin with task-ownership 404s and throttled
+  get/cancel; replay hot tier byte-exact (Base64 + serve-time hash check); admin key PATCH
+  atomicity, pipelined key listing with batched attribution, documented API examples; full
+  test-integrity repairs (exact-set stress reconciliation, per-row staging preservation,
+  detector key-contract, live gauge tracking). Full `verify` green (3,254 tests, JaCoCo 97.29%
+  line / 95.05% branch, pom 95% gate holds).
 
 ### Fixed
 
@@ -145,7 +217,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failing closed on CORS. Dev profile only; the management port stays
   loopback-published with exactly `health` + `prometheus` exposed (no secrets
   or tenant data in either payload); evil origins still 403; the app port still
-  serves no actuator route.
+  serves no actuator route. (Supersedes the 1.8.0 SEC-15 wording for the dev profile:
+  the allow-list grants the Vite origin read-only actuator probes; prod CORS stays absent.)
 - **Redis tier telemetry for the console:** new admin read `GET
   /v1/admin/cache/tiers` reports live `INFO memory` + `INFO stats` per tier
   (used/max/percent, live policy, evictions, hits/misses) behind a ten-second
