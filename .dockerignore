@@ -1,0 +1,10 @@
+# Root build context for the gateway image (backend/Dockerfile, FE-02).
+# The frontend stage rebuilds the console from source, so local artifacts
+# and dependency trees never enter the context.
+.git
+frontend/node_modules
+frontend/dist
+frontend/.tmp-interact
+backend/target
+secrets/
+.tmp/

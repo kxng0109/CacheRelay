@@ -51,6 +51,7 @@ function New-HexSecret {
 }
 
 # Every value below is hex, so it is safe unquoted in .env and compose interpolation.
+# Rotation: the dev bootstrap key is generated fresh on every init (never shipped).
 $generated = [ordered]@{
     "POSTGRES_PASSWORD"            = New-HexSecret 32
     "POSTGRES_EXPORTER_PASSWORD"   = New-HexSecret 32
@@ -59,7 +60,9 @@ $generated = [ordered]@{
     "GATEWAY_ADMIN_MASTERKEY"      = New-HexSecret 32
     "GATEWAY_AUTH_JWT_SECRET"      = New-HexSecret 32
     "GATEWAY_MCP_HITL_SECRET"      = New-HexSecret 32
+    "GATEWAY_ALERTS_WEBHOOK_SECRET" = New-HexSecret 32
     "GRAFANA_ADMIN_PASSWORD"       = New-HexSecret 16
+    "GATEWAY_BOOTSTRAPKEYS_0_PLAINTEXTKEY" = "gw-" + (New-HexSecret 16)
 }
 
 $content = Get-Content -LiteralPath $sourcePath -Raw
@@ -96,6 +99,19 @@ try {
     & icacls.exe $outPath /inheritance:r /grant:r "$($env:USERDOMAIN)\$($env:USERNAME):(R,W)" | Out-Null
 } catch {
     Write-Host "Note: could not restrict .env permissions automatically; keep this file private." -ForegroundColor Yellow
+}
+
+# Dedicated Alertmanager credential file (C5): compose mounts this read-only
+# and Alertmanager presents it as the bearer credential, so the admin key is
+# never distributed to monitoring. Rewritten on every init to match .env.
+$secretsDir = Join-Path $repoRoot "secrets"
+New-Item -ItemType Directory -Force -Path $secretsDir | Out-Null
+$webhookSecretPath = Join-Path $secretsDir "alertmanager-webhook-secret.txt"
+[System.IO.File]::WriteAllText($webhookSecretPath, $generated["GATEWAY_ALERTS_WEBHOOK_SECRET"], $utf8NoBom)
+try {
+    & icacls.exe $webhookSecretPath /inheritance:r /grant:r "$($env:USERDOMAIN)\$($env:USERNAME):(R,W)" | Out-Null
+} catch {
+    Write-Host "Note: could not restrict the Alertmanager secret file automatically; keep it private." -ForegroundColor Yellow
 }
 
 Write-Host ""

@@ -30,16 +30,29 @@ trap 'rm -f "$tmp"' EXIT
 tr -d '\r' < "$src" > "$tmp"
 
 for name in POSTGRES_PASSWORD POSTGRES_EXPORTER_PASSWORD REDIS_PASSWORD REDIS_CACHE_PASSWORD \
-            GATEWAY_ADMIN_MASTERKEY GATEWAY_AUTH_JWT_SECRET GATEWAY_MCP_HITL_SECRET; do
+            GATEWAY_ADMIN_MASTERKEY GATEWAY_AUTH_JWT_SECRET GATEWAY_MCP_HITL_SECRET \
+            GATEWAY_ALERTS_WEBHOOK_SECRET; do
   grep -q "^${name}=" "$tmp" || { echo "Template is missing required variable '$name' in $src" >&2; exit 1; }
   secret=$(gen_hex 32)
   sed "s|^${name}=.*$|${name}=${secret}|" "$tmp" > "$tmp.new" && mv "$tmp.new" "$tmp"
 done
 grafana=$(gen_hex 16)
 sed "s|^GRAFANA_ADMIN_PASSWORD=.*$|GRAFANA_ADMIN_PASSWORD=${grafana}|" "$tmp" > "$tmp.new" && mv "$tmp.new" "$tmp"
+# Rotation: bootstrap keys are generated fresh on every init (never shipped).
+bootstrap=$(gen_hex 16)
+sed "s|^GATEWAY_BOOTSTRAPKEYS_0_PLAINTEXTKEY=.*$|GATEWAY_BOOTSTRAPKEYS_0_PLAINTEXTKEY=gw-${bootstrap}|" "$tmp" > "$tmp.new" && mv "$tmp.new" "$tmp"
 
 cp "$tmp" "$out"
 chmod 600 "$out" 2>/dev/null || true
+# Dedicated Alertmanager credential file (C5): the compose Alertmanager mounts
+# this read-only and presents it as the bearer credential, so the admin key is
+# never distributed to monitoring. Rewritten on every init to match .env.
+secrets_dir="$repo_root/secrets"
+mkdir -p "$secrets_dir"
+chmod 700 "$secrets_dir" 2>/dev/null || true
+webhook_secret=$(grep "^GATEWAY_ALERTS_WEBHOOK_SECRET=" "$out" | cut -d= -f2)
+printf '%s' "$webhook_secret" > "$secrets_dir/alertmanager-webhook-secret.txt"
+chmod 600 "$secrets_dir/alertmanager-webhook-secret.txt" 2>/dev/null || true
 echo "Created $out"
 echo "Generated local secrets (values not shown). Provider API keys were left blank."
 echo "Keep this file private - it is gitignored. Next: docker compose --profile deps up -d"
