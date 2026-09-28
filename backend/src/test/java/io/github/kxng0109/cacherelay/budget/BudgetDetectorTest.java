@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import javax.sql.DataSource;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -27,6 +28,7 @@ import org.springframework.data.redis.core.ValueOperations;
 import tools.jackson.databind.ObjectMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -139,6 +141,68 @@ class BudgetDetectorTest {
 		when(harness.valueOps().get(anyString())).thenReturn("400000");
 		harness.detector().evaluateAll(tick.plusSeconds(120));
 		assertThat(alertsOf(savedAlerts(harness.outbox()), "burn_static")).hasSize(1);
+	}
+
+	@Test
+	@DisplayName("FIN-B42: detector reads the exact enforcer month-counter key for the tick month")
+	void readsExactMonthCounterKey() {
+		String cfg = "budget:{b:global}:cfg:KEY:hex1";
+		Harness harness;
+		try {
+			harness = harness(List.of(cfg));
+		} catch (Exception ex) {
+			throw new IllegalStateException(ex);
+		}
+		when(harness.hashOps().multiGet(anyString(), anyList()))
+				.thenReturn(List.of("0", "1000000"));
+		when(harness.valueOps().get(anyString())).thenReturn("600000");
+		Instant tick = tickBase();
+
+		harness.detector().evaluateAll(tick);
+
+		String month = YearMonth.from(tick.atZone(ZoneOffset.UTC)).toString();
+		ArgumentCaptor<String> keysCaptor = ArgumentCaptor.forClass(String.class);
+		verify(harness.valueOps(), atLeastOnce()).get(keysCaptor.capture());
+		assertThat(keysCaptor.getAllValues())
+				.as("month-counter reads hit the enforcer key, never a re-parsed guess")
+				.contains(BudgetEnforcer.monthKey("KEY", "hex1", month));
+	}
+
+	@Test
+	@DisplayName("malformed scope keys are skipped without firing or throwing")
+	void malformedScopeKeysSkipped() {
+		Harness harness;
+		try {
+			harness = harness(List.of(
+					"budget:{b:global}:cfg::subject",
+					"budget:{b:global}:cfg:KEY:",
+					"budget:{b:global}:cfg:KEY"));
+		} catch (Exception ex) {
+			throw new IllegalStateException(ex);
+		}
+		when(harness.hashOps().multiGet(anyString(), anyList()))
+				.thenReturn(List.of("0", "1000000"));
+		when(harness.valueOps().get(anyString())).thenReturn("600000");
+
+		assertThatNoException().isThrownBy(() -> harness.detector().evaluateAll(tickBase()));
+		verify(harness.outbox(), never()).save(any(AlertEvent.class));
+	}
+
+	@Test
+	@DisplayName("null meter registry leaves the tick unobserved without failing")
+	void nullMeterRegistryLeavesTickUnobserved() {
+		Harness harness;
+		try {
+			harness = harness(List.of("budget:{b:global}:cfg:KEY:hex1"));
+		} catch (Exception ex) {
+			throw new IllegalStateException(ex);
+		}
+		harness.detector().setMeterRegistry(null);
+		when(harness.hashOps().multiGet(anyString(), anyList()))
+				.thenReturn(List.of("0", "1000000"));
+		when(harness.valueOps().get(anyString())).thenReturn("100");
+
+		assertThatNoException().isThrownBy(() -> harness.detector().evaluateAll(tickBase()));
 	}
 
 	@Test
@@ -658,6 +722,24 @@ class BudgetDetectorTest {
 		} catch (Exception ex) {
 			throw new IllegalStateException(ex);
 		}
+	}
+
+	@Test
+	@DisplayName("successful tick records the last-tick gauge")
+	void successfulTickRecordsGauge() {
+		Harness harness;
+		try {
+			harness = harness(List.of());
+		} catch (Exception ex) {
+			throw new IllegalStateException(ex);
+		}
+		SimpleMeterRegistry registry = new SimpleMeterRegistry();
+		harness.detector().setMeterRegistry(registry);
+
+		harness.detector().evaluate();
+
+		assertThat(registry.get("cacherelay.job.last_tick_seconds")
+				.tag("job", "budget-detector").gauge().value()).isPositive();
 	}
 
 	/**

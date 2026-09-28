@@ -28,6 +28,8 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.http.HttpHeaders;
 import java.net.http.HttpResponse;
@@ -123,9 +125,33 @@ class ProxyControllerGuardrailStreamingTest {
 	}
 
 	@Test
+	@DisplayName("PRX-B05: upstream mid-stream faults emit a terminal error event")
+	void upstreamMidStreamFaultEmitsErrorEvent() throws Exception {
+		Stream<String> lines = Stream.concat(
+				Stream.of("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}"),
+				Stream.generate(() -> {
+					throw new UncheckedIOException(new IOException("upstream reset"));
+				}));
+		ProviderResponse providerResp = mockProviderResponse(lines);
+		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+				.thenReturn(CompletableFuture.completedFuture(providerResp));
+
+		String requestJson = "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"Hi\"}]}";
+		MockHttpServletRequest request = new MockHttpServletRequest();
+
+		ResponseEntity<StreamingResponseBody> response = controller.proxyChatCompletions(requestJson, request);
+		ByteArrayOutputStream out = new ByteArrayOutputStream();
+		response.getBody().writeTo(out);
+
+		assertThat(response.getStatusCode().value()).isEqualTo(200);
+		assertThat(out.toString(StandardCharsets.UTF_8))
+				.contains("event: error")
+				.contains("UPSTREAM_FAULT");
+	}
+
+	@Test
 	@DisplayName("decorates response headers with X-CacheRelay-Audit-Receipt and X-No-Storage")
-	void decoratesHeadersWithAuditReceiptAndZdr() {
-		Stream<String> lines = Stream.of("data: [DONE]");
+	void decoratesHeadersWithAuditReceiptAndZdr() {		Stream<String> lines = Stream.of("data: [DONE]");
 		ProviderResponse providerResp = mockProviderResponse(lines);
 		when(orchestrator.execute(any(), anyString(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(providerResp));

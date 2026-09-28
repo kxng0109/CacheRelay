@@ -5,11 +5,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.http.HttpClient;
 import java.net.http.HttpHeaders;
 import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Flow;
@@ -61,6 +63,19 @@ class BoundedLineBodyHandlerTest {
 	}
 
 	@Test
+	@DisplayName("constructor rejects null, zero, and negative idle timeouts")
+	void constructorRejectsBadIdleTimeout() {
+		assertThatThrownBy(() -> new BoundedLineBodyHandler(100, StandardCharsets.UTF_8, null))
+				.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> new BoundedLineBodyHandler(
+				100, StandardCharsets.UTF_8, Duration.ZERO))
+				.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> new BoundedLineBodyHandler(
+				100, StandardCharsets.UTF_8, Duration.ofMillis(-1)))
+				.isInstanceOf(IllegalArgumentException.class);
+	}
+
+	@Test
 	@DisplayName("constructor uses UTF-8 when charset is null")
 	void constructorDefaultsCharset() {
 		BoundedLineBodyHandler handler = new BoundedLineBodyHandler(100, null);
@@ -101,8 +116,7 @@ class BoundedLineBodyHandlerTest {
 
 	@Test
 	@DisplayName("simple lines terminated with newline are yielded in order")
-	void simpleLines() throws Exception {
-		BoundedLineBodyHandler handler = new BoundedLineBodyHandler(10, StandardCharsets.UTF_8);
+	void simpleLines() throws Exception {		BoundedLineBodyHandler handler = new BoundedLineBodyHandler(10, StandardCharsets.UTF_8);
 		HttpResponse.BodySubscriber<Stream<String>> sub = handler.apply(INFO);
 		MockSubscription mock = new MockSubscription();
 		sub.onSubscribe(mock);
@@ -113,6 +127,45 @@ class BoundedLineBodyHandlerTest {
 		Stream<String> stream = sub.getBody().toCompletableFuture().get(5, TimeUnit.SECONDS);
 		List<String> lines = stream.toList();
 		assertThat(lines).containsExactly("hello", "world");
+	}
+
+	@Test
+	@Timeout(value = 15, unit = TimeUnit.SECONDS)
+	@DisplayName("PRX-B12: an idle upstream aborts the consumer within the bound")
+	void idleUpstreamAbortsConsumer() throws Exception {
+		BoundedLineBodyHandler handler = new BoundedLineBodyHandler(
+				100, StandardCharsets.UTF_8, Duration.ofMillis(150));
+		HttpResponse.BodySubscriber<Stream<String>> sub = handler.apply(INFO);
+		MockSubscription mock = new MockSubscription();
+		sub.onSubscribe(mock);
+
+		Stream<String> stream = sub.getBody().toCompletableFuture().get(5, TimeUnit.SECONDS);
+
+		assertThatThrownBy(() -> stream.iterator().next())
+				.isInstanceOf(UncheckedIOException.class)
+				.hasMessageContaining("idle");
+		assertThat(mock.cancelled.get()).as("idle abort cancels upstream").isPositive();
+	}
+
+	@Test
+	@Timeout(value = 15, unit = TimeUnit.SECONDS)
+	@DisplayName("PRX-B12: live traffic resets the idle clock")
+	void liveTrafficResetsIdleClock() throws Exception {
+		BoundedLineBodyHandler handler = new BoundedLineBodyHandler(
+				100, StandardCharsets.UTF_8, Duration.ofMillis(300));
+		HttpResponse.BodySubscriber<Stream<String>> sub = handler.apply(INFO);
+		MockSubscription mock = new MockSubscription();
+		sub.onSubscribe(mock);
+
+		Stream<String> stream = sub.getBody().toCompletableFuture().get(5, TimeUnit.SECONDS);
+		Iterator<String> iterator = stream.iterator();
+		for (int i = 0; i < 5; i++) {
+			Thread.sleep(100L);
+			sub.onNext(List.of(ByteBuffer.wrap(("tick-" + i + "\n").getBytes(StandardCharsets.UTF_8))));
+			assertThat(iterator.next()).isEqualTo("tick-" + i);
+		}
+		sub.onComplete();
+		assertThat(mock.cancelled.get()).as("healthy stream never cancels").isZero();
 	}
 
 	@Test

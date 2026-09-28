@@ -93,6 +93,19 @@ public class A2aGatewayProperties {
 	private Duration streamMaxDuration = Duration.ofMinutes(5);
 
 	/**
+	 * How long a task-ownership binding is remembered (A2A-B02). Tasks outliving the TTL
+	 * deny {@code tasks/get} / {@code tasks/cancel} fail-closed until re-created.
+	 */
+	private Duration taskIndexTtl = Duration.ofHours(1);
+
+	/**
+	 * Maximum tracked task bindings (A2A-B02, LRU-evicted beyond it).
+	 */
+	@Min(100)
+	@Max(1_000_000)
+	private long taskIndexMaxSize = 10_000;
+
+	/**
 	 * Registered upstream A2A agents, keyed by the name used in the proxy path.
 	 */
 	private Map<String, A2aAgentConfig> agents = new LinkedHashMap<>();

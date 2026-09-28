@@ -55,6 +55,43 @@ class CostCalculatorTest {
 		assertEquals(0, calculator.calculate(ProviderType.OPENAI, "brand-new-model", 100, 100));
 	}
 
+	@Test
+	@DisplayName("FIN-B09: negative token counts clamp to zero instead of crediting")
+	void negativeTokensClampToZero() {
+		when(catalog.lookup(ProviderType.OPENAI, "m")).thenReturn(
+				Optional.of(entry("m", "openai", "0.000004", "0.00002")));
+
+		assertEquals(0, calculator.calculate(ProviderType.OPENAI, "m", -100, -50));
+		assertEquals(1000, calculator.calculate(
+				ProviderType.OPENAI, "m", 100, 50, -10L, -5L, -5L));
+		assertEquals(0, calculator.calculate(
+				ProviderType.OPENAI, "m", -100, -50, -10L, -5L, -5L));
+	}
+
+	@Test
+	@DisplayName("FIN-B09: a single negative lane clamps while healthy lanes still bill")
+	void singleNegativeLaneClamps() {
+		when(catalog.lookup(ProviderType.OPENAI, "m")).thenReturn(
+				Optional.of(entry("m", "openai", "0.000004", "0.00002")));
+
+		assertEquals(400, calculator.calculate(
+				ProviderType.OPENAI, "m", 100, -50, 100, 0L, 0L));
+		assertEquals(1400, calculator.calculate(
+				ProviderType.OPENAI, "m", 100, 50, 100, -5L, 0L));
+		assertEquals(1400, calculator.calculate(
+				ProviderType.OPENAI, "m", 100, 50, 100, 0L, -5L));
+	}
+
+	@Test
+	@DisplayName("FIN-B26: overflowing costs saturate instead of wrapping")
+	void overflowSaturates() {
+		when(catalog.lookup(ProviderType.OPENAI, "m")).thenReturn(
+				Optional.of(entry("m", "openai", "1000000", "1000000")));
+
+		assertEquals(Long.MAX_VALUE,
+				calculator.calculate(ProviderType.OPENAI, "m", Long.MAX_VALUE, Long.MAX_VALUE));
+	}
+
 	private static ModelPricingEntry entry(String modelId, String provider, String input, String output) {
 		return new ModelPricingEntry(
 				modelId, provider, "chat",

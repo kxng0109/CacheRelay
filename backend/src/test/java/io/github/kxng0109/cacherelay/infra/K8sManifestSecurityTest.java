@@ -23,7 +23,7 @@ import org.yaml.snakeyaml.Yaml;
 class K8sManifestSecurityTest {
 
 	private static final Path K8S_DIR =
-			Paths.get(System.getProperty("user.dir"), "deploy", "k8s");
+			InfraPaths.moduleDir().resolve(Paths.get("deploy", "k8s"));
 
 	@SuppressWarnings("unchecked")
 	private static Map<String, Object> load(String file) throws IOException {
@@ -90,5 +90,39 @@ class K8sManifestSecurityTest {
 			Map<String, Object> labels = (Map<String, Object>) selector.get("matchLabels");
 			assertThat(labels).containsEntry("app.kubernetes.io/name", "monitoring");
 		});
+	}
+
+	@Test
+	@DisplayName("FS-B17: pods run least-privilege with no service-account token")
+	@SuppressWarnings("unchecked")
+	void podsLeastPrivilege() throws IOException {
+		Map<String, Object> deployment = load("deployment.yaml");
+		Map<String, Object> spec = (Map<String, Object>) deployment.get("spec");
+		Map<String, Object> template = (Map<String, Object>) spec.get("template");
+		Map<String, Object> podSpec = (Map<String, Object>) ((Map<String, Object>) template.get("spec"));
+
+		assertThat(podSpec.get("automountServiceAccountToken")).isEqualTo(Boolean.FALSE);
+		Map<String, Object> podSecurity = (Map<String, Object>) podSpec.get("securityContext");
+		assertThat(podSecurity.get("runAsNonRoot")).isEqualTo(Boolean.TRUE);
+
+		List<Map<String, Object>> containers = (List<Map<String, Object>>) podSpec.get("containers");
+		Map<String, Object> container = containers.getFirst();
+		Map<String, Object> containerSecurity = (Map<String, Object>) container.get("securityContext");
+		assertThat(containerSecurity.get("allowPrivilegeEscalation")).isEqualTo(Boolean.FALSE);
+		assertThat(containerSecurity.get("readOnlyRootFilesystem")).isEqualTo(Boolean.TRUE);
+
+		List<Map<String, Object>> mounts =
+				(List<Map<String, Object>>) container.get("volumeMounts");
+		assertThat(mounts).anySatisfy(mount -> {
+			assertThat(mount.get("mountPath")).isEqualTo("/app/logs");
+		});
+	}
+
+	@Test
+	@DisplayName("FS-B17: HPA workload metrics have a committed adapter mapping")
+	void hpaAdapterMappingCommitted() {
+		assertThat(Files.exists(K8S_DIR.resolve("prometheus-adapter.yaml")))
+				.as("adapter mapping manifest exists")
+				.isTrue();
 	}
 }

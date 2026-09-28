@@ -73,7 +73,8 @@ public class GatewayExceptionHandler {
 	private HttpStatus resolveStatus(UpstreamUnavailableException exception) {
 		int upstreamStatus = exception.getUpstreamStatus();
 		if (upstreamStatus >= 400) {
-			return HttpStatus.valueOf(upstreamStatus);
+			HttpStatus resolved = HttpStatus.resolve(upstreamStatus);
+			return resolved != null ? resolved : HttpStatus.BAD_GATEWAY;
 		}
 		if (exception.isTimedOut()) {
 			return HttpStatus.GATEWAY_TIMEOUT;

@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 import io.github.kxng0109.cacherelay.budget.NotificationBounceRepository;
 import io.github.kxng0109.cacherelay.budget.NotificationDedupeRepository;
@@ -15,11 +16,16 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -158,6 +164,19 @@ class NotificationFanoutTest {
 	}
 
 	@Test
+	@DisplayName("null claim template delivers directly without a transaction")
+	@SuppressWarnings("DataFlowIssue")
+	void nullClaimTemplateDeliversDirectly() {
+		Harness harness = harness(List.of(preference("teams", "warning")));
+		harness.fanout().setClaimTemplate(null);
+
+		harness.fanout().onDelivered(event());
+
+		assertThat(harness.teams().received).hasSize(1);
+		verify(harness.logs()).save(any(NotificationLogEntry.class));
+	}
+
+	@Test
 	@DisplayName("sender explosions degrade to failed audit rows")
 	void senderFailureAuditedFailed() {
 		Harness harness = harness(List.of(preference("teams", "warning")));
@@ -168,6 +187,42 @@ class NotificationFanoutTest {
 		ArgumentCaptor<NotificationLogEntry> log = ArgumentCaptor.forClass(NotificationLogEntry.class);
 		verify(harness.logs()).save(log.capture());
 		assertThat(log.getValue().getStatus()).isEqualTo("FAILED");
+	}
+
+	@Test
+	@DisplayName("FIN-B15: transient sends release the claim so retries proceed")
+	void transientSendReleasesClaim() {
+		Harness harness = harness(List.of(preference("teams", "warning")));
+		harness.teams().result = ChannelResult.TRANSIENT;
+
+		harness.fanout().onDelivered(event());
+		harness.fanout().onDelivered(event());
+
+		assertThat(harness.teams().received).hasSize(2);
+		verify(harness.dedupes(), times(2)).deleteByDedupeShaAndChannelAndTarget(
+				"sha", "teams", "https://example.com/hook");
+		ArgumentCaptor<NotificationLogEntry> log = ArgumentCaptor.forClass(NotificationLogEntry.class);
+		verify(harness.logs(), atLeastOnce()).save(log.capture());
+		assertThat(log.getAllValues()).extracting(NotificationLogEntry::getStatus)
+				.contains("FAILED");
+	}
+
+	@Test
+	@DisplayName("FIN-B14: persistence runs inside REQUIRES_NEW transactions")
+	void persistenceUsesClaimTemplate() {
+		Harness harness = harness(List.of(preference("teams", "warning")));
+		TransactionTemplate template = mock(TransactionTemplate.class);
+		doAnswer(invocation -> {
+			Consumer<TransactionStatus> work = invocation.getArgument(0);
+			work.accept(mock(TransactionStatus.class));
+			return null;
+		}).when(template).executeWithoutResult(any());
+		harness.fanout().setClaimTemplate(template);
+
+		harness.fanout().onDelivered(event());
+
+		verify(template, atLeastOnce()).executeWithoutResult(any());
+		verify(harness.dedupes()).save(any());
 	}
 
 	@Test

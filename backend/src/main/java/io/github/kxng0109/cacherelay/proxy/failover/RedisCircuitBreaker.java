@@ -95,7 +95,8 @@ public final class RedisCircuitBreaker implements CircuitBreaker {
 		this.clock = clock;
 		this.bulkhead = bulkhead;
 		this.key = KEY_PREFIX + providerName;
-		this.mirror = new ProviderCircuitBreaker(providerName, clock);
+		this.mirror = new ProviderCircuitBreaker(
+				providerName, clock, props.failureThreshold(), props.cooldown(), props.probeLease());
 	}
 
 	/**
@@ -118,6 +119,9 @@ public final class RedisCircuitBreaker implements CircuitBreaker {
 			return mirror.tryAcquire();
 		}
 		try {
+			if (!mirror.tryAcquire() && mirror.getState() == CircuitBreaker.State.OPEN) {
+				return false;
+			}
 			Long allowed = breakerTemplate.execute(
 					tryAcquireScript,
 					List.of(key),
@@ -152,7 +156,6 @@ public final class RedisCircuitBreaker implements CircuitBreaker {
 			breakerTemplate.execute(
 					recordFailureScript,
 					List.of(key),
-					String.valueOf(clock.instant().toEpochMilli()),
 					String.valueOf(props.failureThreshold())
 			);
 		} catch (DataAccessException ex) {

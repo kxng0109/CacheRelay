@@ -284,9 +284,16 @@ public class MicroBatchLedgerWriter implements SmartLifecycle {
 
 	/**
 	 * Parks a failed batch in the shared staging table for replay by any instance
-	 * (preserving the pre-PERF-03 listener contract at batch granularity). Duplicates
-	 * already staged elsewhere are benign success; any other staging failure falls
-	 * through to the per-pod spillway journal below.
+	 * (preserving the pre-PERF-03 listener contract at batch granularity).
+	 *
+	 * <p>FIN-B02: a blanket duplicate catch must never discard batch-mates. The
+	 * batch {@code saveAll} rolls back as a unit on a single conflicting row,
+	 * so a conflict falls back to per-row {@code saveAndFlush} (each in its own
+	 * transaction, like every other repository call here): conflicting rows are
+	 * benign success (already staged elsewhere), freshly inserted rows are
+	 * durable, and only rows failing for non-conflict reasons flow to the
+	 * per-pod spillway journal below. Any other staging failure journals the
+	 * whole batch.
 	 *
 	 * @param batch failed events
 	 * @return {@code true} when the spillway path must be skipped
@@ -305,11 +312,39 @@ public class MicroBatchLedgerWriter implements SmartLifecycle {
 			staging.flush();
 			return true;
 		} catch (DataIntegrityViolationException duplicate) {
-			return true;
+			return stageConflictingRowsIndividually(staging, batch);
 		} catch (RuntimeException ex) {
 			log.debug("Staging unavailable, falling back to disk journal: {}", ex.getMessage());
 			return false;
 		}
+	}
+
+	/**
+	 * Retries a conflicted staging batch row by row so one duplicate cannot
+	 * discard its batch-mates. Rows failing for non-conflict reasons are
+	 * journaled durably instead of lost.
+	 *
+	 * @param staging shared staging repository
+	 * @param batch events whose batch insert hit a duplicate conflict
+	 * @return {@code true} when the caller-level journal path must be skipped
+	 */
+	private boolean stageConflictingRowsIndividually(
+			LedgerStagingRepository staging, List<TokenUsageEvent> batch) {
+		List<TokenUsageEvent> unstaged = new ArrayList<>();
+		for (TokenUsageEvent event : batch) {
+			try {
+				staging.saveAndFlush(LedgerStagingEntry.pendingFrom(event));
+			} catch (DataIntegrityViolationException alreadyStaged) {
+				log.debug("Staging row already present, treating as benign: {}", event.requestId());
+			} catch (RuntimeException ex) {
+				log.debug("Staging row failed, journaling instead: {}", ex.getMessage());
+				unstaged.add(event);
+			}
+		}
+		if (!unstaged.isEmpty()) {
+			spillwayJournal.appendBatch(unstaged, "Staging conflict with partial failure");
+		}
+		return true;
 	}
 
 	/**

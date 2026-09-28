@@ -15,6 +15,51 @@ class SsrfValidatorTest {
 	private final SsrfValidator validator = new SsrfValidator();
 
 	@Test
+	@DisplayName("PRX-B15: IANA special-purpose ranges are blocked (CGNAT, benchmark, TEST-NET, reserved)")
+	void rejectsIanaSpecialRanges() {
+		assertThrows(
+				SsrfViolationException.class,
+				() -> validator.validate(URI.create("http://100.64.0.1/"))
+		);
+		assertThrows(
+				SsrfViolationException.class,
+				() -> validator.validate(URI.create("http://198.18.0.1/"))
+		);
+		assertThrows(
+				SsrfViolationException.class,
+				() -> validator.validate(URI.create("http://192.0.2.1/"))
+		);
+		assertThrows(
+				SsrfViolationException.class,
+				() -> validator.validate(URI.create("http://198.51.100.1/"))
+		);
+		assertThrows(
+				SsrfViolationException.class,
+				() -> validator.validate(URI.create("http://203.0.113.1/"))
+		);
+		assertThrows(
+				SsrfViolationException.class,
+				() -> validator.validate(URI.create("http://240.0.0.1/"))
+		);
+		assertThrows(
+				SsrfViolationException.class,
+				() -> validator.validate(URI.create("http://192.0.0.170/"))
+		);
+		assertThrows(
+				SsrfViolationException.class,
+				() -> validator.validate(URI.create("http://192.88.99.1/"))
+		);
+		assertThrows(
+				SsrfViolationException.class,
+				() -> validator.validate(URI.create("http://[64:ff9b::808:808]/"))
+		);
+		assertThrows(
+				SsrfViolationException.class,
+				() -> validator.validate(URI.create("http://[2001:db8::1]/"))
+		);
+	}
+
+	@Test
 	@DisplayName("rejects a null target URL")
 	void rejectsNullTargetUrl() {
 		SsrfViolationException thrown = assertThrows(

@@ -32,6 +32,12 @@ public record McpJsonRpcError(
 	public static final int MISSING_REQUIRED_CAPABILITY = -32021;
 	public static final int UNSUPPORTED_PROTOCOL_VERSION = -32022;
 
+	/**
+	 * A2A protocol version unsupported by the selected interface (A2A spec section 3.6.2:
+	 * agents return {@code VersionNotSupportedError}, JSON-RPC {@code -32009} / HTTP 400).
+	 */
+	public static final int VERSION_NOT_SUPPORTED = -32009;
+
 	public static McpJsonRpcError parseError(String detail) {
 		return new McpJsonRpcError(PARSE_ERROR, "Parse error: " + detail, null);
 	}
@@ -50,6 +56,22 @@ public record McpJsonRpcError(
 
 	public static McpJsonRpcError internalError(String detail) {
 		return new McpJsonRpcError(INTERNAL_ERROR, "Internal error: " + detail, null);
+	}
+
+	/**
+	 * Tool-execution failure with a correlation id (MCP-B19): the client-facing message is generic and
+	 * carries only the id in {@code data}, so upstream exception text (paths, credentials, socket
+	 * detail) never reaches the client; the id ties the client report to the server log line.
+	 *
+	 * @param detail        generic failure summary, never exception text
+	 * @param correlationId server-log correlation id
+	 * @param mapper        mapper for the {@code data} node
+	 * @return the client-safe error
+	 */
+	public static McpJsonRpcError internalError(String detail, String correlationId, ObjectMapper mapper) {
+		ObjectNode dataNode = mapper.createObjectNode();
+		dataNode.put("correlationId", correlationId);
+		return new McpJsonRpcError(INTERNAL_ERROR, "Internal error: " + detail, dataNode);
 	}
 
 	/**
@@ -128,6 +150,29 @@ public record McpJsonRpcError(
 		return new McpJsonRpcError(HEADER_MISMATCH, "Header mismatch: " + detail, null);
 	}
 
+	/**
+	 * Whether an upstream-supplied error code may be forwarded verbatim (MCP-B27, verified against
+	 * JSON-RPC 2.0 section 5.1 and the MCP 2026-07-28 error-code partition): the standard JSON-RPC
+	 * codes, the three spec-defined MCP codes, and the legacy {@code -32000..-32019} band (which MCP
+	 * explicitly grandfathers as implementation-defined — forwarding an upstream code from it is not
+	 * allocating a new one). Undefined codes from the spec-reserved {@code -32020..-32099} sub-range
+	 * and anything outside the known set are remapped to {@code INTERNAL_ERROR} so a misbehaving
+	 * upstream cannot put clients into undefined-code branches.
+	 *
+	 * @param code upstream error code
+	 * @return true when the code is safe to forward
+	 */
+	public static boolean isForwardableUpstreamCode(int code) {
+		if (code >= -32019 && code <= -32000) {
+			return true;
+		}
+		return switch (code) {
+			case PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR,
+			     HEADER_MISMATCH, MISSING_REQUIRED_CAPABILITY, UNSUPPORTED_PROTOCOL_VERSION -> true;
+			default -> false;
+		};
+	}
+
 	public static McpJsonRpcError unsupportedVersion(String requestedVersion, ObjectMapper mapper) {
 		ObjectNode dataNode = mapper.createObjectNode();
 		dataNode.put("requested", requestedVersion);
@@ -136,5 +181,15 @@ public record McpJsonRpcError(
 			supportedNode.add(v);
 		}
 		return new McpJsonRpcError(UNSUPPORTED_PROTOCOL_VERSION, "Unsupported protocol version", dataNode);
+	}
+
+	/**
+	 * A2A version not supported by the selected interface (A2A spec section 3.6.2).
+	 *
+	 * @param detail human-readable version mismatch summary
+	 * @return the {@code -32009} client error
+	 */
+	public static McpJsonRpcError versionNotSupported(String detail) {
+		return new McpJsonRpcError(VERSION_NOT_SUPPORTED, "Version not supported: " + detail, null);
 	}
 }

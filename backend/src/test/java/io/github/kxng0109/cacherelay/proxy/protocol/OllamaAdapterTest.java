@@ -25,6 +25,43 @@ class OllamaAdapterTest {
 	private final OllamaAdapter adapter = new OllamaAdapter(objectMapper);
 
 	@Test
+	@DisplayName("PRX-B25: tools are forwarded instead of dropped")
+	void toolsForwarded() {
+		String body = """
+				{"model":"llama3.2","messages":[{"role":"user","content":"hi"}],
+				 "tools":[{"type":"function","function":{"name":"get_weather","description":"d",
+				 "parameters":{"type":"object","properties":{}}}}]}""";
+
+		JsonNode result = objectMapper.readTree(adapter.buildRequestBody(body, null));
+
+		assertTrue(result.has("tools"));
+		assertEquals("get_weather",
+				result.path("tools").get(0).path("function").path("name").asString());
+	}
+
+	@Test
+	@DisplayName("PRX-B25: non-array and empty tools are dropped, never forwarded")
+	void nonArrayAndEmptyToolsDropped() {
+		String objectTools = "{\"model\":\"llama3.2\",\"messages\":[],\"tools\":{}}";
+		String emptyTools = "{\"model\":\"llama3.2\",\"messages\":[],\"tools\":[]}";
+		String noTools = "{\"model\":\"llama3.2\",\"messages\":[]}";
+
+		assertFalse(objectMapper.readTree(adapter.buildRequestBody(objectTools, null)).has("tools"));
+		assertFalse(objectMapper.readTree(adapter.buildRequestBody(emptyTools, null)).has("tools"));
+		assertFalse(objectMapper.readTree(adapter.buildRequestBody(noTools, null)).has("tools"));
+	}
+
+	@Test
+	@DisplayName("PRX-B10: stream:false is honored instead of forced true")
+	void streamFalseHonored() {
+		String streaming = "{\"model\":\"m\",\"messages\":[],\"stream\":true}";
+		String nonStreaming = "{\"model\":\"m\",\"messages\":[],\"stream\":false}";
+
+		assertTrue(objectMapper.readTree(adapter.buildRequestBody(streaming, null)).get("stream").asBoolean());
+		assertFalse(objectMapper.readTree(adapter.buildRequestBody(nonStreaming, null)).get("stream").asBoolean());
+	}
+
+	@Test
 	@DisplayName("maps messages and options into the native body")
 	void mapsMessagesAndOptions() {
 		String body = """

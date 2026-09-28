@@ -9,9 +9,11 @@ import org.springframework.stereotype.Component;
 /**
  * Exposes upstream MCP server circuit breaker states as Micrometer gauges.
  *
- * <p>One {@code cacherelay.mcp.circuit.breaker.state} gauge per materialized server (state
+ * <p>One {@code cacherelay.mcp.circuit.breaker.state} gauge per configured server (state
  * encoded 0=CLOSED, 1=OPEN, 2=HALF_OPEN) plus one {@code cacherelay.mcp.circuit.breaker.failures}
- * gauge for the consecutive failure count. Scraped by Prometheus for the MCP health view.</p>
+ * gauge for the consecutive failure count. Breakers pre-materialize at bind time so every
+ * configured server is visible from boot — gauges never depend on a server having tripped
+ * first. Scraped by Prometheus for the MCP health view.</p>
  */
 @Component
 public class McpBreakerMetrics implements MeterBinder {
@@ -28,13 +30,15 @@ public class McpBreakerMetrics implements MeterBinder {
 	}
 
 	/**
-	 * Registers state and failure gauges per materialized server.
+	 * Pre-materializes every configured breaker, then registers state and
+	 * failure gauges per server.
 	 *
 	 * @param registry the registry the gauges are registered with
 	 */
 	@Override
 	public void bindTo(MeterRegistry registry) {
-		for (String name : manager.serverNames()) {
+		for (String name : manager.configuredServerNames()) {
+			manager.getBreaker(name);
 			Gauge.builder("cacherelay.mcp.circuit.breaker.state", manager,
 							m -> stateCode(m.getBreaker(name).getState()))
 					.tag("server", name)

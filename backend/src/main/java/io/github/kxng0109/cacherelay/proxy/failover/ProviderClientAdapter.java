@@ -75,7 +75,7 @@ public class ProviderClientAdapter {
 	) {
 		ProtocolAdapter adapter = adapterResolver.resolve(config.type());
 
-		HttpRequest.Builder builder = HttpRequest.newBuilder(adapter.buildUpstreamUrl(config))
+		HttpRequest.Builder builder = HttpRequest.newBuilder(adapter.buildUpstreamUrl(config, streaming))
 		                                         .timeout(config.requestTimeout())
 		                                         .POST(HttpRequest.BodyPublishers.ofString(
 				                                         adapter.buildRequestBody(requestBody, modelOverride),

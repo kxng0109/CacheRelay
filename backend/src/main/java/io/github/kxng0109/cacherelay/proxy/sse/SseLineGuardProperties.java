@@ -50,7 +50,16 @@ public record SseLineGuardProperties(
 
 		@NotNull
 		@DefaultValue("5s")
-		Duration writeTimeoutCheckInterval
+		Duration writeTimeoutCheckInterval,
+
+		/**
+		 * Upstream idle ceiling (PRX-B12): aborts the consumer when no bytes
+		 * arrive within this bound, independent of the request timeout (which
+		 * stays headers-scoped). Long enough for slow reasoning streams.
+		 */
+		@NotNull
+		@DefaultValue("5m")
+		Duration upstreamIdleTimeout
 ) {
 
 	public SseLineGuardProperties {
@@ -69,6 +78,9 @@ public record SseLineGuardProperties(
 		if (writeTimeoutCheckInterval == null) {
 			throw new IllegalArgumentException("writeTimeoutCheckInterval must not be null");
 		}
+		if (upstreamIdleTimeout == null) {
+			throw new IllegalArgumentException("upstreamIdleTimeout must not be null");
+		}
 		if (perProvider == null) {
 			throw new IllegalArgumentException("perProvider must not be null");
 		}
@@ -84,6 +96,7 @@ public record SseLineGuardProperties(
 			SseLineGuard.Action.REJECT_LINE_AND_CLOSE,
 			Map.of(),
 			Duration.ofSeconds(30),
-			Duration.ofSeconds(5)
+			Duration.ofSeconds(5),
+			Duration.ofMinutes(5)
 	);
 }

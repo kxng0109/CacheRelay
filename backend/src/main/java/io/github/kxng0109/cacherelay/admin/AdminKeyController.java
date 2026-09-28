@@ -21,14 +21,18 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.jspecify.annotations.Nullable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * REST controller for administrative management of virtual API keys under {@code /v1/admin/keys}.
@@ -66,8 +70,8 @@ public class AdminKeyController {
 									name = "Created Key Response",
 									value = """
 											{
-											  "hash": "a1b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d",
-											  "plaintextKey": "gw-aB3_x9...32chars",
+											  "keyId": "a1b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d",
+											  "key": "gw-aB3_x9...32chars",
 											  "keyPrefix": "gw-",
 											  "ownerId": "tenant-corp",
 											  "name": "production-key",
@@ -75,8 +79,20 @@ public class AdminKeyController {
 											  "tpmLimit": 500000,
 											  "allowedModels": ["gpt-56-luna", "claude-sonnet-4-5"],
 											  "allowedProviders": ["openai", "anthropic"],
+											  "allowedTools": [],
+											  "deniedTools": [],
+											  "allowedResources": [],
+											  "deniedResources": [],
+											  "allowedPrompts": [],
+											  "deniedPrompts": [],
+											  "injectionBlock": true,
 											  "enabled": true,
-											  "createdAt": "2026-09-01T12:00:00Z"
+											  "createdAt": "2026-09-01T12:00:00Z",
+											  "allowedCacheScopes": ["TENANT"],
+											  "allowedAgents": [],
+											  "deniedAgents": [],
+											  "ownerUserId": null,
+											  "ownerUsername": null
 											}
 											"""
 							)
@@ -167,7 +183,19 @@ public class AdminKeyController {
 			@RequestParam(value = "ownerId", required = false) String ownerId
 	) {
 		List<VirtualApiKey> keys = keyManagementService.listKeys(ownerId);
-		List<KeyResponse> response = keys.stream().map(this::toKeyResponse).toList();
+		// ADM-B16: one batch username lookup for the whole page, never one per key.
+		Set<UUID> owners = new LinkedHashSet<>();
+		for (VirtualApiKey key : keys) {
+			if (key.ownerUserId() != null) {
+				owners.add(key.ownerUserId());
+			}
+		}
+		Map<UUID, String> resolved = keyManagementService.usernamesOf(owners);
+		Map<UUID, String> usernames = resolved != null ? resolved : Map.of();
+		List<KeyResponse> response = keys.stream()
+				.map(key -> toKeyResponse(key,
+						key.ownerUserId() == null ? null : usernames.get(key.ownerUserId())))
+				.toList();
 		return ResponseEntity.ok(response);
 	}
 
@@ -232,31 +260,51 @@ public class AdminKeyController {
 		SHA256Hash hash = parseHash(hashHex);
 		Optional<VirtualApiKey> updated;
 		try {
+			// ADM-B04: owner-bearing PATCH routes through a single atomic,
+			// validate-first patchKey — never assign-then-update. Ownerless
+			// PATCH keeps the legacy updateKey path.
 			if (request.ownerUserId() != null) {
-				updated = keyManagementService.assignOwner(hash, request.ownerUserId());
-				if (updated.isEmpty()) {
-					return ResponseEntity.notFound().build();
-				}
+				updated = keyManagementService.patchKey(
+						hash,
+						request.ownerUserId(),
+						request.name(),
+						request.rpmLimit(),
+						request.tpmLimit(),
+						request.allowedModels(),
+						request.allowedProviders(),
+						request.allowedTools(),
+						request.deniedTools(),
+						request.allowedResources(),
+						request.deniedResources(),
+						request.allowedPrompts(),
+						request.deniedPrompts(),
+						request.injectionBlock(),
+						request.allowedCacheScopes(),
+						request.allowedAgents(),
+						request.deniedAgents(),
+						request.enabled()
+				);
+			} else {
+				updated = keyManagementService.updateKey(
+						hash,
+						request.name(),
+						request.rpmLimit(),
+						request.tpmLimit(),
+						request.allowedModels(),
+						request.allowedProviders(),
+						request.allowedTools(),
+						request.deniedTools(),
+						request.allowedResources(),
+						request.deniedResources(),
+						request.allowedPrompts(),
+						request.deniedPrompts(),
+						request.injectionBlock(),
+						request.allowedCacheScopes(),
+						request.allowedAgents(),
+						request.deniedAgents(),
+						request.enabled()
+				);
 			}
-			updated = keyManagementService.updateKey(
-					hash,
-					request.name(),
-					request.rpmLimit(),
-					request.tpmLimit(),
-					request.allowedModels(),
-					request.allowedProviders(),
-					request.allowedTools(),
-					request.deniedTools(),
-					request.allowedResources(),
-					request.deniedResources(),
-					request.allowedPrompts(),
-					request.deniedPrompts(),
-					request.injectionBlock(),
-					request.allowedCacheScopes(),
-					request.allowedAgents(),
-					request.deniedAgents(),
-					request.enabled()
-			);
 		} catch (IllegalArgumentException invalid) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, invalid.getMessage());
 		}
@@ -335,6 +383,10 @@ public class AdminKeyController {
 	}
 
 	private KeyResponse toKeyResponse(VirtualApiKey key) {
+		return toKeyResponse(key, keyManagementService.usernameOf(key.ownerUserId()));
+	}
+
+	private KeyResponse toKeyResponse(VirtualApiKey key, @Nullable String ownerUsername) {
 		return new KeyResponse(
 				key.keyHash() != null ? key.keyHash().hex() : "",
 				key.keyPrefix(),
@@ -357,13 +409,14 @@ public class AdminKeyController {
 				key.allowedAgents(),
 				key.deniedAgents(),
 				key.ownerUserId(),
-				keyManagementService.usernameOf(key.ownerUserId())
+				ownerUsername
 		);
 	}
 
 	private SHA256Hash parseHash(String hex) {
 		if (hex == null || hex.length() != 64 || !hex.matches("^[a-fA-F0-9]{64}$")) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid key hash format: " + hex);
+			// ADM-B16: static message — the raw path input is never reflected.
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid key hash format");
 		}
 		return SHA256Hash.fromHex(hex);
 	}

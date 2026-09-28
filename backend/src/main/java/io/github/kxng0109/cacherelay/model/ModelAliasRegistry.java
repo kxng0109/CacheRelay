@@ -14,10 +14,11 @@ import io.github.kxng0109.cacherelay.contracts.GatewayProperties;
 import io.github.kxng0109.cacherelay.contracts.ModelAlias;
 import io.github.kxng0109.cacherelay.contracts.ProviderRef;
 import lombok.extern.slf4j.Slf4j;
-import tools.jackson.core.JacksonException;
-import tools.jackson.core.type.TypeReference;
+import org.jspecify.annotations.Nullable;
+import tools.jackson.core.JacksonException;import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.Ordered;
@@ -72,6 +73,7 @@ public class ModelAliasRegistry {
 	private final AtomicBoolean loaded = new AtomicBoolean();
 	private volatile Map<String, ModelAlias> fileAliases;
 	private volatile Set<String> databaseNames = Set.of();
+	private volatile @Nullable ModelAliasChangeNotifier changeNotifier;
 
 	/**
 	 * Creates the registry.
@@ -85,6 +87,33 @@ public class ModelAliasRegistry {
 		this.repository = repository;
 		this.gatewayProperties = gatewayProperties;
 		this.objectMapper = objectMapper;
+	}
+
+	/**
+	 * Wires the fleet fan-out for local mutations. Optional on purpose: without
+	 * it (unit-test contexts) mutations stay pod-local.
+	 *
+	 * @param changeNotifier notifier for created/updated/deleted aliases, if available
+	 */
+	@Autowired
+	public void setChangeNotifier(@Nullable ModelAliasChangeNotifier changeNotifier) {
+		this.changeNotifier = changeNotifier;
+	}
+
+	/**
+	 * Re-reads the database overlay and republishes the merged catalog.
+	 * Entry point for {@link ModelAliasInvalidationListener}: a failure keeps
+	 * serving the last-known catalog (remotes converge on restart at worst).
+	 */
+	public synchronized void refreshFromDatabase() {
+		try {
+			if (fileAliases == null) {
+				fileAliases = Map.copyOf(gatewayProperties.getAliases());
+			}
+			rebuild(repository.findAll());
+		} catch (RuntimeException ex) {
+			log.warn("Alias refresh unavailable; serving last-known catalog: {}", ex.toString());
+		}
 	}
 
 	/**
@@ -153,6 +182,7 @@ public class ModelAliasRegistry {
 					"Model already exists: " + cleanName, ex);
 		}
 		rebuild();
+		notifyChanged(cleanName);
 		return new ModelAlias(steps, mode);
 	}
 
@@ -179,6 +209,7 @@ public class ModelAliasRegistry {
 		existing.replacePlan(encode(steps), mode.name());
 		repository.save(existing);
 		rebuild();
+		notifyChanged(cleanName);
 		return new ModelAlias(steps, mode);
 	}
 
@@ -200,6 +231,7 @@ public class ModelAliasRegistry {
 		}
 		repository.deleteById(cleanName);
 		rebuild();
+		notifyChanged(cleanName);
 	}
 
 	private void ensureLoaded() {
@@ -231,6 +263,18 @@ public class ModelAliasRegistry {
 
 	private void rebuild() {
 		rebuild(repository.findAll());
+	}
+
+	/**
+	 * Fans a local mutation out; skipped when no notifier is wired.
+	 *
+	 * @param cleanName validated alias slug that changed
+	 */
+	private void notifyChanged(String cleanName) {
+		ModelAliasChangeNotifier notifier = this.changeNotifier;
+		if (notifier != null) {
+			notifier.notifyChanged(cleanName);
+		}
 	}
 
 	private void rebuild(List<ModelAliasDefinition> rows) {

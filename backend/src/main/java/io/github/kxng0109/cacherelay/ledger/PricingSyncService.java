@@ -117,8 +117,9 @@ public class PricingSyncService {
 	}
 
 	/**
-	 * Fetches the catalog with exponential backoff on transport failures (connect/DNS/
-	 * request timeouts). Parse errors fail fast: retrying a malformed document is pointless.
+	 * Fetches the catalog with exponential backoff on transient failures (FIN-B27):
+	 * transport errors, I/O failures mid-read, HTTP 429, and HTTP 5xx. Parse errors
+	 * and 4xx fail fast: retrying a malformed document or a bad URL is pointless.
 	 * Interrupts stop the schedule immediately with the flag restored.
 	 *
 	 * @return parsed catalog root
@@ -134,13 +135,42 @@ public class PricingSyncService {
 			} catch (InterruptedException interrupted) {
 				Thread.currentThread().interrupt();
 				throw interrupted;
-			} catch (HttpTimeoutException | ConnectException | UnknownHostException ex) {
+			} catch (NonRetryableFetchException terminal) {
+				throw new IOException("pricing fetch will not be retried: " + terminal.getMessage(),
+						terminal);
+			} catch (RetryableFetchException retryable) {
+				if (attempt >= maxAttempts) {
+					throw new IOException(
+							"pricing fetch failed after " + attempt + " attempts", retryable);
+				}
+				sleepBackoff(attempt, retryable);
+			} catch (IOException ex) {
 				if (attempt >= maxAttempts) {
 					throw new IOException(
 							"pricing fetch failed after " + attempt + " attempts", ex);
 				}
 				sleepBackoff(attempt, ex);
 			}
+		}
+	}
+
+	/**
+	 * Signals a transient fetch failure worth retrying (5xx, 429).
+	 */
+	static final class RetryableFetchException extends IOException {
+
+		RetryableFetchException(String message) {
+			super(message);
+		}
+	}
+
+	/**
+	 * Signals a permanent fetch failure (4xx: bad URL, gone document).
+	 */
+	static final class NonRetryableFetchException extends IOException {
+
+		NonRetryableFetchException(String message) {
+			super(message);
 		}
 	}
 
@@ -167,14 +197,23 @@ public class PricingSyncService {
 			}
 			BigDecimal inputCost = decimalOrDefault(entry, "input_cost_per_token");
 			BigDecimal outputCost = decimalOrDefault(entry, "output_cost_per_token");
+			BigDecimal readCost = decimalOrDefault(entry, "cache_read_input_token_cost");
+			BigDecimal writeCost = decimalOrDefault(entry, "cache_creation_input_token_cost");
+			// FIN-B26: a negative catalog price would bill credits. The entry is corrupt;
+			// skip it and keep the previous price instead of storing a credit machine.
+			if (inputCost.signum() < 0 || outputCost.signum() < 0
+					|| readCost.signum() < 0 || writeCost.signum() < 0) {
+				log.warn("Skipping model '{}' with negative catalog price", field.getKey());
+				continue;
+			}
 			repository.upsert(
 					field.getKey(),
 					provider.isBlank() ? "unknown" : provider,
 					mode.isBlank() ? "chat" : mode,
 					inputCost,
 					outputCost,
-					decimalOrDefault(entry, "cache_read_input_token_cost"),
-					decimalOrDefault(entry, "cache_creation_input_token_cost"),
+					readCost,
+					writeCost,
 					longOrDefault(entry, "max_input_tokens"),
 					longOrDefault(entry, "max_output_tokens"),
 					sourceUrl
@@ -190,8 +229,12 @@ public class PricingSyncService {
 		                                 .GET()
 		                                 .build();
 		HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-		if (response.statusCode() != 200) {
-			throw new IllegalStateException("catalog fetch returned HTTP " + response.statusCode());
+		int status = response.statusCode();
+		if (status == 429 || (status >= 500 && status < 600)) {
+			throw new RetryableFetchException("catalog fetch returned HTTP " + status);
+		}
+		if (status != 200) {
+			throw new NonRetryableFetchException("catalog fetch returned HTTP " + status);
 		}
 		return objectMapper.readTree(response.body());
 	}

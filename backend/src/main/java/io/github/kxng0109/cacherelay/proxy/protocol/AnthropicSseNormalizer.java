@@ -5,6 +5,7 @@ import org.jspecify.annotations.Nullable;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -82,8 +83,31 @@ public final class AnthropicSseNormalizer implements SseNormalizer {
 			case "content_block_delta" -> contentDelta(node);
 			case "message_delta" -> messageDelta(node);
 			case "message_stop" -> messageStop();
+			case "error" -> providerError(node);
 			default -> List.of();
 		};
+	}
+
+	/**
+	 * Maps a provider {@code error} event to a terminal OpenAI error chunk
+	 * (PRX-B11): the client sees the failure instead of a silent truncation,
+	 * and the stream ends here.
+	 *
+	 * @param node error event payload
+	 * @return a single OpenAI error data line
+	 */
+	private List<String> providerError(JsonNode node) {
+		done = true;
+		JsonNode detail = node.path("error");
+		ObjectNode error = objectMapper.createObjectNode();
+		error.put("message", detail.path("message").asString("Upstream provider error"));
+		String type = detail.path("type").asString("");
+		if (!type.isEmpty()) {
+			error.put("type", type);
+		}
+		ObjectNode envelope = objectMapper.createObjectNode();
+		envelope.set("error", error);
+		return List.of("data: " + envelope.toString());
 	}
 
 	@Override

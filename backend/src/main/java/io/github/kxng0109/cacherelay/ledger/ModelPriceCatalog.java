@@ -3,6 +3,9 @@ package io.github.kxng0109.cacherelay.ledger;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import io.github.kxng0109.cacherelay.contracts.ProviderType;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -33,6 +36,7 @@ public class ModelPriceCatalog {
 
 	private final ModelPricingRepository repository;
 	private final Cache<String, Map<String, List<ModelPricingEntry>>> snapshotCache;
+	private final MeterRegistry meterRegistry;
 
 	/**
 	 * @param repository          the pricing repository
@@ -43,13 +47,15 @@ public class ModelPriceCatalog {
 	public ModelPriceCatalog(
 			ModelPricingRepository repository,
 			@Value("${gateway.pricing.snapshot-ttl-minutes:15}") long snapshotTtlMinutes,
-			@Value("${gateway.pricing.snapshot-maximum-size:1}") int snapshotMaximumSize
+			@Value("${gateway.pricing.snapshot-maximum-size:1}") int snapshotMaximumSize,
+			MeterRegistry meterRegistry
 	) {
 		this.repository = repository;
 		this.snapshotCache = Caffeine.newBuilder()
 		                             .maximumSize(Math.max(1, snapshotMaximumSize))
 		                             .expireAfterWrite(Duration.ofMinutes(Math.max(1L, snapshotTtlMinutes)))
 		                             .build();
+		this.meterRegistry = meterRegistry != null ? meterRegistry : new SimpleMeterRegistry();
 	}
 
 	/**
@@ -58,7 +64,17 @@ public class ModelPriceCatalog {
 	 * @param repository the pricing repository
 	 */
 	public ModelPriceCatalog(ModelPricingRepository repository) {
-		this(repository, 15L, 1);
+		this(repository, 15L, 1, new SimpleMeterRegistry());
+	}
+
+	/**
+	 * Creates the catalog with default snapshot ceilings and an explicit registry (tests).
+	 *
+	 * @param repository    the pricing repository
+	 * @param meterRegistry registry for fallback-billing telemetry
+	 */
+	public ModelPriceCatalog(ModelPricingRepository repository, MeterRegistry meterRegistry) {
+		this(repository, 15L, 1, meterRegistry);
 	}
 
 	/**
@@ -138,11 +154,13 @@ public class ModelPriceCatalog {
 			if (sameProvider.isPresent()) {
 				return sameProvider;
 			}
+			countFallback("provider-mismatch", provider);
 			return Optional.of(exact.getFirst());
 		}
 
 		List<ModelPricingEntry> composite = byModelId.get(provider + "/" + model);
 		if (composite != null && !composite.isEmpty()) {
+			countFallback("composite", provider);
 			return Optional.of(composite.getFirst());
 		}
 
@@ -151,10 +169,29 @@ public class ModelPriceCatalog {
 		                                .max(Comparator.comparingInt(String::length))
 		                                .orElse(null);
 		if (longestPrefix != null) {
+			countFallback("prefix", provider);
 			return Optional.of(byModelId.get(longestPrefix).getFirst());
 		}
 
 		return Optional.empty();
+	}
+
+	/**
+	 * Records one fallback-priced billing (FIN-B28): prefix, composite, and
+	 * cross-provider matches bill at another row's rate, so each must be visible
+	 * in telemetry. Tags stay low-cardinality (strategy and mapped provider only —
+	 * never the raw model id).
+	 *
+	 * @param strategy fallback strategy taken
+	 * @param provider mapped provider name
+	 */
+	private void countFallback(String strategy, String provider) {
+		Counter.builder("cacherelay.pricing.fallback.total")
+		       .description("Billing priced by a fallback catalog row instead of an exact match")
+		       .tag("strategy", strategy)
+		       .tag("provider", provider)
+		       .register(meterRegistry)
+		       .increment();
 	}
 
 	private static String litellmProvider(ProviderType type) {

@@ -23,7 +23,6 @@ class McpGatewayPropertiesTest {
 		assertThat(props.getCatalogRefreshCron()).isEqualTo("0 */5 * * * *");
 		assertThat(props.getHitlSuspensionTtl()).isEqualTo(Duration.ofSeconds(300));
 		assertThat(props.getHitlSecret()).as("HITL secret must be null by default; injected from environment").isNull();
-		assertThat(props.getMaxSseMessageBytes()).isEqualTo(2 * 1024 * 1024);
 		assertThat(props.isAllowLegacySse()).isTrue();
 		assertThat(props.getCircuitBreakerFailureThreshold()).isEqualTo(3);
 		assertThat(props.getCircuitBreakerCooldown()).isEqualTo(Duration.ofSeconds(30));
@@ -35,7 +34,6 @@ class McpGatewayPropertiesTest {
 		props.setCatalogRefreshCron("0 0 * * * *");
 		props.setHitlSuspensionTtl(Duration.ofSeconds(600));
 		props.setHitlSecret(new SensitiveString("new-secret"));
-		props.setMaxSseMessageBytes(4 * 1024 * 1024);
 		props.setAllowLegacySse(false);
 		props.setCircuitBreakerFailureThreshold(5);
 		props.setCircuitBreakerCooldown(Duration.ofSeconds(60));
@@ -48,7 +46,6 @@ class McpGatewayPropertiesTest {
 		assertThat(props.getCatalogRefreshCron()).isEqualTo("0 0 * * * *");
 		assertThat(props.getHitlSuspensionTtl()).isEqualTo(Duration.ofSeconds(600));
 		assertThat(props.getHitlSecret().value()).isEqualTo("new-secret");
-		assertThat(props.getMaxSseMessageBytes()).isEqualTo(4 * 1024 * 1024);
 		assertThat(props.isAllowLegacySse()).isFalse();
 		assertThat(props.getCircuitBreakerFailureThreshold()).isEqualTo(5);
 		assertThat(props.getCircuitBreakerCooldown()).isEqualTo(Duration.ofSeconds(60));

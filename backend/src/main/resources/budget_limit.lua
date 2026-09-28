@@ -6,14 +6,23 @@
 -- it (zero overhead on the existing path), and the rate script's tested
 -- semantics stay byte-identical.
 --
--- KEYS: three dim-groups of three keys each (level order KEY, TEAM, ORG).
+-- FIN-B22: the window and month are derived from the Redis server clock
+-- (TIME), never from a gateway instance's clock: all pods address the same
+-- counter keys, so skew can neither split a window nor straddle a month.
+-- Counter keys are built here from the level subjects; every key carries the
+-- same hash tag the engine passes, so placement stays single-slot.
+--
+-- KEYS: config hashes only (level order KEY, TEAM, ORG).
 --   An empty-string key means "level not configured" and is skipped entirely.
---   KEYS[1..3] = minute spend counters for KEY, TEAM, ORG
---   KEYS[4..6] = month spend counters for KEY, TEAM, ORG
---   KEYS[7..9] = config hashes (HGET minute_micros / month_micros) for KEY, TEAM, ORG
+--   KEYS[1..3] = config hashes (HGET minute_micros / month_micros).
 --
 -- ARGV:
 --   ARGV[1] = estimatedCostMicros integer >= 0; spend this request is expected to add
+--   ARGV[2] = dedupe claim id (namespaced by the engine); '' means no dedupe
+--   ARGV[3] = KEY-level subject (key sha256 hex)
+--   ARGV[4] = TEAM-level subject (owner id); '' skips the level
+--   ARGV[5] = ORG-level subject
+--   ARGV[6] = hash tag shared by every budget key (e.g. {b:global})
 --
 -- Semantics (the anti-double-charge rules that motivated this shape):
 --   * CHECK-BEFORE-INCREMENT: a request that would exceed a cap is rejected
@@ -31,22 +40,57 @@
 --   * Counters and limits are micro-dollars (integers); floating point never
 --     crosses this boundary.
 --
--- Return value: EXACTLY 5 integers (never booleans; a Lua false inside a
--- returned table collapses to nil and truncates the array):
+-- Return value: the 5 historic integers (never booleans; a Lua false inside a
+-- returned table collapses to nil and truncates the array) plus the
+-- authoritative calendar month the charge landed in:
 --   [1] allowed          1 = within every cap, 0 = rejected
 --   [2] rejected         0 = none, 1 = key-minute, 2 = key-month,
 --                        3 = team-minute, 4 = team-month, 5 = org-minute, 6 = org-month
 --   [3] remainingMicros  lowest (limit - count) across evaluated dims, clamped >= 0;
 --                        -1 when no dimension was configured at all
 --   [4] resetSeconds     minute-window TTL of the binding dim; 0 when the binding
---                        dim is monthly (the engine resolves month-end itself)
+--                        dim is monthly
 --   [5] configured       count of dimensions with a limit > 0 (lets the engine
 --                        cache presence without a second round trip)
+--   [6] yearMonth        "YYYY-MM" derived from server TIME (the engine records
+--                        holds against this month so settlement addresses the
+--                        same counter the charge incremented)
+
+-- Authoritative window from the server clock (TIME returns {seconds, micros}).
+local timeParts = redis.call('TIME')
+local epochSec = tonumber(timeParts[1])
+local epochMinute = math.floor(epochSec / 60)
+
+-- Proleptic Gregorian YYYY-MM from epoch seconds (Howard Hinnant's
+-- days-to-civil algorithm; epoch is always positive here, so era is exact).
+-- Source: http://howardhinnant.github.io/date_algorithms.html
+local function serverYearMonth(sec)
+	local days = math.floor(sec / 86400)
+	local z = days + 719468
+	local era = math.floor(z / 146097)
+	local doe = z - era * 146097
+	local yoe = math.floor((doe - math.floor(doe / 1460)
+		+ math.floor(doe / 36524) - math.floor(doe / 146096)) / 365)
+	local y = yoe + era * 400
+	local doy = doe - (365 * yoe + math.floor(yoe / 4) - math.floor(yoe / 100))
+	local mp = math.floor((5 * doy + 2) / 153)
+	local m = mp + 3
+	if m > 12 then
+		m = m - 12
+		y = y + 1
+	end
+	return string.format('%04d-%02d', y, m)
+end
+local yearMonth = serverYearMonth(epochSec)
 
 local estimated = tonumber(ARGV[1])
 if estimated == nil or estimated < 0 then
 	estimated = 0
 end
+
+local slotTag = ARGV[6]
+local subjects = { ARGV[3], ARGV[4], ARGV[5] }
+local levelNames = { 'KEY', 'TEAM', 'ORG' }
 
 -- Counts configured dimensions exactly like the main loop (minute>0 and month>0
 -- each count once), for the early-return paths below that must report an honest
@@ -55,8 +99,8 @@ local function countConfigured()
 	local n = 0
 	local lvl = 1
 	while lvl <= 3 do
-		local ck = KEYS[lvl + 6]
-		if ck ~= '' then
+		local ck = KEYS[lvl]
+		if ck ~= '' and subjects[lvl] ~= '' then
 			if (tonumber(redis.call('HGET', ck, 'minute_micros') or '0') or 0) > 0 then
 				n = n + 1
 			end
@@ -77,7 +121,7 @@ end
 -- is not poisoned by a zero count.
 local MAX_EXACT_INTEGER = 9007199254740991
 if estimated > MAX_EXACT_INTEGER then
-	return { 0, 1, 0, 60, countConfigured() }
+	return { 0, 1, 0, 60, countConfigured(), yearMonth }
 end
 
 -- Idempotency: a retried client key must not double-debit when the first flight
@@ -102,10 +146,9 @@ local resetSeconds = 0
 local configured = 0
 local level = 1
 while level <= 3 do
-	local minuteKey = KEYS[level]
-	local monthKey = KEYS[level + 3]
-	local cfgKey = KEYS[level + 6]
-	if minuteKey ~= '' then
+	local cfgKey = KEYS[level]
+	local subject = subjects[level]
+	if cfgKey ~= '' and subject ~= '' then
 		local minuteLimit = tonumber(redis.call('HGET', cfgKey, 'minute_micros') or '0') or 0
 		local monthLimit = tonumber(redis.call('HGET', cfgKey, 'month_micros') or '0') or 0
 		if minuteLimit > 0 then
@@ -115,6 +158,10 @@ while level <= 3 do
 			configured = configured + 1
 		end
 		if minuteLimit > 0 or monthLimit > 0 then
+			local minuteKey = 'budget:' .. slotTag .. ':' .. levelNames[level] .. ':' .. subject
+				.. ':minute:' .. epochMinute
+			local monthKey = 'budget:' .. slotTag .. ':' .. levelNames[level] .. ':' .. subject
+				.. ':month:' .. yearMonth
 			local minuteCount = tonumber(redis.call('GET', minuteKey) or '0') or 0
 			local monthCount = tonumber(redis.call('GET', monthKey) or '0') or 0
 			local minuteDenied = minuteLimit > 0 and minuteCount + estimated > minuteLimit
@@ -178,4 +225,4 @@ if rejected > 0 then
 	allowed = 0
 end
 
-return { allowed, rejected, remaining, resetSeconds, configured }
+return { allowed, rejected, remaining, resetSeconds, configured, yearMonth }

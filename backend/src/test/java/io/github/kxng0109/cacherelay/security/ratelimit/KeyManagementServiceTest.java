@@ -8,17 +8,22 @@ import io.github.kxng0109.cacherelay.contracts.BootstrapKey;
 import io.github.kxng0109.cacherelay.contracts.GatewayProperties;
 import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
 import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.HashOperations;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.SetOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.security.oauth2.jwt.Jwt;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -42,7 +47,47 @@ class KeyManagementServiceTest {
 	private KeyManagementService newService() {
 		when(redisTemplate.<String, String>opsForHash()).thenReturn(hashOps);
 		when(redisTemplate.<String, String>opsForSet()).thenReturn(setOps);
+		when(redisTemplate.execute(any(), anyList(), any(Object[].class))).thenReturn(1L);
 		return new KeyManagementService(redisTemplate);
+	}
+
+	/**
+	 * Stubs the atomic-store script to succeed while recording its flat ARGV.
+	 *
+	 * @return reference holding the captured arguments after the call
+	 */
+	private AtomicReference<List<Object>> captureScriptArgv() {
+		AtomicReference<List<Object>> argv = new AtomicReference<>(List.of());
+		when(redisTemplate.execute(any(), anyList(), any(Object[].class))).thenAnswer(inv -> {
+			Object[] all = inv.getArguments();
+			List<Object> flat = new ArrayList<>();
+			for (int i = 2; i < all.length; i++) {
+				Object element = all[i];
+				if (element instanceof Object[] nested) {
+					flat.addAll(Arrays.asList(nested));
+				} else {
+					flat.add(element);
+				}
+			}
+			argv.set(flat);
+			return 1L;
+		});
+		return argv;
+	}
+
+	/**
+	 * Rebuilds the stored field map from atomic-store script ARGV (flat key/value
+	 * pairs plus the trailing index hex).
+	 *
+	 * @param argv captured script arguments
+	 * @return field map as the hash would store it
+	 */
+	private static Map<String, String> scriptFields(List<Object> argv) {
+		Map<String, String> fields = new LinkedHashMap<>();
+		for (int i = 0; i + 1 < argv.size() - 1; i += 2) {
+			fields.put(String.valueOf(argv.get(i)), String.valueOf(argv.get(i + 1)));
+		}
+		return fields;
 	}
 
 	private void stubPresent(SHA256Hash hash, Map<String, String> entries) {
@@ -104,16 +149,13 @@ class KeyManagementServiceTest {
 	@Test
 	void generateKeyStoresHashOnlyAndNeverThePlaintext() {
 		KeyManagementService service = newService();
+		AtomicReference<List<Object>> argv = captureScriptArgv();
 
 		String plaintext = service.generateKey(
 				new BootstrapKey("owner", "name", "ignored", 5, 50, Set.of(), Set.of()));
 
 		String redisKey = redisKey(hashOf(plaintext));
-		@SuppressWarnings("unchecked")
-		ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
-		verify(hashOps).putAll(eq(redisKey), fieldsCaptor.capture());
-
-		Map<String, String> stored = fieldsCaptor.getValue();
+		Map<String, String> stored = scriptFields(argv.get());
 		assertFalse(stored.containsKey(plaintext));
 		assertFalse(stored.containsValue(plaintext));
 		for (String value : stored.values()) {
@@ -131,7 +173,8 @@ class KeyManagementServiceTest {
 	}
 
 	@Test
-	void revokeKeyDisablesKeyAndInvalidatesCache() {		KeyManagementService service = newService();
+	void revokeKeyDisablesKeyAndInvalidatesCache() {
+		KeyManagementService service = newService();
 		SHA256Hash hash = hashOf(FIXED_PLAINTEXT);
 		when(redisTemplate.hasKey(redisKey(hash))).thenReturn(Boolean.TRUE);
 		when(hashOps.entries(redisKey(hash))).thenReturn(
@@ -469,7 +512,9 @@ class KeyManagementServiceTest {
 		assertEquals("key-name", created.key().name());
 		assertEquals(60, created.key().rpmLimit());
 		assertEquals(5000, created.key().tpmLimit());
-		verify(setOps).add("admin:keys", created.hash().hex());
+		verify(redisTemplate).execute(
+				any(), eq(List.of(redisKey(created.hash()), "admin:keys")), any(Object[].class));
+		verify(setOps, never()).add(anyString(), any(String[].class));
 	}
 
 	@Test
@@ -506,10 +551,12 @@ class KeyManagementServiceTest {
 		SHA256Hash hash1 = hashOf("gw-key11111111111111111111111111111");
 		SHA256Hash hash2 = hashOf("gw-key22222222222222222222222222222");
 
-		when(setOps.members("admin:keys")).thenReturn(Set.of(hash1.hex(), hash2.hex(), "invalid-hex-entry"));
-
-		stubPresent(hash1, fields("owner-1", "k1", "10", "100", "true", "", "", "2026-08-30T10:00:00Z", "gw-"));
-		stubPresent(hash2, fields("owner-2", "k2", "20", "200", "true", "", "", "2026-08-31T10:00:00Z", "gw-"));
+		when(setOps.members("admin:keys"))
+				.thenReturn(new LinkedHashSet<>(List.of(hash1.hex(), hash2.hex(), "invalid-hex-entry")));
+		Map<String, String> row1 = fields("owner-1", "k1", "10", "100", "true", "", "", "2026-08-30T10:00:00Z", "gw-");
+		Map<String, String> row2 = fields("owner-2", "k2", "20", "200", "true", "", "", "2026-08-31T10:00:00Z", "gw-");
+		when(redisTemplate.executePipelined(any(RedisCallback.class)))
+				.thenReturn(List.of(row1, row2));
 
 		List<VirtualApiKey> all = service.listKeys(null);
 		assertEquals(2, all.size());
@@ -607,6 +654,7 @@ class KeyManagementServiceTest {
 	@Test
 	void createKeyPersistsResourceAndPromptVisibility() {
 		KeyManagementService service = newService();
+		AtomicReference<List<Object>> argv = captureScriptArgv();
 
 		KeyManagementService.CreatedKey created = service.createKey(
 				"owner", "name", 5, 50, Set.of(), Set.of(), Set.of(), Set.of(),
@@ -617,10 +665,7 @@ class KeyManagementServiceTest {
 		assertEquals(Set.of("postgres://secret/*"), created.key().deniedResources());
 		assertEquals(Set.of(), created.key().allowedPrompts());
 		assertEquals(Set.of("admin_*"), created.key().deniedPrompts());
-		@SuppressWarnings("unchecked")
-		ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
-		verify(hashOps).putAll(eq(redisKey(created.hash())), fieldsCaptor.capture());
-		Map<String, String> stored = fieldsCaptor.getValue();
+		Map<String, String> stored = scriptFields(argv.get());
 		assertEquals("[\"postgres://*\"]", stored.get("allowedResources"));
 		assertEquals("[\"postgres://secret/*\"]", stored.get("deniedResources"));
 		assertEquals("[]", stored.get("allowedPrompts"));
@@ -628,7 +673,8 @@ class KeyManagementServiceTest {
 	}
 
 	@Test
-	void legacyKeysWithoutVisibilityFieldsLoadAsFullyVisible() {		KeyManagementService service = newService();
+	void legacyKeysWithoutVisibilityFieldsLoadAsFullyVisible() {
+		KeyManagementService service = newService();
 		SHA256Hash hash = hashOf(FIXED_PLAINTEXT);
 		when(redisTemplate.hasKey(redisKey(hash))).thenReturn(Boolean.TRUE);
 		when(hashOps.entries(redisKey(hash))).thenReturn(
@@ -646,6 +692,7 @@ class KeyManagementServiceTest {
 	@Test
 	void explicitInjectionFlagRoundTripsThroughCreateAndUpdate() {
 		KeyManagementService service = newService();
+		AtomicReference<List<Object>> argv = captureScriptArgv();
 
 		KeyManagementService.CreatedKey created = service.createKey(
 				"owner", "name", 5, 50, Set.of(), Set.of(), Set.of(), Set.of(),
@@ -653,10 +700,8 @@ class KeyManagementServiceTest {
 				Set.of(), Set.of(), UUID.randomUUID());
 
 		assertFalse(created.key().injectionBlock());
-		@SuppressWarnings("unchecked")
-		ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
-		verify(hashOps).putAll(eq(redisKey(created.hash())), fieldsCaptor.capture());
-		assertEquals("false", fieldsCaptor.getValue().get("injectionBlock"));
+		Map<String, String> stored = scriptFields(argv.get());
+		assertEquals("false", stored.get("injectionBlock"));
 
 		SHA256Hash hash = created.hash();
 		when(redisTemplate.hasKey(redisKey(hash))).thenReturn(Boolean.TRUE);
@@ -670,13 +715,14 @@ class KeyManagementServiceTest {
 		assertTrue(updated.isPresent());
 		@SuppressWarnings("unchecked")
 		ArgumentCaptor<Map<String, String>> updateCaptor = ArgumentCaptor.forClass(Map.class);
-		verify(hashOps, times(2))
+		verify(hashOps, times(1))
 				.putAll(eq(redisKey(hash)), updateCaptor.capture());
 		assertEquals("false", updateCaptor.getAllValues().getLast().get("injectionBlock"));
 	}
 
 	@Test
-	void missingInjectionFlagDefaultsToBlock() {		KeyManagementService service = newService();
+	void missingInjectionFlagDefaultsToBlock() {
+		KeyManagementService service = newService();
 		SHA256Hash hash = hashOf(FIXED_PLAINTEXT);
 		when(redisTemplate.hasKey(redisKey(hash))).thenReturn(Boolean.TRUE);
 		when(hashOps.entries(redisKey(hash))).thenReturn(
@@ -691,6 +737,7 @@ class KeyManagementServiceTest {
 	@Test
 	void explicitTrueInjectionFlagRoundTrips() {
 		KeyManagementService service = newService();
+		AtomicReference<List<Object>> argv = captureScriptArgv();
 
 		KeyManagementService.CreatedKey created = service.createKey(
 				"owner", "name", 5, 50, Set.of(), Set.of(), Set.of(), Set.of(),
@@ -698,14 +745,13 @@ class KeyManagementServiceTest {
 				Set.of(), Set.of(), UUID.randomUUID());
 
 		assertTrue(created.key().injectionBlock());
-		@SuppressWarnings("unchecked")
-		ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
-		verify(hashOps).putAll(eq(redisKey(created.hash())), fieldsCaptor.capture());
-		assertEquals("true", fieldsCaptor.getValue().get("injectionBlock"));
+		Map<String, String> stored = scriptFields(argv.get());
+		assertEquals("true", stored.get("injectionBlock"));
 	}
 
 	@Test
-	void storedFalseInjectionFlagLoadsAsFlagMode() {		KeyManagementService service = newService();
+	void storedFalseInjectionFlagLoadsAsFlagMode() {
+		KeyManagementService service = newService();
 		SHA256Hash hash = hashOf(FIXED_PLAINTEXT);
 		when(redisTemplate.hasKey(redisKey(hash))).thenReturn(Boolean.TRUE);
 		Map<String, String> stored = new LinkedHashMap<>(fields(
@@ -761,15 +807,13 @@ class KeyManagementServiceTest {
 	@Test
 	void emptyCacheScopesStoreAsEmptyCsv() {
 		KeyManagementService service = newService();
+		AtomicReference<List<Object>> argv = captureScriptArgv();
 
 		KeyManagementService.CreatedKey created = service.createKey(
 				"owner", "name", 5, 50, Set.of(), Set.of(), Set.of(), Set.of(),
 				Set.of(), Set.of(), Set.of(), Set.of(), null, Set.of(), Set.of(), Set.of(), UUID.randomUUID());
 
-		@SuppressWarnings("unchecked")
-		ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
-		verify(hashOps).putAll(eq(redisKey(created.hash())), fieldsCaptor.capture());
-		assertThat(fieldsCaptor.getValue().get("allowedCacheScopes"))
+		assertThat(scriptFields(argv.get()).get("allowedCacheScopes"))
 				.as("empty scope set persists as empty CSV").isEmpty();
 	}
 
@@ -833,6 +877,167 @@ class KeyManagementServiceTest {
 		assertThat(updated).as("revoked key accepts a non-reenabling update").isPresent();
 		assertThat(updated.get().revoked()).as("tombstone survives the update").isTrue();
 		assertThat(updated.get().enabled()).as("enabled stays cleared").isFalse();
+	}
+
+	@Test
+	@DisplayName("ADM-B04: patchKey validates everything before writing anything")
+	void patchKeyWritesNothingOnValidationFailure() {
+		KeyManagementService service = newService();
+		SHA256Hash hash = hashOf("gw-revoked000000000000000000000002");
+		Map<String, String> revoked = fields("owner", "name", "5", "50", "false", "", "", CREATED_AT, "gw-");
+		revoked.put("revoked", "true");
+		stubPresent(hash, revoked);
+
+		assertThatThrownBy(() -> service.patchKey(
+				hash, UUID.randomUUID(), null, null, null, null, null, null, null, null, null,
+				null, null, null, null, null, null, Boolean.TRUE))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessageContaining("terminally revoked");
+		verify(hashOps, never()).put(anyString(), anyString(), anyString());
+		verify(hashOps, never()).putAll(anyString(), anyMap());
+	}
+
+	@Test
+	@DisplayName("ADM-B16: listKeys bulk-loads hashes in one pipeline round trip")
+	void listKeysBulkLoads() {
+		KeyManagementService service = newService();
+		SHA256Hash hash1 = hashOf("gw-key11111111111111111111111111111");
+		SHA256Hash hash2 = hashOf("gw-key22222222222222222222222222222");
+		when(setOps.members("admin:keys")).thenReturn(Set.of(hash1.hex(), hash2.hex(), "invalid-hex-entry"));
+		Map<String, String> row = fields("owner-1", "k1", "10", "100", "true", "", "", CREATED_AT, "gw-");
+		Map<byte[], byte[]> rawRow = new LinkedHashMap<>();
+		row.forEach((k, v) -> rawRow.put(k.getBytes(StandardCharsets.UTF_8), v.getBytes(StandardCharsets.UTF_8)));
+		when(redisTemplate.executePipelined(any(RedisCallback.class)))
+				.thenReturn(List.of(row, rawRow));
+
+		List<VirtualApiKey> keys = service.listKeys(null);
+
+		assertEquals(2, keys.size());
+		verify(redisTemplate, times(1)).executePipelined(any(RedisCallback.class));
+		verify(hashOps, never()).entries(anyString());
+	}
+
+	@Test
+	@DisplayName("ADM-B16: usernames resolve in one batch query")
+	void usernamesResolveInOneBatch() {
+		UserAccountRepository users = mock(UserAccountRepository.class);
+		KeyManagementService service = newService();
+		service.setUserAccountRepository(users);
+		UserAccount alice = new UserAccount("alice", null, null, false);
+		UserAccount bob = new UserAccount("bob", null, null, false);
+		when(users.findAllById(any())).thenReturn(List.of(alice, bob));
+
+		Map<UUID, String> names = service.usernamesOf(Set.of(alice.getId(), bob.getId()));
+
+		assertEquals("alice", names.get(alice.getId()));
+		assertEquals("bob", names.get(bob.getId()));
+		verify(users, times(1)).findAllById(any());
+	}
+
+	@Test
+	@DisplayName("ADM-B16: usernamesOf degrades to empty instead of failing reads")
+	void usernamesOfDegradesGracefully() {
+		KeyManagementService unwired = newService();
+
+		assertThat(unwired.usernamesOf(null)).isEmpty();
+		assertThat(unwired.usernamesOf(Set.of())).isEmpty();
+		assertThat(unwired.usernamesOf(Set.of(UUID.randomUUID()))).isEmpty();
+
+		UserAccountRepository failing = mock(UserAccountRepository.class);
+		KeyManagementService broken = newService();
+		broken.setUserAccountRepository(failing);
+		when(failing.findAllById(any())).thenThrow(new RuntimeException("db down"));
+
+		assertThat(broken.usernamesOf(Set.of(UUID.randomUUID()))).isEmpty();
+	}
+
+	@Test
+	@DisplayName("ADM-B16: usernamesOf skips unresolvable accounts without failing the batch")
+	void usernamesOfSkipsUnknownAccounts() {
+		UserAccountRepository users = mock(UserAccountRepository.class);
+		KeyManagementService service = newService();
+		service.setUserAccountRepository(users);
+		UserAccount alice = new UserAccount("alice", null, null, false);
+		when(users.findAllById(any())).thenReturn(Arrays.asList(alice, null));
+
+		Map<UUID, String> names = service.usernamesOf(Set.of(alice.getId(), UUID.randomUUID()));
+
+		assertThat(names).containsExactly(Map.entry(alice.getId(), "alice"));
+	}
+
+	@Test
+	@DisplayName("ADM-B14: key creation fails closed when the atomic store reports a collision")
+	void storeCollisionFailsClosed() {
+		KeyManagementService service = newService();
+		when(redisTemplate.execute(any(), anyList(), any(Object[].class))).thenReturn(0L);
+
+		assertThatThrownBy(() -> service.createKey(
+				"owner", "name", 5, 50, Set.of(), Set.of(), Set.of(), Set.of(),
+				Set.of(), Set.of(), Set.of(), Set.of(), null, null,
+				Set.of(), Set.of(), UUID.randomUUID()))
+				.isInstanceOf(IllegalStateException.class)
+				.hasMessageContaining("collision");
+	}
+
+	@Test
+	@DisplayName("ADM-B16: listKeys degrades to available rows when the pipeline gaps")
+	void listKeysDegradesOnPipelineGaps() {
+		KeyManagementService service = newService();
+		SHA256Hash hash1 = hashOf("gw-key11111111111111111111111111111");
+		SHA256Hash hash2 = hashOf("gw-key22222222222222222222222222222");
+		when(setOps.members("admin:keys")).thenReturn(
+				new LinkedHashSet<>(List.of(hash1.hex(), hash2.hex())));
+		Map<String, String> row = fields("owner-1", "k1", "10", "100", "true", "", "", CREATED_AT, "gw-");
+
+		when(redisTemplate.executePipelined(any(RedisCallback.class))).thenReturn(null);
+		assertThat(service.listKeys(null)).isEmpty();
+
+		when(redisTemplate.executePipelined(any(RedisCallback.class))).thenReturn(List.of(row));
+		List<VirtualApiKey> partial = service.listKeys(null);
+		assertThat(partial).hasSize(1);
+		assertThat(partial.getFirst().ownerId()).isEqualTo("owner-1");
+
+		when(redisTemplate.executePipelined(any(RedisCallback.class)))
+				.thenReturn(List.of(Map.of(), row));
+		assertThat(service.listKeys(null)).hasSize(1);
+	}
+
+	@Test
+	@DisplayName("ADM-B04: patchKey applies owner and fields in a single write")
+	void patchKeyAppliesAtomically() {
+		KeyManagementService service = newService();
+		SHA256Hash hash = hashOf(FIXED_PLAINTEXT);
+		stubPresent(hash, fields("owner", "name", "5", "50", "true", "", "", CREATED_AT, "gw-"));
+		UUID owner = UUID.randomUUID();
+
+		Optional<VirtualApiKey> updated = service.patchKey(
+				hash, owner, "renamed", null, null, null, null, null, null, null, null,
+				null, null, null, null, null, null, null);
+
+		assertThat(updated).isPresent();
+		verify(hashOps, times(1)).putAll(eq(redisKey(hash)), anyMap());
+		verify(hashOps, never()).put(anyString(), anyString(), anyString());
+	}
+
+	@Test
+	@DisplayName("ADM-B14: key creation stores hash and index atomically via script")
+	void createKeyStoresAtomically() {
+		KeyManagementService service = newService();
+		when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class)))
+				.thenReturn(1L);
+
+		KeyManagementService.CreatedKey created = service.createKey(
+				"owner", "name", 5, 50, Set.of(), Set.of(), Set.of(), Set.of(),
+				Set.of(), Set.of(), Set.of(), Set.of(), null, null, Set.of(), Set.of(),
+				UUID.randomUUID());
+
+		assertThat(created).isNotNull();
+		verify(redisTemplate).execute(
+				any(RedisScript.class),
+				eq(List.of("apikey:" + created.hash().hex(), "admin:keys")),
+				any(Object[].class));
+		verify(hashOps, never()).putAll(anyString(), anyMap());
+		verify(setOps, never()).add(anyString(), any(String[].class));
 	}
 
 	@Test
@@ -946,8 +1151,7 @@ class KeyManagementServiceTest {
 	}
 
 	@Test
-	void seedSkipsDisabledOwnerWhenWired() {
-		UserAccountRepository users = mock(UserAccountRepository.class);
+	void seedSkipsDisabledOwnerWhenWired() {		UserAccountRepository users = mock(UserAccountRepository.class);
 		KeyManagementService service = newService();
 		service.setUserAccountRepository(users);
 		UserAccount disabled = mock(UserAccount.class);
@@ -959,6 +1163,60 @@ class KeyManagementServiceTest {
 		service.seedBootstrapKeys(properties);
 
 		verify(redisTemplate, never()).execute(any(), anyList(), any(Object[].class));
+	}
+
+	@Test
+	void seedProceedsWithoutOwnerLookupWhenUnwired() {
+		KeyManagementService service = newService();
+		GatewayProperties properties = new GatewayProperties();
+		properties.setBootstrapKeys(List.of(fullTemplate("seeduser")));
+
+		service.seedBootstrapKeys(properties);
+
+		verify(redisTemplate, atLeastOnce()).execute(any(), anyList(), any(Object[].class));
+	}
+
+	@Test
+	void patchKeyValidatesLegacyStoredOwner() {
+		KeyManagementService service = newService();
+		SHA256Hash hash = hashOf(FIXED_PLAINTEXT);
+		stubPresent(hash, fields("owner", "name", "5", "50", "true", "", "", CREATED_AT, "gw-"));
+		when(hashOps.get(redisKey(hash), "ownerId")).thenReturn("owner");
+		UUID owner = UUID.randomUUID();
+
+		Optional<VirtualApiKey> updated = service.patchKey(
+				hash, owner, "renamed", null, null, null, null, null, null, null, null,
+				null, null, null, null, null, null, null);
+
+		assertThat(updated).isPresent();
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<Map<String, String>> updatesCaptor = ArgumentCaptor.forClass(Map.class);
+		verify(hashOps).putAll(eq(redisKey(hash)), updatesCaptor.capture());
+		assertThat(updatesCaptor.getValue().get("ownerUserId")).isEqualTo(owner.toString());
+		assertThat(updatesCaptor.getValue().get("name")).isEqualTo("renamed");
+	}
+
+	@Test
+	void listKeysSkipsRowsWithNullFieldsAndMissingKeys() {
+		KeyManagementService service = newService();
+		SHA256Hash hash1 = hashOf("gw-key11111111111111111111111111111");
+		when(setOps.members("admin:keys")).thenReturn(new LinkedHashSet<>(List.of(hash1.hex())));
+		Map<String, String> row = fields("owner-1", "k1", "10", "100", "true", "", "", CREATED_AT, "gw-");
+
+		Map<Object, Object> nullKey = new HashMap<>();
+		nullKey.put(null, "v");
+		when(redisTemplate.executePipelined(any(RedisCallback.class))).thenReturn(List.of(nullKey));
+		assertThat(service.listKeys(null)).isEmpty();
+
+		Map<Object, Object> nullValue = new HashMap<>(row);
+		nullValue.put("name", null);
+		when(redisTemplate.executePipelined(any(RedisCallback.class))).thenReturn(List.of(nullValue));
+		assertThat(service.listKeys(null)).isEmpty();
+
+		Map<String, String> sparse = new LinkedHashMap<>(row);
+		sparse.remove("rpmLimit");
+		when(redisTemplate.executePipelined(any(RedisCallback.class))).thenReturn(List.of(sparse));
+		assertThat(service.listKeys(null)).isEmpty();
 	}
 
 	private static BootstrapKey fullTemplate(String ownerUsername) {

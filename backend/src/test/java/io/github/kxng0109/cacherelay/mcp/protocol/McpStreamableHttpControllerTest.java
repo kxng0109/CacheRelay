@@ -25,8 +25,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentMatchers;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
+
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -41,11 +47,17 @@ import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;import java.time.Instant;
+import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.Flow;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -158,8 +170,7 @@ class McpStreamableHttpControllerTest {
 
 	@Test
 	@DisplayName("Returns 503 when MCP Gateway subsystem is disabled")
-	void returnsServiceUnavailableWhenDisabled() {
-		properties.setEnabled(false);
+	void returnsServiceUnavailableWhenDisabled() {		properties.setEnabled(false);
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
 
@@ -172,6 +183,190 @@ class McpStreamableHttpControllerTest {
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
 		assertThat(response.getBody()).contains("-32603").contains("MCP Gateway is disabled");
+	}
+
+	@Test
+	@DisplayName("MCP-B06: legacy eras keep _meta optional")
+	void legacyEraMetaOptional() {
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+
+		ResponseEntity<String> response = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\","
+						+ "\"params\":{\"name\":\"postgres__run_query\",\"arguments\":{}}}",
+				"2024-11-05",
+				null,
+				request
+		);
+
+		assertThat(response.getStatusCode()).isNotEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(response.getBody()).doesNotContain("Missing required _meta");
+	}
+
+	@Test
+	@DisplayName("MCP-B10: catalog-changed notifications invalidate, not re-read")
+	void listChangedInvalidatesCatalog() {
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+
+		ResponseEntity<String> response = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}",
+				"2026-07-28",
+				null,
+				request
+		);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+		verify(catalogAggregator).invalidateCatalog();
+	}
+
+	@Test
+	@DisplayName("MCP-B26: non-scalar request ids are rejected with -32600")
+	void nonScalarIdRejected() {
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+
+		ResponseEntity<String> arrayId = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":[1],\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+				"2026-07-28",
+				null,
+				request
+		);
+		assertThat(arrayId.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(arrayId.getBody()).contains("-32600");
+
+		ResponseEntity<String> objectId = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":{\"n\":1},\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+				"2026-07-28",
+				null,
+				request
+		);
+		assertThat(objectId.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(objectId.getBody()).contains("-32600");
+	}
+
+	@Test
+	@DisplayName("MCP-B25: unknown methods answer 404 with -32601 on the modern era")
+	void unknownMethodAnswers404() {
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+
+		ResponseEntity<String> response = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"u-404\",\"method\":\"unknown/method\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+				"2026-07-28",
+				null,
+				request
+		);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+		assertThat(response.getBody()).contains("-32601");
+	}
+
+	@Test
+	@DisplayName("blank Mcp-Name is treated as absent, not a mismatch")
+	void blankMcpNameTreatedAsAbsent() {
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+		request.addHeader("Mcp-Name", "   ");
+
+		ResponseEntity<String> response = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+				"2026-07-28",
+				null,
+				request
+		);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody()).doesNotContain("-32020");
+	}
+
+	@Test
+	@DisplayName("explicit-null ids pass scalar validation as notifications, never -32600")
+	void explicitNullIdPassesValidation() {
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+
+		ResponseEntity<String> response = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+				"2026-07-28",
+				null,
+				request
+		);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+		assertThat(response.getBody()).isNull();
+	}
+
+	@Test
+	@DisplayName("MCP-B11: Mcp-Method header mismatch is rejected with -32020")
+	void headerMethodMismatchRejected() {
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+
+		ResponseEntity<String> response = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+				"2026-07-28",
+				"resources/list",
+				request
+		);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(response.getBody()).contains("-32020");
+	}
+
+	@Test
+	@DisplayName("MCP-B11: base64-sentinel Mcp-Method decodes and agrees with the body")
+	void headerMethodSentinelDecoded() {
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+
+		// "ping" -> cGluZw==
+		ResponseEntity<String> response = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+				"2026-07-28",
+				"=?base64?cGluZw==?=",
+				request
+		);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody()).doesNotContain("-32020");
+	}
+
+	@Test
+	@DisplayName("MCP-B11: blank version header and invalid Mcp-Name are rejected with -32020")
+	void blankVersionAndInvalidNameRejected() {
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+
+		ResponseEntity<String> blankVersion = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+				"   ",
+				null,
+				request
+		);
+		assertThat(blankVersion.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(blankVersion.getBody()).contains("-32020");
+
+		MockHttpServletRequest badName = new MockHttpServletRequest();
+		badName.setAttribute("virtualApiKey", validApiKey);
+		badName.addHeader("Mcp-Name", "not a valid token!!!");
+		ResponseEntity<String> invalidName = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+				"2026-07-28",
+				null,
+				badName
+		);
+		assertThat(invalidName.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(invalidName.getBody()).contains("-32020");
 	}
 
 	@Test
@@ -598,6 +793,82 @@ class McpStreamableHttpControllerTest {
 	}
 
 	@Test
+	@DisplayName("MCP-B20: non-object client _meta on legacy eras is replaced with gateway meta")
+	void nonObjectClientMetaReplaced() throws Exception {
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
+
+		// Legacy eras skip _meta validation, so a non-object _meta reaches
+		// forwarding and must be replaced, never forwarded verbatim.
+		String rawRpc = "{\"jsonrpc\":\"2.0\",\"id\":\"meta-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"postgres__run_query\",\"arguments\":{\"sql\":\"SELECT 1\"},\"_meta\":\"nope\"}}";
+		McpResolvedRoute route = new McpResolvedRoute(postgresServer, "run_query", "postgres__run_query");
+		when(router.resolveToolRoute("postgres__run_query")).thenReturn(Optional.of(route));
+		when(rbacPolicyEngine.isToolAllowed("postgres__run_query", validApiKey)).thenReturn(true);
+		when(guardrailScanner.scanArguments(any())).thenReturn(SecretScanResult.clean());
+		when(circuitBreakerManager.tryAcquire("postgres")).thenReturn(true);
+		when(hitlSuspensionEngine.evaluateOrSuspend(any(), any(), any(), any(), any())).thenReturn(Optional.empty());
+		when(catalogAggregator.getAggregatedCatalog()).thenReturn(new McpAggregatedCatalog(
+				List.of(new McpToolDefinition("postgres__run_query", "Query DB",
+						objectMapper.createObjectNode(), null)),
+				List.of(), List.of(), Instant.now()));
+		when(jsonSchemaValidator.validate(any(), any())).thenReturn(McpJsonSchemaValidator.ValidationResult.success());
+		when(mockHttpResponse.statusCode()).thenReturn(200);
+		when(mockHttpResponse.body()).thenReturn(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"meta-1\",\"result\":{\"content\":["
+						+ "{\"type\":\"text\",\"text\":\"[{\\\"count\\\": 1}]\"}]}}");
+		when(httpClient.send(
+				any(HttpRequest.class),
+				ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
+		)).thenReturn(mockHttpResponse);
+		when(guardrailScanner.wrapToolOutputWithNonce(eq("postgres__run_query"), eq("[{\"count\": 1}]")))
+				.thenReturn(
+						"<tool_result name=\"postgres__run_query\" nonce=\"abc12345\">[{\"count\": 1}]</tool_result>");
+
+		ResponseEntity<String> response = controller.handleStreamableHttp(rawRpc, "2024-11-05", null, request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody()).contains("abc12345");
+		verify(circuitBreakerManager).recordSuccess("postgres");
+	}
+
+	@Test
+	@DisplayName("MCP-B34: upstream responses with mismatched ids are discarded fail-closed")
+	void mismatchedUpstreamIdDiscarded() throws Exception {
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
+
+		String rawRpc = "{\"jsonrpc\":\"2.0\",\"id\":\"corr-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"postgres__run_query\",\"arguments\":{\"sql\":\"SELECT 1\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{\"tools\":{}}}}}";
+		McpResolvedRoute route = new McpResolvedRoute(postgresServer, "run_query", "postgres__run_query");
+		when(router.resolveToolRoute("postgres__run_query")).thenReturn(Optional.of(route));
+		when(rbacPolicyEngine.isToolAllowed("postgres__run_query", validApiKey)).thenReturn(true);
+		when(guardrailScanner.scanArguments(any())).thenReturn(SecretScanResult.clean());
+		when(circuitBreakerManager.tryAcquire("postgres")).thenReturn(true);
+		when(hitlSuspensionEngine.evaluateOrSuspend(any(), any(), any(), any(), any())).thenReturn(Optional.empty());
+		when(catalogAggregator.getAggregatedCatalog()).thenReturn(new McpAggregatedCatalog(
+				List.of(new McpToolDefinition("postgres__run_query", "Query DB",
+						objectMapper.createObjectNode(), null)),
+				List.of(), List.of(), Instant.now()));
+		when(jsonSchemaValidator.validate(any(), any())).thenReturn(McpJsonSchemaValidator.ValidationResult.success());
+		when(mockHttpResponse.statusCode()).thenReturn(200);
+		when(mockHttpResponse.body()).thenReturn(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"someone-else\",\"result\":{\"content\":["
+						+ "{\"type\":\"text\",\"text\":\"hijack\"}]}}");
+		when(httpClient.send(
+				any(HttpRequest.class),
+				ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
+		)).thenReturn(mockHttpResponse);
+
+		ResponseEntity<String> response = controller.handleStreamableHttp(rawRpc, null, null, request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody()).contains("-32603");
+		assertThat(response.getBody()).doesNotContain("hijack");
+		verify(circuitBreakerManager).recordFailure("postgres");
+	}
+
+	@Test
 	@DisplayName("tools/call fails closed with -32603 on RBAC permission denial")
 	void handlesToolsCallRbacDenial() {
 		MockHttpServletRequest request = new MockHttpServletRequest();
@@ -918,11 +1189,32 @@ class McpStreamableHttpControllerTest {
 	}
 
 	@Test
-	@DisplayName("per-method capability requirements reject mismatched declarations")
-	void perMethodCapabilityMismatch() {
+	@DisplayName("non-object client capabilities fail closed with -32021")
+	void nonObjectCapabilitiesRejected() {
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		request.setAttribute("virtualApiKey", validApiKey);
 		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
+
+		ResponseEntity<String> response = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"n-2\",\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":\"nope\"}}}",
+				null,
+				null,
+				request
+		);
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(response.getBody()).contains("-32021");
+	}
+
+	@Test
+	@DisplayName("MCP-B05: spec-conformant capabilities without server keys pass the gate")
+	void conformantCapabilitiesPassGate() {
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
+		McpAggregatedCatalog emptyCatalog = new McpAggregatedCatalog(
+				List.of(), List.of(), List.of(), Instant.now());
+		when(catalogAggregator.getAggregatedCatalog()).thenReturn(emptyCatalog);
+		when(rbacPolicyEngine.filterCatalog(emptyCatalog, validApiKey)).thenReturn(emptyCatalog);
 
 		ResponseEntity<String> promptsResp = controller.handleStreamableHttp(
 				"{\"jsonrpc\":\"2.0\",\"id\":\"p-1\",\"method\":\"prompts/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{\"tools\":{}}}}}",
@@ -930,8 +1222,8 @@ class McpStreamableHttpControllerTest {
 				null,
 				request
 		);
-		assertThat(promptsResp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-		assertThat(promptsResp.getBody()).contains("-32021");
+		assertThat(promptsResp.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(promptsResp.getBody()).doesNotContain("-32021");
 
 		ResponseEntity<String> resourcesResp = controller.handleStreamableHttp(
 				"{\"jsonrpc\":\"2.0\",\"id\":\"r-1\",\"method\":\"resources/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{\"tools\":{}}}}}",
@@ -939,8 +1231,17 @@ class McpStreamableHttpControllerTest {
 				null,
 				request
 		);
-		assertThat(resourcesResp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-		assertThat(resourcesResp.getBody()).contains("-32021");
+		assertThat(resourcesResp.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(resourcesResp.getBody()).doesNotContain("-32021");
+
+		ResponseEntity<String> bareResp = controller.handleStreamableHttp(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"t-1\",\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+				null,
+				null,
+				request
+		);
+		assertThat(bareResp.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(bareResp.getBody()).doesNotContain("-32021");
 	}
 
 	@Test
@@ -1076,6 +1377,223 @@ class McpStreamableHttpControllerTest {
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(response.getBody()).contains("result");
+	}
+
+	@Test
+	@DisplayName("MCP-B19: upstream failure returns a generic error with a correlation id")
+	void upstreamFailureHidesInternals() throws Exception {
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
+
+		String rawRpc = "{\"jsonrpc\":\"2.0\",\"id\":\"f-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"postgres__run_query\",\"arguments\":{},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}";
+		McpResolvedRoute route = new McpResolvedRoute(postgresServer, "run_query", "postgres__run_query");
+		when(router.resolveToolRoute("postgres__run_query")).thenReturn(Optional.of(route));
+		when(rbacPolicyEngine.isToolAllowed("postgres__run_query", validApiKey)).thenReturn(true);
+		when(guardrailScanner.scanArguments(any())).thenReturn(SecretScanResult.clean());
+		when(circuitBreakerManager.tryAcquire("postgres")).thenReturn(true);
+		when(hitlSuspensionEngine.evaluateOrSuspend(any(), any(), any(), any(), any())).thenReturn(Optional.empty());
+		when(catalogAggregator.getAggregatedCatalog()).thenReturn(new McpAggregatedCatalog(
+				List.of(new McpToolDefinition("postgres__run_query", "Query DB",
+						objectMapper.createObjectNode(), null)),
+				List.of(), List.of(), Instant.now()));
+		when(jsonSchemaValidator.validate(any(), any())).thenReturn(McpJsonSchemaValidator.ValidationResult.success());
+		when(httpClient.send(
+				any(HttpRequest.class),
+				ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
+		)).thenThrow(new IOException("upstream password=hunter2"));
+
+		ResponseEntity<String> response = controller.handleStreamableHttp(rawRpc, null, null, request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody()).contains("-32603");
+		assertThat(response.getBody()).doesNotContain("hunter2");
+		assertThat(response.getBody()).contains("correlationId");
+	}
+
+	@Test
+	@DisplayName("MCP-B27: reserved upstream error codes are not forwarded verbatim")
+	void reservedUpstreamCodesRemapped() throws Exception {
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
+
+		String rawRpc = "{\"jsonrpc\":\"2.0\",\"id\":\"g-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"postgres__run_query\",\"arguments\":{},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}";
+		McpResolvedRoute route = new McpResolvedRoute(postgresServer, "run_query", "postgres__run_query");
+		when(router.resolveToolRoute("postgres__run_query")).thenReturn(Optional.of(route));
+		when(rbacPolicyEngine.isToolAllowed("postgres__run_query", validApiKey)).thenReturn(true);
+		when(guardrailScanner.scanArguments(any())).thenReturn(SecretScanResult.clean());
+		when(circuitBreakerManager.tryAcquire("postgres")).thenReturn(true);
+		when(hitlSuspensionEngine.evaluateOrSuspend(any(), any(), any(), any(), any())).thenReturn(Optional.empty());
+		when(catalogAggregator.getAggregatedCatalog()).thenReturn(new McpAggregatedCatalog(
+				List.of(new McpToolDefinition("postgres__run_query", "Query DB",
+						objectMapper.createObjectNode(), null)),
+				List.of(), List.of(), Instant.now()));
+		when(jsonSchemaValidator.validate(any(), any())).thenReturn(McpJsonSchemaValidator.ValidationResult.success());
+		when(mockHttpResponse.statusCode()).thenReturn(200);
+		when(mockHttpResponse.body()).thenReturn(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"g-1\",\"error\":{\"code\":-32099,\"message\":\"reserved\",\"data\":{\"k\":\"v\"}}}");
+		when(httpClient.send(
+				any(HttpRequest.class),
+				ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
+		)).thenReturn(mockHttpResponse);
+
+		ResponseEntity<String> response = controller.handleStreamableHttp(rawRpc, null, null, request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody()).doesNotContain("-32099");
+		assertThat(response.getBody()).contains("-32603");
+	}
+
+	@Test
+	@DisplayName("MCP-B34: uncorrelated upstream responses are rejected")
+	void uncorrelatedUpstreamRejected() throws Exception {
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
+
+		String rawRpc = "{\"jsonrpc\":\"2.0\",\"id\":\"h-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"postgres__run_query\",\"arguments\":{},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}";
+		McpResolvedRoute route = new McpResolvedRoute(postgresServer, "run_query", "postgres__run_query");
+		when(router.resolveToolRoute("postgres__run_query")).thenReturn(Optional.of(route));
+		when(rbacPolicyEngine.isToolAllowed("postgres__run_query", validApiKey)).thenReturn(true);
+		when(guardrailScanner.scanArguments(any())).thenReturn(SecretScanResult.clean());
+		when(circuitBreakerManager.tryAcquire("postgres")).thenReturn(true);
+		when(hitlSuspensionEngine.evaluateOrSuspend(any(), any(), any(), any(), any())).thenReturn(Optional.empty());
+		when(catalogAggregator.getAggregatedCatalog()).thenReturn(new McpAggregatedCatalog(
+				List.of(new McpToolDefinition("postgres__run_query", "Query DB",
+						objectMapper.createObjectNode(), null)),
+				List.of(), List.of(), Instant.now()));
+		when(jsonSchemaValidator.validate(any(), any())).thenReturn(McpJsonSchemaValidator.ValidationResult.success());
+		when(mockHttpResponse.statusCode()).thenReturn(200);
+		when(mockHttpResponse.body()).thenReturn(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"someone-else\",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}}");
+		when(httpClient.send(
+				any(HttpRequest.class),
+				ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
+		)).thenReturn(mockHttpResponse);
+
+		ResponseEntity<String> response = controller.handleStreamableHttp(rawRpc, null, null, request);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody()).contains("-32603");
+		assertThat(response.getBody()).doesNotContain("someone-else");
+	}
+
+	@Test
+	@DisplayName("MCP-B30: evil tool names cannot forge log lines on the denial path")
+	void evilToolNameCannotForgeLogLines() {
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+
+		McpResolvedRoute evilRoute = new McpResolvedRoute(postgresServer, "evil\ntool", "srv__evil\nINJECTED");
+		when(router.resolveToolRoute("evil\ntool")).thenReturn(Optional.of(evilRoute));
+		when(rbacPolicyEngine.isToolAllowed("srv__evil\nINJECTED", validApiKey)).thenReturn(false);
+
+		Logger controllerLog = (Logger) LoggerFactory.getLogger(McpStreamableHttpController.class);
+		ListAppender<ILoggingEvent> appender = new ListAppender<>();
+		appender.start();
+		controllerLog.addAppender(appender);
+		try {
+			ResponseEntity<String> response = controller.handleStreamableHttp(
+					"{\"jsonrpc\":\"2.0\",\"id\":\"j-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"evil\\ntool\",\"arguments\":{},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+					"2026-07-28",
+					null,
+					request
+			);
+
+			assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+			assertThat(response.getBody()).contains("-32603");
+			List<String> denialLines = appender.list.stream()
+					.map(ILoggingEvent::getFormattedMessage)
+					.filter(message -> message.contains("RBAC violation"))
+					.toList();
+			assertThat(denialLines).hasSize(1);
+			assertThat(denialLines.getFirst()).doesNotContain("\n");
+			assertThat(denialLines.getFirst()).contains("srv__evil_INJECTED");
+		} finally {
+			controllerLog.detachAppender(appender);
+		}
+	}
+
+	@Test
+	@DisplayName("MCP-B20: upstream calls carry synthesized _meta, synced headers, SSE accept")
+	void upstreamCallIsConformant() throws Exception {
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.setAttribute("virtualApiKey", validApiKey);
+		when(keyManagementService.isUsable(any(VirtualApiKey.class))).thenReturn(true);
+
+		// No client _meta at all: legacy-era call, gateway must synthesize its own.
+		String rawRpc = "{\"jsonrpc\":\"2.0\",\"id\":\"c-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"postgres__run_query\",\"arguments\":{}}}";
+		McpResolvedRoute route = new McpResolvedRoute(postgresServer, "run_query", "postgres__run_query");
+		when(router.resolveToolRoute("postgres__run_query")).thenReturn(Optional.of(route));
+		when(rbacPolicyEngine.isToolAllowed("postgres__run_query", validApiKey)).thenReturn(true);
+		when(guardrailScanner.scanArguments(any())).thenReturn(SecretScanResult.clean());
+		when(circuitBreakerManager.tryAcquire("postgres")).thenReturn(true);
+		when(hitlSuspensionEngine.evaluateOrSuspend(any(), any(), any(), any(), any())).thenReturn(Optional.empty());
+		when(catalogAggregator.getAggregatedCatalog()).thenReturn(new McpAggregatedCatalog(
+				List.of(new McpToolDefinition("postgres__run_query", "Query DB",
+						objectMapper.createObjectNode(), null)),
+				List.of(), List.of(), Instant.now()));
+		when(jsonSchemaValidator.validate(any(), any())).thenReturn(McpJsonSchemaValidator.ValidationResult.success());
+		when(mockHttpResponse.statusCode()).thenReturn(200);
+		when(mockHttpResponse.body()).thenReturn(
+				"{\"jsonrpc\":\"2.0\",\"id\":\"c-1\",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}}");
+		when(httpClient.send(
+				any(HttpRequest.class),
+				ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
+		)).thenReturn(mockHttpResponse);
+
+		ResponseEntity<String> response = controller.handleStreamableHttp(rawRpc, "2024-11-05", null, request);
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+
+		ArgumentCaptor<HttpRequest> captor = ArgumentCaptor.forClass(HttpRequest.class);
+		verify(httpClient).send(captor.capture(), ArgumentMatchers.<HttpResponse.BodyHandler<String>>any());
+		HttpRequest upstream = captor.getValue();
+		AtomicReference<String> sentBody = new AtomicReference<>("");
+		upstream.bodyPublisher().ifPresent(publisher -> publisher.subscribe(new BodyCapture(sub -> {
+			byte[] rest = new byte[sub.remaining()];
+			sub.get(rest);
+			sentBody.set(new String(rest, StandardCharsets.UTF_8));
+		})));
+
+		String accept = upstream.headers().firstValue("Accept").orElse("");
+		assertThat(accept).contains("text/event-stream");
+		String headerVersion = upstream.headers()
+				.firstValue(McpHeaderNormalizer.HEADER_PROTOCOL_VERSION).orElse("");
+		assertThat(headerVersion).isNotBlank();
+		assertThat(sentBody.get()).contains("io.modelcontextprotocol/protocolVersion");
+		assertThat(sentBody.get()).contains(headerVersion);
+	}
+
+	/**
+	 * Minimal subscriber capturing the single buffer of an in-memory body publisher.
+	 */
+	private static final class BodyCapture implements Flow.Subscriber<ByteBuffer> {
+
+		private final Consumer<ByteBuffer> onNext;
+
+		BodyCapture(Consumer<ByteBuffer> onNext) {
+			this.onNext = onNext;
+		}
+
+		@Override
+		public void onSubscribe(Flow.Subscription subscription) {
+			subscription.request(Long.MAX_VALUE);
+		}
+
+		@Override
+		public void onNext(ByteBuffer item) {
+			onNext.accept(item);
+		}
+
+		@Override
+		public void onError(Throwable throwable) {
+		}
+
+		@Override
+		public void onComplete() {
+		}
 	}
 
 	@Test

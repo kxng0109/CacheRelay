@@ -12,6 +12,10 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -64,6 +68,37 @@ class SpaFallbackTest extends SharedContainersBase {
 		assertThat(asset.headers().firstValue("Cache-Control"))
 				.as("asset cache policy")
 				.hasValueSatisfying(value -> assertThat(value).contains("immutable"));
+	}
+
+	@Test
+	@DisplayName("FE-01: shell nonces match the response header and no placeholder survives")
+	void shellNoncesMatchHeader() throws Exception {
+		HttpRequest request = HttpRequest.newBuilder()
+				.uri(URI.create("http://localhost:" + port + "/"))
+				.GET()
+				.build();
+		HttpResponse<String> response =
+				HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+
+		assertThat(response.statusCode()).as("shell status").isEqualTo(200);
+		String policy = response.headers().firstValue("Content-Security-Policy").orElse("");
+		Matcher header = Pattern.compile("'nonce-([^']+)'").matcher(policy);
+		assertThat(header.find()).as("header carries a nonce").isTrue();
+		String nonce = header.group(1);
+
+		String html = response.body();
+		assertThat(html).as("legacy placeholder substituted").doesNotContain("__CSP_NONCE__");
+		assertThat(html).as("vite placeholder substituted").doesNotContain("CSP_NONCE_PLACEHOLDER");
+		List<String> nonces = new ArrayList<>();
+		Matcher tags = Pattern.compile("nonce=\"([^\"]+)\"").matcher(html);
+		while (tags.find()) {
+			nonces.add(tags.group(1));
+		}
+		assertThat(nonces).as("shell carries nonces").isNotEmpty();
+		assertThat(nonces).as("every tag nonce equals the header nonce")
+				.allSatisfy(value -> assertThat(value).isEqualTo(nonce));
+		assertThat(html).as("meta nonce equals the header nonce")
+				.contains("<meta property=\"csp-nonce\" content=\"" + nonce + "\"");
 	}
 
 	@Test

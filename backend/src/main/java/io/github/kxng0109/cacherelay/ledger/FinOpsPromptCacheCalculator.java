@@ -6,13 +6,16 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 
 /**
  * Enterprise FinOps engine computing granular prompt caching cost breakdowns and savings in micro-dollars.
  *
  * <p>Supports explicit provider pricing contracts as well as canonical vendor cache discount multipliers
  * (Anthropic 1.25x write / 0.10x read, OpenAI 0.50x read, DeepSeek 0.10x read) without floating point drift.</p>
+ *
+ * <p>Rate resolution, micros conversion, and token clamping are single-sourced from
+ * {@link CostCalculator} (FIN-B29): this class owns only the list/billed/effective/savings
+ * decomposition, never the rates themselves.</p>
  */
 @Slf4j
 @Component
@@ -20,15 +23,10 @@ import java.math.RoundingMode;
 public class FinOpsPromptCacheCalculator {
 
 	/**
-	 * Micro-dollars per US dollar constant for scaled fixed-point integer conversions.
+	 * Micro-dollars per US dollar constant, single-sourced from {@link CostCalculator}
+	 * (FIN-B29). Retained as an alias for existing callers.
 	 */
-	public static final BigDecimal MICRO_DOLLARS_PER_DOLLAR = new BigDecimal("1000000");
-
-	// Canonical vendor multipliers when exact token pricing fields are unspecified
-	private static final BigDecimal ANTHROPIC_WRITE_MULTIPLIER = new BigDecimal("1.25");
-	private static final BigDecimal ANTHROPIC_READ_MULTIPLIER = new BigDecimal("0.10");
-	private static final BigDecimal OPENAI_READ_MULTIPLIER = new BigDecimal("0.50");
-	private static final BigDecimal DEEPSEEK_READ_MULTIPLIER = new BigDecimal("0.10");
+	public static final BigDecimal MICRO_DOLLARS_PER_DOLLAR = CostCalculator.MICRO_DOLLARS_PER_DOLLAR;
 
 	private final ModelPriceCatalog catalog;
 
@@ -85,22 +83,28 @@ public class FinOpsPromptCacheCalculator {
 		BigDecimal baseInputRate = entry.inputCostPerToken();
 		BigDecimal baseOutputRate = entry.outputCostPerToken();
 
-		// 1. Standard list cost without cache optimization
-		BigDecimal listInputCost = BigDecimal.valueOf(totalPromptTokens).multiply(baseInputRate);
-		BigDecimal listOutputCost = BigDecimal.valueOf(completionTokens).multiply(baseOutputRate);
-		long listCostMicros = toMicros(listInputCost.add(listOutputCost));
+		long safeTotal = CostCalculator.clampNonNegative(totalPromptTokens);
+		long safeCompletion = CostCalculator.clampNonNegative(completionTokens);
+		long safeUncached = CostCalculator.clampNonNegative(uncachedPromptTokens);
+		long safeRead = CostCalculator.clampNonNegative(cacheReadTokens);
+		long safeWrite = CostCalculator.clampNonNegative(cacheWriteTokens);
 
-		// 2. Resolve cache write and read rates
-		BigDecimal writeRate = resolveWriteRate(type, entry, baseInputRate);
-		BigDecimal readRate = resolveReadRate(type, entry, baseInputRate);
+		// 1. Standard list cost without cache optimization
+		BigDecimal listInputCost = BigDecimal.valueOf(safeTotal).multiply(baseInputRate);
+		BigDecimal listOutputCost = BigDecimal.valueOf(safeCompletion).multiply(baseOutputRate);
+		long listCostMicros = CostCalculator.toMicrosSaturating(listInputCost.add(listOutputCost));
+
+		// 2. Resolve cache write and read rates (single-sourced)
+		BigDecimal writeRate = CostCalculator.writeRateFor(type, entry, baseInputRate);
+		BigDecimal readRate = CostCalculator.readRateFor(type, entry, baseInputRate);
 
 		// 3. Compute granular cached input cost
-		BigDecimal uncachedCost = BigDecimal.valueOf(uncachedPromptTokens).multiply(baseInputRate);
-		BigDecimal writeCost = BigDecimal.valueOf(cacheWriteTokens).multiply(writeRate);
-		BigDecimal readCost = BigDecimal.valueOf(cacheReadTokens).multiply(readRate);
+		BigDecimal uncachedCost = BigDecimal.valueOf(safeUncached).multiply(baseInputRate);
+		BigDecimal writeCost = BigDecimal.valueOf(safeWrite).multiply(writeRate);
+		BigDecimal readCost = BigDecimal.valueOf(safeRead).multiply(readRate);
 		BigDecimal billedInputCost = uncachedCost.add(writeCost).add(readCost);
 
-		long billedCostMicros = toMicros(billedInputCost.add(listOutputCost));
+		long billedCostMicros = CostCalculator.toMicrosSaturating(billedInputCost.add(listOutputCost));
 
 		// Effective cost (FOCUS 1.4): equals Billed Cost here because this per-request cache ledger
 		// has no covering/covered charge pairs. Computed explicitly (not aliased) so the invariant
@@ -125,40 +129,5 @@ public class FinOpsPromptCacheCalculator {
 	 */
 	private static long computeEffectiveCostMicros(long billedCostMicros) {
 		return billedCostMicros;
-	}
-
-	private BigDecimal resolveWriteRate(ProviderType type, ModelPricingEntry entry, BigDecimal baseRate) {
-		if (entry.cacheCreationInputTokenCost() != null) {
-			return entry.cacheCreationInputTokenCost();
-		}
-		if (type == ProviderType.ANTHROPIC) {
-			return baseRate.multiply(ANTHROPIC_WRITE_MULTIPLIER);
-		}
-		if (type == ProviderType.DEEPSEEK) {
-			return BigDecimal.ZERO; // DeepSeek does not surcharge cache writes
-		}
-		return baseRate;
-	}
-
-	private BigDecimal resolveReadRate(ProviderType type, ModelPricingEntry entry, BigDecimal baseRate) {
-		if (entry.cacheReadInputTokenCost() != null) {
-			return entry.cacheReadInputTokenCost();
-		}
-		if (type == ProviderType.ANTHROPIC) {
-			return baseRate.multiply(ANTHROPIC_READ_MULTIPLIER);
-		}
-		if (type == ProviderType.OPENAI) {
-			return baseRate.multiply(OPENAI_READ_MULTIPLIER);
-		}
-		if (type == ProviderType.DEEPSEEK) {
-			return baseRate.multiply(DEEPSEEK_READ_MULTIPLIER);
-		}
-		return baseRate;
-	}
-
-	private static long toMicros(BigDecimal dollarAmount) {
-		return dollarAmount.multiply(MICRO_DOLLARS_PER_DOLLAR)
-		                   .setScale(0, RoundingMode.HALF_UP)
-		                   .longValue();
 	}
 }

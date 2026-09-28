@@ -64,6 +64,13 @@ public class CachePolicyEngine {
 	/**
 	 * Determines whether the response should be saved to cache upon completion.
 	 *
+	 * <p>No-cache parity (ADM-B09): the same signals that suppress reads suppress
+	 * writes. This deliberately deviates from RFC 9111 (where {@code no-cache}
+	 * permits storing with revalidation): a stored completion here is served
+	 * verbatim to later prompts, so a client asking for no caching must leave
+	 * nothing behind — otherwise one-off or sensitive answers would populate the
+	 * shared tiers.</p>
+	 *
 	 * @param request     client chat request
 	 * @param httpRequest servlet HTTP request
 	 * @return true if caching the response is permitted, false otherwise
@@ -74,7 +81,16 @@ public class CachePolicyEngine {
 		}
 
 		String cacheControl = httpRequest.getHeader("Cache-Control");
-		if (cacheControl != null && cacheControl.toLowerCase(Locale.ROOT).contains("no-store")) {
+		if (cacheControl != null) {
+			String ccLower = cacheControl.toLowerCase(Locale.ROOT);
+			if (ccLower.contains("no-store") || ccLower.contains("no-cache")
+					|| ccLower.contains("max-age=0")) {
+				return false;
+			}
+		}
+
+		String cacherelayNoCache = httpRequest.getHeader("X-CacheRelay-No-Cache");
+		if ("true".equalsIgnoreCase(cacherelayNoCache)) {
 			return false;
 		}
 

@@ -46,8 +46,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * behavior when Redis becomes unavailable.
  *
  * <p>The upstream provider is pointed at a non-routable TEST-NET address so
- * that requests which pass authentication never reach an external service: an allowed request fails fast with 502/504,
- * which is the signal that the auth and rate-limit layers admitted it.</p>
+ * that requests which pass authentication never reach an external service: an allowed request fails fast with 502/503/504,
+ * which is the signal that the auth and rate-limit layers admitted it (503 when the SSRF guard blocks the
+ * documentation-range target without any call started; 504 on timeout; 502 otherwise).</p>
  *
  * <p>Redis connection details are injected via {@link DynamicPropertySource},
  * while PostgreSQL is wired via {@code @ServiceConnection} (auto-creates
@@ -134,14 +135,14 @@ class RateLimitIntegrationTest extends SharedContainersBase {
 		String key = seedKey("gw-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 2, 100_000, Set.of(), true);
 
 		HttpResponse<String> first = post(key, body("gpt-4o", 100));
-		assertThat(first.statusCode()).isIn(502, 504);
+		assertThat(first.statusCode()).isIn(502, 503, 504);
 		assertThat(first.headers().firstValue("X-RateLimit-Limit-RPM").orElseThrow()).isEqualTo("2");
 		assertThat(first.headers().firstValue("X-RateLimit-Remaining-RPM").orElseThrow()).isEqualTo("1");
 		assertThat(first.headers().firstValue("X-RateLimit-Limit-TPM").orElseThrow()).isEqualTo("100000");
 		assertThat(first.headers().firstValue("X-RateLimit-Remaining-TPM").orElseThrow()).isEqualTo("99900");
 
 		HttpResponse<String> second = post(key, body("gpt-4o", 100));
-		assertThat(second.statusCode()).isIn(502, 504);
+		assertThat(second.statusCode()).isIn(502, 503, 504);
 		assertThat(second.headers().firstValue("X-RateLimit-Remaining-RPM").orElseThrow()).isEqualTo("0");
 
 		HttpResponse<String> third = post(key, body("gpt-4o", 100));
@@ -158,7 +159,7 @@ class RateLimitIntegrationTest extends SharedContainersBase {
 		String key = seedKey("gw-cccccccccccccccccccccccccccccccc", 100_000, 150, Set.of(), true);
 
 		HttpResponse<String> first = post(key, body("gpt-4o", 100));
-		assertThat(first.statusCode()).isIn(502, 504);
+		assertThat(first.statusCode()).isIn(502, 503, 504);
 
 		HttpResponse<String> second = post(key, body("gpt-4o", 100));
 		assertThat(second.statusCode()).isEqualTo(429);
@@ -185,7 +186,7 @@ class RateLimitIntegrationTest extends SharedContainersBase {
 		assertThat(errorCode(blocked)).isEqualTo("MODEL_NOT_ALLOWED");
 
 		HttpResponse<String> allowed = post(key, body("gpt-4o", 100));
-		assertThat(allowed.statusCode()).isIn(502, 504);
+		assertThat(allowed.statusCode()).isIn(502, 503, 504);
 	}
 
 	@Test
@@ -194,7 +195,7 @@ class RateLimitIntegrationTest extends SharedContainersBase {
 		String key = seedKey("gw-ffffffffffffffffffffffffffffffff", 100_000, 100_000, Set.of(), true);
 
 		HttpResponse<String> before = post(key, body("gpt-4o", 100));
-		assertThat(before.statusCode()).isIn(502, 504);
+		assertThat(before.statusCode()).isIn(502, 503, 504);
 
 		// Pause (not stop) the container: pausing keeps the mapped host port
 		// stable, which the already-created Spring context still points at.
@@ -209,7 +210,7 @@ class RateLimitIntegrationTest extends SharedContainersBase {
 		}
 
 		HttpResponse<String> after = post(key, body("gpt-4o", 100));
-		assertThat(after.statusCode()).isIn(502, 504);
+		assertThat(after.statusCode()).isIn(502, 503, 504);
 	}
 
 	@Test

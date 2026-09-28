@@ -2,6 +2,7 @@ package io.github.kxng0109.cacherelay.mcp.hitl;
 
 import io.github.kxng0109.cacherelay.admin.AdminAuthFilter;
 import io.github.kxng0109.cacherelay.config.OpenApiConfig;
+import io.github.kxng0109.cacherelay.mcp.protocol.McpLogSanitizer;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -152,6 +153,9 @@ public class AdminMcpApprovalController {
 			@Parameter(description = "Hex token ID of the suspended invocation", example = "9f8e7d6c5b4a3210")
 			@PathVariable("tokenId") String tokenId
 	) {
+		if (!isValidTokenId(tokenId)) {
+			return ResponseEntity.badRequest().build();
+		}
 		String raw = redisTemplate.opsForValue().get(REDIS_PENDING_PREFIX + tokenId);
 		if (raw == null || raw.isBlank()) {
 			return ResponseEntity.notFound().build();
@@ -219,6 +223,9 @@ public class AdminMcpApprovalController {
 			@RequestBody(required = false) @Valid DecisionRequest decision,
 			HttpServletRequest httpRequest
 	) {
+		if (!isValidTokenId(tokenId)) {
+			return ResponseEntity.badRequest().build();
+		}
 		String pendingKey = REDIS_PENDING_PREFIX + tokenId;
 		String raw = redisTemplate.opsForValue().get(pendingKey);
 		if (raw == null || raw.isBlank()) {
@@ -228,7 +235,8 @@ public class AdminMcpApprovalController {
 		// Mark approved with a 300s window
 		redisTemplate.opsForValue().set(REDIS_APPROVED_PREFIX + tokenId, "APPROVED", 300, TimeUnit.SECONDS);
 		recordDecision(tokenId, "APPROVED", decision, resolveActor(httpRequest));
-		log.info("Administrator approved MCP tool invocation for token ID '{}'", tokenId);
+		log.info("Administrator approved MCP tool invocation for token ID '{}'",
+				McpLogSanitizer.safe(tokenId));
 
 		ObjectNode response = objectMapper.createObjectNode();
 		response.put("status", "APPROVED");
@@ -261,6 +269,9 @@ public class AdminMcpApprovalController {
 			@RequestBody(required = false) @Valid DecisionRequest decision,
 			HttpServletRequest httpRequest
 	) {
+		if (!isValidTokenId(tokenId)) {
+			return ResponseEntity.badRequest().build();
+		}
 		redisTemplate.delete(REDIS_PENDING_PREFIX + tokenId);
 		redisTemplate.delete(REDIS_APPROVED_PREFIX + tokenId);
 		// Terminal marker: resuming this token is refused without re-suspension for the
@@ -268,7 +279,8 @@ public class AdminMcpApprovalController {
 		redisTemplate.opsForValue().set(
 				REDIS_REJECTED_PREFIX + tokenId, "REJECTED", DECISION_TTL_SECONDS, TimeUnit.SECONDS);
 		recordDecision(tokenId, "REJECTED", decision, resolveActor(httpRequest));
-		log.info("Administrator rejected MCP tool invocation for token ID '{}'", tokenId);
+		log.info("Administrator rejected MCP tool invocation for token ID '{}'",
+				McpLogSanitizer.safe(tokenId));
 
 		ObjectNode response = objectMapper.createObjectNode();
 		response.put("status", "REJECTED");
@@ -276,6 +288,26 @@ public class AdminMcpApprovalController {
 		response.put("message", "Tool invocation rejected and purged.");
 
 		return ResponseEntity.ok(response.toString());
+	}
+
+	/**
+	 * Whether a token id matches the minted shape (ADM-B10): 32 lowercase hex chars.
+	 * Anything else is rejected 400 before it can become Redis key material.
+	 *
+	 * @param tokenId raw path id, possibly {@code null}
+	 * @return true only for the minted shape
+	 */
+	private static boolean isValidTokenId(@Nullable String tokenId) {
+		if (tokenId == null || tokenId.length() != 32) {
+			return false;
+		}
+		for (int i = 0; i < 32; i++) {
+			char c = tokenId.charAt(i);
+			if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	/**
@@ -299,9 +331,11 @@ public class AdminMcpApprovalController {
 					objectMapper.writeValueAsString(entry),
 					DECISION_TTL_SECONDS, TimeUnit.SECONDS);
 		} catch (Exception e) {
-			log.debug("Skipping HITL decision record for token ID '{}': {}", tokenId, e.getMessage());
+			log.debug("Skipping HITL decision record for token ID '{}': {}", McpLogSanitizer.safe(tokenId),
+					McpLogSanitizer.safe(e.getMessage()));
 		}
-		log.info("HITL {} for token ID '{}' by '{}': {}", status, tokenId, decidedBy, reason);
+		log.info("HITL {} for token ID '{}' by '{}': {}", status, McpLogSanitizer.safe(tokenId),
+				McpLogSanitizer.safe(decidedBy), McpLogSanitizer.safe(reason));
 	}
 
 	/**

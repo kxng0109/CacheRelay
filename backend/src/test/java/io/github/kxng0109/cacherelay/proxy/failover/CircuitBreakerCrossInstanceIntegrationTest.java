@@ -104,6 +104,55 @@ class CircuitBreakerCrossInstanceIntegrationTest extends SharedContainersBase {
 		assertThat(instB.tryAcquire()).isTrue();
 	}
 
+	@Test
+	@DisplayName("PRX-B09: one instance's concurrent attempts admit exactly one probe")
+	void sameInstanceConcurrentAttemptsAdmitSingleProbe() throws Exception {
+		RedisCircuitBreaker breaker = breaker("shared-same-instance", "inst-A");
+
+		breaker.recordFailure();
+		breaker.recordFailure();
+		breaker.recordFailure();
+		assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+
+		waitForCooldown();
+
+		int attempts = 50;
+		CountDownLatch ready = new CountDownLatch(attempts);
+		CountDownLatch go = new CountDownLatch(1);
+		AtomicBoolean[] admitted = new AtomicBoolean[attempts];
+		for (int i = 0; i < attempts; i++) {
+			admitted[i] = new AtomicBoolean();
+		}
+		try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+			for (int i = 0; i < attempts; i++) {
+				int slot = i;
+				executor.submit(() -> {
+					ready.countDown();
+					try {
+						go.await(5, TimeUnit.SECONDS);
+					} catch (InterruptedException ex) {
+						Thread.currentThread().interrupt();
+						return;
+					}
+					admitted[slot].set(breaker.tryAcquire());
+				});
+			}
+			assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+			go.countDown();
+			executor.shutdown();
+			assertThat(executor.awaitTermination(30, TimeUnit.SECONDS)).isTrue();
+		}
+
+		int granted = 0;
+		for (AtomicBoolean slot : admitted) {
+			if (slot.get()) {
+				granted++;
+			}
+		}
+		assertThat(granted).as("single in-flight probe").isEqualTo(1);
+		breaker.recordSuccess();
+	}
+
 	private static RedisCircuitBreaker breaker(String providerName, String instanceId) {
 		return new RedisCircuitBreaker(
 				providerName,

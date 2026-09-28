@@ -3,10 +3,12 @@ package io.github.kxng0109.cacherelay.replay;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
+import io.github.kxng0109.cacherelay.proxy.IdempotencyKeys;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
@@ -55,16 +57,17 @@ class ReplayServiceTest {
 	@DisplayName("replay entries never cross tenant boundaries")
 	void replayDoesNotCrossTenants() {
 		Harness harness = harness();
+		byte[] body = "{\"ok\":true}".getBytes(StandardCharsets.UTF_8);
 		Map<Object, Object> fields = new HashMap<>();
-		fields.put("body", "{\"ok\":true}");
-		fields.put("body_hash", "abc123");
+		fields.put("body", Base64.getEncoder().encodeToString(body));
+		fields.put("body_hash", IdempotencyKeys.sha256Hex(body));
 		fields.put("sse", "0");
 		when(harness.hashOps().entries(ReplayService.PREFIX + "tenant-a:hash-a:rk-1")).thenReturn(fields);
 
 		ReplayService.Lookup sameTenant =
-				harness.service().lookup("rk-1", "abc123", "tenant-a", "hash-a");
+				harness.service().lookup("rk-1", IdempotencyKeys.sha256Hex(body), "tenant-a", "hash-a");
 		ReplayService.Lookup otherTenant =
-				harness.service().lookup("rk-1", "abc123", "tenant-b", "hash-b");
+				harness.service().lookup("rk-1", IdempotencyKeys.sha256Hex(body), "tenant-b", "hash-b");
 
 		assertThat(sameTenant).isInstanceOf(ReplayService.Hit.class);
 		assertThat(otherTenant).as("cross-tenant lookup misses").isInstanceOf(ReplayService.Miss.class);
@@ -74,18 +77,59 @@ class ReplayServiceTest {
 	@DisplayName("lookup serves a hit when the fingerprint matches")
 	void lookupServesHit() {
 		Harness harness = harness();
+		byte[] body = "{\"ok\":true}".getBytes(StandardCharsets.UTF_8);
 		Map<Object, Object> fields = new HashMap<>();
-		fields.put("body", "{\"ok\":true}");
-		fields.put("body_hash", "abc123");
+		fields.put("body", Base64.getEncoder().encodeToString(body));
+		fields.put("body_hash", IdempotencyKeys.sha256Hex(body));
 		fields.put("sse", "0");
 		when(harness.hashOps().entries(ReplayService.PREFIX + "unknown:unknown:rk-1")).thenReturn(fields);
 
-		ReplayService.Lookup lookup = harness.service().lookup("rk-1", "abc123", null, null);
+		ReplayService.Lookup lookup =
+				harness.service().lookup("rk-1", IdempotencyKeys.sha256Hex(body), null, null);
 
 		assertThat(lookup).isInstanceOf(ReplayService.Hit.class);
 		ReplayService.Hit hit = (ReplayService.Hit) lookup;
-		assertThat(new String(hit.body(), StandardCharsets.UTF_8)).isEqualTo("{\"ok\":true}");
+		assertThat(hit.body()).isEqualTo(body);
 		assertThat(hit.sseFramed()).isFalse();
+	}
+
+	@Test
+	@DisplayName("FIN-B30: non-UTF8 bodies round-trip byte-exact through store and lookup")
+	void nonUtf8RoundTripsByteExact() {
+		Harness harness = harness();
+		byte[] body = new byte[]{0x00, 0x01, (byte) 0xFF, (byte) 0xFE, 0x7F, (byte) 0x80};
+		String bodyHash = IdempotencyKeys.sha256Hex(body);
+		Map<Object, Object> stored = new HashMap<>();
+		when(harness.hashOps().entries(ReplayService.PREFIX + "unknown:unknown:rk-bin"))
+				.thenReturn(stored);
+
+		assertThat(harness.service().store("rk-bin", bodyHash, body, false, null, null)).isTrue();
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
+		verify(harness.hashOps()).putAll(eq(ReplayService.PREFIX + "unknown:unknown:rk-bin"),
+				fieldsCaptor.capture());
+		stored.putAll(fieldsCaptor.getValue());
+
+		ReplayService.Lookup lookup = harness.service().lookup("rk-bin", bodyHash, null, null);
+
+		assertThat(lookup).isInstanceOf(ReplayService.Hit.class);
+		assertThat(((ReplayService.Hit) lookup).body()).isEqualTo(body);
+	}
+
+	@Test
+	@DisplayName("FIN-B30: tampered hot-tier bodies fail the serve-time hash check")
+	void tamperedBodyFailsServeTimeHashCheck() {
+		Harness harness = harness();
+		byte[] body = "{\"ok\":true}".getBytes(StandardCharsets.UTF_8);
+		Map<Object, Object> fields = new HashMap<>();
+		fields.put("body", Base64.getEncoder().encodeToString("{\"tampered\":true}".getBytes(StandardCharsets.UTF_8)));
+		fields.put("body_hash", IdempotencyKeys.sha256Hex(body));
+		fields.put("sse", "0");
+		when(harness.hashOps().entries(ReplayService.PREFIX + "unknown:unknown:rk-1")).thenReturn(fields);
+
+		assertThat(harness.service().lookup("rk-1", IdempotencyKeys.sha256Hex(body), null, null))
+				.isInstanceOf(ReplayService.Miss.class);
 	}
 
 	@Test
@@ -238,15 +282,17 @@ class ReplayServiceTest {
 	@DisplayName("lookup Hit carries the real Redis TTL, not a fabricated horizon")
 	void lookupHitCarriesRealTtl() {
 		Harness harness = harness();
+		byte[] body = "{\"ok\":true}".getBytes(StandardCharsets.UTF_8);
 		Map<Object, Object> fields = new HashMap<>();
-		fields.put("body", "{\"ok\":true}");
-		fields.put("body_hash", "abc123");
+		fields.put("body", Base64.getEncoder().encodeToString(body));
+		fields.put("body_hash", IdempotencyKeys.sha256Hex(body));
 		fields.put("sse", "0");
 		when(harness.hashOps().entries(ReplayService.PREFIX + "unknown:unknown:rk-1")).thenReturn(fields);
 		when(harness.template().getExpire(
 				ReplayService.PREFIX + "unknown:unknown:rk-1")).thenReturn(7_100L);
 
-		ReplayService.Lookup lookup = harness.service().lookup("rk-1", "abc123", null, null);
+		ReplayService.Lookup lookup =
+				harness.service().lookup("rk-1", IdempotencyKeys.sha256Hex(body), null, null);
 
 		assertThat(lookup).isInstanceOf(ReplayService.Hit.class);
 		ReplayService.Hit hit = (ReplayService.Hit) lookup;
@@ -328,12 +374,13 @@ class ReplayServiceTest {
 		HashOperations<String, Object, Object> hashOps = mock(HashOperations.class);
 		when(template.opsForHash()).thenReturn(hashOps);
 		Map<Object, Object> fields = new HashMap<>();
-		fields.put("body", "{}");
-		fields.put("body_hash", "abc123");
+		byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
+		fields.put("body", Base64.getEncoder().encodeToString(body));
+		fields.put("body_hash", IdempotencyKeys.sha256Hex(body));
 		when(hashOps.entries(anyString())).thenReturn(fields);
 		ReplayService service = new ReplayService(template, mock(ReplayRepository.class),
 				mock(MeterRegistry.class));
 
-		assertThat(service.lookup("rk-1", "abc123", null, null)).isInstanceOf(ReplayService.Hit.class);
+		assertThat(service.lookup("rk-1", IdempotencyKeys.sha256Hex(body), null, null)).isInstanceOf(ReplayService.Hit.class);
 	}
 }

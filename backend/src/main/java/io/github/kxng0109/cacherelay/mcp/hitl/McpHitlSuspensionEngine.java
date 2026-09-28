@@ -278,13 +278,29 @@ public class McpHitlSuspensionEngine {
 
 		ObjectNode hitlParams = hitlRequest.putObject("params");
 		hitlParams.put("mode", "url");
-		hitlParams.put("url", "/v1/admin/mcp/approvals/" + tokenId);
+		hitlParams.put("url", elicitationApprovalUrl(tokenId));
 		hitlParams.put(
 				"message",
 				"Execution of privileged tool '" + namespacedToolName + "' requires administrator approval."
 		);
 
 		return McpJsonRpcResponse.success(request.id(), resultNode);
+	}
+
+	/**
+	 * Builds the approval link for an {@code elicitation/create} payload (MCP-B33).
+	 *
+	 * @param tokenId HITL resumption token id
+	 * @return absolute URL when {@code public-base-url} is configured, else the relative path
+	 */
+	String elicitationApprovalUrl(String tokenId) {
+		String path = "/v1/admin/mcp/approvals/" + tokenId;
+		String base = properties.getPublicBaseUrl();
+		if (base == null || base.isBlank()) {
+			return path;
+		}
+		String stripped = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
+		return stripped + path;
 	}
 
 	private @Nullable String extractResumptionToken(McpJsonRpcRequest request) {

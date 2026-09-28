@@ -55,6 +55,14 @@ class McpGatewayPropertiesValidationDiagnosticTest {
 	}
 
 	@Test
+	@DisplayName("MCP-B36: HITL secret validation is skipped when the gateway is disabled")
+	void hitlValidationSkippedWhenDisabled() {
+		runner.withPropertyValues("gateway.mcp.enabled: false", "gateway.mcp.hitl-secret:  ").run(ctx -> {
+			assertThat(ctx).hasNotFailed();
+		});
+	}
+
+	@Test
 	@DisplayName("Shared SensitiveString record must accept short provider keys (no length coupling)")
 	void sharedRecordAcceptsShortProviderKeys() {
 		Validator validator = Validation.buildDefaultValidatorFactory().getValidator();

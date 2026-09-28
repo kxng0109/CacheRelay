@@ -137,6 +137,31 @@ class DashboardServiceTest {
 	}
 
 	@Test
+	@DisplayName("FIN-B11: extending a cached view does not double-count the watermark boundary")
+	void mergeDoesNotDoubleCountWatermark() {
+		UUID userId = UUID.randomUUID();
+		when(keys.listKeysByUser(userId)).thenReturn(List.of(keyFor("owner-1", userId)));
+		Instant from = FIXED_NOW.minus(Duration.ofHours(2));
+		Instant firstTo = FIXED_NOW.minus(Duration.ofHours(1));
+		OwnerModelUsageRecord row = detail("owner-1", "openai", "gpt-4o", 10L, 1000L, 500L, 1500L,
+				14_000L, 13_000L, 13_000L, 1_200L, 200L, 50L, 750L, 0L);
+		when(detail.getDetailRows(eq(Set.of("owner-1")), any(), any())).thenAnswer(inv -> {
+			Instant queryFrom = inv.getArgument(1);
+			if (queryFrom.isAfter(firstTo)) {
+				return List.of();
+			}
+			return List.of(row);
+		});
+
+		DashboardView first = service.getPersonal(userId, from, firstTo);
+		assertThat(first.summary().totalRequests()).isEqualTo(10L);
+
+		DashboardView second = service.getPersonal(userId, from, FIXED_NOW);
+
+		assertThat(second.summary().totalRequests()).isEqualTo(10L);
+	}
+
+	@Test
 	@DisplayName("missing window defaults to the trailing seven days quantized to the minute")
 	void windowDefaultsToTrailingWeek() {
 		UUID userId = UUID.randomUUID();
@@ -226,7 +251,7 @@ class DashboardServiceTest {
 				detail("owner-1", "openai", "gpt-4o", 2L, 200L, 100L, 300L,
 						2_000L, 2_000L, 2_000L, 400L, 0L, 0L, 200L, 0L)));
 		Instant later = FIXED_NOW.plus(Duration.ofMinutes(1));
-		when(detail.getDetailRows(eq(Set.of("owner-1")), eq(FIXED_NOW), eq(later))).thenReturn(List.of(
+		when(detail.getDetailRows(eq(Set.of("owner-1")), eq(FIXED_NOW.plusNanos(1)), eq(later))).thenReturn(List.of(
 				detail("owner-1", "openai", "gpt-4o", 3L, 300L, 150L, 450L,
 						3_000L, 3_000L, 3_000L, 600L, 0L, 0L, 300L, 0L)));
 
@@ -285,6 +310,32 @@ class DashboardServiceTest {
 
 		assertThat(view.summary().totalRequests()).isEqualTo(5L);
 		verify(buckets).saveAll(any());
+	}
+
+	@Test
+	@DisplayName("FIN-B10: settled buckets recompute when late rows arrive")
+	void settledBucketsRecomputeOnLateRows() {
+		UUID userId = UUID.randomUUID();
+		when(keys.listKeysByUser(userId)).thenReturn(List.of(keyFor("owner-1", userId)));
+		Instant from = Instant.parse("2026-09-10T00:00:00Z");
+		Instant to = Instant.parse("2026-09-12T00:00:00Z");
+		DashboardBucket stale = new DashboardBucket(UUID.randomUUID(), "PERSONAL",
+				userId.toString(), LocalDate.of(2026, 9, 11), "owner-1", "openai", "gpt-4o",
+				4L, 400L, 200L, 600L, 4_000L, 4_000L, 4_000L, 800L, 0L, 0L, 400L, 0L,
+				Instant.parse("2026-09-11T23:59:59Z"), FIXED_NOW);
+		when(buckets.findByScopeTypeAndScopeKeyAndBucketDayBetween(eq("PERSONAL"),
+				eq(userId.toString()), any(), any())).thenReturn(List.of(stale));
+		when(detail.countByOwnerIdInAndCreatedAtBetween(eq(Set.of("owner-1")), any(), any()))
+				.thenReturn(6L);
+		when(detail.getDetailRows(any(), any(), any())).thenReturn(List.of(
+				detail("owner-1", "openai", "gpt-4o", 6L, 600L, 300L, 900L,
+						6_000L, 6_000L, 6_000L, 1200L, 0L, 0L, 600L, 0L)));
+
+		DashboardView view = service.getPersonal(userId, from, to);
+
+		assertThat(view.summary().totalRequests()).isEqualTo(12L);
+		verify(buckets).deleteByScopeTypeAndScopeKeyAndBucketDay(
+				eq("PERSONAL"), eq(userId.toString()), eq(LocalDate.of(2026, 9, 11)));
 	}
 
 	@Test
@@ -477,7 +528,7 @@ class DashboardServiceTest {
 				eq(Instant.parse("2026-09-22T00:00:00Z")),
 				eq(Instant.parse("2026-09-22T00:00:00Z")));
 		verify(detail, times(1)).getDetailRows(eq(Set.of("owner-1")),
-				eq(Instant.parse("2026-09-23T00:00:00Z")),
+				eq(Instant.parse("2026-09-23T00:00:00Z").plusNanos(1)),
 				eq(Instant.parse("2026-09-24T00:00:00Z")));
 	}
 

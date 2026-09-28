@@ -369,21 +369,6 @@ public final class ProviderCircuitBreaker implements CircuitBreaker {
 		return state.get() == CircuitBreaker.State.HALF_OPEN && halfOpenProbes.get() > 0;
 	}
 
-	/**
-	 * Directly sets the observable state of this mirror. Used by the Redis-backed breaker to keep the local mirror in
-	 * step with Redis after a successful read, so the fallback path reflects reality.
-	 *
-	 * @param mirrored      the state to mirror
-	 * @param failures      the failure count to mirror
-	 * @param mirroredOpenedAt the {@code openedAt} instant to mirror (only meaningful in OPEN)
-	 */
-	void syncFrom(CircuitBreaker.State mirrored, int failures, Instant mirroredOpenedAt) {
-		this.state.set(mirrored);
-		this.consecutiveFailures.set(failures);
-		this.openedAt = mirroredOpenedAt;
-		this.halfOpenProbes.set(mirrored == CircuitBreaker.State.HALF_OPEN ? 1 : 0);
-	}
-
 	private boolean cooldownElapsed() {
 		return clock.instant().isAfter(openedAt.plus(cooldown));
 	}

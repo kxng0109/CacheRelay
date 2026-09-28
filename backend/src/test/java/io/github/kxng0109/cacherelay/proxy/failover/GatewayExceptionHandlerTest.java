@@ -70,6 +70,17 @@ class GatewayExceptionHandlerTest {
 	}
 
 	@Test
+	@DisplayName("PRX-B22: non-enumerated upstream statuses fall back to 502")
+	void nonEnumeratedStatusFallsBack() {
+		ResponseEntity<Map<String, Object>> response =
+				handler.handleUpstreamUnavailable(
+						new UpstreamUnavailableException("weird", null, false, false, 599));
+
+		assertEquals(502, response.getStatusCode().value());
+		assertEquals("no upstream provider could serve this request", errorMessage(response));
+	}
+
+	@Test
 	@DisplayName("timeout wins over the low priority flags when both are set")
 	void timeoutTakesPrecedenceOverUnavailable() {
 		ResponseEntity<Map<String, Object>> response =

@@ -16,6 +16,34 @@ class GeminiSseNormalizerTest {
 	private final ObjectMapper objectMapper = new ObjectMapper();
 
 	@Test
+	@DisplayName("PRX-B26: thought tokens are exposed for billing")
+	void thoughtTokensExposed() throws Exception {
+		GeminiSseNormalizer normalizer = new GeminiSseNormalizer(objectMapper, "gemini-2.5-flash", true);
+
+		normalizer.normalizeLine(
+				"data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"Hi\"}], \"role\": \"model\"},"
+						+ " \"finishReason\": null, \"index\": 0}],"
+						+ " \"usageMetadata\": {\"promptTokenCount\": 10, \"candidatesTokenCount\": 20,"
+						+ " \"thoughtsTokenCount\": 7}}");
+
+		assertEquals(7L, normalizer.reasoningTokens());
+	}
+
+	@Test
+	@DisplayName("PRX-B11: provider error payloads map to a terminal OpenAI error")
+	void providerErrorIsTerminal() throws Exception {
+		GeminiSseNormalizer normalizer = new GeminiSseNormalizer(objectMapper, "gemini-2.5-flash", true);
+
+		List<String> output = normalizer.normalizeLine(
+				"data: {\"error\":{\"code\":429,\"message\":\"Quota exceeded\",\"status\":\"RESOURCE_EXHAUSTED\"}}");
+
+		assertEquals(1, output.size());
+		assertTrue(output.getFirst().contains("\"error\""));
+		assertTrue(output.getFirst().contains("Quota exceeded"));
+		assertTrue(normalizer.isDone());
+	}
+
+	@Test
 	@DisplayName("normalizes text delta chunks into OpenAI streaming format")
 	void normalizesTextDeltas() throws Exception {
 		GeminiSseNormalizer normalizer = new GeminiSseNormalizer(objectMapper, "gemini-2.5-flash", true);

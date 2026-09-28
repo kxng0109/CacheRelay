@@ -8,6 +8,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
  * @param success      whether the purge operation succeeded
  * @param message      status message
  * @param evictedScope target scope that was purged (e.g. "ALL", or tenant ID)
+ * @param evictedKeys  total Redis keys deleted across the purged patterns
  */
 @Schema(name = "CachePurgeResponse", description = "Confirmation details for an executed cache purge operation")
 public record CachePurgeResponse(
@@ -18,6 +19,9 @@ public record CachePurgeResponse(
 		String message,
 
 		@Schema(description = "Evicted tenant scope or ALL for global purge", example = "tenant-corp")
-		String evictedScope
+		String evictedScope,
+
+		@Schema(description = "Total Redis keys deleted across the purged patterns", example = "42")
+		long evictedKeys
 ) {
 }

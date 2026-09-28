@@ -3,10 +3,8 @@ package io.github.kxng0109.cacherelay.mcp.config;
 import io.github.kxng0109.cacherelay.config.SensitiveString;
 import io.github.kxng0109.cacherelay.mcp.contracts.McpProtocolVersion;
 import io.github.kxng0109.cacherelay.mcp.contracts.McpServerConfig;
-import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotNull;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -22,14 +20,15 @@ import java.util.Map;
  *
  * <p>All secrets are injected exclusively from the runtime environment (environment variables, Kubernetes Secrets,
  * AWS Secrets Manager, Azure Key Vault, or HashiCorp Vault). No secret value is ever hardcoded in source. The
- * {@link #hitlSecret} field is validated at startup via {@link Validated} to fail fast if the secret is absent,
- * blank, or does not meet the minimum length bar.</p>
+ * {@link #hitlSecret} field is validated at startup via {@link Validated}, but only when the gateway is
+ * {@link #enabled}: a disabled subsystem never fails startup over its secret (MCP-B36).</p>
  *
  * @since 1.4.0
  */
 @Getter
 @Setter
 @Validated
+@HitlSecretRequiredWhenEnabled
 @ConfigurationProperties(prefix = "gateway.mcp")
 public class McpGatewayProperties {
 
@@ -81,18 +80,10 @@ public class McpGatewayProperties {
 	 * 256-bit secret key used for AEAD encryption of HITL resumption tokens.
 	 *
 	 * <p>Must be injected via the {@code GATEWAY_MCP_HITL_SECRET} environment variable (or equivalent
-	 * secret-manager injection). Must be at least 32 bytes when decoded. The application will refuse
-	 * to start if this value is absent, blank, or shorter than 32 bytes.</p>
+	 * secret-manager injection). Must be at least 32 bytes when decoded. Required only when the gateway
+	 * is enabled (see {@link HitlSecretRequiredWhenEnabled}); a disabled gateway starts without it.</p>
 	 */
-	@NotNull(message = "GATEWAY_MCP_HITL_SECRET is required; provide a 32+ byte base64/random secret via the environment or a secret manager")
-	@Valid
-	@HitlSecretLength
 	private SensitiveString hitlSecret;
-
-	/**
-	 * Maximum permissible byte length for a single incoming or outgoing MCP SSE message.
-	 */
-	private int maxSseMessageBytes = 2 * 1024 * 1024; // 2 MB
 
 	/**
 	 * Maximum bytes buffered for one tools/call upstream result body (PERF-11).
@@ -104,6 +95,15 @@ public class McpGatewayProperties {
 	 * Whether to enable backwards-compatible legacy dual-endpoint SSE transport (GET /mcp/sse + POST /mcp/message).
 	 */
 	private boolean allowLegacySse = true;
+
+	/**
+	 * Public base URL for absolute elicitation links (MCP-B33): the MCP spec mandates only
+	 * "a valid URL" and is silent on absolute vs relative, so absoluteness is an operator
+	 * choice, not a spec requirement. When set (e.g. {@code https://gateway.example.com}) the
+	 * {@code elicitation/create} payload carries an absolute link for remote clients; blank keeps
+	 * the relative path for same-origin console use. Never derived from request headers (cf. ADM-B02).
+	 */
+	private String publicBaseUrl = "";
 
 	/**
 	 * Upstream MCP server circuit breaker failure threshold.

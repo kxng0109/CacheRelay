@@ -4,7 +4,9 @@ import io.github.kxng0109.cacherelay.contracts.ProviderConfig;
 import io.github.kxng0109.cacherelay.contracts.ProviderType;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.Nullable;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
+import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ArrayNode;
@@ -40,17 +42,29 @@ public final class GeminiAdapter implements ProtocolAdapter {
 
 	@Override
 	public URI buildUpstreamUrl(ProviderConfig config) {
+		return buildUpstreamUrl(config, true);
+	}
+
+	@Override
+	public URI buildUpstreamUrl(ProviderConfig config, boolean streaming) {
 		String baseUrl = stripTrailingSlash(config.baseUrl().toString());
+		String streamPath = streaming ? ":streamGenerateContent?alt=sse" : ":generateContent";
 		if (baseUrl.contains(":streamGenerateContent") || baseUrl.contains(":generateContent")) {
-			return URI.create(baseUrl);
+			if (streaming) {
+				return URI.create(baseUrl);
+			}
+			return URI.create(baseUrl.replace(":streamGenerateContent?alt=sse", ":generateContent"));
 		}
 		if (config.type() == ProviderType.VERTEX_AI) {
-			return URI.create(baseUrl + ":streamGenerateContent?alt=sse");
+			return URI.create(baseUrl + streamPath);
 		}
 		if (baseUrl.endsWith("/models")) {
-			return URI.create(baseUrl + "/" + DEFAULT_GEMINI_MODEL + ":streamGenerateContent?alt=sse");
+			return URI.create(baseUrl + "/" + DEFAULT_GEMINI_MODEL + streamPath);
 		}
-		return URI.create(baseUrl + String.format(DEVELOPER_API_STREAM_PATH, DEFAULT_GEMINI_MODEL));
+		if (streaming) {
+			return URI.create(baseUrl + String.format(DEVELOPER_API_STREAM_PATH, DEFAULT_GEMINI_MODEL));
+		}
+		return URI.create(baseUrl + "/v1beta/models/" + DEFAULT_GEMINI_MODEL + ":generateContent");
 	}
 
 	@Override
@@ -226,6 +240,13 @@ public final class GeminiAdapter implements ProtocolAdapter {
 						ObjectNode inlineData = parts.addObject().putObject("inlineData");
 						inlineData.put("mimeType", mimeType);
 						inlineData.put("data", b64);
+					} else if (url.startsWith("http://") || url.startsWith("https://")) {
+						// PRX-B26: remote image URLs cannot reach Gemini (no
+						// URL-fetch semantic) — reject explicitly instead of
+						// dropping the part and billing a lesser request.
+						throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+								"Remote image URLs are not supported for Gemini models;"
+										+ " send base64 data URLs instead");
 					}
 				}
 			}

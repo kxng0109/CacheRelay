@@ -10,9 +10,13 @@ import java.util.Set;
 
 import javax.sql.DataSource;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNoException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -28,7 +32,7 @@ import static org.mockito.Mockito.when;
 class BudgetHoldSweeperTest {
 
 	private static final BudgetSettlementProperties ENABLED =
-			new BudgetSettlementProperties(true, 4096, 3600L, 30L, 500);
+			new BudgetSettlementProperties(true, 4096, 3600L, 30L, 500, 300L);
 
 	private record Harness(DataSource dataSource, Connection connection, BudgetSettlement settlement,
 	                       BudgetHoldSweeper sweeper) {
@@ -39,15 +43,12 @@ class BudgetHoldSweeperTest {
 		Connection connection = mock(Connection.class);
 		PreparedStatement lockStatement = mock(PreparedStatement.class);
 		ResultSet lockRows = mock(ResultSet.class);
-		PreparedStatement unlockStatement = mock(PreparedStatement.class);
 		when(dataSource.getConnection()).thenReturn(connection);
-		when(connection.prepareStatement("SELECT pg_try_advisory_lock(hashtextextended(?, 0))"))
+		when(connection.prepareStatement("SELECT pg_try_advisory_xact_lock(hashtextextended(?, 0))"))
 				.thenReturn(lockStatement);
 		when(lockStatement.executeQuery()).thenReturn(lockRows);
 		when(lockRows.next()).thenReturn(true);
 		when(lockRows.getBoolean(1)).thenReturn(lockWon);
-		when(connection.prepareStatement("SELECT pg_advisory_unlock(hashtextextended(?, 0))"))
-				.thenReturn(unlockStatement);
 		BudgetSettlement settlement = mock(BudgetSettlement.class);
 		when(settlement.dueHoldKeys(anyInt())).thenReturn(due);
 		BudgetHoldSweeper sweeper = new BudgetHoldSweeper(dataSource, settlement, ENABLED);
@@ -66,7 +67,7 @@ class BudgetHoldSweeperTest {
 	}
 
 	@Test
-	@DisplayName("won lock expires every due hold then unlocks")
+	@DisplayName("won lock expires every due hold then commits the release")
 	void wonLockExpiresDueHolds() throws Exception {
 		Harness harness = harness(true, Set.of(
 				BudgetEnforcer.holdKey("hold-1"), BudgetEnforcer.holdKey("hold-2")));
@@ -76,6 +77,19 @@ class BudgetHoldSweeperTest {
 
 		verify(harness.settlement()).expireDueHold(BudgetEnforcer.holdKey("hold-1"));
 		verify(harness.settlement()).expireDueHold(BudgetEnforcer.holdKey("hold-2"));
+		verify(harness.connection()).commit();
+	}
+
+	@Test
+	@DisplayName("null meter registry leaves the sweep unobserved without failing")
+	void nullMeterRegistryLeavesSweepUnobserved() throws Exception {
+		Harness harness = harness(true, Set.of(BudgetEnforcer.holdKey("hold-1")));
+		harness.sweeper().setMeterRegistry(null);
+		when(harness.settlement().expireDueHold(anyString())).thenReturn(true);
+
+		assertThatNoException().isThrownBy(() -> harness.sweeper().sweep());
+
+		verify(harness.settlement()).expireDueHold(BudgetEnforcer.holdKey("hold-1"));
 	}
 
 	@Test
@@ -93,11 +107,24 @@ class BudgetHoldSweeperTest {
 	}
 
 	@Test
+	@DisplayName("successful tick records the last-tick gauge")
+	void successfulTickRecordsGauge() throws Exception {
+		Harness harness = harness(true, Set.of());
+		SimpleMeterRegistry registry = new SimpleMeterRegistry();
+		harness.sweeper().setMeterRegistry(registry);
+
+		harness.sweeper().sweep();
+
+		assertThat(registry.get("cacherelay.job.last_tick_seconds")
+				.tag("job", "budget-hold-sweeper").gauge().value()).isPositive();
+	}
+
+	@Test
 	@DisplayName("disabled kill-switch skips everything including the datasource")
 	void disabledSkipsEverything() throws Exception {
 		DataSource dataSource = mock(DataSource.class);
 		BudgetHoldSweeper sweeper = new BudgetHoldSweeper(dataSource, mock(BudgetSettlement.class),
-				new BudgetSettlementProperties(false, 4096, 3600L, 30L, 500));
+				new BudgetSettlementProperties(false, 4096, 3600L, 30L, 500, 300L));
 
 		sweeper.sweep();
 
@@ -118,27 +145,26 @@ class BudgetHoldSweeperTest {
 	}
 
 	@Test
-	@DisplayName("unlock failure is absorbed after a completed sweep")
-	void unlockFailureAbsorbed() throws Exception {
+	@DisplayName("mid-sweep failure rolls back instead of leaking the lock")
+	void midSweepFailureRollsBack() throws Exception {
 		DataSource dataSource = mock(DataSource.class);
 		Connection connection = mock(Connection.class);
 		PreparedStatement lockStatement = mock(PreparedStatement.class);
 		ResultSet lockRows = mock(ResultSet.class);
 		when(dataSource.getConnection()).thenReturn(connection);
-		when(connection.prepareStatement("SELECT pg_try_advisory_lock(hashtextextended(?, 0))"))
+		when(connection.prepareStatement("SELECT pg_try_advisory_xact_lock(hashtextextended(?, 0))"))
 				.thenReturn(lockStatement);
 		when(lockStatement.executeQuery()).thenReturn(lockRows);
 		when(lockRows.next()).thenReturn(true);
 		when(lockRows.getBoolean(1)).thenReturn(true);
-		when(connection.prepareStatement("SELECT pg_advisory_unlock(hashtextextended(?, 0))"))
-				.thenThrow(new SQLException("conn gone"));
 		BudgetSettlement settlement = mock(BudgetSettlement.class);
-		when(settlement.dueHoldKeys(anyInt())).thenReturn(Set.of());
+		when(settlement.dueHoldKeys(anyInt())).thenThrow(new RuntimeException("redis down"));
 		BudgetHoldSweeper sweeper = new BudgetHoldSweeper(dataSource, settlement, ENABLED);
 
-		sweeper.sweep();
+		assertThatThrownBy(sweeper::sweep).isInstanceOf(RuntimeException.class);
 
-		verify(settlement).dueHoldKeys(anyInt());
+		verify(connection).rollback();
+		verify(connection, never()).commit();
 	}
 
 	@Test
@@ -148,21 +174,18 @@ class BudgetHoldSweeperTest {
 		Connection connection = mock(Connection.class);
 		PreparedStatement lockStatement = mock(PreparedStatement.class);
 		ResultSet lockRows = mock(ResultSet.class);
-		PreparedStatement unlockStatement = mock(PreparedStatement.class);
 		when(dataSource.getConnection()).thenReturn(connection);
-		when(connection.prepareStatement("SELECT pg_try_advisory_lock(hashtextextended(?, 0))"))
+		when(connection.prepareStatement("SELECT pg_try_advisory_xact_lock(hashtextextended(?, 0))"))
 				.thenReturn(lockStatement);
 		when(lockStatement.executeQuery()).thenReturn(lockRows);
 		when(lockRows.next()).thenReturn(true);
 		when(lockRows.getBoolean(1)).thenReturn(true);
-		when(connection.prepareStatement("SELECT pg_advisory_unlock(hashtextextended(?, 0))"))
-				.thenReturn(unlockStatement);
 		BudgetSettlement settlement = mock(BudgetSettlement.class);
 		when(settlement.dueHoldKeys(1)).thenReturn(new LinkedHashSet<>(List.of(
 				BudgetEnforcer.holdKey("hold-1"), BudgetEnforcer.holdKey("hold-2"))));
 		when(settlement.expireDueHold(anyString())).thenReturn(true);
 		BudgetHoldSweeper sweeper = new BudgetHoldSweeper(dataSource, settlement,
-				new BudgetSettlementProperties(true, 4096, 3600L, 30L, 1));
+				new BudgetSettlementProperties(true, 4096, 3600L, 30L, 1, 300L));
 
 		sweeper.sweep();
 

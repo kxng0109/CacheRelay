@@ -22,6 +22,16 @@ class DeepSeekAdapterTest {
 	private final DeepSeekAdapter adapter = new DeepSeekAdapter(objectMapper);
 
 	@Test
+	@DisplayName("PRX-B10: stream:false is honored instead of forced true")
+	void streamFalseHonored() {
+		String streaming = "{\"model\":\"m\",\"messages\":[],\"stream\":true}";
+		String nonStreaming = "{\"model\":\"m\",\"messages\":[],\"stream\":false}";
+
+		assertTrue(objectMapper.readTree(adapter.buildRequestBody(streaming, null)).get("stream").asBoolean());
+		assertFalse(objectMapper.readTree(adapter.buildRequestBody(nonStreaming, null)).get("stream").asBoolean());
+	}
+
+	@Test
 	@DisplayName("builds upstream URL and sets Bearer Authorization header")
 	void buildsUrlAndHeaders() {
 		ProviderConfig config = new ProviderConfig(

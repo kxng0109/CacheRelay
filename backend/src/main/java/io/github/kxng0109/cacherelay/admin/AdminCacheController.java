@@ -5,6 +5,7 @@ import io.github.kxng0109.cacherelay.admin.dto.CacheStatsResponse;
 import io.github.kxng0109.cacherelay.admin.dto.CacheTierStatsResponse;
 import io.github.kxng0109.cacherelay.cache.config.CacheRelayCacheProperties;
 import io.github.kxng0109.cacherelay.cache.engine.CacheRelayCacheService;
+import io.github.kxng0109.cacherelay.cache.engine.CachePurgeNotifier;
 import io.github.kxng0109.cacherelay.cache.engine.l2.RediSearchVectorClient;
 import io.github.kxng0109.cacherelay.cache.engine.l2.RedisSemanticVectorCache;
 import io.github.kxng0109.cacherelay.config.OpenApiConfig;
@@ -21,6 +22,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.Nullable;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -46,6 +48,18 @@ public class AdminCacheController {
 	private final StringRedisTemplate stringRedisTemplate;
 	private final RediSearchVectorClient vectorClient;
 	private final RedisTierProbe tierProbe;
+	private volatile @Nullable CachePurgeNotifier purgeNotifier;
+
+	/**
+	 * Wires the fleet fan-out for local purges. Optional on purpose: without
+	 * it (unit-test contexts) purges stay pod-local.
+	 *
+	 * @param purgeNotifier notifier for executed purges, if available
+	 */
+	@Autowired
+	public void setPurgeNotifier(@Nullable CachePurgeNotifier purgeNotifier) {
+		this.purgeNotifier = purgeNotifier;
+	}
 
 	/**
 	 * Returns active cache configuration and status metrics.
@@ -160,8 +174,9 @@ public class AdminCacheController {
 									value = """
 											{
 											  "success": true,
-											  "message": "Purged cache for tenant tenant-corp",
-											  "evictedScope": "tenant-corp"
+											  "message": "Purged cache for tenant tenant-corp: 42 keys",
+											  "evictedScope": "tenant-corp",
+											  "evictedKeys": 42
 											}
 											"""
 							)
@@ -174,19 +189,31 @@ public class AdminCacheController {
 			@Parameter(description = "Optional tenant owner ID to restrict purge. If omitted, triggers global purge.", example = "tenant-corp")
 			@RequestParam(name = "ownerId", required = false) @Nullable String ownerId
 	) {
+		// ADM-B06: the tenant scope is interpolated into Redis glob patterns, so glob
+		// metacharacters must never reach the pattern builder — "*" would silently
+		// escalate a tenant purge into a global one while the response claims the
+		// tenant scope. Reject before touching any tier.
+		if (ownerId != null && !ownerId.isBlank() && containsGlobMetacharacters(ownerId)) {
+			return ResponseEntity.badRequest().body(new CachePurgeResponse(
+					false, "Invalid ownerId: glob characters are not allowed", "INVALID", 0L));
+		}
 		cacheService.purgeLocalCache();
+		notifyPurge(ownerId);
 
 		if (ownerId != null && !ownerId.isBlank()) {
-			purgeKeysByPattern("cacherelay:cache:exact:" + ownerId + ":*");
-			purgeKeysByPattern("cacherelay:cache:doc:" + ownerId + ":*");
-			log.info("Administrative cache purge executed for tenant '{}'", ownerId);
-			return ResponseEntity.ok(new CachePurgeResponse(true, "Purged cache for tenant " + ownerId, ownerId));
+			long deleted = purgeKeysByPattern("cacherelay:cache:exact:" + ownerId + ":*")
+					+ purgeKeysByPattern("cacherelay:cache:doc:" + ownerId + ":*");
+			log.info("Administrative cache purge executed for tenant '{}': {} keys",
+					safeForLog(ownerId), deleted);
+			return ResponseEntity.ok(new CachePurgeResponse(
+					true, "Purged cache for tenant " + ownerId + ": " + deleted + " keys",
+					ownerId, deleted));
 		}
 
-		purgeKeysByPattern("cacherelay:cache:exact:*");
-		purgeKeysByPattern("cacherelay:cache:doc:*");
-		purgeKeysByPattern(ReplayService.PREFIX + "*");
-		purgeKeysByPattern(ReplayService.FILL_PREFIX + "*");
+		long deleted = purgeKeysByPattern("cacherelay:cache:exact:*")
+				+ purgeKeysByPattern("cacherelay:cache:doc:*")
+				+ purgeKeysByPattern(ReplayService.PREFIX + "*")
+				+ purgeKeysByPattern(ReplayService.FILL_PREFIX + "*");
 		try {
 			// PERF-14: rebuild at the live dimension read back from FT.INFO — the old
 			// hardcoded 1536 broke L2 whenever the model used another width. When the
@@ -207,8 +234,55 @@ public class AdminCacheController {
 			log.debug("Index re-creation notice: {}", ex.getMessage());
 		}
 
-		log.info("Global administrative cache purge executed successfully");
-		return ResponseEntity.ok(new CachePurgeResponse(true, "Global cache purge completed successfully", "ALL"));
+		log.info("Global administrative cache purge executed successfully: {} keys", deleted);
+		return ResponseEntity.ok(new CachePurgeResponse(
+				true, "Global cache purge completed successfully: " + deleted + " keys", "ALL", deleted));
+	}
+
+	/**
+	 * Whether a tenant scope carries Redis glob metacharacters (ADM-B06).
+	 *
+	 * @param ownerId raw tenant scope
+	 * @return true when the scope would alter the purge pattern beyond its namespace
+	 */
+	private static boolean containsGlobMetacharacters(String ownerId) {
+		for (int i = 0; i < ownerId.length(); i++) {
+			char c = ownerId.charAt(i);
+			if (c == '*' || c == '?' || c == '[' || c == ']' || c == '\\') {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Folds control characters out of a log-bound value (log-injection guard).
+	 *
+	 * @param value raw value, possibly {@code null}
+	 * @return the value with control characters replaced, or "null"
+	 */
+	private static String safeForLog(@Nullable String value) {
+		if (value == null) {
+			return "null";
+		}
+		StringBuilder safe = new StringBuilder(value.length());
+		for (int i = 0; i < value.length(); i++) {
+			char c = value.charAt(i);
+			safe.append(c < 0x20 || c == 0x7F ? '_' : c);
+		}
+		return safe.toString();
+	}
+
+	/**
+	 * Fans an executed purge out; skipped when no notifier is wired.
+	 *
+	 * @param ownerId tenant scope of the purge, or {@code null} for global
+	 */
+	private void notifyPurge(@Nullable String ownerId) {
+		CachePurgeNotifier notifier = this.purgeNotifier;
+		if (notifier != null) {
+			notifier.notifyPurge(ownerId != null && !ownerId.isBlank() ? "tenant:" + ownerId : "ALL");
+		}
 	}
 
 	/**

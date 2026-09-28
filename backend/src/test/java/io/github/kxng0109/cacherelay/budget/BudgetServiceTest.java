@@ -156,6 +156,15 @@ class BudgetServiceTest {
 	}
 
 	@Test
+	@DisplayName("ADM-B18: balance validates the subject, not just the level")
+	void balanceValidatesSubject() {
+		assertThrows(ResponseStatusException.class, () -> service.balance("TEAM", "Not A Tenant!!"));
+		assertThrows(ResponseStatusException.class, () -> service.balance("TEAM", ""));
+		assertThrows(ResponseStatusException.class, () -> service.balance("KEY", "tenant-a"));
+		verify(limits, never()).findByLevelAndSubjectId(anyString(), anyString());
+	}
+
+	@Test
 	@DisplayName("backfill mirrors every durable limit into Redis")
 	void backfillMirrorsAll() {
 		BootstrapKey key = new BootstrapKey(

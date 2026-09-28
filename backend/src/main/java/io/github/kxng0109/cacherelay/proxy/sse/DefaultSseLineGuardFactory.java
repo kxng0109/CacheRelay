@@ -87,12 +87,14 @@ public final class DefaultSseLineGuardFactory implements SseLineGuardAutoConfig.
 			SseLineGuard.ProviderType providerType
 	) {
 		int ceilingBytes = resolveCeilingBytes(providerType);
-		return new BoundedLineBodyHandler(ceilingBytes, StandardCharsets.UTF_8);
+		return new BoundedLineBodyHandler(
+				ceilingBytes, StandardCharsets.UTF_8, properties.upstreamIdleTimeout());
 	}
 
 	@Override
 	public BoundedLineBodyHandler bodyHandlerForNonStreaming() {
-		return new BoundedLineBodyHandler(NON_STREAMING_MAX_LINE_BYTES, StandardCharsets.UTF_8);
+		return new BoundedLineBodyHandler(
+				NON_STREAMING_MAX_LINE_BYTES, StandardCharsets.UTF_8, properties.upstreamIdleTimeout());
 	}
 
 	@Override

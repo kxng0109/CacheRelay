@@ -17,6 +17,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -124,6 +125,27 @@ class UsageLedgerIntegrationTest extends SharedContainersBase {
 		assertThat(usageLedgerRepository.findAll().stream()
 		                                .filter(entry -> entry.getRequestId().equals(requestId)).count())
 				.isEqualTo(1);
+	}
+
+	@Test
+	@Transactional
+	@DisplayName("FIN-B39: retention purge deletes only rows older than the cutoff")
+	void retentionPurgeDeletesOnlyOldRows() {
+		UUID oldId = UUID.randomUUID();
+		UUID freshId = UUID.randomUUID();
+		Instant now = Instant.now();
+		usageLedgerRepository.save(new UsageLedgerEntry(
+				oldId, "owner-1", "openai", "gpt-5.6-sol",
+				10, 5, 15, 140, 50, now.minus(Duration.ofDays(400))));
+		usageLedgerRepository.save(new UsageLedgerEntry(
+				freshId, "owner-1", "openai", "gpt-5.6-sol",
+				10, 5, 15, 140, 50, now.minus(Duration.ofDays(10))));
+
+		int purged = usageLedgerRepository.purgeBefore(now.minus(Duration.ofDays(365)));
+
+		assertThat(purged).isEqualTo(1);
+		assertThat(usageLedgerRepository.findByRequestId(oldId)).isEmpty();
+		assertThat(usageLedgerRepository.findByRequestId(freshId)).isPresent();
 	}
 
 	@Test

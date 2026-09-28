@@ -33,9 +33,10 @@ import java.util.concurrent.Semaphore;
  * virtual threads; callers are expected to fall back to the in-memory {@link ProviderCircuitBreaker} mirror. Redis is
  * therefore always required and the mirror is only a fallback, so the breaker is fail-closed.</p>
  *
- * <p>The three Lua scripts implement the distributed state machine atomically on the server; the per-instance
- * {@link InstanceId} lets exactly one instance own a HALF_OPEN probe, and the bulkhead {@link Semaphore} caps how
- * many virtual threads can be waiting on Redis commands at once.</p>
+ * <p>The three Lua scripts implement the distributed state machine atomically on the server with server-side
+ * time (Redis {@code TIME}); HALF_OPEN admits exactly one in-flight probe fleet-wide (lease-stealable on hang),
+ * and the bulkhead {@link Semaphore} caps how many virtual threads can be waiting on Redis commands at once.
+ * The per-instance {@link InstanceId} is recorded as probe owner for observability only.</p>
  */
 @Configuration
 @EnableConfigurationProperties(CircuitBreakerProperties.class)

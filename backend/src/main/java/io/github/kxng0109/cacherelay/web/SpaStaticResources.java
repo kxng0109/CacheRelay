@@ -11,9 +11,10 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * Cache policy for the operator SPA static assets.
  *
  * <p>Vite emits content-hashed filenames under {@code /assets/}, so those bytes are immutable: one year,
- * {@code public}, {@code immutable}. The shell ({@code /index.html}) is served by Boot defaults with no explicit
- * policy so browsers always revalidate it; a stale shell referencing rotated asset hashes is the classic SPA
- * cache failure this split avoids.
+ * {@code public}, {@code immutable}. The shell ({@code /index.html}) carries per-response CSP nonce
+ * placeholders ({@link CspNonceSubstitutionTransformer}) and is served {@code no-store} through an
+ * uncached resource chain, so substituted HTML is never cached: a stale shell referencing rotated asset
+ * hashes is the classic SPA cache failure this split avoids.</p>
  *
  * @since 1.8.0
  */
@@ -27,6 +28,8 @@ public class SpaStaticResources implements WebMvcConfigurer {
 				.setCacheControl(CacheControl.maxAge(365, TimeUnit.DAYS).cachePublic().immutable());
 		registry.addResourceHandler("/index.html")
 				.addResourceLocations("classpath:/static/")
-				.setCacheControl(CacheControl.noStore());
+				.setCacheControl(CacheControl.noStore())
+				.resourceChain(false)
+				.addTransformer(new CspNonceSubstitutionTransformer());
 	}
 }

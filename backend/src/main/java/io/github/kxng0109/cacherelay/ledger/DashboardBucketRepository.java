@@ -6,6 +6,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 
 /**
  * Persistence for {@link DashboardBucket} lazy daily grains.
@@ -36,4 +37,15 @@ public interface DashboardBucketRepository extends JpaRepository<DashboardBucket
 	 */
 	Optional<DashboardBucket> findByScopeTypeAndScopeKeyAndBucketDayAndProviderAndModel(
 			String scopeType, String scopeKey, LocalDate day, String provider, String model);
+
+	/**
+	 * Drops one day's grains before a freshness recompute (FIN-B10): buckets are
+	 * replaced, never updated in place.
+	 *
+	 * @param scopeType scope grain
+	 * @param scopeKey  scope identity
+	 * @param day       bucket day
+	 */
+	@Modifying
+	void deleteByScopeTypeAndScopeKeyAndBucketDay(String scopeType, String scopeKey, LocalDate day);
 }

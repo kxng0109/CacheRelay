@@ -207,17 +207,12 @@ class BudgetLuaIntegrationTest extends SharedContainersBase {
 		seedCfg(template, "KEY", hex(), 1_000_000L, 100_000_000L);
 		DefaultRedisScript<List> script = script();
 		List<String> keys = List.of(
-				BudgetEnforcer.minuteKey("KEY", hex(), 1L),
-				"",
-				"",
-				BudgetEnforcer.monthKey("KEY", hex(), "2026-09"),
-				"",
-				"",
 				BudgetEnforcer.cfgKey("KEY", hex()),
 				"",
 				"");
-		List<?> result = template.execute(script, keys, "99999999999999999999");
-		assertEquals(5, result.size());
+		List<?> result = template.execute(script, keys,
+				"99999999999999999999", "", hex(), "", "global", "{b:global}");
+		assertEquals(6, result.size());
 		long[] actual = new long[5];
 		for (int i = 0; i < 5; i++) {
 			Object value = result.get(i);
@@ -225,7 +220,46 @@ class BudgetLuaIntegrationTest extends SharedContainersBase {
 					: Long.parseLong(String.valueOf(value).trim());
 		}
 		assertArrayEquals(new long[]{0L, 1L, 0L, 60L, 2L}, actual);
-		assertFalse(template.hasKey(BudgetEnforcer.minuteKey("KEY", hex(), 1L)));
+		assertEquals(redisYearMonth(template), String.valueOf(result.get(5)));
+	}
+
+	@Test
+	@DisplayName("FIN-B22: windows and month derive from Redis TIME, not the pod clock")
+	void luaDerivesWindowFromRedisTime() {
+		StringRedisTemplate template = template();
+		template.getConnectionFactory().getConnection().serverCommands().flushDb();
+		seedCfg(template, "KEY", hex(), 1_000_000L, 100_000_000L);
+		DefaultRedisScript<List> script = script();
+		List<String> keys = List.of(
+				BudgetEnforcer.cfgKey("KEY", hex()),
+				"",
+				"");
+		List<?> result = template.execute(script, keys,
+				"60000", "", hex(), "", "global", "{b:global}");
+
+		assertEquals(6, result.size());
+		long redisSeconds = redisTimeSeconds(template);
+		String expectedMinuteKey = BudgetEnforcer.minuteKey("KEY", hex(), redisSeconds / 60L);
+		assertEquals("60000", template.opsForValue().get(expectedMinuteKey));
+		String expectedMonthKey = BudgetEnforcer.monthKey("KEY", hex(), redisYearMonth(template));
+		assertEquals("60000", template.opsForValue().get(expectedMonthKey));
+		assertEquals(redisYearMonth(template), String.valueOf(result.get(5)));
+	}
+
+	private static long redisTimeSeconds(StringRedisTemplate template) {
+		// Spring's serverCommands().time() folds TIME into epoch millis; the Lua
+		// script divides TIME[1] seconds itself, so normalize here to seconds.
+		Long millis = template.execute(
+				(org.springframework.data.redis.core.RedisCallback<Long>) connection ->
+						connection.serverCommands().time());
+		assertThat(millis).as("Redis TIME available").isNotNull().isPositive();
+		return millis / 1000L;
+	}
+
+	private static String redisYearMonth(StringRedisTemplate template) {
+		return YearMonth.from(
+				java.time.Instant.ofEpochSecond(redisTimeSeconds(template)).atZone(ZoneOffset.UTC))
+				.toString();
 	}
 
 	@Test

@@ -24,7 +24,7 @@ class DockerComposeSecurityTest {
 	@BeforeAll
 	@SuppressWarnings("unchecked")
 	static void loadCompose() throws IOException {
-		Path compose = Paths.get(System.getProperty("user.dir"), "..", "docker-compose.yml");
+		Path compose = InfraPaths.repoRoot().resolve("docker-compose.yml");
 		assertThat(Files.exists(compose)).as("repo docker-compose.yml resolves").isTrue();
 		rawCompose = Files.readString(compose);
 		Map<String, Object> root;
@@ -74,7 +74,8 @@ class DockerComposeSecurityTest {
 	@Test
 	@DisplayName("Prometheus scrapes the management port, not the app port")
 	void prometheusScrapesManagementPort() throws IOException {
-		Path scrape = Paths.get(System.getProperty("user.dir"), "monitoring", "prometheus", "prometheus.yml");
+		Path scrape = InfraPaths.moduleDir().resolve(
+				Paths.get("monitoring", "prometheus", "prometheus.yml"));
 		assertThat(Files.exists(scrape)).as("prometheus.yml resolves").isTrue();
 		String config = Files.readString(scrape);
 		assertThat(config).as("scrape target is the management port").contains("cacherelay:9091");
@@ -132,12 +133,13 @@ class DockerComposeSecurityTest {
 	}
 
 	@Test
-	@DisplayName("Alertmanager receiver targets the app service, not its own loopback")
+	@DisplayName("Alertmanager receiver targets the dedicated webhook on the app service")
 	void alertmanagerReceiverUsesServiceName() throws IOException {
-		Path receiver = Paths.get(System.getProperty("user.dir"), "monitoring", "alertmanager", "alertmanager.yml");
+		Path receiver = InfraPaths.moduleDir().resolve(
+				Paths.get("monitoring", "alertmanager", "alertmanager.yml"));
 		assertThat(Files.exists(receiver)).as("alertmanager.yml resolves").isTrue();
 		String config = Files.readString(receiver);
-		assertThat(config).as("webhook routes to the app service").contains("http://cacherelay:8080");
+		assertThat(config).as("webhook routes to the dedicated receiver").contains("http://cacherelay:8080/v1/alerts/webhook");
 		assertThat(config).as("no self-loopback receiver").doesNotContain("localhost:8080");
 	}
 
@@ -150,7 +152,8 @@ class DockerComposeSecurityTest {
 	@Test
 	@DisplayName("Provisioned dashboards are file-sourced; UI edits disabled")
 	void dashboardsFileSourced() throws IOException {
-		Path provider = Paths.get(System.getProperty("user.dir"), "monitoring", "grafana", "provisioning", "dashboards", "dashboards.yml");
+		Path provider = InfraPaths.moduleDir().resolve(
+				Paths.get("monitoring", "grafana", "provisioning", "dashboards", "dashboards.yml"));
 		assertThat(Files.exists(provider)).as("dashboards.yml resolves").isTrue();
 		assertThat(Files.readString(provider)).as("UI updates disabled for read-only provisioned path").contains("allowUiUpdates: false");
 	}
@@ -159,5 +162,53 @@ class DockerComposeSecurityTest {
 	@DisplayName("no bare empty defaults: compose rejects ${VAR:} interpolation")
 	void noBareEmptyDefaults() {
 		assertThat(rawCompose).doesNotMatch("(?m)\\$\\{[A-Z_]+:\\}");
+	}
+
+	@Test
+	@DisplayName("FS-B17: ledger spillway has a writable volume under read-only rootfs")
+	void spillwayVolumeWritable() {
+		assertThat(rawCompose).contains("ledger-logs:/app/logs");
+		assertThat(rawCompose).contains("ledger-logs:");
+	}
+
+	@Test
+	@DisplayName("FS-B17: app service is pids-capped with drain headroom")
+	void appPidsAndGrace() {
+		assertThat(rawCompose).contains("pids: 512");
+		assertThat(rawCompose).contains("stop_grace_period: 2m30s");
+	}
+
+	@Test
+	@DisplayName("FS-B17: no shipped bootstrap plaintext keys")
+	void noShippedBootstrapKeys() {
+		assertThat(rawCompose).doesNotContain("gw-localdevmasterkey0123456789abcde");
+		assertThat(rawCompose).doesNotContain("gw-0123456789abcdef0123456789abcdef");
+	}
+
+	@Test
+	@DisplayName("FS-B17: Prometheus lifecycle API stays disabled")
+	void prometheusLifecycleDisabled() {
+		assertThat(rawCompose).doesNotContain("--web.enable-lifecycle");
+	}
+
+	@Test
+	@DisplayName("C5: alertmanager authenticates with a mounted credential file, not the admin key")
+	void alertmanagerCredentialFileMounted() throws IOException {
+		Path receiver = InfraPaths.moduleDir().resolve(
+				Paths.get("monitoring", "alertmanager", "alertmanager.yml"));
+		String config = Files.readString(receiver);
+		assertThat(config).as("bearer credential file configured")
+				.contains("credentials_file: /etc/alertmanager/alerts-webhook-secret.txt");
+		assertThat(config).as("admin receiver retired").doesNotContain("/v1/admin/alerts/webhook");
+		assertThat(rawCompose).as("secret file mounted read-only into alertmanager")
+				.contains("./secrets/alertmanager-webhook-secret.txt:/etc/alertmanager/alerts-webhook-secret.txt:ro");
+		assertThat(rawCompose).as("no admin key distributed to monitoring")
+				.doesNotContain("admin-key.txt");
+		assertThat(rawCompose).as("app receives the dedicated webhook secret")
+				.contains("GATEWAY_ALERTS_WEBHOOK_SECRET");
+		Path controller = InfraPaths.moduleDir().resolve(
+				Paths.get("src", "main", "java",
+						"io", "github", "kxng0109", "cacherelay", "admin", "AlertWebhookController.java"));
+		assertThat(Files.exists(controller)).as("receiver controller exists").isTrue();
 	}
 }

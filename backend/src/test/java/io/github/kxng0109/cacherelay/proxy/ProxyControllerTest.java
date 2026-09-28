@@ -218,6 +218,8 @@ class ProxyControllerTest {
 
 		assertEquals(200, entity.getStatusCode().value());
 		assertTrue(out.writtenUtf8().contains("hi"));
+		assertTrue(out.writtenUtf8().contains("event: error"));
+		assertTrue(out.writtenUtf8().contains("FLUSH_BACKPRESSURE"));
 		assertFalse(out.writtenUtf8().contains("[DONE]"));
 	}
 
@@ -2038,11 +2040,30 @@ class ProxyControllerTest {
 		return request;
 	}
 
+	@Test
+	@DisplayName("PRX-B24: non-streaming Anthropic usage is billed, not zeroed")
+	void nonStreamingAnthropicUsageBilled() throws Exception {
+		String upstream = "{\"id\":\"msg-1\",\"type\":\"message\",\"role\":\"assistant\","
+				+ "\"content\":[{\"type\":\"text\",\"text\":\"hi\"}],\"model\":\"claude-sonnet-5\","
+				+ "\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}";
+		ProviderResponse response = providerResponse("anthropic", 200, jsonHeaders(), Stream.of(upstream));
+		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(
+				"{\"model\":\"claude-sonnet-5\",\"messages\":[]}", request());
+		body(entity);
+
+		ArgumentCaptor<TokenUsageEvent> captor = ArgumentCaptor.forClass(TokenUsageEvent.class);
+		verify(eventPublisher).publishEvent(captor.capture());
+		assertEquals(10, captor.getValue().promptTokens());
+		assertEquals(5, captor.getValue().completionTokens());
+	}
+
 	@SuppressWarnings("unchecked")
 	@Test
 	@DisplayName("non-streaming 200 JSON completion is normalized and served as JSON")
-	void jsonRelayNormalizesFullCompletion() throws Exception {
-		String upstream = "{\"id\":\"chatcmpl-abc\",\"object\":\"chat.completion\",\"created\":1700000000,"
+	void jsonRelayNormalizesFullCompletion() throws Exception {		String upstream = "{\"id\":\"chatcmpl-abc\",\"object\":\"chat.completion\",\"created\":1700000000,"
 				+ "\"model\":\"gpt-5.6-luna\",\"choices\":[{\"index\":2,\"message\":{\"role\":\"assistant\","
 				+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
 				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
@@ -2115,6 +2136,85 @@ class ProxyControllerTest {
 			assertEquals("9000", entity.getHeaders().getFirst("X-Budget-Held-Micros"));
 			assertEquals("openai", entity.getHeaders().getFirst("X-CacheRelay-Provider"));
 			assertEquals("openai", entity.getHeaders().getFirst("X-CacheRelay-Tried"));
+		} finally {
+			controller.setBudgetEnforcer(null);
+			controller.setBudgetSettlement(null);
+		}
+	}
+
+	@Test
+	@DisplayName("FIN-B20: long streams renew the hold on a coarse cadence, then settle actuals")
+	void longStreamsRenewHoldCoarsely() throws Exception {
+		BudgetEnforcer mockEnforcer = mock(BudgetEnforcer.class);
+		BudgetSettlement mockSettlement = mock(BudgetSettlement.class);
+		controller.setBudgetEnforcer(mockEnforcer);
+		controller.setBudgetSettlement(mockSettlement);
+		try {
+			when(mockSettlement.authorize(any(), any(), any(), anyString(), anyInt(), any(), any(), any()))
+					.thenReturn(new BudgetEnforcer.HoldAuthorization(
+							new BudgetDecision.Allowed(100L, 60L), 9_000L, "2026-09"));
+			when(mockSettlement.createHold(anyString(), anyString(), any(), any()))
+					.thenReturn(true);
+			when(mockSettlement.renewHoldIfDue(anyString(), anyLong(), anyLong()))
+					.thenAnswer(invocation -> invocation.getArgument(1));
+			List<String> lines = new ArrayList<>();
+			for (int i = 0; i < 130; i++) {
+				lines.add("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-5.6-luna\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"},\"finish_reason\":null}]}");
+			}
+			lines.add("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-5.6-luna\",\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}");
+			lines.add("data: [DONE]");
+			ProviderResponse response = providerResponse("openai", 200, sseHeaders(), lines.stream());
+			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+					.thenReturn(CompletableFuture.completedFuture(response));
+			MockHttpServletRequest req = request();
+			req.setAttribute("cacherelay.keyHash", "ab".repeat(32));
+
+			ResponseEntity<StreamingResponseBody> entity =
+					controller.proxyChatCompletions(USAGE_BODY, req);
+
+			assertTrue(body(entity).contains("data: [DONE]"));
+			verify(mockSettlement, times(2)).renewHoldIfDue(anyString(), anyLong(), anyLong());
+			verify(mockSettlement).settleStream(anyString(), anyString(), eq("owner-1"),
+					eq("2026-09"), anyLong(), eq(false));
+		} finally {
+			controller.setBudgetEnforcer(null);
+			controller.setBudgetSettlement(null);
+		}
+	}
+
+	@Test
+	@DisplayName("FIN-B20: short streams settle without any renewal traffic")
+	void shortStreamsSettleWithoutRenewal() throws Exception {
+		BudgetEnforcer mockEnforcer = mock(BudgetEnforcer.class);
+		BudgetSettlement mockSettlement = mock(BudgetSettlement.class);
+		controller.setBudgetEnforcer(mockEnforcer);
+		controller.setBudgetSettlement(mockSettlement);
+		try {
+			when(mockSettlement.authorize(any(), any(), any(), anyString(), anyInt(), any(), any(), any()))
+					.thenReturn(new BudgetEnforcer.HoldAuthorization(
+							new BudgetDecision.Allowed(100L, 60L), 9_000L, "2026-09"));
+			when(mockSettlement.createHold(anyString(), anyString(), any(), any()))
+					.thenReturn(true);
+			ProviderResponse response = providerResponse(
+					"openai", 200, sseHeaders(),
+					Stream.of(
+							"data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-5.6-luna\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}",
+							"data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-5.6-luna\",\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}",
+							"data: [DONE]"
+					)
+			);
+			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+					.thenReturn(CompletableFuture.completedFuture(response));
+			MockHttpServletRequest req = request();
+			req.setAttribute("cacherelay.keyHash", "ab".repeat(32));
+
+			ResponseEntity<StreamingResponseBody> entity =
+					controller.proxyChatCompletions(USAGE_BODY, req);
+
+			assertTrue(body(entity).contains("data: [DONE]"));
+			verify(mockSettlement, never()).renewHoldIfDue(anyString(), anyLong(), anyLong());
+			verify(mockSettlement).settleStream(anyString(), anyString(), eq("owner-1"),
+					eq("2026-09"), anyLong(), eq(false));
 		} finally {
 			controller.setBudgetEnforcer(null);
 			controller.setBudgetSettlement(null);

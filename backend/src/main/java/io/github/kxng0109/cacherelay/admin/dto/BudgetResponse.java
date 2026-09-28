@@ -17,7 +17,9 @@ public record BudgetResponse(
 		@Schema(description = "Budget subject") String subjectId,
 		@Schema(description = "Rolling-60s cap in micro-dollars") long minuteMicros,
 		@Schema(description = "UTC-month cap in micro-dollars") long monthMicros,
-		@Schema(description = "Alert webhook URL, if any") @Nullable String webhookUrl,
+		@Schema(description = "Alert webhook URL as stored. RESERVED (FIN-B25): per-limit delivery is not implemented; "
+				+ "alerts are delivered to the global Alertmanager receiver. Stored for a future delivery feature "
+				+ "and validated as http(s) on write.") @Nullable String webhookUrl,
 		@Schema(description = "Creation time") Instant createdAt,
 		@Schema(description = "Last update time") Instant updatedAt
 ) {

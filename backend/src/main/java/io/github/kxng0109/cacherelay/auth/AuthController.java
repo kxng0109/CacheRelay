@@ -75,6 +75,7 @@ public class AuthController {
 
 	/**
 	 * Redeems a single-use invite into an account and logs it in immediately.
+	 * Unknown, consumed, and expired tokens answer one indistinguishable 404 (ADM-B02).
 	 *
 	 * @param body    invite token plus desired credentials
 	 * @param request current request (network attribution)
@@ -83,19 +84,18 @@ public class AuthController {
 	@Operation(summary = "Redeem invite", description = "Consumes a single-use invite (410 when consumed or expired) and opens a session for the new account")
 	@ApiResponses(value = {
 			@ApiResponse(responseCode = "201", description = "Redeemed and logged in"),
-			@ApiResponse(responseCode = "404", description = "Unknown invite token"),
-			@ApiResponse(responseCode = "410", description = "Invite consumed or expired")
+			@ApiResponse(responseCode = "404", description = "Unknown, consumed, or expired invite token")
 	})
 	@PostMapping("/redeem")
 	public ResponseEntity<AccessTokenResponse> redeem(@Valid @RequestBody RedeemRequest body,
 			HttpServletRequest request) {
 		InviteService.RedeemResult result = invites.redeem(body.token(), body.username(),
 				body.password(), request.getRemoteAddr(), request.getHeader("X-Request-ID"));
-		if (result instanceof InviteService.RedeemResult.Missing) {
-			throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown invite");
-		}
-		if (result instanceof InviteService.RedeemResult.Gone) {
-			throw new ResponseStatusException(HttpStatus.GONE, "Invite consumed or expired");
+		// ADM-B02 (token oracle): unknown, consumed, and expired tokens answer one
+		// indistinguishable 404 — a 404/410 split would let callers probe token validity.
+		if (result instanceof InviteService.RedeemResult.Missing
+				|| result instanceof InviteService.RedeemResult.Gone) {
+			throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown or consumed invite");
 		}
 		LoginService.LoginResult session = login.login(body.username(), body.password(),
 				request.getRemoteAddr(), request.getHeader("X-Request-ID"));

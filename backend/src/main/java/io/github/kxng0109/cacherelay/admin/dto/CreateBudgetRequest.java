@@ -33,7 +33,8 @@ public record CreateBudgetRequest(
 		@PositiveOrZero(message = "monthMicros must be non-negative")
 		Long monthMicros,
 
-		@Schema(description = "Optional alert webhook URL", example = "https://ops.example.com/hooks/budget")
+		@Schema(description = "Optional alert webhook URL (RESERVED: stored and validated, per-limit delivery not "
+				+ "implemented — see BudgetResponse.webhookUrl)", example = "https://ops.example.com/hooks/budget")
 		@Nullable String webhookUrl
 ) {
 	public CreateBudgetRequest {

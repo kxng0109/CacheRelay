@@ -10,6 +10,7 @@ import java.util.Set;
 import io.github.kxng0109.cacherelay.contracts.ProviderType;
 import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
 import io.github.kxng0109.cacherelay.security.ratelimit.RateLimitUnavailableException;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -37,7 +38,7 @@ import static org.mockito.Mockito.when;
 class BudgetSettlementTest {
 
 	private static final BudgetSettlementProperties ENABLED =
-			new BudgetSettlementProperties(true, 4096, 3600L, 30L, 500);
+			new BudgetSettlementProperties(true, 4096, 3600L, 30L, 500, 300L);
 
 	private static SHA256Hash keyHash() {
 		return SHA256Hash.fromRawKey("gw-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
@@ -54,7 +55,7 @@ class BudgetSettlementTest {
 		when(enforcer.checkBudget(any(), any(), any(), anyString(), anyInt(), any(), any()))
 				.thenReturn(new BudgetDecision.Allowed(-1L, 0L));
 		BudgetSettlementProperties off =
-				new BudgetSettlementProperties(false, 4096, 3600L, 30L, 500);
+				new BudgetSettlementProperties(false, 4096, 3600L, 30L, 500, 300L);
 		BudgetSettlement settlement = new BudgetSettlement(enforcer, mock(BudgetGapRepository.class), off);
 
 		BudgetEnforcer.HoldAuthorization auth = settlement.authorize(
@@ -238,7 +239,7 @@ class BudgetSettlementTest {
 	void createHoldNoopWithoutSettlement() {
 		BudgetEnforcer enforcer = mock(BudgetEnforcer.class);
 		BudgetSettlementProperties off =
-				new BudgetSettlementProperties(false, 4096, 3600L, 30L, 500);
+				new BudgetSettlementProperties(false, 4096, 3600L, 30L, 500, 300L);
 		BudgetSettlement settlement = new BudgetSettlement(enforcer, mock(BudgetGapRepository.class), off);
 		BudgetEnforcer.HoldAuthorization auth =
 				new BudgetEnforcer.HoldAuthorization(new BudgetDecision.Allowed(100L, 60L), 9_000L, "2026-09");
@@ -329,6 +330,26 @@ class BudgetSettlementTest {
 
 		verify(repository).save(gap.capture());
 		assertThat(gap.getValue().getReason()).isEqualTo("EXPIRED");
+	}
+
+	@Test
+	@DisplayName("FIN-B23: team-attributed gaps record TEAM level, not KEY")
+	void teamGapRecordsTeamLevel() {
+		BudgetEnforcer enforcer = mock(BudgetEnforcer.class);
+		when(enforcer.settle(anyString(), anyString(), anyString(), any(), anyString(), anyString(),
+				anyString(), anyLong(), anyLong()))
+				.thenReturn(new BudgetEnforcer.SettleOutcome(false, BudgetEnforcer.SETTLE_EXPIRED, 0L, -1L,
+						true));
+		BudgetGapRepository repository = mock(BudgetGapRepository.class);
+		org.mockito.ArgumentCaptor<BudgetGapRecord> gap = ArgumentCaptor.forClass(
+				BudgetGapRecord.class);
+		String month = YearMonth.now(ZoneOffset.UTC).toString();
+
+		settlement(enforcer, repository).settleStream("hold-1", "hex", "owner-1", month, 4_000L, false);
+
+		verify(repository).save(gap.capture());
+		assertThat(gap.getValue().getLevel()).isEqualTo("TEAM");
+		assertThat(gap.getValue().getSubjectId()).isEqualTo("owner-1");
 	}
 
 	@Test
@@ -542,5 +563,79 @@ class BudgetSettlementTest {
 
 		assertThat(view).isPresent();
 		assertThat(view.get().settledMicros()).isNull();
+	}
+
+	@Test
+	@DisplayName("FIN-B20: live streams renew the hold TTL instead of lapsing")
+	void liveStreamRenewsHold() {
+		BudgetEnforcer enforcer = mock(BudgetEnforcer.class);
+		when(enforcer.renewHold("hold-1", 3600L)).thenReturn(true);
+
+		assertThat(settlement(enforcer, mock(BudgetGapRepository.class)).renewHold("hold-1")).isTrue();
+		verify(enforcer).renewHold("hold-1", 3600L);
+	}
+
+	@Test
+	@DisplayName("FIN-B20: renewal failure stays safe (hold stays counted, no throw)")
+	void renewHoldFailureStaysSafe() {
+		BudgetEnforcer enforcer = mock(BudgetEnforcer.class);
+		when(enforcer.renewHold(anyString(), anyLong()))
+				.thenThrow(new RateLimitUnavailableException("down"));
+
+		assertThat(settlement(enforcer, mock(BudgetGapRepository.class)).renewHold("hold-1")).isFalse();
+	}
+
+	@Test
+	@DisplayName("FIN-B20: renewal fires only on the coarse cadence, never per chunk")
+	void renewalHonorsCoarseCadence() {
+		BudgetEnforcer enforcer = mock(BudgetEnforcer.class);
+		when(enforcer.renewHold(anyString(), anyLong())).thenReturn(true);
+		BudgetSettlement live = settlement(enforcer, mock(BudgetGapRepository.class));
+		long now = System.nanoTime();
+
+		assertThat(live.renewHoldIfDue("hold-1", now, now)).isEqualTo(now);
+		verify(enforcer, never()).renewHold(anyString(), anyLong());
+
+		long due = live.renewHoldIfDue("hold-1", now - 301_000_000_000L, now);
+		assertThat(due).isEqualTo(now);
+		verify(enforcer, times(1)).renewHold("hold-1", 3600L);
+	}
+
+	@Test
+	@DisplayName("FIN-B20: renewed holds settle actuals with no gap row")
+	void renewedHoldSettlesActualsWithNoGap() {
+		BudgetEnforcer enforcer = mock(BudgetEnforcer.class);
+		when(enforcer.renewHold(anyString(), anyLong())).thenReturn(true);
+		when(enforcer.settle(anyString(), anyString(), anyString(), any(), anyString(), anyString(),
+				anyString(), anyLong(), anyLong()))
+				.thenReturn(new BudgetEnforcer.SettleOutcome(true, BudgetEnforcer.SETTLE_OK, 4_000L, 10L, false));
+		BudgetGapRepository repository = mock(BudgetGapRepository.class);
+		BudgetSettlement live = settlement(enforcer, repository);
+
+		assertThat(live.renewHold("hold-1")).isTrue();
+		BudgetEnforcer.SettleOutcome outcome =
+				live.settleStream("hold-1", "hex", "owner-1", "2026-09", 4_000L, false);
+
+		assertThat(outcome.gapSet()).isFalse();
+		verify(repository, never()).save(any(BudgetGapRecord.class));
+	}
+
+	@Test
+	@DisplayName("FIN-B20: renewals are counted by result")
+	void renewalsCountedByResult() {
+		BudgetEnforcer enforcer = mock(BudgetEnforcer.class);
+		when(enforcer.renewHold("hold-1", 3600L)).thenReturn(true);
+		when(enforcer.renewHold("hold-gone", 3600L)).thenReturn(false);
+		BudgetSettlement live = settlement(enforcer, mock(BudgetGapRepository.class));
+		SimpleMeterRegistry registry = new SimpleMeterRegistry();
+		live.setMeterRegistry(registry);
+
+		assertThat(live.renewHold("hold-1")).isTrue();
+		assertThat(live.renewHold("hold-gone")).isFalse();
+
+		assertThat(registry.get("budget.hold.renew.total").tag("result", "renewed")
+				.counter().count()).isEqualTo(1.0);
+		assertThat(registry.get("budget.hold.renew.total").tag("result", "missing")
+				.counter().count()).isEqualTo(1.0);
 	}
 }

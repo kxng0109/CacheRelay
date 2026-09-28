@@ -122,7 +122,12 @@ public class CacheRelayCacheService {
 		try {
 			return singleFlightManager.execute(
 					key.exactHash(),
-					() -> doLookup(key, request.temperature(), start, embeddingMemo),
+					() -> doLookup(
+							key,
+							request.temperature(),
+							policyEngine.resolveSimilarityThreshold(httpRequest),
+							start,
+							embeddingMemo),
 					properties.getSingleFlightTimeout());
 		} catch (Exception ex) {
 			log.warn("Cache evaluation failed non-fatally: {}", ex.getMessage());
@@ -144,7 +149,8 @@ public class CacheRelayCacheService {
 	static final String CACHE_KEY_ATTRIBUTE = "cacherelay.cacheKey";
 
 	private CacheLookupResult doLookup(
-			CompoundCacheKey key, Double temperature, long start, Map<String, float[]> embeddingMemo) {
+			CompoundCacheKey key, Double temperature, double threshold, long start,
+			Map<String, float[]> embeddingMemo) {
 		// Tier L1: Distributed Redis exact match (1-2ms). L0 is served before the flight
 		// in evaluateCache; a race backfilling L0 concurrently simply hits L1 here.
 		CacheEntry l1Hit = l1Cache.get(key);
@@ -157,7 +163,7 @@ public class CacheRelayCacheService {
 		}
 
 		// 3. Tier L2: Distributed RediSearch Vector Similarity Search (10-25ms)
-		CacheEntry l2Hit = l2Cache.findSemanticMatch(key, temperature, embeddingMemo);
+		CacheEntry l2Hit = l2Cache.findSemanticMatch(key, temperature, embeddingMemo, threshold);
 		if (l2Hit != null) {
 			long duration = System.currentTimeMillis() - start;
 			l0Cache.put(key.exactHash(), l2Hit);

@@ -4,6 +4,7 @@ import io.github.kxng0109.cacherelay.mcp.config.McpGatewayProperties;
 import io.github.kxng0109.cacherelay.mcp.contracts.*;
 import io.github.kxng0109.cacherelay.mcp.protocol.BoundedResultBodyHandler;
 import io.github.kxng0109.cacherelay.mcp.protocol.McpHeaderNormalizer;
+import io.github.kxng0109.cacherelay.mcp.protocol.McpLogSanitizer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -81,7 +82,8 @@ public class McpCatalogAggregator {
 			McpAggregatedCatalog refreshed = refreshCatalog();
 			catalogCache.put(refreshed);
 		} catch (Exception e) {
-			log.warn("Scheduled MCP catalog refresh encountered an error: {}", e.getMessage());
+			log.warn("Scheduled MCP catalog refresh encountered an error: {}",
+					McpLogSanitizer.safe(e.getMessage()));
 		}
 	}
 
@@ -116,7 +118,8 @@ public class McpCatalogAggregator {
 				aggregatedResources.addAll(partial.resources());
 				aggregatedPrompts.addAll(partial.prompts());
 			} catch (Exception e) {
-				log.warn("Failed to retrieve catalog slice from upstream server: {}", e.getMessage());
+				log.warn("Failed to retrieve catalog slice from upstream server: {}",
+						McpLogSanitizer.safe(e.getMessage()));
 			}
 		}
 

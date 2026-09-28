@@ -80,6 +80,7 @@ class LedgerStressAndBackpressureIntegrationTest extends SharedContainersBase {
 		final CountDownLatch completionGate = new CountDownLatch(totalEvents);
 		final List<Throwable> observedErrors = Collections.synchronizedList(new ArrayList<>());
 		final AtomicInteger publishedCount = new AtomicInteger(0);
+		final List<UUID> publishedIds = Collections.synchronizedList(new ArrayList<>(totalEvents));
 
 		try (ExecutorService virtualExecutor = Executors.newVirtualThreadPerTaskExecutor()) {
 			for (int i = 0; i < totalEvents; i++) {
@@ -100,6 +101,7 @@ class LedgerStressAndBackpressureIntegrationTest extends SharedContainersBase {
 								1300, 1300, "hash" + idx
 						);
 						eventPublisher.publishEvent(event);
+						publishedIds.add(reqId);
 						publishedCount.incrementAndGet();
 					} catch (Throwable t) {
 						observedErrors.add(t);
@@ -116,10 +118,24 @@ class LedgerStressAndBackpressureIntegrationTest extends SharedContainersBase {
 			assertThat(completed).as("All events must complete publishing").isTrue();
 			assertThat(observedErrors).as("Zero publishing thread exceptions").isEmpty();
 			assertThat(publishedCount.get()).isEqualTo(totalEvents);
+			assertThat(publishedIds).hasSize(totalEvents);
 
-			// Allow async consumers to drain before context tear down
-			Thread.sleep(1500);
-			assertThat(usageLedgerRepository.count()).isGreaterThanOrEqualTo(1);
+			// FIN-B40: reconcile the exact published id set through the async
+			// pipeline (listener → queue → micro-batch → DB) instead of asserting
+			// a trivial row count. A single lost record fails this test.
+			long deadline = System.currentTimeMillis() + 60_000L;
+			List<UsageLedgerEntry> persisted;
+			do {
+				persisted = usageLedgerRepository.findByRequestIdIn(publishedIds);
+				if (persisted.size() >= totalEvents) {
+					break;
+				}
+				Thread.sleep(500L);
+			} while (System.currentTimeMillis() < deadline);
+
+			assertThat(persisted.stream().map(UsageLedgerEntry::getRequestId).toList())
+					.as("every published event persisted exactly once")
+					.containsExactlyInAnyOrderElementsOf(publishedIds);
 		}
 	}
 

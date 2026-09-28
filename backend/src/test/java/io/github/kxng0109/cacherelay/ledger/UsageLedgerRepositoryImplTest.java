@@ -181,6 +181,37 @@ class UsageLedgerRepositoryImplTest {
 	}
 
 	@Test
+	@DisplayName("ADM-B15: overflowing page offsets answer empty without querying")
+	void findEntriesOverflowOffset() {
+		CriteriaQuery<Long> countCq = mock(CriteriaQuery.class);
+		Root<UsageLedgerEntry> countRoot = mock(Root.class);
+		TypedQuery<Long> countQuery = mock(TypedQuery.class);
+
+		when(em.getCriteriaBuilder()).thenReturn(cb);
+		when(cb.createQuery(Long.class)).thenReturn(countCq);
+		when(countCq.from(UsageLedgerEntry.class)).thenReturn(countRoot);
+		when(em.createQuery(countCq)).thenReturn(countQuery);
+		when(countQuery.getSingleResult()).thenReturn(5L);
+
+		CriteriaQuery<UsageLedgerEntry> cq = mock(CriteriaQuery.class);
+		Root<UsageLedgerEntry> countContent = mock(Root.class);
+		TypedQuery<UsageLedgerEntry> dataQuery = mock(TypedQuery.class);
+		when(cb.createQuery(UsageLedgerEntry.class)).thenReturn(cq);
+		when(cq.from(UsageLedgerEntry.class)).thenReturn(countContent);
+		when(em.createQuery(cq)).thenReturn(dataQuery);
+		when(dataQuery.setFirstResult(anyInt())).thenReturn(dataQuery);
+		when(dataQuery.setMaxResults(anyInt())).thenReturn(dataQuery);
+		when(dataQuery.getResultList()).thenReturn(List.of());
+
+		LedgerFilter filter = new LedgerFilter(null, null, null, null, null);
+		Page<UsageLedgerEntry> page = repository.findEntries(filter, PageRequest.of(30_000_000, 100));
+
+		assertThat(page.getContent()).isEmpty();
+		assertThat(page.getTotalElements()).isEqualTo(5L);
+		verify(cb, never()).createQuery(UsageLedgerEntry.class);
+	}
+
+	@Test
 	@DisplayName("findEntries executes count and content queries with sort allowlist and fallback")
 	void findEntriesWithContentAndSort() {
 		CriteriaQuery<Long> countCq = mock(CriteriaQuery.class);

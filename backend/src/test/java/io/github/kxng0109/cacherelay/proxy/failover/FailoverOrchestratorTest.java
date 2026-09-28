@@ -18,16 +18,24 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpResponse;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.*;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -412,23 +420,103 @@ class FailoverOrchestratorTest {
 	}
 
 	@Test
-	@DisplayName("RACE with a slow losing leg still closes that leg quietly")
-	void raceSlowLoserClosedQuietly() throws Exception {
-		FailoverOrchestrator orchestrator = orchestrator(allowAll());
-		// A is fast and wins; B is a hanging leg that will time out after the win
+	@DisplayName("PRX-B18: the losing race leg is truly cancelled, not left running")
+	void raceLoserTrulyCancelled() throws Exception {
+		Map<String, CompletableFuture<HttpResponse<Stream<String>>>> futures = new ConcurrentHashMap<>();
+		ProviderClientAdapter tracking = new ProviderClientAdapter(httpClient, resolver(), testLineGuardFactory()) {
+			@Override
+			public CompletableFuture<HttpResponse<Stream<String>>> sendAsync(
+					ProviderConfig config, String body, String modelOverride, boolean streaming) {
+				CompletableFuture<HttpResponse<Stream<String>>> future =
+						super.sendAsync(config, body, modelOverride, streaming);
+				futures.put(config.name(), future);
+				return future;
+			}
+		};
+		GatewayProperties properties = properties();
+		FailoverOrchestrator orchestrator = new FailoverOrchestrator(
+				tracking, allowAll(), properties, new InMemoryCircuitBreakerFactory(properties));
 		serverA.enqueue(sse("data: winner\n\ndata: [DONE]"));
+		serverB.enqueue(new MockResponse().setHeadersDelay(30, TimeUnit.SECONDS));
 
 		ProviderResponse winner = join(orchestrator.execute(raceAlias("a", "b"), MODELS));
 
 		assertEquals("a", winner.providerName());
-		assertEquals(200, winner.response().statusCode());
-		// give the losing leg a moment to be cancelled and closed
-		Thread.sleep(150);
+		assertThat(serverB.takeRequest(5, TimeUnit.SECONDS)).as("loser was attempted").isNotNull();
+		CompletableFuture<HttpResponse<Stream<String>>> loser = futures.get("b");
+		assertThat(loser).as("loser future tracked").isNotNull();
+		// cancelLosers runs in the winner's callback just after raceResult
+		// completes, so join() can return first: poll for settlement. Note:
+		// the JDK returns MinimalFuture, whose cancel() aborts the exchange
+		// and completes with CancellationException without setting the
+		// cancelled bit — so the terminal outcome (not isCancelled) is the
+		// proof of a true cancel.
+		boolean settled = false;
+		long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+		while (System.nanoTime() < deadline) {
+			if (loser.isDone()) {
+				settled = true;
+				break;
+			}
+			Thread.sleep(50L);
+		}
+		assertThat(settled).as("loser future settled").isTrue();
+		assertThat(loser.exceptionNow())
+				.as("loser aborted with cancellation, never served")
+				.isInstanceOf(CancellationException.class);
 	}
 
 	// ---------------------------------------------------------------------
 	// Helpers
 	// ---------------------------------------------------------------------
+
+	@Test
+	@DisplayName("PRX-B15: provider URLs revalidate past the validation TTL")
+	void urlsRevalidatePastTtl() {
+		MutableClock clock = new MutableClock();
+		AtomicInteger validations = new AtomicInteger();
+		UpstreamUrlValidator counting = url -> {
+			validations.incrementAndGet();
+		};
+		GatewayProperties properties = properties();
+		FailoverOrchestrator orchestrator = new FailoverOrchestrator(
+				adapter(), counting, properties, new InMemoryCircuitBreakerFactory(properties),
+				null, null, clock);
+		serverA.enqueue(sse("data: hi\n\ndata: [DONE]"));
+		join(orchestrator.execute(alias("a", "b"), MODELS));
+		serverA.enqueue(sse("data: hi\n\ndata: [DONE]"));
+		join(orchestrator.execute(alias("a", "b"), MODELS));
+		assertEquals(1, validations.get(), "validation cached within TTL");
+
+		clock.advance(FailoverOrchestrator.VALIDATION_TTL.plusMinutes(1));
+		serverA.enqueue(sse("data: hi\n\ndata: [DONE]"));
+		join(orchestrator.execute(alias("a", "b"), MODELS));
+		assertEquals(2, validations.get(), "validation re-runs past TTL");
+	}
+
+	private static final class MutableClock extends Clock {
+
+		private Instant now = Instant.now();
+
+		void advance(Duration step) {
+			now = now.plus(step);
+		}
+
+		@Override
+		public ZoneId getZone() {
+			return ZoneOffset.UTC;
+		}
+
+		@Override
+		public Clock withZone(ZoneId zone) {
+			return this;
+		}
+
+		@Override
+		public Instant instant() {
+			return now;
+		}
+	}
 
 	private FailoverOrchestrator orchestrator(UpstreamUrlValidator validator) {
 		GatewayProperties properties = properties();
@@ -442,15 +530,18 @@ class FailoverOrchestratorTest {
 	}
 
 	private ProviderClientAdapter adapter() {
+		return new ProviderClientAdapter(httpClient, resolver(), testLineGuardFactory());
+	}
+
+	private ProtocolAdapterResolver resolver() {
 		ObjectMapper mapper = new ObjectMapper();
-		ProtocolAdapterResolver resolver = new ProtocolAdapterResolver(
+		return new ProtocolAdapterResolver(
 				new OpenAiPassthroughAdapter(mapper),
 				new AnthropicAdapter(mapper),
 				new GeminiAdapter(mapper),
 				new DeepSeekAdapter(mapper),
 				new OllamaAdapter(mapper)
 		);
-		return new ProviderClientAdapter(httpClient, resolver, testLineGuardFactory());
 	}
 
 	private SseLineGuardFactory testLineGuardFactory() {

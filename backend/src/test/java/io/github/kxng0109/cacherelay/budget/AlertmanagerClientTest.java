@@ -143,25 +143,27 @@ class AlertmanagerClientTest {
 	}
 
 	@Test
-	@DisplayName("blank base URL is log-only and reports sent")
+	@DisplayName("blank base URL is log-only and reports skipped, never sent")
 	void blankUrlIsLogOnly() {
 		AlertmanagerClient client = new AlertmanagerClient(
 				new BudgetDetectionProperties(true, "  ", 100));
 
 		AlertmanagerClient.PostResult result = client.post(List.of(alert()));
 
-		assertThat(result.sent()).isTrue();
+		assertThat(result.sent()).isFalse();
+		assertThat(result.skipped()).isTrue();
 	}
 
 	@Test
-	@DisplayName("null base URL is log-only and reports sent")
+	@DisplayName("null base URL is log-only and reports skipped, never sent")
 	void nullUrlIsLogOnly() {
 		AlertmanagerClient client = new AlertmanagerClient(
 				new BudgetDetectionProperties(true, null, 100));
 
 		AlertmanagerClient.PostResult result = client.post(List.of(alert()));
 
-		assertThat(result.sent()).isTrue();
+		assertThat(result.sent()).isFalse();
+		assertThat(result.skipped()).isTrue();
 	}
 
 	@Test

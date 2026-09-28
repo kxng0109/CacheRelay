@@ -19,6 +19,13 @@ import java.util.List;
 import java.util.concurrent.Semaphore;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * Integration tests for {@link RedisCircuitBreaker} against a real Redis instance (Testcontainers): the Lua state
@@ -84,7 +91,56 @@ class RedisCircuitBreakerTest extends SharedContainersBase {
 	}
 
 	@Test
-	@DisplayName("after the cooldown exactly one instance owns the HALF_OPEN probe and recovery transitions work")
+	@DisplayName("PRX-B16: the fallback mirror honors configured thresholds")
+	void mirrorHonorsConfiguredThreshold() {
+		CircuitBreakerProperties hairTrigger = new CircuitBreakerProperties(
+				Duration.ofMillis(250), 1, Duration.ofMillis(250), Duration.ofSeconds(60), 256);
+		RedisCircuitBreaker breaker = new RedisCircuitBreaker(
+				"mirror-threshold",
+				new ThrowingRedisTemplate(),
+				tryAcquireScript,
+				recordFailureScript,
+				recordSuccessScript,
+				hairTrigger,
+				InstanceId.generate().value(),
+				clock,
+				bulkhead
+		);
+
+		breaker.recordFailure();
+
+		assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+		assertThat(breaker.tryAcquire()).isFalse();
+	}
+
+	@Test
+	@DisplayName("PRX-B17: a mirror-OPEN denial skips the Redis round trip")
+	void mirrorOpenDenialSkipsRedis() {
+		StringRedisTemplate countingRedis = mock(StringRedisTemplate.class);
+		when(countingRedis.execute(any(), anyList(), any(Object[].class)))
+				.thenThrow(new RedisConnectionFailureException("redis down"));
+		RedisCircuitBreaker breaker = new RedisCircuitBreaker(
+				"fast-path",
+				countingRedis,
+				tryAcquireScript,
+				recordFailureScript,
+				recordSuccessScript,
+				props,
+				InstanceId.generate().value(),
+				clock,
+				bulkhead
+		);
+		recordFailures(breaker, 3);
+		assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+		clearInvocations(countingRedis);
+
+		assertThat(breaker.tryAcquire()).isFalse();
+
+		verify(countingRedis, never()).execute(any(), anyList(), any(Object[].class));
+	}
+
+	@Test
+	@DisplayName("after the cooldown exactly one probe is in flight and recovery transitions work")
 	void probeOwnershipIsSingleFlightAndRecoveryTransitionsWork() {
 		RedisCircuitBreaker owner = breaker("probe", InstanceId.generate().value());
 		recordFailures(owner, 3);
@@ -95,10 +151,11 @@ class RedisCircuitBreakerTest extends SharedContainersBase {
 
 		RedisCircuitBreaker other = breaker("probe", InstanceId.generate().value());
 		assertThat(other.tryAcquire()).isFalse();
-		assertThat(owner.tryAcquire()).isTrue();
+		assertThat(owner.tryAcquire()).as("live probe is single-flight, even for its owner").isFalse();
 
 		owner.recordSuccess();
 		assertThat(owner.tryAcquire()).isTrue();
+		assertThat(other.tryAcquire()).isTrue();
 
 		recordFailures(owner, 3);
 		assertThat(owner.tryAcquire()).isFalse();

@@ -67,6 +67,32 @@ class AuthConfigInviteBaseTest {
 		assertThat(new AuthConfig(configured, prodEnv)).isNotNull();
 	}
 
+	@Test
+	@DisplayName("ADM-B02: blank base fails startup outside dev/test (no Host-derived links)")
+	void beanRejectsBlankBaseOutsideDev() {
+		AuthProperties configured = new AuthProperties(null, null, null, null, null, null, null,
+				null, null, null, "test-only-jwt-secret-32-bytes-min!!", 180, new HashMap<>(), 5,
+				null, null, "   ");
+		Environment prodEnv = mock(Environment.class);
+		when(prodEnv.getActiveProfiles()).thenReturn(new String[]{"prod"});
+
+		assertThatThrownBy(() -> new AuthConfig(configured, prodEnv))
+				.isInstanceOf(IllegalStateException.class)
+				.hasMessageContaining("GATEWAY_AUTH_INVITE_BASE_URL");
+	}
+
+	@Test
+	@DisplayName("ADM-B02: blank base still boots under dev (request-derived fallback)")
+	void beanAcceptsBlankBaseInDev() {
+		AuthProperties configured = new AuthProperties(null, null, null, null, null, null, null,
+				null, null, null, "test-only-jwt-secret-32-bytes-min!!", 180, new HashMap<>(), 5,
+				null, null, null);
+		Environment devEnv = mock(Environment.class);
+		when(devEnv.getActiveProfiles()).thenReturn(new String[]{"dev"});
+
+		assertThat(new AuthConfig(configured, devEnv)).isNotNull();
+	}
+
 	private static Stream<Arguments> blanks() {
 		return Stream.of(
 				Arguments.of((String) null),

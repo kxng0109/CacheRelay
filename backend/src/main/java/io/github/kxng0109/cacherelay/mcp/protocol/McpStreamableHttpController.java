@@ -48,7 +48,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
-import java.util.LinkedHashSet;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -154,6 +153,32 @@ public class McpStreamableHttpController {
 			                     .body("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32603,\"message\":\"Unauthorized: Invalid or disabled API key\"}}");
 		}
 
+		// MCP-B11: transport-header validation (spec MUST). A blank version header
+		// is malformed (an absent one falls back to the default below); an
+		// Mcp-Name that is not a valid RFC 9110 token is rejected. Both fail
+		// with -32020 before any body parsing (no request id is known yet).
+		if (headerProtocolVersion != null && headerProtocolVersion.isBlank()) {
+			McpJsonRpcError err = McpJsonRpcError.headerMismatch(
+					"MCP-Protocol-Version header is blank");
+			return ResponseEntity.badRequest()
+			                     .body(McpJsonRpcResponse.failure(null, err).toJsonNode(objectMapper)
+			                                             .toString());
+		}
+		String rawName = httpRequest.getHeader(McpHeaderNormalizer.HEADER_MCP_NAME);
+		if (rawName != null && !rawName.isBlank()
+				&& !McpHeaderNormalizer.isValidHeaderToken(McpHeaderNormalizer.decodeHeaderValue(rawName))) {
+			McpJsonRpcError err = McpJsonRpcError.headerMismatch(
+					"Mcp-Name header is not a valid token");
+			return ResponseEntity.badRequest()
+			                     .body(McpJsonRpcResponse.failure(null, err).toJsonNode(objectMapper)
+			                                             .toString());
+		}
+		// Decoded once here so the body fallback below and the agreement check
+		// share the same sentinel-decoded value.
+		String decodedHeaderMethod = (headerMethod != null && !headerMethod.isBlank())
+				? McpHeaderNormalizer.decodeHeaderValue(headerMethod)
+				: null;
+
 		// Protocol version negotiation
 		String protocolVersion =
 				headerProtocolVersion != null ? headerProtocolVersion : properties.getDefaultProtocolVersion();
@@ -177,13 +202,37 @@ public class McpStreamableHttpController {
 			}
 			String jsonrpc = tree.path("jsonrpc").asString("2.0");
 			JsonNode id = tree.has("id") ? tree.get("id") : null;
-			String method = tree.path("method").asString(headerMethod != null ? headerMethod : "");
+			String method = tree.path("method").asString(decodedHeaderMethod != null ? decodedHeaderMethod : "");
 			JsonNode params = tree.has("params") ? tree.get("params") : null;
 			request = new McpJsonRpcRequest(jsonrpc, id, method, params);
 		} catch (Exception e) {
 			McpJsonRpcError err = McpJsonRpcError.parseError(e.getMessage());
 			return ResponseEntity.badRequest()
 			                     .body(McpJsonRpcResponse.failure(null, err).toJsonNode(objectMapper).toString());
+		}
+
+		// MCP-B11: when the Mcp-Method header is present it must agree with the
+		// body method (sentinels already decoded); a desync is a -32020.
+		if (decodedHeaderMethod != null && !decodedHeaderMethod.isBlank()
+				&& !decodedHeaderMethod.equals(request.method())) {
+			McpJsonRpcError err = McpJsonRpcError.headerMismatch(
+					"Mcp-Method header '" + decodedHeaderMethod
+							+ "' does not match body method '" + request.method() + "'");
+			return ResponseEntity.badRequest()
+			                     .body(McpJsonRpcResponse.failure(request.id(), err).toJsonNode(objectMapper)
+			                                             .toString());
+		}
+
+		// MCP-B26: JSON-RPC 2.0 ids are string, number, or null. Booleans, arrays,
+		// and objects are never valid — reject with -32600 before the id flows
+		// into responses and correlation checks.
+		if (request.id() != null && !request.id().isString()
+				&& !request.id().isNumber() && !request.id().isNull()) {
+			McpJsonRpcError err = McpJsonRpcError.invalidRequest(
+					"Request id must be a string, a number, or null");
+			return ResponseEntity.badRequest()
+			                     .body(McpJsonRpcResponse.failure(null, err).toJsonNode(objectMapper)
+			                                             .toString());
 		}
 
 		// F-05: Per-request _meta validation (MCP 2026-07-28, basic spec "Per-request protocol fields").
@@ -210,6 +259,13 @@ public class McpStreamableHttpController {
 		}
 
 		McpJsonRpcResponse response = processRequest(request, apiKey, protocolVersion);
+		if (response.isMethodNotFound()
+				&& McpProtocolVersion.V2026_07_28.equals(protocolVersion)) {
+			// MCP-B25 (verified): the 2026-07-28 transport mandates 404 + -32601 for
+			// unknown RPC methods. Legacy eras predate the rule and keep 200.
+			return ResponseEntity.status(HttpStatus.NOT_FOUND)
+			                     .body(response.toJsonNode(objectMapper).toString());
+		}
 		return ResponseEntity.ok(response.toJsonNode(objectMapper).toString());
 	}
 
@@ -240,7 +296,7 @@ public class McpStreamableHttpController {
 							.toJsonNode(objectMapper).toString());
 		}
 		if (decision instanceof RateLimitDecision.Rejected rejected) {
-			log.warn("MCP rate limit exceeded for tenant '{}'", apiKey.ownerId());
+			log.warn("MCP rate limit exceeded for tenant '{}'", McpLogSanitizer.safe(apiKey.ownerId()));
 			return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
 					.header("Retry-After", String.valueOf(rejected.retryAfterSeconds()))
 					.body(McpJsonRpcResponse.failure(request.id(),
@@ -284,8 +340,8 @@ public class McpStreamableHttpController {
 				apiKey.injectionBlock() ? "block" : "warn");
 		log.warn(
 				"MCP egress signal: indirect prompt injection markers in tool '{}' output for tenant '{}'",
-				namespacedTool,
-				apiKey.ownerId()
+				McpLogSanitizer.safe(namespacedTool),
+				McpLogSanitizer.safe(apiKey.ownerId())
 		);
 		return true;
 	}
@@ -438,6 +494,12 @@ public class McpStreamableHttpController {
 	 */
 	private ResponseEntity<String> validateRequestMeta(McpJsonRpcRequest request, String protocolVersion) {
 		boolean modern = McpProtocolVersion.V2026_07_28.equals(protocolVersion);
+		if (!modern) {
+			// MCP-B06: legacy eras (2025-11-25, 2024-11-05) carry no per-request
+			// _meta contract — it stays optional, so legacy requests pass through
+			// without _meta validation.
+			return null;
+		}
 		if (request.params() == null || !request.params().isObject()) {
 			if (!modern || request.isNotification()) {
 				return null;
@@ -507,35 +569,19 @@ public class McpStreamableHttpController {
 	/**
 	 * Determines which client capabilities are required for the given method but absent from the client-declared
 	 * {@code clientCapabilities} object.
+	 *
+	 * <p>MCP-B05: {@code tools}, {@code prompts}, and {@code resources} are <em>server</em> capabilities —
+	 * no conformant client declares them, so demanding them rejected every conformant 2026-07-28 client.
+	 * No current method requires a specific spec client-capability key ({@code elicitation}, {@code roots},
+	 * {@code sampling} are optional hints, never gates), so a well-formed declaration object — even empty —
+	 * passes. A missing or non-object declaration still fails closed: the modern era requires the client to
+	 * declare its capabilities.</p>
 	 */
 	private static Set<String> requiredMissingCapabilities(String method, JsonNode clientCapabilities) {
-		Set<String> missing = new LinkedHashSet<>();
 		if (clientCapabilities == null || !clientCapabilities.isObject()) {
-			missing.add("tools");
-			missing.add("prompts");
-			missing.add("resources");
-			return missing;
+			return Set.of("clientCapabilities");
 		}
-		switch (method) {
-			case "tools/list", "tools/call" -> {
-				if (!clientCapabilities.has("tools")) {
-					missing.add("tools");
-				}
-			}
-			case "prompts/list", "prompts/get" -> {
-				if (!clientCapabilities.has("prompts")) {
-					missing.add("prompts");
-				}
-			}
-			case "resources/list", "resources/read" -> {
-				if (!clientCapabilities.has("resources")) {
-					missing.add("resources");
-				}
-			}
-			default -> {
-			}
-		}
-		return missing;
+		return Set.of();
 	}
 
 	private McpJsonRpcResponse processRequest(McpJsonRpcRequest request, VirtualApiKey apiKey, String protocolVersion) {
@@ -561,7 +607,7 @@ public class McpStreamableHttpController {
 			log.debug("Client signaled initialized notification");
 		} else if ("notifications/tools/list_changed".equals(method)) {
 			log.info("Catalog changed notification received. Invalidating cache.");
-			catalogAggregator.getAggregatedCatalog();
+			catalogAggregator.invalidateCatalog();
 		}
 	}
 
@@ -660,8 +706,8 @@ public class McpStreamableHttpController {
 		if (!rbacPolicyEngine.isToolAllowed(route.namespacedName(), apiKey)) {
 			log.warn(
 					"MCP RBAC violation: tenant '{}' denied access to tool '{}'",
-					apiKey.ownerId(),
-					route.namespacedName()
+					McpLogSanitizer.safe(apiKey.ownerId()),
+					McpLogSanitizer.safe(route.namespacedName())
 			);
 			return McpJsonRpcResponse.failure(
 					request.id(),
@@ -696,8 +742,8 @@ public class McpStreamableHttpController {
 		try {
 			secretScan = guardrailScanner.scanArguments(args);
 		} catch (GuardrailScanException failed) {
-			log.warn("MCP guardrail scan failed closed for '{}': {}", route.namespacedName(),
-					failed.getMessage());
+			log.warn("MCP guardrail scan failed closed for '{}': {}", McpLogSanitizer.safe(route.namespacedName()),
+					McpLogSanitizer.safe(failed.getMessage()));
 			return McpJsonRpcResponse.failure(
 					request.id(),
 					McpJsonRpcError.internalError("Guardrail evaluation failed")
@@ -706,8 +752,8 @@ public class McpStreamableHttpController {
 		if (secretScan.detected()) {
 			log.warn(
 					"MCP Guardrail violation: leaked secret ({}) in tool arguments for '{}'",
-					secretScan.ruleId(),
-					route.namespacedName()
+					McpLogSanitizer.safe(secretScan.ruleId()),
+					McpLogSanitizer.safe(route.namespacedName())
 			);
 			return McpJsonRpcResponse.failure(
 					request.id(),
@@ -754,15 +800,24 @@ public class McpStreamableHttpController {
 			if (args != null && !args.isMissingNode()) {
 				upstreamParams.set("arguments", args);
 			}
-			if (params.has("_meta")) {
-				upstreamParams.set("_meta", params.get("_meta"));
+			// MCP-B20: the gateway is itself an MCP client upstream, so it declares its
+			// own era. The client _meta is never forwarded verbatim (its capabilities
+			// are the downstream client's, not ours); long-lived fields such as a
+			// progress token survive, but the version is always the gateway's.
+			ObjectNode upstreamMeta;
+			if (params.has("_meta") && params.path("_meta").isObject()) {
+				upstreamMeta = (ObjectNode) params.path("_meta").deepCopy();
+			} else {
+				upstreamMeta = objectMapper.createObjectNode();
 			}
+			upstreamMeta.put("io.modelcontextprotocol/protocolVersion", McpProtocolVersion.LATEST);
+			upstreamParams.set("_meta", upstreamMeta);
 
 			HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
 			                                            .uri(server.baseUrl())
 			                                            .timeout(server.requestTimeout())
 			                                            .header("Content-Type", "application/json")
-			                                            .header("Accept", "application/json")
+			                                            .header("Accept", "application/json, text/event-stream")
 			                                            .header(
 					                                            McpHeaderNormalizer.HEADER_PROTOCOL_VERSION,
 					                                            McpProtocolVersion.LATEST
@@ -787,6 +842,19 @@ public class McpStreamableHttpController {
 			if (upstreamResponse.statusCode() >= 200 && upstreamResponse.statusCode() < 300) {
 				circuitBreakerManager.recordSuccess(server.name());
 				JsonNode respNode = objectMapper.readTree(upstreamResponse.body());
+
+				// MCP-B34: correlate before trusting anything in the payload — a
+				// response whose id does not echo the request (or that is not
+				// JSON-RPC 2.0) is discarded fail-closed, never relayed.
+				if (!isCorrelatedResponse(respNode, upstreamRpc.get("id"))) {
+					circuitBreakerManager.recordFailure(server.name());
+					log.warn("Discarding uncorrelated response from MCP server '{}'",
+							McpLogSanitizer.safe(server.name()));
+					return McpJsonRpcResponse.failure(
+							request.id(),
+							McpJsonRpcError.internalError("Upstream response did not correlate to the request")
+					);
+				}
 
 				// Egress Sanitization & Nonced Tag Wrapping: every text-carrying shape
 				// is screened (plain text, embedded resource text, structured content);
@@ -853,11 +921,21 @@ public class McpStreamableHttpController {
 					return McpJsonRpcResponse.success(request.id(), resultNode);
 				} else if (respNode.has("error")) {
 					JsonNode errNode = respNode.get("error");
+					int upstreamCode = errNode.path("code").asInt(McpJsonRpcError.INTERNAL_ERROR);
+					if (McpJsonRpcError.isForwardableUpstreamCode(upstreamCode)) {
+						return McpJsonRpcResponse.failure(
+								request.id(),
+								upstreamCode,
+								errNode.path("message").asString("Upstream error"),
+								errNode.path("data")
+						);
+					}
+					// MCP-B27: reserved/unknown codes never reach the client verbatim.
+					log.warn("MCP server '{}' returned reserved error code {}; remapped",
+							McpLogSanitizer.safe(server.name()), upstreamCode);
 					return McpJsonRpcResponse.failure(
 							request.id(),
-							errNode.path("code").asInt(-32000),
-							errNode.path("message").asString("Upstream error"),
-							errNode.path("data")
+							McpJsonRpcError.internalError("Upstream error")
 					);
 				}
 			}
@@ -869,21 +947,37 @@ public class McpStreamableHttpController {
 			);
 		} catch (Exception e) {
 			circuitBreakerManager.recordFailure(server.name());
+			// MCP-B19: exception text stays in the server log tied to a correlation id;
+			// the client sees only the generic message plus the id.
+			String failureId = UUID.randomUUID().toString();
 			log.error(
-					"Failed executing tool '{}' against server '{}': {}",
-					route.namespacedName(),
-					server.name(),
-					e.getMessage()
+					"Failed executing tool '{}' against server '{}' [{}]: {}",
+					McpLogSanitizer.safe(route.namespacedName()),
+					McpLogSanitizer.safe(server.name()),
+					failureId,
+					McpLogSanitizer.safe(e.getMessage())
 			);
 			return McpJsonRpcResponse.failure(
 					request.id(),
-					McpJsonRpcError.internalError("Tool execution failed: " + e.getMessage())
+					McpJsonRpcError.internalError("Tool execution failed", failureId, objectMapper)
 			);
 		}
 	}
 
-	private @Nullable VirtualApiKey resolveApiKey(HttpServletRequest request) {
-		Object attr = request.getAttribute("virtualApiKey");
+	/**
+	 * Checks an upstream response against the sent request id (MCP-B34).
+	 *
+	 * @param respNode upstream response root
+	 * @param sentId   id the gateway sent (never {@code null}: always set or synthesized)
+	 * @return true when the response is JSON-RPC 2.0 and echoes the request id
+	 */
+	private static boolean isCorrelatedResponse(JsonNode respNode, JsonNode sentId) {
+		return "2.0".equals(respNode.path("jsonrpc").asString(null))
+				&& respNode.has("id")
+				&& respNode.get("id").equals(sentId);
+	}
+
+	private @Nullable VirtualApiKey resolveApiKey(HttpServletRequest request) {		Object attr = request.getAttribute("virtualApiKey");
 		if (attr instanceof VirtualApiKey key) {
 			return key;
 		}

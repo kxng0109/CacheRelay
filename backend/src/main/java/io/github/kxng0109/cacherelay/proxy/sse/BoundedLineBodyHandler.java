@@ -8,13 +8,16 @@ import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.Spliterator;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Flow;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
@@ -43,21 +46,43 @@ import java.util.stream.StreamSupport;
 public final class BoundedLineBodyHandler
 		implements HttpResponse.BodyHandler<Stream<String>> {
 
+	/**
+	 * Idle default when the caller supplies none: long enough for slow
+	 * reasoning streams, bounded against hung connections.
+	 */
+	public static final Duration DEFAULT_UPSTREAM_IDLE_TIMEOUT = Duration.ofMinutes(5);
+
 	private final int maxLineBytes;
 	private final Charset charset;
+	private final long idleTimeoutNanos;
 
 	/**
-	 * Creates a new bounded line body handler.
+	 * Creates a new bounded line body handler with the default upstream idle timeout.
 	 *
 	 * @param maxLineBytes maximum line length in bytes (must be positive)
 	 * @param charset      the character set to use for decoding (typically UTF-8)
 	 */
 	public BoundedLineBodyHandler(int maxLineBytes, Charset charset) {
+		this(maxLineBytes, charset, DEFAULT_UPSTREAM_IDLE_TIMEOUT);
+	}
+
+	/**
+	 * Creates a new bounded line body handler.
+	 *
+	 * @param maxLineBytes        maximum line length in bytes (must be positive)
+	 * @param charset             the character set to use for decoding (typically UTF-8)
+	 * @param upstreamIdleTimeout no-bytes ceiling before the consumer aborts (must be positive)
+	 */
+	public BoundedLineBodyHandler(int maxLineBytes, Charset charset, Duration upstreamIdleTimeout) {
 		if (maxLineBytes <= 0) {
 			throw new IllegalArgumentException("maxLineBytes must be positive");
 		}
+		if (upstreamIdleTimeout == null || upstreamIdleTimeout.isZero() || upstreamIdleTimeout.isNegative()) {
+			throw new IllegalArgumentException("upstreamIdleTimeout must be positive");
+		}
 		this.maxLineBytes = maxLineBytes;
 		this.charset = charset == null ? StandardCharsets.UTF_8 : charset;
+		this.idleTimeoutNanos = upstreamIdleTimeout.toNanos();
 	}
 
 	/**
@@ -69,7 +94,7 @@ public final class BoundedLineBodyHandler
 
 	@Override
 	public HttpResponse.BodySubscriber<Stream<String>> apply(HttpResponse.ResponseInfo responseInfo) {
-		return new BoundedLineSubscriber(maxLineBytes, charset);
+		return new BoundedLineSubscriber(maxLineBytes, charset, idleTimeoutNanos);
 	}
 
 	/**
@@ -105,8 +130,25 @@ public final class BoundedLineBodyHandler
 		private int lineLen;
 		private boolean pendingCr;
 
-		BoundedLineSubscriber(int maxLineBytes, Charset charset) {
+		/**
+		 * Wake granularity for idle checks: short enough to fire promptly,
+		 * long enough not to spin. The deadline always recomputes from the
+		 * producer timestamp, so slow consumers never trip it spuriously.
+		 */
+		private static final long IDLE_POLL_GRANULARITY_NANOS = TimeUnit.SECONDS.toNanos(1);
+
+		private final long idleTimeoutNanos;
+
+		/**
+		 * Producer-side timestamp of the latest received bytes. The consumer
+		 * measures idleness against this (not its own pace), so a slow
+		 * downstream never mistakes its own lag for an upstream stall.
+		 */
+		private final AtomicLong lastReceiveNanos = new AtomicLong(System.nanoTime());
+
+		BoundedLineSubscriber(int maxLineBytes, Charset charset, long idleTimeoutNanos) {
 			this.maxLineBytes = maxLineBytes;
+			this.idleTimeoutNanos = idleTimeoutNanos;
 			this.lineBuffer = new byte[maxLineBytes + 4];
 			this.lineLen = 0;
 			this.stream = StreamSupport.stream(new LineSpliterator(), false)
@@ -126,11 +168,13 @@ public final class BoundedLineBodyHandler
 				return;
 			}
 			subscription.set(s);
+			lastReceiveNanos.set(System.nanoTime());
 			s.request(1);
 		}
 
 		@Override
 		public void onNext(List<ByteBuffer> items) {
+			lastReceiveNanos.set(System.nanoTime());
 			try {
 				for (ByteBuffer item : items) {
 					processBytes(item);
@@ -220,6 +264,19 @@ public final class BoundedLineBodyHandler
 			terminate(t, false);
 		}
 
+		/**
+		 * Aborts a stalled upstream (PRX-B12): no bytes arrived within the
+		 * idle bound, so the subscription is cancelled (RST_STREAM on
+		 * HTTP/2) and the consumer fails with an idle {@code IOException}
+		 * that the relay loop reports as an upstream fault.
+		 */
+		private void signalIdleTimeout(long idleNanos) {
+			terminate(
+					new IOException("Upstream idle timeout: no bytes for "
+							+ TimeUnit.NANOSECONDS.toMillis(idleNanos) + " ms"),
+					true);
+		}
+
 		private void cancelUpstream() {
 			terminate(null, true);
 		}
@@ -258,15 +315,25 @@ public final class BoundedLineBodyHandler
 							rethrowIfFailed();
 							return false;
 						}
-						// Otherwise block for the next item (JDK HttpResponseInputStream
-						// sentinel pattern): the producer is paced by demand and the queue is
-						// bounded, so blocking here cannot accumulate memory and cannot hang
-						// while the producer is alive.
+						// PRX-B12 idle watchdog: wait in short slices, always
+						// re-measuring against the producer timestamp so slow
+						// consumption never counts as an upstream stall.
+						long idleNanos = System.nanoTime() - lastReceiveNanos.get();
+						long remaining = idleTimeoutNanos - idleNanos;
+						if (remaining <= 0) {
+							signalIdleTimeout(idleNanos);
+							rethrowIfFailed();
+							return false;
+						}
 						try {
-							item = queue.take();
+							item = queue.poll(Math.min(remaining, IDLE_POLL_GRANULARITY_NANOS),
+									TimeUnit.NANOSECONDS);
 						} catch (InterruptedException ex) {
 							Thread.currentThread().interrupt();
 							throw new RuntimeException(ex);
+						}
+						if (item == null) {
+							continue;
 						}
 					}
 					if (item == TERMINAL) {

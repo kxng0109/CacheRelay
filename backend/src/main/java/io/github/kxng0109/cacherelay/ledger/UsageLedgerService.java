@@ -13,6 +13,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -81,12 +82,12 @@ public class UsageLedgerService {
 	 * @return aggregated summary response
 	 */
 	public LedgerSummaryResponse getSummary(LedgerFilter filter) {
-		validateFilter(filter);
+		LedgerFilter effective = effectiveFilter(filter);
 
-		UsageTotals totals = repository.getTotals(filter);
-		List<OwnerUsageRecord> ownerRecords = repository.getBreakdownByOwner(filter);
-		List<ModelUsageRecord> modelRecords = repository.getBreakdownByModel(filter);
-		List<ProviderUsageRecord> providerRecords = repository.getBreakdownByProvider(filter);
+		UsageTotals totals = repository.getTotals(effective);
+		List<OwnerUsageRecord> ownerRecords = repository.getBreakdownByOwner(effective);
+		List<ModelUsageRecord> modelRecords = repository.getBreakdownByModel(effective);
+		List<ProviderUsageRecord> providerRecords = repository.getBreakdownByProvider(effective);
 
 		List<OwnerUsageSummary> ownerSummaries = ownerRecords.stream()
 		                                                     .map(r -> new OwnerUsageSummary(
@@ -150,10 +151,10 @@ public class UsageLedgerService {
 	 * @return paginated entries envelope
 	 */
 	public PageResponse<LedgerEntryResponse> getEntries(LedgerFilter filter, Pageable pageable) {
-		validateFilter(filter);
+		LedgerFilter effective = effectiveFilter(filter);
 		Pageable clampedPageable = clampPageable(pageable);
 
-		Page<UsageLedgerEntry> page = repository.findEntries(filter, clampedPageable);
+		Page<UsageLedgerEntry> page = repository.findEntries(effective, clampedPageable);
 		List<LedgerEntryResponse> content = page.getContent().stream()
 		                                        .map(this::toEntryResponse)
 		                                        .toList();
@@ -188,19 +189,35 @@ public class UsageLedgerService {
 		return BigDecimal.valueOf(costUsdMicros, 6);
 	}
 
-	private void validateFilter(LedgerFilter filter) {
-		if (filter.from() != null && filter.to() != null) {
-			if (filter.from().isAfter(filter.to())) {
-				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Parameter 'from' cannot be after 'to'");
-			}
-			Duration duration = Duration.between(filter.from(), filter.to());
-			if (duration.compareTo(maxQueryWindow) > 0) {
-				throw new ResponseStatusException(
-						HttpStatus.BAD_REQUEST,
-						"Query window exceeds maximum allowed limit of " + maxQueryWindow.toDays() + " days"
-				);
-			}
+	/**
+	 * Validates the time window and defaults any missing bound (ADM-B03): an admin
+	 * query must never aggregate the unbounded full ledger. A missing {@code to}
+	 * defaults to now; a missing {@code from} defaults to {@code to} minus the
+	 * maximum window; the resulting window is always enforced, and a {@code from}
+	 * in the future is rejected.
+	 *
+	 * @param filter raw query filter
+	 * @return filter with both bounds populated inside the maximum window
+	 */
+	private LedgerFilter effectiveFilter(LedgerFilter filter) {
+		Instant now = Instant.now();
+		Instant to = filter.to() != null ? filter.to() : now;
+		Instant from = filter.from() != null ? filter.from() : to.minus(maxQueryWindow);
+		if (from.isAfter(now)) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+					"Parameter 'from' cannot be in the future");
 		}
+		if (from.isAfter(to)) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Parameter 'from' cannot be after 'to'");
+		}
+		Duration duration = Duration.between(from, to);
+		if (duration.compareTo(maxQueryWindow) > 0) {
+			throw new ResponseStatusException(
+					HttpStatus.BAD_REQUEST,
+					"Query window exceeds maximum allowed limit of " + maxQueryWindow.toDays() + " days"
+			);
+		}
+		return new LedgerFilter(filter.ownerId(), filter.provider(), filter.model(), from, to);
 	}
 
 	private Pageable clampPageable(Pageable pageable) {

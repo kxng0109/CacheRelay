@@ -8,11 +8,13 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -89,7 +91,7 @@ class AdminKeyOwnershipTest {
 	}
 
 	@Test
-	@DisplayName("patch with an owner reassigns instead of updating fields")
+	@DisplayName("ADM-B04: patch with an owner applies atomically via patchKey")
 	void patchOwnerReassigns() {
 		VirtualApiKey key = owned(true, false);
 		UUID other = UUID.randomUUID();
@@ -98,12 +100,10 @@ class AdminKeyOwnershipTest {
 				Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(),
 				Set.of(), Set.of(), true, true, Instant.now(),
 				Set.of(), Set.of(), Set.of(), other, false);
-		when(service.assignOwner(eq(key.keyHash()), eq(other))).thenReturn(Optional.of(moved));
+		when(service.patchKey(eq(key.keyHash()), eq(other), any(), any(), any(), any(), any(),
+				any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(Optional.of(moved));
 		when(service.usernameOf(other)).thenReturn("other");
-		when(service.updateKey(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
-				any(), any(), any(), any(), any(), any(), any())).thenReturn(Optional.of(moved));
-		when(service.updateKey(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
-				any(), any(), any(), any(), any(), any(), any())).thenReturn(Optional.of(moved));
 
 		UpdateKeyRequest patch = new UpdateKeyRequest(
 				null, null, null, null, null, null, null, null, null, null,
@@ -114,9 +114,12 @@ class AdminKeyOwnershipTest {
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(response.getBody()).isNotNull();
 		assertThat(response.getBody().ownerUserId()).isEqualTo(other);
-		verify(service).assignOwner(eq(key.keyHash()), eq(other));
-		verify(service).updateKey(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
-				any(), any(), any(), any(), any(), any(), any());
+		verify(service, times(1)).patchKey(eq(key.keyHash()), eq(other), any(), any(), any(),
+				any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+				any(), any());
+		verify(service, never()).assignOwner(any(), any());
+		verify(service, never()).updateKey(any(), any(), any(), any(), any(), any(), any(),
+				any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
 	}
 
 	@Test
@@ -155,7 +158,7 @@ class AdminKeyOwnershipTest {
 	void readsCarryAttribution() {
 		VirtualApiKey key = owned(true, false);
 		when(service.listKeys(null)).thenReturn(List.of(key));
-		when(service.usernameOf(ownerId)).thenReturn("local");
+		when(service.usernamesOf(Set.of(ownerId))).thenReturn(Map.of(ownerId, "local"));
 
 		ResponseEntity<List<KeyResponse>> response = controller.listKeys(null);
 

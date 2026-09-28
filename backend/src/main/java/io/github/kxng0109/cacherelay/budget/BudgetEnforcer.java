@@ -180,8 +180,10 @@ public class BudgetEnforcer {
 		};
 	}
 
+	static final String CFG_KEY_PREFIX = "budget:" + SLOT_TAG + ":cfg:";
+
 	static String cfgKey(String level, String subject) {
-		return "budget:" + SLOT_TAG + ":cfg:" + level + ":" + subject;
+		return CFG_KEY_PREFIX + level + ":" + subject;
 	}
 
 	/**
@@ -289,6 +291,10 @@ public class BudgetEnforcer {
 		return Math.max(1L, end.toEpochSecond() - now.toEpochSecond());
 	}
 
+	private record ScriptVerdict(long allowed, long rejected, long remainingMicros, long resetSeconds,
+	                             long configured, String month) {
+	}
+
 	private static List<Long> assertFive(@Nullable List<?> result) {
 		if (result == null || result.size() != 5) {
 			throw new RateLimitUnavailableException("Budget script returned an unexpected shape");
@@ -310,6 +316,36 @@ public class BudgetEnforcer {
 			}
 		}
 		return checked;
+	}
+
+	private static ScriptVerdict assertVerdict(@Nullable List<?> result) {
+		if (result == null || result.size() != 6) {
+			throw new RateLimitUnavailableException("Budget script returned an unexpected shape");
+		}
+		List<Long> checked = new ArrayList<>(5);
+		for (int i = 0; i < 5; i++) {
+			Object value = result.get(i);
+			// StringRedisTemplate deserializes Lua integers as Strings on some paths;
+			// accept both wire forms, fail closed on anything else.
+			if (value instanceof Number number) {
+				checked.add(number.longValue());
+			} else if (value instanceof String text) {
+				try {
+					checked.add(Long.parseLong(text.trim()));
+				} catch (NumberFormatException malformed) {
+					throw new RateLimitUnavailableException("Budget script returned a non-numeric value");
+				}
+			} else {
+				throw new RateLimitUnavailableException("Budget script returned an unexpected value");
+			}
+		}
+		Object monthValue = result.get(5);
+		String month = monthValue == null ? "" : String.valueOf(monthValue).trim();
+		if (month.isEmpty()) {
+			throw new RateLimitUnavailableException("Budget script returned an unexpected value");
+		}
+		return new ScriptVerdict(
+				checked.get(0), checked.get(1), checked.get(2), checked.get(3), checked.get(4), month);
 	}
 
 	/**
@@ -343,9 +379,7 @@ public class BudgetEnforcer {
 			return new BudgetDecision.Allowed(-1L, 0L);
 		}
 		long estimatedMicros = estimateCostMicros(type, model, estimatedTokens);
-		Instant now = Instant.now();
-		return decide(hex, ownerId, estimatedMicros, idempotencyKey, bodyHashHex,
-				now.toEpochMilli() / 60_000L, YearMonth.from(now.atZone(ZoneOffset.UTC)).toString());
+		return decide(hex, ownerId, estimatedMicros, idempotencyKey, bodyHashHex).decision();
 	}
 
 	/**
@@ -380,51 +414,46 @@ public class BudgetEnforcer {
 					YearMonth.from(now.atZone(ZoneOffset.UTC)).toString());
 		}
 		long holdMicros = holdCostMicros(type, model, promptTokens, maxTokens);
-		Instant now = Instant.now();
-		String month = YearMonth.from(now.atZone(ZoneOffset.UTC)).toString();
-		BudgetDecision decision = decide(hex, ownerId, holdMicros, idempotencyKey, bodyHashHex,
-				now.toEpochMilli() / 60_000L, month);
-		return new HoldAuthorization(decision, holdMicros, month);
+		DecidedBudget decided = decide(hex, ownerId, holdMicros, idempotencyKey, bodyHashHex);
+		return new HoldAuthorization(decided.decision(), holdMicros, decided.month());
 	}
 
-	private BudgetDecision decide(String hex, @Nullable String ownerId, long micros,
-	                              @Nullable String idempotencyKey, @Nullable String bodyHashHex,
-	                              long epochMinute, String month) {
+	private record DecidedBudget(BudgetDecision decision, String month) {
+	}
+
+	private DecidedBudget decide(String hex, @Nullable String ownerId, long micros,
+	                             @Nullable String idempotencyKey, @Nullable String bodyHashHex) {
 		String team = ownerId == null || ownerId.isBlank() ? "" : ownerId;
 		List<String> keys = List.of(
-				minuteKey("KEY", hex, epochMinute),
-				team.isEmpty() ? "" : minuteKey("TEAM", team, epochMinute),
-				minuteKey("ORG", GLOBAL_ORG, epochMinute),
-				monthKey("KEY", hex, month),
-				team.isEmpty() ? "" : monthKey("TEAM", team, month),
-				monthKey("ORG", GLOBAL_ORG, month),
 				cfgKey("KEY", hex),
 				team.isEmpty() ? "" : cfgKey("TEAM", team),
 				cfgKey("ORG", GLOBAL_ORG)
 		);
-		List<Long> result;
+		ScriptVerdict verdict;
 		try {
-			result = assertFive(redisTemplate.execute(
+			verdict = assertVerdict(redisTemplate.execute(
 					budgetScript, keys, Long.toString(micros),
-					idempotencyKey == null ? "" : dedupeClaimId(ownerId, hex, bodyHashHex, idempotencyKey)));
+					idempotencyKey == null ? "" : dedupeClaimId(ownerId, hex, bodyHashHex, idempotencyKey),
+					hex, team, GLOBAL_ORG, SLOT_TAG));
 		} catch (RuntimeException ex) {
 			throw new RateLimitUnavailableException("Budget service unavailable", ex);
 		}
-		long allowed = result.get(0);
-		long rejected = result.get(1);
-		long remaining = result.get(2);
-		long reset = result.get(3);
-		long configured = result.get(4);
+		long allowed = verdict.allowed();
+		long rejected = verdict.rejected();
+		long remaining = verdict.remainingMicros();
+		long reset = verdict.resetSeconds();
+		long configured = verdict.configured();
 		budgetedKeys.put(hex, configured > 0);
 		if (allowed == 1L) {
 			recordDecision("allowed", "none");
-			return new BudgetDecision.Allowed(remaining, reset);
+			return new DecidedBudget(new BudgetDecision.Allowed(remaining, reset), verdict.month());
 		}
 		String level = rejected <= 2 ? "KEY" : rejected <= 4 ? "TEAM" : "ORG";
 		String window = rejected % 2 == 1 ? "MINUTE" : "MONTH";
 		long retryAfter = rejected % 2 == 1 ? Math.max(1L, reset) : secondsToMonthEnd();
 		recordDecision("denied", level);
-		return new BudgetDecision.Denied(level, window, retryAfter);
+		return new DecidedBudget(
+				new BudgetDecision.Denied(level, window, retryAfter), verdict.month());
 	}
 
 	/**
@@ -502,6 +531,33 @@ public class BudgetEnforcer {
 			return result.get(0) == 1L;
 		} catch (RuntimeException ex) {
 			throw new RateLimitUnavailableException("Budget hold unavailable", ex);
+		}
+	}
+
+	/**
+	 * Renews a live hold's record TTL and expiry-index score (FIN-B20): a
+	 * stream longer than the hold TTL would otherwise lapse mid-flight and
+	 * settle as a gap instead of trueing up to actuals. Plain commands, not
+	 * Lua: the worst case of a torn renewal is the pre-existing gap path,
+	 * never a money move.
+	 *
+	 * @param holdId     hold id from creation
+	 * @param ttlSeconds hold-record TTL, positive
+	 * @return {@code true} when the hold still exists and was renewed,
+	 * {@code false} when the record is already gone (settle will gap)
+	 * @throws RateLimitUnavailableException when Redis is unreachable
+	 */
+	public boolean renewHold(String holdId, long ttlSeconds) {
+		String key = holdKey(holdId);
+		try {
+			if (!Boolean.TRUE.equals(redisTemplate.expire(key, Duration.ofSeconds(ttlSeconds)))) {
+				return false;
+			}
+			redisTemplate.opsForZSet().add(holdExpiryKey(), key,
+					Instant.now().getEpochSecond() + ttlSeconds);
+			return true;
+		} catch (RuntimeException ex) {
+			throw new RateLimitUnavailableException("Budget hold renewal unavailable", ex);
 		}
 	}
 

@@ -25,6 +25,41 @@ class FinOpsPromptCacheCalculatorTest {
 	}
 
 	@Test
+	@DisplayName("FIN-B29: billed cost always agrees with the ledger calculator")
+	void billedAgreesWithLedgerCalculator() {
+		ModelPricingEntry entry = new ModelPricingEntry(
+				"claude-sonnet-5",
+				"anthropic",
+				"chat",
+				new BigDecimal("0.000002"),
+				new BigDecimal("0.000010")
+		);
+		when(catalog.lookup(ProviderType.ANTHROPIC, "claude-sonnet-5")).thenReturn(Optional.of(entry));
+		CostCalculator ledger = new CostCalculator(catalog);
+
+		FinOpsPromptCacheCalculator.FinOpsCostBreakdown breakdown = calculator.calculateBreakdown(
+				ProviderType.ANTHROPIC, "claude-sonnet-5", 1000, 500, 200, 500, 300);
+
+		assertThat(breakdown.billedCostMicros()).isEqualTo(
+				ledger.calculate(ProviderType.ANTHROPIC, "claude-sonnet-5", 1000, 500, 200, 500, 300));
+	}
+
+	@Test
+	@DisplayName("FIN-B09: negative token counts clamp to zero instead of crediting")
+	void negativeTokensClampToZero() {
+		ModelPricingEntry entry = new ModelPricingEntry(
+				"m", "openai", "chat",
+				new BigDecimal("0.000004"), new BigDecimal("0.00002"));
+		when(catalog.lookup(ProviderType.OPENAI, "m")).thenReturn(Optional.of(entry));
+
+		FinOpsPromptCacheCalculator.FinOpsCostBreakdown breakdown = calculator.calculateBreakdown(
+				ProviderType.OPENAI, "m", -100, -50, -10, -5, -5);
+
+		assertThat(breakdown.billedCostMicros()).isZero();
+		assertThat(breakdown.listCostMicros()).isZero();
+	}
+
+	@Test
 	@DisplayName("Anthropic caching applies 1.25x write surcharge and 0.10x read discount")
 	void shouldCalculateAnthropicPromptCachingAccurately() {
 		// Model: input = $0.000002 / token, output = $0.000010 / token

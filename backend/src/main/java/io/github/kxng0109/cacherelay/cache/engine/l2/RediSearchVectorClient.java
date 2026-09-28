@@ -63,6 +63,10 @@ public class RediSearchVectorClient {
 	/**
 	 * Escapes special punctuation characters reserved by the RediSearch query parser.
 	 *
+	 * <p>The backslash is escaped first (ADM-B13): it is itself the RediSearch escape
+	 * character, so a raw {@code \} would capture the following character and break
+	 * out of the tag. Escaping it before the rest avoids double-escaping.</p>
+	 *
 	 * @param tag raw tag string
 	 * @return escaped tag safe for inclusion in {@code @field:{tag}}
 	 */
@@ -70,7 +74,8 @@ public class RediSearchVectorClient {
 		if (tag == null || tag.isEmpty()) {
 			return "";
 		}
-		return tag.replaceAll("([,.<>\\{\\}\\[\\]\"':;!@#$%^&*()\\-+=\\~|/])", "\\\\$1");
+		String escaped = tag.replace("\\", "\\\\");
+		return escaped.replaceAll("([,.<>\\{\\}\\[\\]\"':;!@#$%^&*()\\-+=\\~|/])", "\\\\$1");
 	}
 
 	/**

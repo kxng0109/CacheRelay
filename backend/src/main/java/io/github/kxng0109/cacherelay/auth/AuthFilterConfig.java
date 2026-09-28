@@ -45,12 +45,13 @@ public class AuthFilterConfig {
 	/**
 	 * Registers the per-response CSP nonce filter ahead of the security chain.
 	 *
+	 * @param csp configured CSP surface, including extra {@code connect-src} origins
 	 * @return the filter registration
 	 */
 	@Bean
-	FilterRegistrationBean<CspNonceFilter> cspNonceFilterRegistration() {
+	FilterRegistrationBean<CspNonceFilter> cspNonceFilterRegistration(CspProperties csp) {
 		FilterRegistrationBean<CspNonceFilter> registration = new FilterRegistrationBean<>(
-				new CspNonceFilter()
+				new CspNonceFilter(csp.getExtraConnectSrc())
 		);
 		registration.setOrder(0);
 		registration.addUrlPatterns("/*");

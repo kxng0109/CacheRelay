@@ -7,6 +7,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -14,8 +15,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Unit tests for {@link AdaptiveSseFlushStrategy}: the dual-trigger thresholds, the shared timer scan, the flush rate
- * limiter, the buffer cap, backpressure detection, the write watchdog, configuration hot reload, and the connection
- * ceiling. Time-dependent behavior is driven with a frozen {@link MutableNanoSource} except where real time is the
+ * limiter, the buffer cap, backpressure detection, the write watchdog, configuration hot reload, and the connection * ceiling. Time-dependent behavior is driven with a frozen {@link MutableNanoSource} except where real time is the
  * point of the test (slow flush, watchdog).
  */
 @DisplayName("AdaptiveSseFlushStrategy")
@@ -277,7 +277,7 @@ class AdaptiveSseFlushStrategyTest {
 	}
 
 	@Test
-	@DisplayName("a flush blocked beyond the watchdog timeout is aborted by the watchdog")
+	@DisplayName("a flush blocked beyond the watchdog timeout is aborted, owner closes")
 	void watchdogAbortsBlockedFlush() throws Exception {
 		strategy = new AdaptiveSseFlushStrategy(
 				new SseFlushProperties(1, 10, 500, 65_536, 1_000, true),
@@ -301,7 +301,51 @@ class AdaptiveSseFlushStrategyTest {
 		assertFalse(writer.isAlive(), "the blocked onWrite must return once the watchdog closes the stream");
 		assertNull(failure.get(), "onWrite must not throw, it must report the abort as its result");
 		assertTrue(Boolean.TRUE.equals(aborted.get()), "the watchdog abort must surface as a backpressure flag");
-		assertTrue(out.isClosed(), "the watchdog must close the stuck stream");
+		assertTrue(out.isClosed(), "the owner must close the stuck stream");
+	}
+
+	@Test
+	@DisplayName("PRX-B06: only the owning writer thread closes the stream, never the watchdog")
+	void onlyOwnerClosesStream() throws Exception {
+		strategy = new AdaptiveSseFlushStrategy(
+				new SseFlushProperties(1, 10, 500, 65_536, 1_000, true),
+				registry, System::nanoTime, 0, 100, 100
+		);
+		ThreadNamingStream out = new ThreadNamingStream();
+		strategy.register(out);
+
+		AtomicReference<Boolean> aborted = new AtomicReference<>();
+		AtomicReference<Throwable> failure = new AtomicReference<>();
+		Thread writer = Thread.ofVirtual().name("test-writer").start(() -> {
+			try {
+				aborted.set(strategy.onWrite(out, 10));
+			} catch (Throwable ex) {
+				failure.set(ex);
+			}
+		});
+
+		out.awaitFlushStarted();
+		writer.join(2_000);
+		assertFalse(writer.isAlive(), "the blocked onWrite must return once the watchdog aborts");
+		assertNull(failure.get(), "onWrite must not throw, it must report the abort as its result");
+		assertTrue(Boolean.TRUE.equals(aborted.get()), "the watchdog abort must surface as a backpressure flag");
+		assertEquals("test-writer", out.closerThreadName(),
+				"the owning writer closes the stream; the watchdog only signals");
+	}
+
+	private static final class ThreadNamingStream extends BlockingServletOutputStream {
+
+		private volatile String closerThreadName;
+
+		@Override
+		public void close() throws IOException {
+			closerThreadName = Thread.currentThread().getName();
+			super.close();
+		}
+
+		String closerThreadName() {
+			return closerThreadName;
+		}
 	}
 
 	@Test

@@ -5,6 +5,7 @@ import org.jspecify.annotations.Nullable;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.util.List;
 
@@ -61,6 +62,15 @@ public final class DeepSeekSseNormalizer implements SseNormalizer {
 		JsonNode node = parse(payload);
 		if (node == null || !node.isObject()) {
 			return List.of();
+		}
+
+		if (node.has("error") && node.get("error").isObject()) {
+			// PRX-B11: mid-stream provider errors terminate with an OpenAI
+			// error chunk instead of passing silently and streaming on.
+			done = true;
+			ObjectNode envelope = objectMapper.createObjectNode();
+			envelope.set("error", node.get("error"));
+			return List.of("data: " + envelope.toString());
 		}
 
 		if (node.has("model") && node.get("model").isString()) {

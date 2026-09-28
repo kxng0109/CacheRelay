@@ -45,7 +45,7 @@ public final class OllamaAdapter implements ProtocolAdapter {
 
 		ObjectNode body = objectMapper.createObjectNode();
 		body.put("model", model);
-		body.put("stream", true);
+		body.put("stream", request.stream() == null || request.stream());
 
 		ArrayNode messages = body.putArray("messages");
 		if (request.messages() != null) {
@@ -77,6 +77,12 @@ public final class OllamaAdapter implements ProtocolAdapter {
 		Integer bound = request.effectiveMaxTokens();
 		if (bound != null && bound > 0) {
 			options.put("num_predict", bound);
+		}
+
+		// PRX-B25: Ollama speaks OpenAI-shaped tools; dropping them while the
+		// normalizer parses tool_calls strands tool workflows silently.
+		if (request.tools() != null && request.tools().isArray() && !request.tools().isEmpty()) {
+			body.set("tools", request.tools());
 		}
 
 		return objectMapper.writeValueAsString(body);

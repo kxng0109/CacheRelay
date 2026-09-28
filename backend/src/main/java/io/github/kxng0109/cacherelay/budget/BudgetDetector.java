@@ -17,8 +17,14 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 import javax.sql.DataSource;
 
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -26,9 +32,9 @@ import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Component;
-import tools.jackson.databind.ObjectMapper;
+import org.springframework.stereotype.Component;import tools.jackson.databind.ObjectMapper;
 
 /**
  * Background spend watchdog: static budget thresholds, exhaustion forecast, and burn-rate anomaly detection.
@@ -69,6 +75,10 @@ public class BudgetDetector {
 
 	private final ObjectMapper objectMapper;
 
+	private final AtomicLong lastTickMillis = new AtomicLong(0);
+
+	private volatile MeterRegistry meterRegistry = new SimpleMeterRegistry();
+
 	public BudgetDetector(StringRedisTemplate redisTemplate, AlertEventRepository outbox,
 	                      BudgetDetectionProperties properties, DataSource dataSource,
 	                      ObjectMapper objectMapper) {
@@ -79,24 +89,54 @@ public class BudgetDetector {
 		this.objectMapper = objectMapper;
 	}
 
+	/**
+	 * Wires the registry for the last-successful-tick gauge. Optional on
+	 * purpose: without it the tick still runs, only unobserved.
+	 *
+	 * @param meterRegistry registry hosting the tick gauge, if available
+	 */
+	@Autowired
+	public void setMeterRegistry(@Nullable MeterRegistry meterRegistry) {
+		if (meterRegistry != null) {
+			this.meterRegistry = meterRegistry;
+			Gauge.builder("cacherelay.job.last_tick_seconds", lastTickMillis,
+							value -> value.get() / 1000.0)
+					.description("Last successful detector tick (epoch seconds)")
+					.tag("job", "budget-detector")
+					.register(meterRegistry);
+		}
+	}
+
 	@Scheduled(fixedDelayString = "${gateway.budget.detection.interval:60s}")
 	public void evaluate() {
 		if (!properties.enabled()) {
 			return;
 		}
 		try (Connection connection = dataSource.getConnection()) {
-			if (!AdvisoryLock.tryLock(connection, LOCK_NAME)) {
+			connection.setAutoCommit(false);
+			if (!AdvisoryLock.tryLockXact(connection, LOCK_NAME)) {
+				connection.rollback();
 				return;
 			}
 			try {
 				evaluateAll(Instant.now());
-			} finally {
-				AdvisoryLock.unlock(connection, LOCK_NAME);
+				connection.commit();
+				lastTickMillis.set(System.currentTimeMillis());
+			} catch (RuntimeException ex) {
+				rollbackQuietly(connection);
+				throw ex;
 			}
 		} catch (SQLException ex) {
 			log.warn("Detector tick skipped (datasource unavailable)");
 		} catch (RuntimeException ex) {
 			log.warn("Detector tick failed; next minute retries");
+		}
+	}
+
+	private static void rollbackQuietly(Connection connection) {
+		try {
+			connection.rollback();
+		} catch (SQLException ignored) {
 		}
 	}
 
@@ -128,12 +168,18 @@ public class BudgetDetector {
 	}
 
 	private void evaluateScope(String cfgKey, String month, Instant now) {
-		String[] parts = cfgKey.split(":", 5);
-		if (parts.length != 5) {
+		String remainder = cfgKey.startsWith(BudgetEnforcer.CFG_KEY_PREFIX)
+				? cfgKey.substring(BudgetEnforcer.CFG_KEY_PREFIX.length())
+				: null;
+		if (remainder == null) {
 			return;
 		}
-		String level = parts[3];
-		String subject = parts[4];
+		String[] parts = remainder.split(":", 2);
+		if (parts.length != 2 || parts[0].isEmpty() || parts[1].isEmpty()) {
+			return;
+		}
+		String level = parts[0];
+		String subject = parts[1];
 		List<?> cfg = redisTemplate.opsForHash().multiGet(cfgKey,
 				List.of("minute_micros", "month_micros"));
 		long minuteCap = parseLong(cfg.size() > 0 && cfg.get(0) != null ? cfg.get(0).toString() : null);

@@ -21,7 +21,8 @@ class CapacityReportRunnerTest {
 				SseCapacityProperties.DEFAULTS,
 				LedgerExecutorProperties.DEFAULTS,
 				RateLimitProperties.DEFAULTS,
-				EmbeddingProperties.DEFAULTS
+				EmbeddingProperties.DEFAULTS,
+				CapacityProfileProperties.DEFAULTS
 		);
 
 		String report = runner.formatReport();
@@ -39,11 +40,13 @@ class CapacityReportRunnerTest {
 				new SseCapacityProperties(60_000, 5, 15_000L),
 				new LedgerExecutorProperties(8, 16, 10_000, 30),
 				new RateLimitProperties(30_000L, 1, 500_000, 100_000, 60),
-				new EmbeddingProperties(512, 8, true)
+				new EmbeddingProperties(512, 8, true),
+				new CapacityProfileProperties("high", 4)
 		);
 
 		String report = runner.formatReport();
 
+		assertThat(report).contains("profile=high, weight=4");
 		assertThat(report).contains("max-connections=60000");
 		assertThat(report).contains("executor=8/16/q10000/await30s");
 		assertThat(report).contains("window-ms=30000");
@@ -57,7 +60,8 @@ class CapacityReportRunnerTest {
 				SseCapacityProperties.DEFAULTS,
 				LedgerExecutorProperties.DEFAULTS,
 				RateLimitProperties.DEFAULTS,
-				EmbeddingProperties.DEFAULTS
+				EmbeddingProperties.DEFAULTS,
+				CapacityProfileProperties.DEFAULTS
 		);
 
 		runner.run(mock(ApplicationArguments.class));

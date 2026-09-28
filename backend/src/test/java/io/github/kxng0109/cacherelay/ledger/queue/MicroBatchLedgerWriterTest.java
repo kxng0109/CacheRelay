@@ -1,11 +1,14 @@
 package io.github.kxng0109.cacherelay.ledger.queue;
 
+import io.github.kxng0109.cacherelay.ledger.LedgerStagingEntry;
 import io.github.kxng0109.cacherelay.ledger.LedgerStagingRepository;
 import io.github.kxng0109.cacherelay.ledger.SpillwayJournalManager;
 import io.github.kxng0109.cacherelay.ledger.TokenUsageEvent;
 import io.github.kxng0109.cacherelay.ledger.UsageLedgerEntry;
 import io.github.kxng0109.cacherelay.ledger.UsageLedgerRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.micrometer.prometheusmetrics.PrometheusConfig;
+import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -262,18 +265,34 @@ class MicroBatchLedgerWriterTest {
 	}
 
 	@Test
-	@DisplayName("Flush cycle treats staged duplicates as benign success")
+	@DisplayName("FIN-B41: staging conflict retries every row so duplicates never drop batch-mates")
 	void shouldTreatStagingDuplicatesAsSuccess() {
 		LedgerStagingRepository staging = mock(LedgerStagingRepository.class);
 		writer.setStagingRepository(staging);
-		queue.offer(createEvent("tenant-1"));
+		UUID dupId = UUID.randomUUID();
+		TokenUsageEvent dup = new TokenUsageEvent(
+				dupId, "tenant-1", "openai", "gpt-4o", 10, 5, 15, 100, 100, Instant.now());
+		TokenUsageEvent fresh = createEvent("tenant-2");
+		queue.offer(dup);
+		queue.offer(fresh);
 		when(repository.findByRequestIdIn(anyCollection())).thenReturn(List.of());
 		doThrow(new RuntimeException("DB down")).when(repository).saveAll(anyList());
 		doThrow(new DataIntegrityViolationException("duplicate")).when(staging).saveAll(anyList());
+		doAnswer(inv -> {
+			LedgerStagingEntry row = inv.getArgument(0);
+			if (dupId.equals(row.getRequestId())) {
+				throw new DataIntegrityViolationException("already staged elsewhere");
+			}
+			return row;
+		}).when(staging).saveAndFlush(any(LedgerStagingEntry.class));
 
 		int flushed = writer.flushCycle();
 
 		assertThat(flushed).isZero();
+		ArgumentCaptor<LedgerStagingEntry> rowsCaptor = ArgumentCaptor.forClass(LedgerStagingEntry.class);
+		verify(staging, times(2)).saveAndFlush(rowsCaptor.capture());
+		assertThat(rowsCaptor.getAllValues()).extracting(LedgerStagingEntry::getRequestId)
+				.containsExactlyInAnyOrder(dupId, fresh.requestId());
 		verify(spillwayJournal, never()).appendBatch(anyList(), anyString());
 	}
 
@@ -500,5 +519,24 @@ class MicroBatchLedgerWriterTest {
 		assertThat(registry.get("cacherelay.cost.micros").counter().count())
 				.as("zero-cost count")
 				.isEqualTo(0.0);
+	}
+
+	@Test
+	@DisplayName("FIN-B44: zero-cost series materializes in Prometheus exposition, tagged")
+	void shouldMaterializeZeroCostSeriesForPrometheus() {
+		PrometheusMeterRegistry registry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+		MicroBatchLedgerWriter metered = new MicroBatchLedgerWriter(
+				queue, repository, spillwayJournal, registry, 100, 50, 30_000L, 60_000L, 5);
+		queue.offer(new TokenUsageEvent(
+				UUID.randomUUID(), "tenant-zero", "ollama", "local-llama",
+				100, 50, 150, 5, 0, Instant.now()));
+
+		int flushed = metered.flushCycle();
+
+		assertThat(flushed).as("flushed events").isEqualTo(1);
+		String exposition = registry.scrape();
+		assertThat(exposition).contains("cacherelay_cost_micros");
+		assertThat(exposition).contains("provider=\"ollama\"");
+		assertThat(exposition).contains("model=\"local-llama\"");
 	}
 }

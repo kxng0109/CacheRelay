@@ -9,16 +9,21 @@ import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.SetOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -33,6 +38,7 @@ class KeySetPersistenceTest {
 	private KeyManagementService newService() {
 		when(redisTemplate.<String, String>opsForHash()).thenReturn(hashOps);
 		when(redisTemplate.<String, String>opsForSet()).thenReturn(setOps);
+		when(redisTemplate.execute(any(), anyList(), any(Object[].class))).thenReturn(1L);
 		return new KeyManagementService(redisTemplate);
 	}
 
@@ -71,14 +77,13 @@ class KeySetPersistenceTest {
 				"[bracket]",
 				"  spaced  ");
 
+		AtomicReference<List<Object>> argv = captureScriptArgv(redisTemplate);
 		KeyManagementService.CreatedKey created = service.createKey(
 				"owner", "name", 5, 50, Set.of(), Set.of(), Set.of(), Set.of(),
 				nasty, Set.of(), Set.of(), Set.of(), null, null, Set.of(), Set.of(), UUID.randomUUID());
 
-		@SuppressWarnings("unchecked")
-		ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
-		verifyStored(created, fieldsCaptor);
-		Map<String, String> stored = new HashMap<>(fieldsCaptor.getValue());
+		verifyStored(created);
+		Map<String, String> stored = new HashMap<>(scriptFields(argv.get()));
 
 		Optional<VirtualApiKey> reloaded = reload(stored);
 
@@ -146,19 +151,58 @@ class KeySetPersistenceTest {
 		HashOperations<String, String, String> hashes = mock(HashOperations.class);
 		when(template.<String, String>opsForHash()).thenReturn(hashes);
 		when(template.<String, String>opsForSet()).thenReturn(mock(SetOperations.class));
-		KeyManagementService.CreatedKey created = new KeyManagementService(template).createKey(
+		AtomicReference<List<Object>> argv = captureScriptArgv(template);
+		new KeyManagementService(template).createKey(
 				"owner", "name", 5, 50, Set.of(), Set.of(), Set.of(), Set.of(),
 				resources, Set.of(), Set.of(), Set.of(), null, null, Set.of(), Set.of(), UUID.randomUUID());
-		@SuppressWarnings("unchecked")
-		ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
-		org.mockito.Mockito.verify(hashes).putAll(
-				eq("apikey:" + created.hash().hex()), fieldsCaptor.capture());
-		return fieldsCaptor.getValue().get("allowedResources");
+		return scriptFields(argv.get()).get("allowedResources");
 	}
 
-	private void verifyStored(KeyManagementService.CreatedKey created,
-	                          ArgumentCaptor<Map<String, String>> fieldsCaptor) {
-		org.mockito.Mockito.verify(hashOps).putAll(
-				eq("apikey:" + created.hash().hex()), fieldsCaptor.capture());
+	/**
+	 * Stubs the atomic-store script to succeed while recording its flat ARGV.
+	 *
+	 * @param template mocked template
+	 * @return reference holding the captured arguments after the call
+	 */
+	private static AtomicReference<List<Object>> captureScriptArgv(StringRedisTemplate template) {
+		AtomicReference<List<Object>> argv = new AtomicReference<>(List.of());
+		when(template.execute(any(), anyList(), any(Object[].class))).thenAnswer(inv -> {
+			Object[] all = inv.getArguments();
+			List<Object> flat = new ArrayList<>();
+			for (int i = 2; i < all.length; i++) {
+				Object element = all[i];
+				if (element instanceof Object[] nested) {
+					flat.addAll(Arrays.asList(nested));
+				} else {
+					flat.add(element);
+				}
+			}
+			argv.set(flat);
+			return 1L;
+		});
+		return argv;
+	}
+
+	/**
+	 * Rebuilds the stored field map from atomic-store script ARGV (flat key/value
+	 * pairs plus the trailing index hex).
+	 *
+	 * @param argv captured script arguments
+	 * @return field map as the hash would store it
+	 */
+	private static Map<String, String> scriptFields(List<Object> argv) {
+		Map<String, String> fields = new HashMap<>();
+		for (int i = 0; i + 1 < argv.size() - 1; i += 2) {
+			fields.put(String.valueOf(argv.get(i)), String.valueOf(argv.get(i + 1)));
+		}
+		return fields;
+	}
+
+	private void verifyStored(KeyManagementService.CreatedKey created) {
+		org.mockito.Mockito.verify(hashOps, org.mockito.Mockito.never()).putAll(
+				eq("apikey:" + created.hash().hex()), any(Map.class));
+		org.mockito.Mockito.verify(redisTemplate).execute(
+				any(), eq(List.of("apikey:" + created.hash().hex(), "admin:keys")),
+				any(Object[].class));
 	}
 }

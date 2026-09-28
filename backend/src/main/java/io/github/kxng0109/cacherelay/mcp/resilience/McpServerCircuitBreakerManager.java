@@ -122,4 +122,15 @@ public class McpServerCircuitBreakerManager {
 	public Set<String> serverNames() {
 		return Set.copyOf(breakers.keySet());
 	}
+
+	/**
+	 * Names every configured upstream server, whether its breaker has been
+	 * touched or not. Metrics bind against this set so dashboards cover the
+	 * whole fleet from boot instead of only servers that already tripped.
+	 *
+	 * @return configured server names, never {@code null}
+	 */
+	public Set<String> configuredServerNames() {
+		return Set.copyOf(properties.getServers().keySet());
+	}
 }

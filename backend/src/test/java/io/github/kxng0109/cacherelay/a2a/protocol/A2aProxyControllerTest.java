@@ -188,7 +188,7 @@ class A2aProxyControllerTest {
 				.setBody(upstreamBody));
 
 		ResponseEntity<StreamingResponseBody> response = controller.relay(
-				AGENT, SEND_BODY, "0.2", request("Bearer gw-a2a-test", -1L));
+				AGENT, SEND_BODY, "0.3", request("Bearer gw-a2a-test", -1L));
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(body(response)).isEqualTo(upstreamBody);
@@ -196,7 +196,7 @@ class A2aProxyControllerTest {
 		RecordedRequest recorded = upstream.takeRequest();
 		assertThat(recorded.getPath()).isEqualTo("/a2a");
 		assertThat(recorded.getHeader("Authorization")).isEqualTo("Bearer agent-secret");
-		assertThat(recorded.getHeader("A2A-Version")).isEqualTo("0.2");
+		assertThat(recorded.getHeader("A2A-Version")).isEqualTo("0.3");
 		assertThat(recorded.getHeader("Content-Type")).contains("application/json");
 	}
 
@@ -467,6 +467,26 @@ class A2aProxyControllerTest {
 	}
 
 	@Test
+	@DisplayName("A2A-B01: a policy stream-cap stop is not an upstream failure")
+	void streamCapStopLeavesBreakerClosed() throws Exception {
+		properties.setMaxResultBytes(8);
+		properties.setCircuitBreakerFailureThreshold(1);
+		upstream.enqueue(new MockResponse()
+				.setResponseCode(200)
+				.setHeader("Content-Type", "text/event-stream")
+				.setBody(SSE_PAYLOAD));
+
+		ResponseEntity<StreamingResponseBody> response = controller.relay(
+				AGENT, STREAM_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(body(response)).isEmpty();
+		assertThat(breakers.tryAcquire(AGENT))
+				.as("local byte-cap policy stop must not trip the agent breaker")
+				.isTrue();
+	}
+
+	@Test
 	@DisplayName("a stalled SSE stream ends at the stream deadline instead of hanging")
 	void stalledStreamEndsAtDeadline() {
 		properties.setStreamMaxDuration(Duration.ofMillis(300));
@@ -531,21 +551,270 @@ class A2aProxyControllerTest {
 	}
 
 	@Test
-	@DisplayName("does not rate-limit tasks/get, which is a local read")
-	void tasksGetIsNotRateLimited() throws Exception {
+	@DisplayName("A2A-B04: tasks/cancel is rate-limited, it dispatches upstream work")
+	void tasksCancelIsRateLimited() throws Exception {
 		when(rateLimitEngine.checkRequestRate(any(), any()))
 				.thenReturn(new RateLimitDecision.Rejected(RejectionReason.RPM_EXCEEDED, 7L));
+
+		ResponseEntity<StreamingResponseBody> response = controller.relay(
+				AGENT,
+				"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tasks/cancel\",\"params\":{\"id\":\"t-1\"}}",
+				null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+		assertThat(upstream.getRequestCount()).isZero();
+	}
+
+	@Test
+	@DisplayName("A2A-B08: SSE detection is exact media-type equality, not substring")
+	void sseDetectionIsExact() {
+		assertThat(A2aProxyController.isSseContentType("text/event-stream")).isTrue();
+		assertThat(A2aProxyController.isSseContentType("text/event-stream; charset=utf-8")).isTrue();
+		assertThat(A2aProxyController.isSseContentType("TEXT/EVENT-STREAM")).isTrue();
+		assertThat(A2aProxyController.isSseContentType("application/x-text-event-stream-evil")).isFalse();
+		assertThat(A2aProxyController.isSseContentType("application/octet-stream")).isFalse();
+		assertThat(A2aProxyController.isSseContentType("application/json")).isFalse();
+		assertThat(A2aProxyController.isSseContentType("")).isFalse();
+		assertThat(A2aProxyController.isSseContentType(null)).isFalse();
+	}
+
+	@Test
+	@DisplayName("A2A-B08: lookalike content types are not treated as SSE")
+	void lookalikeContentTypeFallsBackToJson() throws Exception {
+		upstream.enqueue(new MockResponse().setResponseCode(200)
+				.setHeader("Content-Type", "application/x-text-event-stream-evil")
+				.setBody("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}"));
+
+		ResponseEntity<StreamingResponseBody> response = controller.relay(
+				AGENT, STREAM_BODY, null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_JSON);
+		assertThat(body(response)).contains("\"result\"");
+		assertThat(upstream.getRequestCount()).isEqualTo(1);
+	}
+
+	@Test
+	@DisplayName("A2A-B08: version mismatch against the pinned agent answers -32009")
+	void versionMismatchAnswersNotSupported() throws Exception {
 		upstream.enqueue(new MockResponse().setResponseCode(200)
 				.setHeader("Content-Type", "application/json")
-				.setBody("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"kind\":\"task\"}}"));
+				.setBody("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}"));
+
+		ResponseEntity<StreamingResponseBody> response = pinnedController().relay(
+				"pinned-agent", SEND_BODY, "0.3", versionedRequest("0.3"));
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(errorCode(response)).isEqualTo(-32009);
+		assertThat(upstream.getRequestCount()).isZero();
+	}
+
+	@Test
+	@DisplayName("A2A-B08: unparsable A2A-Version is rejected as invalid")
+	void garbageVersionRejected() throws Exception {
+		upstream.enqueue(new MockResponse().setResponseCode(200)
+				.setHeader("Content-Type", "application/json")
+				.setBody("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}"));
+
+		ResponseEntity<StreamingResponseBody> response = pinnedController().relay(
+				"pinned-agent", SEND_BODY, "not-a-version", versionedRequest("not-a-version"));
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(errorCode(response)).isEqualTo(-32602);
+		assertThat(upstream.getRequestCount()).isZero();
+	}
+
+	private A2aProxyController pinnedController() {
+		A2aGatewayProperties pinnedProps = new A2aGatewayProperties();
+		Map<String, A2aAgentConfig> agents = new LinkedHashMap<>();
+		agents.put("pinned-agent", new A2aAgentConfig(
+				"pinned-agent",
+				upstream.url("/a2a").uri(),
+				new SensitiveString("agent-secret"),
+				"1.0",
+				null,
+				null));
+		pinnedProps.setAgents(agents);
+		return new A2aProxyController(
+				pinnedProps,
+				new A2aAgentRegistry(pinnedProps),
+				new A2aRbacPolicyEngine(),
+				new A2aAgentCircuitBreakerManager(pinnedProps),
+				keyManagementService,
+				rateLimitEngine,
+				objectMapper,
+				HttpClient.newBuilder()
+						.connectTimeout(Duration.ofSeconds(2))
+						.followRedirects(HttpClient.Redirect.NEVER)
+						.build());
+	}
+
+	private HttpServletRequest versionedRequest(String version) {
+		HttpServletRequest req = mock(HttpServletRequest.class);
+		when(req.getHeader("Authorization")).thenReturn("Bearer gw-a2a-test");
+		when(req.getHeader("A2A-Version")).thenReturn(version);
+		when(req.getContentLengthLong()).thenReturn(-1L);
+		return req;
+	}
+
+	@Test
+	@DisplayName("A2A-B02: owner reads its own task")
+	void taskGetOwnTaskProxies() throws Exception {
+		upstream.enqueue(new MockResponse().setResponseCode(200)
+				.setHeader("Content-Type", "application/json")
+				.setBody("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"kind\":\"task\",\"id\":\"t-1\"}}"));
+		upstream.enqueue(new MockResponse().setResponseCode(200)
+				.setHeader("Content-Type", "application/json")
+				.setBody("{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"kind\":\"task\",\"id\":\"t-1\"}}"));
+
+		ResponseEntity<StreamingResponseBody> send = controller.relay(
+				AGENT, SEND_BODY, null, request("Bearer gw-a2a-test", -1L));
+		assertThat(send.getStatusCode()).isEqualTo(HttpStatus.OK);
+
+		ResponseEntity<StreamingResponseBody> get = controller.relay(
+				AGENT,
+				"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tasks/get\",\"params\":{\"id\":\"t-1\"}}",
+				null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(get.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(body(get)).contains("t-1");
+		assertThat(upstream.getRequestCount()).isEqualTo(2);
+	}
+
+	@Test
+	@DisplayName("A2A-B02: foreign tenant cannot read another key's task")
+	void taskGetForeignTaskIs404() throws Exception {
+		upstream.enqueue(new MockResponse().setResponseCode(200)
+				.setHeader("Content-Type", "application/json")
+				.setBody("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"kind\":\"task\",\"id\":\"t-1\"}}"));
+
+		ResponseEntity<StreamingResponseBody> send = controller.relay(
+				AGENT, SEND_BODY, null, request("Bearer gw-a2a-test", -1L));
+		assertThat(send.getStatusCode()).isEqualTo(HttpStatus.OK);
+		routeKeysForForeignTenant();
+		upstream.enqueue(new MockResponse().setResponseCode(200)
+				.setHeader("Content-Type", "application/json")
+				.setBody("{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"kind\":\"task\",\"id\":\"t-1\"}}"));
+
+		ResponseEntity<StreamingResponseBody> get = controller.relay(
+				AGENT,
+				"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tasks/get\",\"params\":{\"id\":\"t-1\"}}",
+				null, request("Bearer gw-evil-test", -1L));
+
+		assertThat(get.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+		assertThat(upstream.getRequestCount()).isEqualTo(1);
+	}
+
+	@Test
+	@DisplayName("A2A-B02: unknown task ids answer 404 without dispatching")
+	void taskGetUnknownTaskIs404() throws Exception {
+		upstream.enqueue(new MockResponse().setResponseCode(200)
+				.setHeader("Content-Type", "application/json")
+				.setBody("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"kind\":\"task\",\"id\":\"t-nope\"}}"));
+
+		ResponseEntity<StreamingResponseBody> get = controller.relay(
+				AGENT,
+				"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tasks/get\",\"params\":{\"id\":\"t-nope\"}}",
+				null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(get.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+		assertThat(upstream.getRequestCount()).isZero();
+	}
+
+	@Test
+	@DisplayName("A2A-B02: foreign tenant cannot cancel another key's task")
+	void taskCancelForeignTaskIs404() throws Exception {
+		upstream.enqueue(new MockResponse().setResponseCode(200)
+				.setHeader("Content-Type", "application/json")
+				.setBody("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"kind\":\"task\",\"id\":\"t-1\"}}"));
+		ResponseEntity<StreamingResponseBody> send = controller.relay(
+				AGENT, SEND_BODY, null, request("Bearer gw-a2a-test", -1L));
+		assertThat(send.getStatusCode()).isEqualTo(HttpStatus.OK);
+		routeKeysForForeignTenant();
+		upstream.enqueue(new MockResponse().setResponseCode(200)
+				.setHeader("Content-Type", "application/json")
+				.setBody("{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"kind\":\"task\",\"id\":\"t-1\",\"status\":{\"state\":\"canceled\"}}}"));
+
+		ResponseEntity<StreamingResponseBody> cancel = controller.relay(
+				AGENT,
+				"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tasks/cancel\",\"params\":{\"id\":\"t-1\"}}",
+				null, request("Bearer gw-evil-test", -1L));
+
+		assertThat(cancel.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+		assertThat(upstream.getRequestCount()).isEqualTo(1);
+	}
+
+	@Test
+	@DisplayName("A2A-B02: streaming first frame indexes the task for its owner")
+	void streamFirstFrameIndexesTask() throws Exception {
+		upstream.enqueue(new MockResponse()
+				.setResponseCode(200)
+				.setHeader("Content-Type", "text/event-stream")
+				.setBody(SSE_PAYLOAD));
+		upstream.enqueue(new MockResponse().setResponseCode(200)
+				.setHeader("Content-Type", "application/json")
+				.setBody("{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"kind\":\"task\",\"id\":\"t-1\"}}"));
+
+		ResponseEntity<StreamingResponseBody> stream = controller.relay(
+				AGENT, STREAM_BODY, null, request("Bearer gw-a2a-test", -1L));
+		assertThat(stream.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(body(stream)).contains("t-1");
+
+		ResponseEntity<StreamingResponseBody> get = controller.relay(
+				AGENT,
+				"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tasks/get\",\"params\":{\"id\":\"t-1\"}}",
+				null, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(get.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(upstream.getRequestCount()).isEqualTo(2);
+	}
+
+	private void routeKeysForForeignTenant() {
+		VirtualApiKey evilKey = new VirtualApiKey(
+				SHA256Hash.fromRawKey("gw-evil-test"),
+				"gw-",
+				"tenant-evil",
+				"a2a-evil",
+				100,
+				1000,
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				Set.of(),
+				true,
+				true,
+				Instant.now(),
+				VirtualApiKey.normalizeCacheScopes(Set.of()),
+				Set.of(),
+				Set.of()
+		);
+		String evilHex = SHA256Hash.fromRawKey("gw-evil-test").hex();
+		when(keyManagementService.findByHash(any())).thenAnswer(inv -> {
+			SHA256Hash presented = inv.getArgument(0);
+			if (presented.hex().equals(evilHex)) {
+				return Optional.of(evilKey);
+			}
+			return Optional.of(apiKey);
+		});
+	}
+
+	@Test
+	@DisplayName("A2A-B04: tasks/get is rate-limited, it dispatches an upstream call")
+	void tasksGetIsRateLimited() throws Exception {
+		when(rateLimitEngine.checkRequestRate(any(), any()))
+				.thenReturn(new RateLimitDecision.Rejected(RejectionReason.RPM_EXCEEDED, 7L));
 
 		ResponseEntity<StreamingResponseBody> response = controller.relay(
 				AGENT,
 				"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tasks/get\",\"params\":{\"id\":\"t-1\"}}",
 				null, request("Bearer gw-a2a-test", -1L));
 
-		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-		assertThat(upstream.getRequestCount()).isEqualTo(1);
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+		assertThat(upstream.getRequestCount()).isZero();
 	}
 
 	@Test
@@ -577,6 +846,89 @@ class A2aProxyControllerTest {
 		assertThat(rewritten.get("additionalInterfaces").get(0).get("url").asString())
 				.isEqualTo("https://gateway.example.com/v1/a2a/" + AGENT);
 		assertThat(upstream.takeRequest().getHeader("Authorization")).isEqualTo("Bearer agent-secret");
+	}
+
+	@Test
+	@DisplayName("A2A-B07: card fetches are rate-limited like any upstream dispatch")
+	void cardFetchIsRateLimited() throws Exception {
+		when(rateLimitEngine.checkRequestRate(any(), any()))
+				.thenReturn(new RateLimitDecision.Rejected(RejectionReason.RPM_EXCEEDED, 7L));
+
+		ResponseEntity<String> response =
+				controller.agentCard(AGENT, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+		assertThat(response.getHeaders().getFirst("Retry-After")).isEqualTo("7");
+		assertThat(upstream.getRequestCount()).isZero();
+	}
+
+	@Test
+	@DisplayName("A2A-B07: card fetch denied while the agent breaker is open")
+	void cardFetchDeniedWhenBreakerOpen() throws Exception {
+		properties.setCircuitBreakerFailureThreshold(1);
+		breakers.recordFailure(AGENT);
+		upstream.enqueue(new MockResponse().setResponseCode(200).setBody("{\"name\":\"R\"}"));
+
+		ResponseEntity<String> response =
+				controller.agentCard(AGENT, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+		assertThat(upstream.getRequestCount()).isZero();
+	}
+
+	@Test
+	@DisplayName("A2A-B06: absolute-URI card paths are rejected before any fetch")
+	void absoluteCardPathRejected() throws Exception {
+		A2aGatewayProperties evilProps = new A2aGatewayProperties();
+		Map<String, A2aAgentConfig> agents = new LinkedHashMap<>();
+		agents.put("evil-agent", new A2aAgentConfig(
+				"evil-agent",
+				upstream.url("/a2a").uri(),
+				new SensitiveString("agent-secret"),
+				null,
+				"https://localhost:1/card.json",
+				null));
+		evilProps.setAgents(agents);
+		A2aProxyController evilController = new A2aProxyController(
+				evilProps,
+				new A2aAgentRegistry(evilProps),
+				new A2aRbacPolicyEngine(),
+				new A2aAgentCircuitBreakerManager(evilProps),
+				keyManagementService,
+				rateLimitEngine,
+				objectMapper,
+				HttpClient.newBuilder()
+						.connectTimeout(Duration.ofSeconds(2))
+						.followRedirects(HttpClient.Redirect.NEVER)
+						.build());
+
+		ResponseEntity<String> response =
+				evilController.agentCard("evil-agent", request("Bearer gw-a2a-test", -1L));
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(upstream.getRequestCount()).isZero();
+	}
+
+	@Test
+	@DisplayName("A2A-B03: v1.0 supportedInterfaces URLs are rewritten to the gateway")
+	void rewritesV1SupportedInterfaces() throws Exception {
+		String proxyUrl = "https://gateway.example.com/v1/a2a/" + AGENT;
+		String card = "{\"name\":\"Research\",\"version\":\"1.0\","
+				+ "\"supportedInterfaces\":["
+				+ "{\"url\":\"http://upstream/a2a\",\"protocolBinding\":\"JSONRPC\",\"protocolVersion\":\"1.0\"},"
+				+ "{\"url\":\"http://upstream/a2a/v03\",\"protocolBinding\":\"JSONRPC\",\"protocolVersion\":\"0.3\"}],"
+				+ "\"provider\":{\"name\":\"Upstream\",\"url\":\"http://upstream/about\"},"
+				+ "\"documentationUrl\":\"http://upstream/docs\"}";
+		upstream.enqueue(new MockResponse().setResponseCode(200).setBody(card));
+
+		ResponseEntity<String> response = controller.agentCard(AGENT, request("Bearer gw-a2a-test", -1L));
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode rewritten = objectMapper.readTree(response.getBody());
+		assertThat(rewritten.path("supportedInterfaces").get(0).path("url").asString()).isEqualTo(proxyUrl);
+		assertThat(rewritten.path("supportedInterfaces").get(1).path("url").asString()).isEqualTo(proxyUrl);
+		assertThat(rewritten.path("provider").path("url").asString()).isEqualTo("http://upstream/about");
+		assertThat(rewritten.path("documentationUrl").asString()).isEqualTo("http://upstream/docs");
 	}
 
 	@Test

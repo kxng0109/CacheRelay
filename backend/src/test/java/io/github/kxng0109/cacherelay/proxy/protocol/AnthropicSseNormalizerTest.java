@@ -21,6 +21,22 @@ class AnthropicSseNormalizerTest {
 	private final ObjectMapper objectMapper = new ObjectMapper();
 
 	@Test
+	@DisplayName("PRX-B11: provider error events map to a terminal OpenAI error")
+	void providerErrorIsTerminal() {
+		AnthropicSseNormalizer normalizer = new AnthropicSseNormalizer(objectMapper, "fallback", false);
+
+		List<String> lines = new ArrayList<>();
+		lines.addAll(normalizer.normalizeLine("event: error"));
+		lines.addAll(normalizer.normalizeLine(
+				"data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}"));
+
+		assertEquals(1, lines.size());
+		assertTrue(lines.get(0).contains("\"error\""));
+		assertTrue(lines.get(0).contains("Overloaded"));
+		assertTrue(normalizer.isDone());
+	}
+
+	@Test
 	@DisplayName("rewrites a full Anthropic stream into OpenAI chunks")
 	void rewritesFullStream() {
 		AnthropicSseNormalizer normalizer = new AnthropicSseNormalizer(objectMapper, "fallback", false);

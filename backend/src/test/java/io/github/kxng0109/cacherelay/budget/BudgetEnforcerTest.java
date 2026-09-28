@@ -12,8 +12,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.mockito.ArgumentCaptor;
+
+import java.time.Duration;
 
 import java.time.Duration;
 import java.util.List;
@@ -51,8 +54,8 @@ class BudgetEnforcerTest {
 	@Test
 	@DisplayName("allowed decisions pass remaining spend through")
 	void allowedPassesThrough() {
-		when(redisTemplate.execute(any(), anyList(), any(), any()))
-				.thenReturn(List.of(1L, 0L, 500L, 60L, 2L));
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(List.of(1L, 0L, 500L, 60L, 2L, "2026-09"));
 		when(costCalculator.calculate(any(), any(), anyLong(), anyLong())).thenReturn(4_000L);
 
 		BudgetDecision decision = enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
@@ -65,8 +68,8 @@ class BudgetEnforcerTest {
 	@Test
 	@DisplayName("denied decisions map level, window, and retry horizon")
 	void deniedMapsLevelWindowAndRetry() {
-		when(redisTemplate.execute(any(), anyList(), any(), any()))
-				.thenReturn(List.of(0L, 3L, 0L, 45L, 2L));
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(List.of(0L, 3L, 0L, 45L, 2L, "2026-09"));
 		when(costCalculator.calculate(any(), any(), anyLong(), anyLong())).thenReturn(4_000L);
 
 		BudgetDecision decision = enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
@@ -80,8 +83,8 @@ class BudgetEnforcerTest {
 	@Test
 	@DisplayName("monthly denies resolve month-end horizons")
 	void monthlyDeniesResolveMonthEnd() {
-		when(redisTemplate.execute(any(), anyList(), any(), any()))
-				.thenReturn(List.of(0L, 4L, 0L, 0L, 1L));
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(List.of(0L, 4L, 0L, 0L, 1L, "2026-09"));
 		when(costCalculator.calculate(any(), any(), anyLong(), anyLong())).thenReturn(4_000L);
 
 		BudgetDecision decision = enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
@@ -96,8 +99,8 @@ class BudgetEnforcerTest {
 	@Test
 	@DisplayName("string wire values are accepted like integers")
 	void stringWireValuesAccepted() {
-		when(redisTemplate.execute(any(), anyList(), any(), any()))
-				.thenReturn(List.of("1", "0", "500", "60", "2"));
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(List.of("1", "0", "500", "60", "2", "2026-09"));
 		when(costCalculator.calculate(any(), any(), anyLong(), anyLong())).thenReturn(4_000L);
 
 		BudgetDecision decision = enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
@@ -108,7 +111,7 @@ class BudgetEnforcerTest {
 	@Test
 	@DisplayName("malformed script results fail closed")
 	void malformedShapeFailsClosed() {
-		when(redisTemplate.execute(any(), anyList(), any(), any())).thenReturn(List.of(1L));
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any(), any(), any(), any())).thenReturn(List.of(1L));
 
 		assertThrows(
 				RateLimitUnavailableException.class, () ->
@@ -119,7 +122,7 @@ class BudgetEnforcerTest {
 	@Test
 	@DisplayName("Redis failures fail closed for every key class")
 	void redisDownFailsClosed() {
-		when(redisTemplate.execute(any(), anyList(), any(), any()))
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any(), any(), any(), any()))
 				.thenThrow(new RedisConnectionFailureException("redis down"));
 
 		assertThrows(
@@ -131,14 +134,14 @@ class BudgetEnforcerTest {
 	@Test
 	@DisplayName("confirmed-unbudgeted keys skip the second round trip")
 	void presenceSkipsSecondRoundTrip() {
-		when(redisTemplate.execute(any(), anyList(), any(), any()))
-				.thenReturn(List.of(1L, 0L, -1L, 0L, 0L));
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(List.of(1L, 0L, -1L, 0L, 0L, "2026-09"));
 		when(costCalculator.calculate(any(), any(), anyLong(), anyLong())).thenReturn(4_000L);
 
 		enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
 		enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
 
-		verify(redisTemplate, times(1)).execute(any(), anyList(), any(), any());
+		verify(redisTemplate, times(1)).execute(any(), anyList(), any(), any(), any(), any(), any(), any());
 	}
 
 	@Test
@@ -164,8 +167,8 @@ class BudgetEnforcerTest {
 	void nullRegistryFallsBack() {
 		BudgetEnforcer local =
 				new BudgetEnforcer(redisTemplate, script(), script(), script(), costCalculator, null);
-		when(redisTemplate.execute(any(), anyList(), any(), any()))
-				.thenReturn(List.of(1L, 0L, 500L, 60L, 2L));
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(List.of(1L, 0L, 500L, 60L, 2L, "2026-09"));
 		when(costCalculator.calculate(any(), any(), anyLong(), anyLong())).thenReturn(4_000L);
 
 		BudgetDecision decision = local.checkBudget(
@@ -178,7 +181,7 @@ class BudgetEnforcerTest {
 	@Test
 	@DisplayName("null script result fails closed")
 	void nullScriptResultFailsClosed() {
-		when(redisTemplate.execute(any(), anyList(), any(), any())).thenReturn(null);
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any(), any(), any(), any())).thenReturn(null);
 
 		assertThrows(
 				RateLimitUnavailableException.class, () ->
@@ -191,8 +194,8 @@ class BudgetEnforcerTest {
 	@Test
 	@DisplayName("non-numeric wire values fail closed")
 	void nonNumericWireValueFailsClosed() {
-		when(redisTemplate.execute(any(), anyList(), any(), any()))
-				.thenReturn(List.of(1L, 0L, Boolean.TRUE, 60L, 2L));
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(List.of(1L, 0L, Boolean.TRUE, 60L, 2L, "2026-09"));
 
 		assertThrows(
 				RateLimitUnavailableException.class, () ->
@@ -207,8 +210,8 @@ class BudgetEnforcerTest {
 	@SuppressWarnings("unchecked")
 	void nullOwnerSkipsTeamLevel() {
 		ArgumentCaptor<List<String>> keysCaptor = ArgumentCaptor.forClass(List.class);
-		when(redisTemplate.execute(any(), anyList(), any(), any()))
-				.thenReturn(List.of(1L, 0L, 500L, 60L, 1L));
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(List.of(1L, 0L, 500L, 60L, 1L, "2026-09"));
 		when(costCalculator.calculate(any(), any(), anyLong(), anyLong())).thenReturn(4_000L);
 
 		BudgetDecision decision = enforcer.checkBudget(
@@ -218,16 +221,15 @@ class BudgetEnforcerTest {
 		assertTrue(decision instanceof BudgetDecision.Allowed);
 		verify(redisTemplate, atLeastOnce()).execute(any(), keysCaptor.capture(), any(Object[].class));
 		List<String> keys = keysCaptor.getValue();
+		assertEquals(3, keys.size());
 		assertEquals("", keys.get(1));
-		assertEquals("", keys.get(4));
-		assertEquals("", keys.get(7));
 	}
 
 	@Test
 	@DisplayName("blank owner skips the TEAM level keys")
 	void blankOwnerSkipsTeamLevel() {
-		when(redisTemplate.execute(any(), anyList(), any(), any()))
-				.thenReturn(List.of(1L, 0L, 500L, 60L, 1L));
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(List.of(1L, 0L, 500L, 60L, 1L, "2026-09"));
 		when(costCalculator.calculate(any(), any(), anyLong(), anyLong())).thenReturn(4_000L);
 
 		BudgetDecision decision = enforcer.checkBudget(
@@ -240,8 +242,8 @@ class BudgetEnforcerTest {
 	@Test
 	@DisplayName("org-level denies map level and minute horizon")
 	void orgDenialMapsLevel() {
-		when(redisTemplate.execute(any(), anyList(), any(), any()))
-				.thenReturn(List.of(0L, 5L, 0L, 60L, 3L));
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(List.of(0L, 5L, 0L, 60L, 3L, "2026-09"));
 		when(costCalculator.calculate(any(), any(), anyLong(), anyLong())).thenReturn(4_000L);
 
 		BudgetDecision decision = enforcer.checkBudget(
@@ -266,31 +268,37 @@ class BudgetEnforcerTest {
 								SHA256Hash.fromRawKey("gw-33333333333333333333333333333333"), "owner-1",
 								ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null)
 		);
-		verify(redisTemplate, never()).execute(any(), anyList(), any(), any());
+		verify(redisTemplate, never()).execute(any(), anyList(), any(), any(), any(), any(), any(), any());
 	}
 
 	@Test
-	@DisplayName("script keys are grouped by kind and share one slot tag")
+	@DisplayName("script takes config keys plus subjects; Lua derives TIME windows")
 	@SuppressWarnings("unchecked")
 	void scriptKeysGroupedByKind() {
 		ArgumentCaptor<List<String>> keysCaptor = ArgumentCaptor.forClass(List.class);
-		when(redisTemplate.execute(any(), anyList(), any(), any()))
-				.thenReturn(List.of(1L, 0L, 500L, 60L, 3L));
+		ArgumentCaptor<Object[]> argsCaptor = ArgumentCaptor.forClass(Object[].class);
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(List.of(1L, 0L, 500L, 60L, 3L, "2026-09"));
 		when(costCalculator.calculate(any(), any(), anyLong(), anyLong())).thenReturn(4_000L);
+		SHA256Hash hash = SHA256Hash.fromRawKey("gw-44444444444444444444444444444444");
 
 		enforcer.checkBudget(
-				SHA256Hash.fromRawKey("gw-44444444444444444444444444444444"), "owner-1",
+				hash, "owner-1",
 				ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null);
 
-		verify(redisTemplate).execute(any(), keysCaptor.capture(), any(Object[].class));
+		verify(redisTemplate).execute(any(), keysCaptor.capture(), argsCaptor.capture());
 		List<String> keys = keysCaptor.getValue();
-		assertEquals(9, keys.size());
-		// The script indexes KEYS[level], KEYS[level + 3], KEYS[level + 6]: minute × 3, month × 3, cfg × 3.
-		for (int i = 0; i < 3; i++) {
-			assertTrue(keys.get(i).contains(":minute:"));
-			assertTrue(keys.get(i + 3).contains(":month:"));
-			assertTrue(keys.get(i + 6).contains(":cfg:"));
-		}
+		assertEquals(3, keys.size());
+		// Only config keys cross the boundary; windows are Lua-derived from TIME.
+		assertEquals(BudgetEnforcer.cfgKey("KEY", hash.hex()), keys.get(0));
+		assertEquals(BudgetEnforcer.cfgKey("TEAM", "owner-1"), keys.get(1));
+		assertEquals(BudgetEnforcer.cfgKey("ORG", "global"), keys.get(2));
+		Object[] args = argsCaptor.getValue();
+		assertEquals(6, args.length);
+		assertEquals(hash.hex(), args[2]);
+		assertEquals("owner-1", args[3]);
+		assertEquals("global", args[4]);
+		assertEquals("{b:global}", args[5]);
 		// Single Cluster slot: every addressed key carries the same hash tag.
 		for (String key : keys) {
 			if (!key.isEmpty()) {
@@ -323,8 +331,9 @@ class BudgetEnforcerTest {
 	@Test
 	@DisplayName("idempotency key is forwarded to the script as a namespaced claim")
 	void idempotencyKeyForwarded() {
-		when(redisTemplate.execute(any(), anyList(), anyString(), anyString()))
-				.thenReturn(List.of(1L, 0L, 500L, 60L, 3L));
+		when(redisTemplate.execute(any(), anyList(), anyString(), anyString(), anyString(),
+						anyString(), anyString(), anyString()))
+				.thenReturn(List.of(1L, 0L, 500L, 60L, 3L, "2026-09"));
 		when(costCalculator.calculate(any(), any(), anyLong(), anyLong())).thenReturn(4_000L);
 		SHA256Hash hash = SHA256Hash.fromRawKey("gw-55555555555555555555555555555555");
 
@@ -334,7 +343,8 @@ class BudgetEnforcerTest {
 
 		assertTrue(decision instanceof BudgetDecision.Allowed);
 		verify(redisTemplate).execute(any(), anyList(), eq("4000"),
-				eq(BudgetEnforcer.dedupeClaimId("owner-1", hash.hex(), "body-sha-1", "idem-1")));
+				eq(BudgetEnforcer.dedupeClaimId("owner-1", hash.hex(), "body-sha-1", "idem-1")),
+				eq(hash.hex()), eq("owner-1"), eq("global"), eq("{b:global}"));
 	}
 
 	@Test
@@ -352,5 +362,43 @@ class BudgetEnforcerTest {
 		enforcer.releaseIdempotencyClaim("   ");
 
 		verify(redisTemplate, never()).delete(anyString());
+	}
+
+	@Test
+	@DisplayName("FIN-B20: renewHold refreshes the TTL and re-arms the expiry index")
+	@SuppressWarnings("unchecked")
+	void renewHoldRefreshesTtl() {
+		ZSetOperations<String, String> zset = mock(ZSetOperations.class);
+		when(redisTemplate.opsForZSet()).thenReturn(zset);
+		when(redisTemplate.expire(eq(BudgetEnforcer.holdKey("hold-1")), eq(Duration.ofSeconds(3600L))))
+				.thenReturn(Boolean.TRUE);
+
+		assertTrue(enforcer.renewHold("hold-1", 3600L));
+
+		verify(zset).add(eq(BudgetEnforcer.holdExpiryKey()), eq(BudgetEnforcer.holdKey("hold-1")),
+				anyDouble());
+	}
+
+	@Test
+	@DisplayName("FIN-B20: renewHold reports a gone hold without touching the index")
+	@SuppressWarnings("unchecked")
+	void renewHoldReportsGoneHold() {
+		ZSetOperations<String, String> zset = mock(ZSetOperations.class);
+		when(redisTemplate.opsForZSet()).thenReturn(zset);
+		when(redisTemplate.expire(eq(BudgetEnforcer.holdKey("hold-gone")), any(Duration.class)))
+				.thenReturn(Boolean.FALSE);
+
+		assertFalse(enforcer.renewHold("hold-gone", 3600L));
+
+		verify(zset, never()).add(anyString(), anyString(), anyDouble());
+	}
+
+	@Test
+	@DisplayName("FIN-B20: renewHold fails closed when Redis is down")
+	void renewHoldFailsClosed() {
+		when(redisTemplate.expire(anyString(), any(Duration.class)))
+				.thenThrow(new RedisConnectionFailureException("down"));
+
+		assertThrows(RateLimitUnavailableException.class, () -> enforcer.renewHold("hold-1", 3600L));
 	}
 }

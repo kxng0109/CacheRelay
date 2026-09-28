@@ -61,13 +61,13 @@ class BudgetEnforcerSettlementTest {
 	void holdCostAddsBothSides() {
 		when(costCalculator.calculate(any(), anyString(), anyLong(), anyLong()))
 				.thenAnswer(inv -> (Long) inv.getArgument(2) * 2L + (Long) inv.getArgument(3) * 5L);
-		when(redisTemplate.execute(any(), anyList(), any(), any()))
-				.thenReturn(List.of(1L, 0L, 100L, 60L, 2L));
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(List.of(1L, 0L, 100L, 60L, 2L, "2026-09"));
 
 		enforcer().authorizeHold(keyHash(), "owner-1", ProviderType.OPENAI, "m", 10, 20, null, null);
 
 		// H = 10*2 (prompt) + 20*5 (output) = 120, charged through the same gate.
-		verify(redisTemplate).execute(any(), anyList(), eq("120"), any());
+		verify(redisTemplate).execute(any(), anyList(), eq("120"), any(), any(), any(), any(), any());
 	}
 
 	@Test
@@ -75,8 +75,8 @@ class BudgetEnforcerSettlementTest {
 	void authorizeHoldSendsHoldCost() {
 		when(costCalculator.calculate(any(), anyString(), anyLong(), anyLong()))
 				.thenAnswer(inv -> (Long) inv.getArgument(2) + (Long) inv.getArgument(3));
-		when(redisTemplate.execute(any(), anyList(), any(), any()))
-				.thenReturn(List.of(1L, 0L, 100L, 60L, 2L));
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(List.of(1L, 0L, 100L, 60L, 2L, "2026-09"));
 
 		BudgetEnforcer.HoldAuthorization auth =
 				enforcer().authorizeHold(keyHash(), "owner-1", ProviderType.OPENAI, "m", 10, 20, null, null);
@@ -111,8 +111,8 @@ class BudgetEnforcerSettlementTest {
 	@DisplayName("authorizeHold short-circuits known-unbudgeted keys without pricing")
 	void authorizeHoldSkipsKnownUnbudgeted() {
 		when(costCalculator.calculate(any(), anyString(), anyLong(), anyLong())).thenReturn(4_000L);
-		when(redisTemplate.execute(any(), anyList(), any(), any()))
-				.thenReturn(List.of(1L, 0L, -1L, 0L, 0L));
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(List.of(1L, 0L, -1L, 0L, 0L, "2026-09"));
 		BudgetEnforcer enforcer = enforcer();
 		enforcer.checkBudget(keyHash(), "owner-1", ProviderType.OPENAI, "m", 10, null, null);
 

@@ -89,7 +89,8 @@ class E12CoverageSupportTest {
 				SseLineGuard.Action.REJECT_LINE_AND_CLOSE,
 				Map.of(SseLineGuard.ProviderType.ANTHROPIC, new SseLineGuard.ProviderConfig(32768, 1000, 1048576)),
 				Duration.ofSeconds(30),
-				Duration.ofSeconds(5)
+				Duration.ofSeconds(5),
+				Duration.ofMinutes(5)
 		);
 		DefaultSseLineGuardFactory factory = new DefaultSseLineGuardFactory(
 				props,
@@ -123,7 +124,8 @@ class E12CoverageSupportTest {
 				SseLineGuard.Action.REJECT_LINE_CONTINUE,
 				Map.of(),
 				Duration.ofSeconds(10),
-				Duration.ofSeconds(2)
+				Duration.ofSeconds(2),
+				Duration.ofMinutes(5)
 		);
 		factory.updateProperties(updated);
 		assertThat(factory.properties()).isEqualTo(updated);
@@ -283,7 +285,8 @@ class E12CoverageSupportTest {
 				SseLineGuard.Action.REJECT_LINE_CONTINUE,
 				Map.of(SseLineGuard.ProviderType.OPENAI, new SseLineGuard.ProviderConfig(16384, 1, 10)),
 				Duration.ofSeconds(30),
-				Duration.ofSeconds(5)
+				Duration.ofSeconds(5),
+				Duration.ofMinutes(5)
 		);
 		DefaultSseLineGuard guard = new DefaultSseLineGuard(
 				props,

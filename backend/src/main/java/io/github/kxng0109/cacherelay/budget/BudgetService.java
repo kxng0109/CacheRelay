@@ -217,6 +217,7 @@ public class BudgetService {
 	@Transactional(readOnly = true)
 	public BalanceView balance(String level, String subject) {
 		requireLevel(level);
+		requireSubject(level, subject);
 		Optional<BudgetLimit> found = limits.findByLevelAndSubjectId(level, subject);
 		long minuteLimit = found.map(BudgetLimit::getMinuteMicros).orElse(0L);
 		long monthLimit = found.map(BudgetLimit::getMonthMicros).orElse(0L);

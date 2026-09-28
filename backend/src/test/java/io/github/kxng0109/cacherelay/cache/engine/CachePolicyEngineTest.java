@@ -131,6 +131,41 @@ class CachePolicyEngineTest {
 	}
 
 	@Test
+	@DisplayName("ADM-B09: no-cache suppresses the write side as well as reads")
+	void noCacheSuppressesStore() {
+		OpenAiChatRequest normalReq = new OpenAiChatRequest(
+				"gpt-4o",
+				List.of(),
+				0.0,
+				null,
+				null,
+				null,
+				null,
+				true,
+				null
+		);
+
+		MockHttpServletRequest ccNoCache = new MockHttpServletRequest();
+		ccNoCache.addHeader("Cache-Control", "no-cache");
+		assertThat(policyEngine.shouldStoreInCache(normalReq, ccNoCache)).isFalse();
+
+		MockHttpServletRequest ccMaxAge = new MockHttpServletRequest();
+		ccMaxAge.addHeader("Cache-Control", "max-age=0");
+		assertThat(policyEngine.shouldStoreInCache(normalReq, ccMaxAge)).isFalse();
+
+		MockHttpServletRequest relayNoCache = new MockHttpServletRequest();
+		relayNoCache.addHeader("X-CacheRelay-No-Cache", "true");
+		assertThat(policyEngine.shouldStoreInCache(normalReq, relayNoCache)).isFalse();
+
+		MockHttpServletRequest noStore = new MockHttpServletRequest();
+		noStore.addHeader("Cache-Control", "no-store");
+		assertThat(policyEngine.shouldStoreInCache(normalReq, noStore)).isFalse();
+
+		MockHttpServletRequest plain = new MockHttpServletRequest();
+		assertThat(policyEngine.shouldStoreInCache(normalReq, plain)).isTrue();
+	}
+
+	@Test
 	@DisplayName("shouldStoreInCache respects no-store and read-only directives")
 	void shouldStoreInCache() {
 		OpenAiChatRequest normalReq = new OpenAiChatRequest(

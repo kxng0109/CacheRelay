@@ -11,10 +11,14 @@ import io.github.kxng0109.cacherelay.budget.NotificationLogEntry;
 import io.github.kxng0109.cacherelay.budget.NotificationLogRepository;
 import io.github.kxng0109.cacherelay.budget.NotificationPreference;
 import io.github.kxng0109.cacherelay.budget.NotificationPreferenceRepository;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
@@ -38,6 +42,8 @@ public class NotificationFanout {
 
 	private final Map<String, ChannelSender> senders;
 
+	private volatile @Nullable TransactionTemplate claimTemplate;
+
 	public NotificationFanout(NotificationPreferenceRepository preferences,
 	                          NotificationBounceRepository bounces,
 	                          NotificationDedupeRepository dedupes,
@@ -50,6 +56,23 @@ public class NotificationFanout {
 		this.senders = new ConcurrentHashMap<>();
 		for (ChannelSender sender : senders) {
 			this.senders.put(sender.channel(), sender);
+		}
+	}
+
+	/**
+	 * Wires the transaction template for fanout persistence. Forced to
+	 * {@code REQUIRES_NEW}: the listener runs after the dispatch transaction
+	 * commits, so without a dedicated transaction every claim and audit write
+	 * would be discarded (FIN-B14). Optional on purpose: without it
+	 * (unit-test contexts) repository calls run directly.
+	 *
+	 * @param claimTemplate template for claim/audit/release transactions, if available
+	 */
+	@Autowired
+	public void setClaimTemplate(@Nullable TransactionTemplate claimTemplate) {
+		if (claimTemplate != null) {
+			claimTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+			this.claimTemplate = claimTemplate;
 		}
 	}
 
@@ -77,8 +100,7 @@ public class NotificationFanout {
 			return;
 		}
 		try {
-			dedupes.save(new NotificationDedupe(event.dedupeSha(), preference.getChannel(),
-					preference.getTarget()));
+			claim(event, preference);
 		} catch (DataIntegrityViolationException duplicate) {
 			audit(event, preference, "SKIPPED", "duplicate delivery");
 			return;
@@ -90,14 +112,58 @@ public class NotificationFanout {
 			log.warn("Channel send failed for {}:{}", preference.getChannel(), preference.getTarget());
 			result = ChannelResult.TRANSIENT;
 		}
+		if (result == ChannelResult.TRANSIENT) {
+			// FIN-B15: a transient failure must not suppress the alert permanently —
+			// release the claim so the next redelivery sends again; the FAILED
+			// audit row keeps the evidence.
+			release(event, preference);
+		}
 		audit(event, preference, result == ChannelResult.SENT ? "SENT" : "FAILED", result.name());
+	}
+
+	/**
+	 * Claims one send in its own transaction.
+	 */
+	private void claim(AlertDeliveredEvent event, NotificationPreference preference) {
+		TransactionTemplate template = this.claimTemplate;
+		NotificationDedupe row = new NotificationDedupe(event.dedupeSha(), preference.getChannel(),
+				preference.getTarget());
+		if (template != null) {
+			template.executeWithoutResult(status -> dedupes.save(row));
+		} else {
+			dedupes.save(row);
+		}
+	}
+
+	/**
+	 * Releases one send claim in its own transaction.
+	 */
+	private void release(AlertDeliveredEvent event, NotificationPreference preference) {
+		try {
+			TransactionTemplate template = this.claimTemplate;
+			if (template != null) {
+				template.executeWithoutResult(status -> dedupes.deleteByDedupeShaAndChannelAndTarget(
+						event.dedupeSha(), preference.getChannel(), preference.getTarget()));
+			} else {
+				dedupes.deleteByDedupeShaAndChannelAndTarget(
+						event.dedupeSha(), preference.getChannel(), preference.getTarget());
+			}
+		} catch (RuntimeException ex) {
+			log.warn("Dedupe release failed for {}", event.dedupeSha());
+		}
 	}
 
 	private void audit(AlertDeliveredEvent event, NotificationPreference preference, String status,
 	                   String detail) {
+		NotificationLogEntry entry = new NotificationLogEntry(event.dedupeSha(), event.scope(),
+				preference.getChannel(), preference.getTarget(), status, detail);
 		try {
-			logRepository.save(new NotificationLogEntry(event.dedupeSha(), event.scope(),
-					preference.getChannel(), preference.getTarget(), status, detail));
+			TransactionTemplate template = this.claimTemplate;
+			if (template != null) {
+				template.executeWithoutResult(tx -> logRepository.save(entry));
+			} else {
+				logRepository.save(entry);
+			}
 		} catch (RuntimeException ex) {
 			log.warn("Notification audit write failed for {}", event.dedupeSha());
 		}

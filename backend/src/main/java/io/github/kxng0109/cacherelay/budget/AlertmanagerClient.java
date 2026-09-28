@@ -20,7 +20,7 @@ import tools.jackson.databind.ObjectMapper;
  * POSTs alert batches to the Alertmanager v2 API ({@code POST {base}/api/v2/alerts} with a JSON array body).
  * Retryable failures (429 honoring {@code Retry-After}, 5xx, timeouts) use Full Jitter backoff; 2xx is sent;
  * anything else is terminal. A blank base URL disables POST entirely (log-only mode for environments without
- * Alertmanager; outbox rows stay PENDING as the audit trail).
+ * Alertmanager; outbox rows park as SKIPPED, never SENT, so the audit trail stays honest).
  */
 @Component
 public class AlertmanagerClient {
@@ -32,7 +32,7 @@ public class AlertmanagerClient {
 	static final long BACKOFF_CAP_MILLIS = 30_000L;
 
 	/** Delivery outcome for one batch POST. */
-	public record PostResult(boolean sent, boolean retryable) {
+	public record PostResult(boolean sent, boolean retryable, boolean skipped) {
 	}
 
 	private static final Logger log = LoggerFactory.getLogger(AlertmanagerClient.class);
@@ -60,20 +60,20 @@ public class AlertmanagerClient {
 	 * Sends one batch (Alertmanager v2 expects a JSON array even for a single alert).
 	 *
 	 * @param alerts payloads, each rendered as one array element
-	 * @return outcome; log-only mode reports sent (nothing to deliver, nothing lost)
+	 * @return outcome; log-only mode reports skipped (recorded, never marked sent)
 	 */
 	public PostResult post(List<Map<String, Object>> alerts) {
 		String baseUrl = properties.alertmanagerUrl();
 		if (baseUrl == null || baseUrl.isBlank()) {
 			log.info("Alertmanager delivery disabled (log-only); {} alert(s) recorded in outbox", alerts.size());
-			return new PostResult(true, false);
+			return new PostResult(false, false, true);
 		}
 		String body;
 		try {
 			body = objectMapper.writeValueAsString(alerts);
 		} catch (Exception ex) {
 			log.warn("Alert serialization failed; dropping batch");
-			return new PostResult(false, false);
+			return new PostResult(false, false, false);
 		}
 		String target = baseUrl.endsWith("/") ? baseUrl + "api/v2/alerts" : baseUrl + "/api/v2/alerts";
 		for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -88,7 +88,7 @@ public class AlertmanagerClient {
 						httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 				int status = response.statusCode();
 				if (status >= 200 && status < 300) {
-					return new PostResult(true, false);
+					return new PostResult(true, false, false);
 				}
 				if (status == 429) {
 					long wait = retryAfterSeconds(response);
@@ -103,21 +103,21 @@ public class AlertmanagerClient {
 					continue;
 				}
 				log.warn("Alertmanager rejected batch with {} (terminal)", status);
-				return new PostResult(false, false);
+				return new PostResult(false, false, false);
 			} catch (IOException ex) {
 				log.warn("Alertmanager unreachable (attempt {}/{})", attempt, MAX_ATTEMPTS);
 				try {
 					sleepUninterruptibly(backoffDelayMillis(attempt));
 				} catch (InterruptedException interrupted) {
 					Thread.currentThread().interrupt();
-					return new PostResult(false, false);
+					return new PostResult(false, false, false);
 				}
 			} catch (InterruptedException ex) {
 				Thread.currentThread().interrupt();
-				return new PostResult(false, false);
+				return new PostResult(false, false, false);
 			}
 		}
-		return new PostResult(false, true);
+		return new PostResult(false, true, false);
 	}
 
 	/**

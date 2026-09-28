@@ -56,14 +56,14 @@ class AdminMcpApprovalControllerTest {
 	@DisplayName("getPendingApproval retrieves metadata or returns 404 when absent")
 	void getPendingApprovalScenarios() {
 		// Absent
-		when(valueOperations.get("mcp:hitl:pending:tok-absent")).thenReturn(null);
-		ResponseEntity<String> resp1 = controller.getPendingApproval("tok-absent");
+		when(valueOperations.get("mcp:hitl:pending:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")).thenReturn(null);
+		ResponseEntity<String> resp1 = controller.getPendingApproval("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
 		assertThat(resp1.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
 
 		// Present
-		String mockJson = "{\"tokenId\":\"tok-1\",\"toolName\":\"postgres__execute_sql\"}";
-		when(valueOperations.get("mcp:hitl:pending:tok-1")).thenReturn(mockJson);
-		ResponseEntity<String> resp2 = controller.getPendingApproval("tok-1");
+		String mockJson = "{\"tokenId\":\"9f8e7d6c5b4a32109f8e7d6c5b4a3210\",\"toolName\":\"postgres__execute_sql\"}";
+		when(valueOperations.get("mcp:hitl:pending:9f8e7d6c5b4a32109f8e7d6c5b4a3210")).thenReturn(mockJson);
+		ResponseEntity<String> resp2 = controller.getPendingApproval("9f8e7d6c5b4a32109f8e7d6c5b4a3210");
 		assertThat(resp2.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(resp2.getBody()).isEqualTo(mockJson);
 	}
@@ -71,33 +71,68 @@ class AdminMcpApprovalControllerTest {
 	@Test
 	@DisplayName("approveToolCall sets APPROVED in Redis and returns 200")
 	void approveToolCallSuccess() {
-		when(valueOperations.get("mcp:hitl:pending:tok-1")).thenReturn("{\"tokenId\":\"tok-1\"}");
+		when(valueOperations.get("mcp:hitl:pending:9f8e7d6c5b4a32109f8e7d6c5b4a3210")).thenReturn("{\"tokenId\":\"9f8e7d6c5b4a32109f8e7d6c5b4a3210\"}");
 
-		ResponseEntity<String> response = controller.approveToolCall("tok-1", null, new MockHttpServletRequest());
+		ResponseEntity<String> response = controller.approveToolCall("9f8e7d6c5b4a32109f8e7d6c5b4a3210", null, new MockHttpServletRequest());
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(response.getBody()).contains("APPROVED");
-		verify(valueOperations).set("mcp:hitl:approved:tok-1", "APPROVED", 300, TimeUnit.SECONDS);
+		verify(valueOperations).set("mcp:hitl:approved:9f8e7d6c5b4a32109f8e7d6c5b4a3210", "APPROVED", 300, TimeUnit.SECONDS);
+	}
+
+	@Test
+	@DisplayName("ADM-B10: malformed token ids are rejected 400 without touching Redis")
+	void malformedTokenIdRejected() {
+		MockHttpServletRequest request = new MockHttpServletRequest();
+
+		for (String evil : new String[]{"../x", "tok-1", "", " ", "9F8E7D6C5B4A32109F8E7D6C5B4A3210",
+				"9f8e7d6c5b4a32109f8e7d6c5b4a321", "9f8e7d6c5b4a32109f8e7d6c5b4a3210x",
+				"g".repeat(32), "x".repeat(10_000)}) {
+			assertThat(controller.approveToolCall(evil, null, request).getStatusCode())
+					.isEqualTo(HttpStatus.BAD_REQUEST);
+			assertThat(controller.rejectToolCall(evil, null, request).getStatusCode())
+					.isEqualTo(HttpStatus.BAD_REQUEST);
+			assertThat(controller.getPendingApproval(evil).getStatusCode())
+					.isEqualTo(HttpStatus.BAD_REQUEST);
+		}
+		verifyNoInteractions(redisTemplate);
+		verifyNoInteractions(valueOperations);
+	}
+
+	@Test
+	@DisplayName("ADM-B10: null token ids are rejected 400 without touching Redis")
+	@SuppressWarnings("DataFlowIssue")
+	void nullTokenIdRejected() {
+		MockHttpServletRequest request = new MockHttpServletRequest();
+
+		assertThat(controller.approveToolCall(null, null, request).getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(controller.rejectToolCall(null, null, request).getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(controller.getPendingApproval(null).getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+		verifyNoInteractions(redisTemplate);
+		verifyNoInteractions(valueOperations);
 	}
 
 	@Test
 	@DisplayName("approveToolCall returns 404 when pending token not found")
 	void approveToolCallNotFound() {
-		when(valueOperations.get("mcp:hitl:pending:tok-missing")).thenReturn(null);
-		ResponseEntity<String> response = controller.approveToolCall("tok-missing", null, new MockHttpServletRequest());
+		when(valueOperations.get("mcp:hitl:pending:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")).thenReturn(null);
+		ResponseEntity<String> response = controller.approveToolCall("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", null, new MockHttpServletRequest());
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
 	}
 
 	@Test
 	@DisplayName("rejectToolCall purges keys and returns 200")
 	void rejectToolCallPurgesKeys() {
-		ResponseEntity<String> response = controller.rejectToolCall("tok-1", null, new MockHttpServletRequest());
+		ResponseEntity<String> response = controller.rejectToolCall("9f8e7d6c5b4a32109f8e7d6c5b4a3210", null, new MockHttpServletRequest());
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(response.getBody()).contains("REJECTED");
-		verify(redisTemplate).delete("mcp:hitl:pending:tok-1");
-		verify(redisTemplate).delete("mcp:hitl:approved:tok-1");
-		verify(valueOperations).set("mcp:hitl:rejected:tok-1", "REJECTED", 86_400L, TimeUnit.SECONDS);
+		verify(redisTemplate).delete("mcp:hitl:pending:9f8e7d6c5b4a32109f8e7d6c5b4a3210");
+		verify(redisTemplate).delete("mcp:hitl:approved:9f8e7d6c5b4a32109f8e7d6c5b4a3210");
+		verify(valueOperations).set("mcp:hitl:rejected:9f8e7d6c5b4a32109f8e7d6c5b4a3210", "REJECTED", 86_400L, TimeUnit.SECONDS);
 	}
 
 	@Test
@@ -190,9 +225,9 @@ class AdminMcpApprovalControllerTest {
 	@Test
 	@DisplayName("FS-B12: blank pending values answer 404")
 	void getPendingApprovalBlankIs404() {
-		when(valueOperations.get("mcp:hitl:pending:tok-blank")).thenReturn("   ");
+		when(valueOperations.get("mcp:hitl:pending:cbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcb")).thenReturn("   ");
 
-		assertThat(controller.getPendingApproval("tok-blank").getStatusCode())
+		assertThat(controller.getPendingApproval("cbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcb").getStatusCode())
 				.isEqualTo(HttpStatus.NOT_FOUND);
 	}
 
@@ -215,46 +250,46 @@ class AdminMcpApprovalControllerTest {
 	@Test
 	@DisplayName("approve and reject record reasons without touching the APPROVED flag")
 	void decisionsRecordReasons() {
-		when(valueOperations.get("mcp:hitl:pending:tok-9")).thenReturn("{\"tokenId\":\"tok-9\"}");
+		when(valueOperations.get("mcp:hitl:pending:d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9")).thenReturn("{\"tokenId\":\"d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9\"}");
 
 		ResponseEntity<String> approved =
-				controller.approveToolCall("tok-9", new DecisionRequest("routine", "on-call"),
+				controller.approveToolCall("d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9", new DecisionRequest("routine", "on-call"),
 						new MockHttpServletRequest());
 
 		assertThat(approved.getStatusCode()).isEqualTo(HttpStatus.OK);
 		verify(valueOperations).set(
-				eq("mcp:hitl:approved:tok-9"), eq("APPROVED"), eq(300L), eq(TimeUnit.SECONDS));
+				eq("mcp:hitl:approved:d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9"), eq("APPROVED"), eq(300L), eq(TimeUnit.SECONDS));
 		verify(valueOperations).set(
-				eq("mcp:hitl:decision:tok-9"), contains("routine"), eq(86_400L),
+				eq("mcp:hitl:decision:d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9"), contains("routine"), eq(86_400L),
 				eq(TimeUnit.SECONDS));
 
 		ResponseEntity<String> rejected =
-				controller.rejectToolCall("tok-9", new DecisionRequest("risky", null), new MockHttpServletRequest());
+				controller.rejectToolCall("d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9", new DecisionRequest("risky", null), new MockHttpServletRequest());
 
 		assertThat(rejected.getStatusCode()).isEqualTo(HttpStatus.OK);
 		verify(valueOperations).set(
-				eq("mcp:hitl:decision:tok-9"), contains("risky"), eq(86_400L),
+				eq("mcp:hitl:decision:d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9"), contains("risky"), eq(86_400L),
 				eq(TimeUnit.SECONDS));
 	}
 
 	@Test
 	@DisplayName("anonymous decisions and blank pending values resolve safely")
 	void anonymousAndBlankDecisions() {
-		when(valueOperations.get("mcp:hitl:pending:tok-blank")).thenReturn("   ");
+		when(valueOperations.get("mcp:hitl:pending:cbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcb")).thenReturn("   ");
 
-		assertThat(controller.approveToolCall("tok-blank", null, new MockHttpServletRequest()).getStatusCode())
+		assertThat(controller.approveToolCall("cbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcb", null, new MockHttpServletRequest()).getStatusCode())
 				.isEqualTo(HttpStatus.NOT_FOUND);
 
-		when(valueOperations.get("mcp:hitl:pending:tok-8")).thenReturn("{\"tokenId\":\"tok-8\"}");
+		when(valueOperations.get("mcp:hitl:pending:e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8")).thenReturn("{\"tokenId\":\"e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8\"}");
 
 		ResponseEntity<String> approved =
-				controller.approveToolCall("tok-8", new DecisionRequest(null, "commander"),
+				controller.approveToolCall("e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8", new DecisionRequest(null, "commander"),
 						new MockHttpServletRequest());
 
 		assertThat(approved.getStatusCode()).isEqualTo(HttpStatus.OK);
 		ArgumentCaptor<String> decisionBody = ArgumentCaptor.forClass(String.class);
 		verify(valueOperations).set(
-				eq("mcp:hitl:decision:tok-8"), decisionBody.capture(), eq(86_400L),
+				eq("mcp:hitl:decision:e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8"), decisionBody.capture(), eq(86_400L),
 				eq(TimeUnit.SECONDS));
 		assertThat(decisionBody.getValue())
 				.as("self-asserted name ignored without an authenticated identity")
@@ -265,18 +300,18 @@ class AdminMcpApprovalControllerTest {
 	@Test
 	@DisplayName("forged decidedBy is ignored in favor of the authenticated admin id")
 	void forgedDecidedByIgnored() {
-		when(valueOperations.get("mcp:hitl:pending:tok-7")).thenReturn("{\"tokenId\":\"tok-7\"}");
+		when(valueOperations.get("mcp:hitl:pending:f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7")).thenReturn("{\"tokenId\":\"f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7\"}");
 		MockHttpServletRequest request = new MockHttpServletRequest();
 		UUID adminId = UUID.randomUUID();
 		request.setAttribute(AdminAuthFilter.ATTRIBUTE_ADMIN_ID, adminId);
 
 		ResponseEntity<String> approved = controller.approveToolCall(
-				"tok-7", new DecisionRequest("routine", "mallory"), request);
+				"f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7", new DecisionRequest("routine", "mallory"), request);
 
 		assertThat(approved.getStatusCode()).isEqualTo(HttpStatus.OK);
 		ArgumentCaptor<String> decisionBody = ArgumentCaptor.forClass(String.class);
 		verify(valueOperations).set(
-				eq("mcp:hitl:decision:tok-7"), decisionBody.capture(), eq(86_400L),
+				eq("mcp:hitl:decision:f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7"), decisionBody.capture(), eq(86_400L),
 				eq(TimeUnit.SECONDS));
 		assertThat(decisionBody.getValue())
 				.as("audit records the authenticated actor")
@@ -287,12 +322,12 @@ class AdminMcpApprovalControllerTest {
 	@Test
 	@DisplayName("sealed pending args are decrypted for review, undecryptable ones marked")
 	void sealedArgsDecryptedForReview() {
-		String sealedMeta = "{\"tokenId\":\"tok-sealed\",\"args\":\"v1.aead.args.xyz\"}";
-		when(valueOperations.get("mcp:hitl:pending:tok-sealed")).thenReturn(sealedMeta);
+		String sealedMeta = "{\"tokenId\":\"ab12ab12ab12ab12ab12ab12ab12ab12\",\"args\":\"v1.aead.args.xyz\"}";
+		when(valueOperations.get("mcp:hitl:pending:ab12ab12ab12ab12ab12ab12ab12ab12")).thenReturn(sealedMeta);
 		when(tokenService.openString("v1.aead.args.xyz"))
 				.thenReturn(Optional.of("{\"sql\":\"SELECT 1\"}"));
 
-		ResponseEntity<String> response = controller.getPendingApproval("tok-sealed");
+		ResponseEntity<String> response = controller.getPendingApproval("ab12ab12ab12ab12ab12ab12ab12ab12");
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(response.getBody()).contains("SELECT 1");
@@ -302,11 +337,11 @@ class AdminMcpApprovalControllerTest {
 	@Test
 	@DisplayName("undecryptable sealed args render as an explicit marker")
 	void undecryptableArgsMarked() {
-		String sealedMeta = "{\"tokenId\":\"tok-sealed\",\"args\":\"v1.aead.args.xyz\"}";
-		when(valueOperations.get("mcp:hitl:pending:tok-sealed")).thenReturn(sealedMeta);
+		String sealedMeta = "{\"tokenId\":\"ab12ab12ab12ab12ab12ab12ab12ab12\",\"args\":\"v1.aead.args.xyz\"}";
+		when(valueOperations.get("mcp:hitl:pending:ab12ab12ab12ab12ab12ab12ab12ab12")).thenReturn(sealedMeta);
 		when(tokenService.openString("v1.aead.args.xyz")).thenReturn(Optional.empty());
 
-		ResponseEntity<String> response = controller.getPendingApproval("tok-sealed");
+		ResponseEntity<String> response = controller.getPendingApproval("ab12ab12ab12ab12ab12ab12ab12ab12");
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(response.getBody()).contains("***undecryptable***");
@@ -315,10 +350,10 @@ class AdminMcpApprovalControllerTest {
 	@Test
 	@DisplayName("legacy plaintext pending args pass through review")
 	void legacyPlaintextArgsPassThrough() {
-		String plainMeta = "{\"tokenId\":\"tok-1\",\"args\":\"{\\\"sql\\\":\\\"SELECT 1\\\"}\"}";
-		when(valueOperations.get("mcp:hitl:pending:tok-1")).thenReturn(plainMeta);
+		String plainMeta = "{\"tokenId\":\"9f8e7d6c5b4a32109f8e7d6c5b4a3210\",\"args\":\"{\\\"sql\\\":\\\"SELECT 1\\\"}\"}";
+		when(valueOperations.get("mcp:hitl:pending:9f8e7d6c5b4a32109f8e7d6c5b4a3210")).thenReturn(plainMeta);
 
-		ResponseEntity<String> response = controller.getPendingApproval("tok-1");
+		ResponseEntity<String> response = controller.getPendingApproval("9f8e7d6c5b4a32109f8e7d6c5b4a3210");
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(response.getBody()).isEqualTo(plainMeta);
@@ -337,14 +372,14 @@ class AdminMcpApprovalControllerTest {
 	@Test
 	@DisplayName("FS-B12: decisions without an HTTP request attribute to the master key")
 	void nullRequestAttributesToMasterKey() {
-		when(valueOperations.get("mcp:hitl:pending:tok-nr")).thenReturn("{\"tokenId\":\"tok-nr\"}");
+		when(valueOperations.get("mcp:hitl:pending:1b2b1b2b1b2b1b2b1b2b1b2b1b2b1b2b")).thenReturn("{\"tokenId\":\"1b2b1b2b1b2b1b2b1b2b1b2b1b2b1b2b\"}");
 
-		ResponseEntity<String> response = controller.approveToolCall("tok-nr", null, null);
+		ResponseEntity<String> response = controller.approveToolCall("1b2b1b2b1b2b1b2b1b2b1b2b1b2b1b2b", null, null);
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 		ArgumentCaptor<String> decisionBody = ArgumentCaptor.forClass(String.class);
 		verify(valueOperations).set(
-				eq("mcp:hitl:decision:tok-nr"), decisionBody.capture(), eq(86_400L),
+				eq("mcp:hitl:decision:1b2b1b2b1b2b1b2b1b2b1b2b1b2b1b2b"), decisionBody.capture(), eq(86_400L),
 				eq(TimeUnit.SECONDS));
 		assertThat(decisionBody.getValue()).contains("master-key");
 	}

@@ -75,7 +75,7 @@ public class AdminLedgerController {
 											  "totalPromptTokens": 750000,
 											  "totalCompletionTokens": 250000,
 											  "totalTokens": 1000000,
-											  "totalCostMicros": 1500000,
+											  "totalCostUsdMicros": 1500000,
 											  "totalCostUsd": "1.500000",
 											  "averageDurationMs": 142.5,
 											  "byOwner": [],

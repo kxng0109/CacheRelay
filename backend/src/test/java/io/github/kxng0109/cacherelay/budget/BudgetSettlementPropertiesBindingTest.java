@@ -46,10 +46,11 @@ class BudgetSettlementPropertiesBindingTest {
 				"gateway.budget.settlement.max-tokens-ceiling: 1024",
 				"gateway.budget.settlement.hold-ttl-seconds: 120",
 				"gateway.budget.settlement.abort-grace-seconds: 10",
-				"gateway.budget.settlement.sweeper-batch: 50").run(ctx -> {
+				"gateway.budget.settlement.sweeper-batch: 50",
+				"gateway.budget.settlement.renewal-interval-seconds: 60").run(ctx -> {
 			assertThat(ctx).hasNotFailed();
 			assertThat(ctx.getBean(BudgetSettlementProperties.class))
-					.isEqualTo(new BudgetSettlementProperties(false, 1024, 120L, 10L, 50));
+					.isEqualTo(new BudgetSettlementProperties(false, 1024, 120L, 10L, 50, 60L));
 		});
 	}
 

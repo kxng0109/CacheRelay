@@ -86,6 +86,23 @@ gateway:
     # The application refuses to start if this is absent, blank, shorter than
     # 32 bytes, or equal to a known default (e.g. cacherelay_admin_secret_key).
     master-key: ${GATEWAY_ADMIN_MASTERKEY:}
+  csp:
+    # Extra connect-src origins for the per-response Content Security Policy
+    # (FE-17): the shell probes the management base, which is cross-origin in
+    # development (loopback :9091) while connect-src 'self' is same-origin.
+    # Comma-separated absolute http(s) origins, no path/query (blank = same-origin
+    # only, the safe default). Malformed values fail startup.
+    # Either list the management origin here AND point VITE_MANAGEMENT_BASE_URL
+    # at it, or proxy actuator same-origin (see README security model).
+    extra-connect-src: ${GATEWAY_CSP_EXTRA_CONNECT_SRC:}
+  alerts:
+    # Dedicated Alertmanager webhook secret (C5) — injected exclusively from
+    # the runtime environment. Generate with: openssl rand -base64 32
+    # Required: GATEWAY_ALERTS_WEBHOOK_SECRET=<32+ byte secret>
+    # Outside dev/test the application refuses to start when this is absent,
+    # blank, or shorter than 32 bytes. Alertmanager presents it as a bearer
+    # credential (credentials_file); the admin key is never distributed.
+    webhook-secret: ${GATEWAY_ALERTS_WEBHOOK_SECRET:}
   auth:
     # Human authentication lifetimes: relaxed defaults, strict admin counterparts.
     access-ttl: ${GATEWAY_AUTH_ACCESS_TTL:10m}
@@ -340,8 +357,7 @@ gateway:
     key-cache-maximum-size: ${GATEWAY_RATELIMIT_KEY_CACHE_MAXIMUM_SIZE:1000}
     key-cache-ttl-seconds: ${GATEWAY_RATELIMIT_KEY_CACHE_TTL_SECONDS:5}
   budget:
-    detection:      # Background spend watchdog (static thresholds, exhaustion forecast, anomaly): reads Redis counters
-      # once a minute, writes the alert_events outbox, dispatches to Alertmanager. Empty URL = log-only.
+    detection:      # Background spend watchdog (static thresholds, exhaustion forecast, anomaly): reads Redis counters      # once a minute, writes the alert_events outbox, dispatches to Alertmanager. Empty URL = log-only.
       enabled: ${GATEWAY_BUDGET_DETECTION_ENABLED:true}
       interval: ${GATEWAY_BUDGET_DETECTION_INTERVAL:60s}
       alertmanager-url: ${GATEWAY_BUDGET_DETECTION_ALERTMANAGER_URL:}
@@ -354,6 +370,10 @@ gateway:
       hold-ttl-seconds: ${GATEWAY_BUDGET_SETTLEMENT_HOLD_TTL_SECONDS:3600}
       abort-grace-seconds: ${GATEWAY_BUDGET_SETTLEMENT_ABORT_GRACE_SECONDS:30}
       sweeper-batch: ${GATEWAY_BUDGET_SETTLEMENT_SWEEPER_BATCH:500}
+      # Live-stream hold renewal cadence (FIN-B20): a stream longer than the
+      # hold TTL renews it at most this often, so it settles actuals instead
+      # of lapsing to a gap. Well below hold-ttl-seconds by design.
+      renewal-interval-seconds: ${GATEWAY_BUDGET_SETTLEMENT_RENEWAL_INTERVAL_SECONDS:300}
       sweep-interval: ${GATEWAY_BUDGET_SETTLEMENT_SWEEP_INTERVAL:30s}
   maintenance:
     # Monthly retention janitor (replay partition detach, alert archive roll, purges).
@@ -478,8 +498,11 @@ gateway:
     # HITL AEAD secret — injected exclusively from the runtime environment.
     # NEVER hardcode a value here. Generate with: openssl rand -base64 32
     # Required: GATEWAY_MCP_HITL_SECRET=<32+ byte base64 or random string>
-    # The application refuses to start if this is absent or shorter than 32 bytes.
+    # Required only when the gateway is enabled: a disabled gateway starts without it.
     hitl-secret: ${GATEWAY_MCP_HITL_SECRET:}
+    # Public base URL for absolute elicitation links (MCP-B33): remote MCP clients
+    # cannot resolve relative approval URLs. Blank keeps the relative path.
+    public-base-url: ${GATEWAY_PUBLIC_BASE_URL:}
     catalog-cache-maximum-size: ${GATEWAY_MCP_CATALOG_CACHE_MAXIMUM_SIZE:16}
     legacy-sse-emitter-timeout-minutes: ${GATEWAY_MCP_LEGACY_SSE_EMITTER_TIMEOUT_MINUTES:30}
     # Cap on one tools/call result body (PERF-11): larger upstream results fail with 502
@@ -500,7 +523,19 @@ gateway:
     #     api-key: ${A2A_RESEARCH_AGENT_KEY:}
 
 cacherelay:
+  # Capacity profile: floor (2 vCPU / 2 GB simulation floor) is the default.
+  # Floor-tuned values are profile-driven, never hardcoded: caps enforce,
+  # weights steer. Larger hardware raises the explicit knobs and declares
+  # standard/high here; the startup capacity report names the active profile.
+  capacity:
+    profile: ${CAPACITY_PROFILE:floor}
+    instance-weight: ${INSTANCE_WEIGHT:1}
   sse:
+    # Upstream idle ceiling (PRX-B12): aborts the consumer when no bytes
+    # arrive within this bound, independent of the request timeout (which
+    # stays headers-scoped). Long enough for slow reasoning streams.
+    line-guard:
+      upstream-idle-timeout: ${CACHERELAY_SSE_LINE_GUARD_UPSTREAM_IDLE_TIMEOUT:5m}
     flush:
       # Adaptive dual-trigger SSE flushing: a flush is issued when this many lines
       # are buffered or when this many milliseconds elapsed since the last flush,
@@ -558,6 +593,11 @@ server:
   tomcat:
     mbeanregistry:
       enabled: true
+  # Behind compose/k8s port mappings and any fronting LB, client-facing URLs
+  # (invite links) and scheme checks must see the outside host, not the
+  # container interior. The gateway never binds directly to the internet
+  # (compose publishes loopback by default; k8s fronts via Service).
+  forward-headers-strategy: framework
 
 # ==============================================================================
 # SpringDoc OpenAPI 3.1 & Interactive Swagger UI Configuration

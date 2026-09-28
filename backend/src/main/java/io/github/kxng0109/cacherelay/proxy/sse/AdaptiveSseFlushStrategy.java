@@ -31,8 +31,9 @@ import java.util.function.LongSupplier;
  * timer only marks due connections (never touches the non-thread-safe Tomcat
  * {@code OutputBuffer}), and the streaming thread is already a virtual thread, so a blocking
  * socket write unmounts the carrier exactly as a hopped flush would — without spawning a fresh
- * virtual thread and a join per flush. The watchdog still aborts a stuck flush by closing the
- * stream, which surfaces as an {@code IOException} on this same call path.</p>
+ * virtual thread and a join per flush. The watchdog never touches the stream either: on a stuck
+ * flush it raises an abort flag and interrupts the owner, which unwinds with an
+ * {@code IOException} and closes the stream itself (single-writer invariant).</p>
  *
  * <p>Hardening: a flush slower than {@code flushBackpressureThresholdMs} or buffered bytes above
  * {@code maxBufferBytes} aborts the stream ({@code onWrite} returns {@code true}) so the caller cancels the upstream
@@ -86,6 +87,8 @@ public final class AdaptiveSseFlushStrategy implements SseFlushStrategy, AutoClo
 	private final Timer flushDuration;
 
 	private final Counter backpressureCounter;
+
+	private final Counter watchdogCounter;
 
 	private final Timer connectionDuration;
 
@@ -162,6 +165,10 @@ public final class AdaptiveSseFlushStrategy implements SseFlushStrategy, AutoClo
 		                                  .description(
 				                                  "SSE streams aborted because a flush exceeded the backpressure threshold or the buffer cap")
 		                                  .register(meterRegistry);
+		this.watchdogCounter = Counter.builder("sse.flush.watchdog.count")
+		                              .description(
+				                              "SSE streams aborted by the write watchdog (stuck flush)")
+		                              .register(meterRegistry);
 		this.connectionDuration = Timer.builder("sse.connection.duration")
 		                               .description("Lifetime of an SSE relay connection")
 		                               .register(meterRegistry);
@@ -208,6 +215,16 @@ public final class AdaptiveSseFlushStrategy implements SseFlushStrategy, AutoClo
 		FlushState state = connectionsByStream.get(out);
 		if (state == null) {
 			return false;
+		}
+		state.ownerThread = Thread.currentThread();
+		if (state.abortRequested) {
+			// Watchdog abort pending: consume it exactly once (with the
+			// interrupt it may have delivered) and tear down owner-side.
+			state.abortRequested = false;
+			Thread.interrupted();
+			watchdogCounter.increment();
+			closeOwnedStream(state);
+			return true;
 		}
 		long now = nanoSource.getAsLong();
 		state.recordLine(lineLength);
@@ -357,7 +374,14 @@ public final class AdaptiveSseFlushStrategy implements SseFlushStrategy, AutoClo
 			// benefit (zero delay, immediate join); direct flush is identical.
 			flush(state.out);
 		} catch (RuntimeException ex) {
-			// The flush failed: the client disconnected or the watchdog closed the stream.
+			// The flush failed: the client disconnected, the watchdog aborted a
+			// stuck flush (interrupt surfaced here), or the owner closed the
+			// stream. The owner closes idempotently; the watchdog never does.
+			if (state.abortRequested) {
+				state.abortRequested = false;
+				watchdogCounter.increment();
+			}
+			closeOwnedStream(state);
 			state.flushInProgress = false;
 			state.terminated = true;
 			LockSupport.unpark(state.watchdog);
@@ -387,17 +411,36 @@ public final class AdaptiveSseFlushStrategy implements SseFlushStrategy, AutoClo
 	private void watchdogLoop(FlushState state) {
 		long parkNanos = Math.min(NANOS_PER_SECOND, watchdogTimeoutMs * NANOS_PER_MILLI / 2);
 		while (!state.terminated) {
-			if (state.flushInProgress
+			if (!state.terminated && state.flushInProgress
 					&& nanoSource.getAsLong() - state.flushStartedNanos >= watchdogTimeoutMs * NANOS_PER_MILLI) {
-				try {
-					state.out.close();
-				} catch (IOException ex) {
-					// The stream is already closed; there is nothing left to abort.
+				// PRX-B06: signal, never touch the stream. The Tomcat output is
+				// single-writer: only the owning streaming thread may close it.
+				// Interrupting unblocks a flush stuck in a socket write; the
+				// owner observes the flag on its own path and closes itself.
+				state.abortRequested = true;
+				Thread owner = state.ownerThread;
+				if (owner != null && owner.isAlive()) {
+					owner.interrupt();
 				}
 				return;
 			}
 			LockSupport.parkNanos(parkNanos);
 		}
+	}
+
+	/**
+	 * Closes the stream from the owning thread after a watchdog abort and
+	 * marks the connection terminal. Idempotent: double-aborts stay silent.
+	 *
+	 * @param state connection being torn down, owned by the caller
+	 */
+	private void closeOwnedStream(FlushState state) {
+		try {
+			state.out.close();
+		} catch (IOException ex) {
+			// The stream is already closed; there is nothing left to abort.
+		}
+		state.terminated = true;
 	}
 
 	/**
@@ -444,6 +487,19 @@ public final class AdaptiveSseFlushStrategy implements SseFlushStrategy, AutoClo
 		volatile boolean terminated;
 
 		volatile Thread watchdog;
+
+		/**
+		 * Set by the watchdog when a flush stays blocked past the timeout.
+		 * Only the owning streaming thread acts on it (and closes the
+		 * stream): the watchdog never touches the non-thread-safe output.
+		 */
+		volatile boolean abortRequested;
+
+		/**
+		 * Streaming thread currently driving this connection, for watchdog
+		 * interrupts. Written on every owner entry; read only by the watchdog.
+		 */
+		volatile Thread ownerThread;
 
 		FlushState(long connectionId, ServletOutputStream out, long nowNanos, double flushRate) {
 			this.connectionId = connectionId;

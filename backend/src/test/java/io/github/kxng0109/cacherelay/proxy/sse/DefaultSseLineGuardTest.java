@@ -32,7 +32,8 @@ class DefaultSseLineGuardTest {
 						SseLineGuard.ProviderType.ANTHROPIC, new SseLineGuard.ProviderConfig(200, 5, 500)
 				),
 				Duration.ofSeconds(30),
-				Duration.ofSeconds(5)
+				Duration.ofSeconds(5),
+				Duration.ofMinutes(5)
 		);
 	}
 
@@ -91,7 +92,8 @@ class DefaultSseLineGuardTest {
 				SseLineGuard.Action.REJECT_LINE_AND_CLOSE,
 				Map.of(),
 				Duration.ofSeconds(30),
-				Duration.ofSeconds(5)
+				Duration.ofSeconds(5),
+				Duration.ofMinutes(5)
 		);
 		DefaultSseLineGuard guard = newGuard(props, SseLineGuard.ProviderType.OPENAI, "openai-east");
 		List<String> result = guard.checkLine("x".repeat(1_000), SseLineGuard.ProviderType.OPENAI);
@@ -109,7 +111,8 @@ class DefaultSseLineGuardTest {
 				SseLineGuard.Action.REJECT_LINE_CONTINUE,
 				Map.of(),
 				Duration.ofSeconds(30),
-				Duration.ofSeconds(5)
+				Duration.ofSeconds(5),
+				Duration.ofMinutes(5)
 		);
 		DefaultSseLineGuard guard = newGuard(props, SseLineGuard.ProviderType.OPENAI, "openai-east");
 		List<String> result = guard.checkLine("x".repeat(100), SseLineGuard.ProviderType.OPENAI);
@@ -155,7 +158,7 @@ class DefaultSseLineGuardTest {
 				Map.of(
 						SseLineGuard.ProviderType.OPENAI, new SseLineGuard.ProviderConfig(16384, 3, 1_048_576)
 				),
-				Duration.ofSeconds(30), Duration.ofSeconds(5)
+				Duration.ofSeconds(30), Duration.ofSeconds(5), Duration.ofMinutes(5)
 		);
 		DefaultSseLineGuard guard = newGuard(props, SseLineGuard.ProviderType.OPENAI, "openai");
 		IntStream.range(0, 3).forEach(i -> guard.checkLine("line" + i, SseLineGuard.ProviderType.OPENAI));
@@ -172,7 +175,7 @@ class DefaultSseLineGuardTest {
 				Map.of(
 						SseLineGuard.ProviderType.OPENAI, new SseLineGuard.ProviderConfig(16384, 1000, 20)
 				),
-				Duration.ofSeconds(30), Duration.ofSeconds(5)
+				Duration.ofSeconds(30), Duration.ofSeconds(5), Duration.ofMinutes(5)
 		);
 		DefaultSseLineGuard guard = newGuard(props, SseLineGuard.ProviderType.OPENAI, "openai");
 		guard.checkLine("first-line-here", SseLineGuard.ProviderType.OPENAI);
@@ -186,7 +189,7 @@ class DefaultSseLineGuardTest {
 		SseLineGuardProperties props = new SseLineGuardProperties(
 				true, 10, 10, SseLineGuard.Action.REJECT_LINE_AND_CLOSE,
 				Map.of(),
-				Duration.ofSeconds(30), Duration.ofSeconds(5)
+				Duration.ofSeconds(30), Duration.ofSeconds(5), Duration.ofMinutes(5)
 		);
 		DefaultSseLineGuard guard = newGuard(props, SseLineGuard.ProviderType.OPENAI, "openai");
 		String cjk = "中文测试"; // 4 chars, 12 bytes

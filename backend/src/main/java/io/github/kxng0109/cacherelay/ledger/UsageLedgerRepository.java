@@ -1,7 +1,11 @@
 package io.github.kxng0109.cacherelay.ledger;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -18,6 +22,38 @@ public interface UsageLedgerRepository extends JpaRepository<UsageLedgerEntry, U
 	 */
 	Optional<UsageLedgerEntry> findByRequestId(UUID requestId);
 
+	/**
+	 * Counts rows created in a window (FIN-B10 bucket freshness check).
+	 *
+	 * @param from window start inclusive
+	 * @param to   window end inclusive
+	 * @return row count
+	 */
+	long countByCreatedAtBetween(Instant from, Instant to);
+
+	/**
+	 * Counts one owner set's rows created in a window (FIN-B10 bucket freshness check).
+	 *
+	 * @param ownerIds owner ids to scope to
+	 * @param from     window start inclusive
+	 * @param to       window end inclusive
+	 * @return row count
+	 */
+	long countByOwnerIdInAndCreatedAtBetween(Collection<String> ownerIds, Instant from, Instant to);
+
+	/**
+	 * Retention purge for rows older than the cutoff (FIN-B39): without it the
+	 * ledger grows without bound, and the dedupe horizon is undefined. The
+	 * cutoff must always exceed the 90-day maximum query window — purged rows
+	 * are ancient history no legal detail query can address, and dashboard
+	 * grains survive as the record (see {@code DashboardService.reconcileDay}).
+	 *
+	 * @param cutoff exclusive upper bound on {@code createdAt}
+	 * @return deleted row count
+	 */
+	@Modifying
+	@Query("DELETE FROM UsageLedgerEntry e WHERE e.createdAt < :cutoff")
+	int purgeBefore(@Param("cutoff") Instant cutoff);
 	/**
 	 * @param requestId the correlation id of the proxied request
 	 * @return {@code true} when an entry was already recorded for it

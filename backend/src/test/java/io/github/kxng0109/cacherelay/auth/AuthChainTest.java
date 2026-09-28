@@ -78,7 +78,7 @@ class AuthChainTest extends SharedContainersBase {
 		HttpResponse<String> replay = post("/v1/auth/redeem",
 				"{\"token\":\"" + token + "\",\"username\":\"root2\",\"password\":\"password-12345\"}",
 				null, null);
-		assertThat(replay.statusCode()).as("consumed invite is gone").isEqualTo(410);
+		assertThat(replay.statusCode()).as("consumed invite is indistinguishable from unknown").isEqualTo(404);
 	}
 
 	@Test

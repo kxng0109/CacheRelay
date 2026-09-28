@@ -16,6 +16,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -202,6 +203,77 @@ class AdminKeyControllerTest {
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(response.getBody().injectionBlock()).isFalse();
+	}
+
+	@Test
+	@DisplayName("ADM-B16: invalid hashes are rejected without reflecting input")
+	void invalidHashNotReflected() {
+		UpdateKeyRequest request = new UpdateKeyRequest(
+				null, null, null,
+				null, null,
+				null, null,
+				null, null,
+				null, null,
+				null, null
+		);
+		String evil = "<script>alert(1)</script>";
+
+		assertThatThrownBy(() -> controller.updateKey(evil, request))
+				.isInstanceOf(ResponseStatusException.class)
+				.satisfies(e -> {
+					assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(400);
+					assertThat(e.getMessage()).doesNotContain(evil);
+				});
+	}
+
+	@Test
+	@DisplayName("ADM-B04: owner-bearing PATCH routes through a single atomic patchKey")
+	void ownerBearingPatchUsesPatchKey() {
+		SHA256Hash hash = SHA256Hash.fromRawKey("gw-secretPatch1");
+		UUID owner = UUID.randomUUID();
+		VirtualApiKey metadata = new VirtualApiKey(
+				hash, "gw-", "owner-1", "patch-key", 60, 1000,
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				Set.of(), Set.of(),
+				false,
+				true, Instant.now()
+		);
+		when(keyManagementService.patchKey(
+				eq(hash), eq(owner), eq("renamed"), eq(null), eq(null),
+				eq(null), eq(null),
+				eq(null), eq(null),
+				eq(null), eq(null),
+				eq(null), eq(null),
+				eq(null), eq(null), eq(null),
+				eq(null), eq(null)
+		)).thenReturn(Optional.of(metadata));
+
+		UpdateKeyRequest patch = new UpdateKeyRequest(
+				"renamed", null, null,
+				null, null,
+				null, null,
+				null, null,
+				null, null,
+				null, null, null, null, null, owner
+		);
+
+		ResponseEntity<KeyResponse> patched = controller.updateKey(hash.hex(), patch);
+
+		assertThat(patched.getStatusCode()).isEqualTo(HttpStatus.OK);
+		verify(keyManagementService, times(1)).patchKey(
+				eq(hash), eq(owner), eq("renamed"), eq(null), eq(null),
+				eq(null), eq(null),
+				eq(null), eq(null),
+				eq(null), eq(null),
+				eq(null), eq(null),
+				eq(null), eq(null), eq(null),
+				eq(null), eq(null));
+		verify(keyManagementService, never()).assignOwner(any(), any());
+		verify(keyManagementService, never()).updateKey(
+				any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+				any(), any(), any(), any(), any(), any(), any());
 	}
 
 	@Test
@@ -537,12 +609,14 @@ class AdminKeyControllerTest {
 		);
 
 		when(keyManagementService.listKeys("owner-1")).thenReturn(List.of(key));
+		when(keyManagementService.usernamesOf(any())).thenReturn(Map.of());
 
 		ResponseEntity<List<KeyResponse>> response = controller.listKeys("owner-1");
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(response.getBody()).hasSize(1);
 		assertThat(response.getBody().getFirst().keyId()).isEqualTo(hash.hex());
+		verify(keyManagementService, times(1)).usernamesOf(any());
 
 		// List without owner filter
 		VirtualApiKey keyNullHash = new VirtualApiKey(
@@ -554,6 +628,26 @@ class AdminKeyControllerTest {
 		assertThat(allResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(allResponse.getBody()).hasSize(2);
 		assertThat(allResponse.getBody().get(1).keyId()).isEmpty();
+	}
+
+	@Test
+	@DisplayName("ADM-B16: null username map degrades to unattributed names, never 500")
+	@SuppressWarnings("DataFlowIssue")
+	void nullUsernameMapDegrades() {
+		UUID owner = UUID.randomUUID();
+		VirtualApiKey owned = new VirtualApiKey(
+				SHA256Hash.fromRawKey("gw-owned-null-map"), "gw-", "owner-1", "owned", 60, 1000,
+				Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(),
+				Set.of(), Set.of(), true, true, Instant.now(),
+				Set.of(), Set.of(), Set.of(), owner, false);
+		when(keyManagementService.listKeys(null)).thenReturn(List.of(owned));
+		when(keyManagementService.usernamesOf(any())).thenReturn(null);
+
+		ResponseEntity<List<KeyResponse>> response = controller.listKeys(null);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody()).hasSize(1);
+		assertThat(response.getBody().getFirst().ownerUsername()).isNull();
 	}
 
 	@Test

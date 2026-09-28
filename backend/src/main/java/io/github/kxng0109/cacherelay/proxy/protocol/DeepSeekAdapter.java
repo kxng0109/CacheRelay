@@ -42,7 +42,7 @@ public final class DeepSeekAdapter implements ProtocolAdapter {
 
 		ObjectNode body = objectMapper.createObjectNode();
 		body.put("model", model);
-		body.put("stream", true);
+		body.put("stream", request.stream() == null || request.stream());
 
 		ArrayNode outMessages = body.putArray("messages");
 		if (request.messages() != null) {

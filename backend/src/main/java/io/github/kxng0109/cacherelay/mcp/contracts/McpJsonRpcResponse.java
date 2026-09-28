@@ -51,6 +51,16 @@ public record McpJsonRpcResponse(
 		return error == null;
 	}
 
+	/**
+	 * Whether this response is a method-not-found failure (MCP-B25: drives the era-conditional
+	 * HTTP status — 404 on the modern era, 200 on legacy eras).
+	 *
+	 * @return true when the error code is {@code -32601}
+	 */
+	public boolean isMethodNotFound() {
+		return error != null && error.code() == McpJsonRpcError.METHOD_NOT_FOUND;
+	}
+
 	public ObjectNode toJsonNode(ObjectMapper mapper) {
 		ObjectNode node = mapper.createObjectNode();
 		node.put("jsonrpc", "2.0");

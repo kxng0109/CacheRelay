@@ -504,7 +504,7 @@ class McpFullCoverageBranchTest {
 		@SuppressWarnings("unchecked")
 		HttpResponse<String> respNoContent = mock(HttpResponse.class);
 		when(respNoContent.statusCode()).thenReturn(200);
-		when(respNoContent.body()).thenReturn("{\"jsonrpc\":\"2.0\",\"result\":{\"status\":\"success\"}}");
+		when(respNoContent.body()).thenReturn("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"status\":\"success\"}}");
 		when(httpClient.send(
 				any(HttpRequest.class),
 				ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
@@ -522,7 +522,7 @@ class McpFullCoverageBranchTest {
 		@SuppressWarnings("unchecked")
 		HttpResponse<String> respEmpty = mock(HttpResponse.class);
 		when(respEmpty.statusCode()).thenReturn(200);
-		when(respEmpty.body()).thenReturn("{}");
+		when(respEmpty.body()).thenReturn("{\"jsonrpc\":\"2.0\",\"id\":2}");
 		when(httpClient.send(
 				any(HttpRequest.class),
 				ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()

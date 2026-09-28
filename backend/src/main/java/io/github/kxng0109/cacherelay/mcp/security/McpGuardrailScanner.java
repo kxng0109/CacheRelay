@@ -1,5 +1,6 @@
 package io.github.kxng0109.cacherelay.mcp.security;
 
+import io.github.kxng0109.cacherelay.mcp.protocol.McpLogSanitizer;
 import io.github.kxng0109.cacherelay.security.guardrail.secret.IngressSecretScanner;
 import io.github.kxng0109.cacherelay.security.guardrail.secret.SecretScanResult;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -65,7 +66,7 @@ public class McpGuardrailScanner {
 			byte[] bytes = serialized.getBytes(StandardCharsets.UTF_8);
 			return secretScanner.scan(bytes, serialized);
 		} catch (Exception e) {
-			log.warn("Guardrail argument scan failed closed: {}", e.getMessage());
+			log.warn("Guardrail argument scan failed closed: {}", McpLogSanitizer.safe(e.getMessage()));
 			MeterRegistry registry = this.meterRegistry;
 			if (registry != null) {
 				registry.counter("mcp_guardrail_scan_failures_total", "stage", "arguments")

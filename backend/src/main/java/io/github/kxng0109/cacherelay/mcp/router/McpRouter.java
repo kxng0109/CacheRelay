@@ -2,6 +2,7 @@ package io.github.kxng0109.cacherelay.mcp.router;
 
 import io.github.kxng0109.cacherelay.mcp.config.McpGatewayProperties;
 import io.github.kxng0109.cacherelay.mcp.contracts.McpServerConfig;
+import io.github.kxng0109.cacherelay.mcp.protocol.McpLogSanitizer;
 import io.github.kxng0109.cacherelay.mcp.security.McpToolRbacPolicyEngine;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -63,7 +64,7 @@ public class McpRouter {
 				return Optional.of(new McpResolvedRoute(config, rawToolName, trimmed));
 			}
 			log.warn("MCP routing failed: server prefix '{}' is unknown, disabled, or policy-denied",
-					serverPrefix);
+					McpLogSanitizer.safe(serverPrefix));
 			return Optional.empty();
 		}
 
@@ -84,7 +85,7 @@ public class McpRouter {
 		if (candidates.size() > 1) {
 			log.warn(
 					"MCP routing collision: un-namespaced tool '{}' matches multiple servers: {}; refusing to guess",
-					requestedToolName,
+					McpLogSanitizer.safe(requestedToolName),
 					candidates.stream().map(c -> c.serverConfig().name()).toList()
 			);
 			return Optional.empty();

@@ -270,6 +270,14 @@
                         <GATEWAY_MCP_HITL_SECRET>test-only-hitl-secret-32-bytes-minimum!!</GATEWAY_MCP_HITL_SECRET>
                         <GATEWAY_ADMIN_MASTERKEY>test-only-admin-master-key-32b-min!!</GATEWAY_ADMIN_MASTERKEY>
                         <GATEWAY_AUTH_JWT_SECRET>test-only-jwt-secret-32-bytes-minimum!!</GATEWAY_AUTH_JWT_SECRET>
+                        <GATEWAY_ALERTS_WEBHOOK_SECRET>test-only-alerts-webhook-secret-32b!!</GATEWAY_ALERTS_WEBHOOK_SECRET>
+                        <!-- FIN-B39 repair: ADM-B02 requires an invite base outside dev/test; full-context
+                             Boot tests run with no profiles, so the fork env carries a non-routable
+                             placeholder (.invalid never resolves). Test-JVM-only, never ships. -->
+                        <GATEWAY_AUTH_INVITE_BASE_URL>https://test.invalid</GATEWAY_AUTH_INVITE_BASE_URL>
+                        <GATEWAY_BOOTSTRAPKEYS_0_OWNERID>test-owner</GATEWAY_BOOTSTRAPKEYS_0_OWNERID>
+                        <GATEWAY_BOOTSTRAPKEYS_0_NAME>test-boot</GATEWAY_BOOTSTRAPKEYS_0_NAME>
+                        <GATEWAY_BOOTSTRAPKEYS_0_PLAINTEXTKEY>gw-0123456789abcdef0123456789abcdef</GATEWAY_BOOTSTRAPKEYS_0_PLAINTEXTKEY>
                     </environmentVariables>
                     <!-- Test-only scheduler fast-shutdown (fork-hang guard): system properties
                          form a separate Spring property source, so unlike a test
@@ -388,6 +396,14 @@
                         <GATEWAY_MCP_HITL_SECRET>test-only-hitl-secret-32-bytes-minimum!!</GATEWAY_MCP_HITL_SECRET>
                         <GATEWAY_ADMIN_MASTERKEY>test-only-admin-master-key-32b-min!!</GATEWAY_ADMIN_MASTERKEY>
                         <GATEWAY_AUTH_JWT_SECRET>test-only-jwt-secret-32-bytes-minimum!!</GATEWAY_AUTH_JWT_SECRET>
+                        <GATEWAY_ALERTS_WEBHOOK_SECRET>test-only-alerts-webhook-secret-32b!!</GATEWAY_ALERTS_WEBHOOK_SECRET>
+                        <!-- FIN-B39 repair: ADM-B02 requires an invite base outside dev/test; full-context
+                             Boot tests run with no profiles, so the fork env carries a non-routable
+                             placeholder (.invalid never resolves). Test-JVM-only, never ships. -->
+                        <GATEWAY_AUTH_INVITE_BASE_URL>https://test.invalid</GATEWAY_AUTH_INVITE_BASE_URL>
+                        <GATEWAY_BOOTSTRAPKEYS_0_OWNERID>test-owner</GATEWAY_BOOTSTRAPKEYS_0_OWNERID>
+                        <GATEWAY_BOOTSTRAPKEYS_0_NAME>test-boot</GATEWAY_BOOTSTRAPKEYS_0_NAME>
+                        <GATEWAY_BOOTSTRAPKEYS_0_PLAINTEXTKEY>gw-0123456789abcdef0123456789abcdef</GATEWAY_BOOTSTRAPKEYS_0_PLAINTEXTKEY>
                     </environmentVariables>
                     <systemPropertyVariables>
                         <gateway.scheduling.pool-size>1</gateway.scheduling.pool-size>
@@ -442,6 +458,14 @@
                                 <GATEWAY_MCP_HITL_SECRET>test-only-hitl-secret-32-bytes-minimum!!</GATEWAY_MCP_HITL_SECRET>
                                 <GATEWAY_ADMIN_MASTERKEY>test-only-admin-master-key-32b-min!!</GATEWAY_ADMIN_MASTERKEY>
                                 <GATEWAY_AUTH_JWT_SECRET>test-only-jwt-secret-32-bytes-minimum!!</GATEWAY_AUTH_JWT_SECRET>
+                                <GATEWAY_ALERTS_WEBHOOK_SECRET>test-only-alerts-webhook-secret-32b!!</GATEWAY_ALERTS_WEBHOOK_SECRET>
+                        <!-- FIN-B39 repair: ADM-B02 requires an invite base outside dev/test; full-context
+                             Boot tests run with no profiles, so the fork env carries a non-routable
+                             placeholder (.invalid never resolves). Test-JVM-only, never ships. -->
+                        <GATEWAY_AUTH_INVITE_BASE_URL>https://test.invalid</GATEWAY_AUTH_INVITE_BASE_URL>
+                                <GATEWAY_BOOTSTRAPKEYS_0_OWNERID>test-owner</GATEWAY_BOOTSTRAPKEYS_0_OWNERID>
+                                <GATEWAY_BOOTSTRAPKEYS_0_NAME>test-boot</GATEWAY_BOOTSTRAPKEYS_0_NAME>
+                                <GATEWAY_BOOTSTRAPKEYS_0_PLAINTEXTKEY>gw-0123456789abcdef0123456789abcdef</GATEWAY_BOOTSTRAPKEYS_0_PLAINTEXTKEY>
                             </environmentVariables>
                             <systemPropertyVariables>
                                 <gateway.scheduling.pool-size>1</gateway.scheduling.pool-size>

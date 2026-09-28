@@ -7,18 +7,25 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 import javax.sql.DataSource;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -63,11 +70,33 @@ class AlertDispatcherTest {
 	}
 
 	@Test
+	@DisplayName("successful tick records the last-tick gauge")
+	void successfulTickRecordsGauge() throws Exception {
+		Harness harness = harness(List.of());
+		SimpleMeterRegistry registry = new SimpleMeterRegistry();
+		harness.dispatcher().setMeterRegistry(registry);
+
+		harness.dispatcher().dispatch();
+
+		assertThat(registry.get("cacherelay.job.last_tick_seconds")
+				.tag("job", "alert-dispatcher").gauge().value()).isPositive();
+	}
+
+	@Test
+	@DisplayName("null meter registry leaves dispatch unobserved without failing")
+	void nullMeterRegistryLeavesDispatchUnobserved() throws Exception {
+		Harness harness = harness(List.of());
+		harness.dispatcher().setMeterRegistry(null);
+
+		assertThatNoException().isThrownBy(() -> harness.dispatcher().dispatch());
+	}
+
+	@Test
 	@DisplayName("sent alerts are marked and saved")
 	void sentMarkedAndSaved() throws Exception {
 		AlertEvent row = event();
 		Harness harness = harness(List.of(row));
-		when(harness.client().post(any())).thenReturn(new AlertmanagerClient.PostResult(true, false));
+		when(harness.client().post(any())).thenReturn(new AlertmanagerClient.PostResult(true, false, false));
 
 		harness.dispatcher().dispatch();
 
@@ -80,7 +109,7 @@ class AlertDispatcherTest {
 	void terminalKillsRow() throws Exception {
 		AlertEvent row = event();
 		Harness harness = harness(List.of(row));
-		when(harness.client().post(any())).thenReturn(new AlertmanagerClient.PostResult(false, false));
+		when(harness.client().post(any())).thenReturn(new AlertmanagerClient.PostResult(false, false, false));
 
 		harness.dispatcher().dispatch();
 
@@ -89,11 +118,63 @@ class AlertDispatcherTest {
 	}
 
 	@Test
+	@DisplayName("FIN-B16: claim and outcomes run inside REQUIRES_NEW transactions")
+	void claimUsesTransactionTemplate() throws Exception {
+		AlertEvent row = event();
+		Harness harness = harness(List.of(row));
+		when(harness.client().post(any())).thenReturn(new AlertmanagerClient.PostResult(true, false, false));
+		TransactionTemplate template = mock(TransactionTemplate.class);
+		doAnswer(invocation -> {
+			Consumer<TransactionStatus> work = invocation.getArgument(0);
+			work.accept(mock(TransactionStatus.class));
+			return null;
+		}).when(template).executeWithoutResult(any());
+		when(template.execute(any())).thenAnswer(invocation -> {
+			TransactionCallback<?> callback = invocation.getArgument(0);
+			return callback.doInTransaction(mock(TransactionStatus.class));
+		});
+		harness.dispatcher().setClaimTemplate(template);
+
+		harness.dispatcher().dispatch();
+
+		assertThat(row.getStatus()).isEqualTo("SENT");
+		verify(template).execute(any());
+		verify(template).executeWithoutResult(any());
+	}
+
+	@Test
+	@DisplayName("FIN-B18: rows past the batch deadline re-arm without sending")
+	void pastDeadlineRearmsWithoutSending() throws Exception {
+		AlertEvent row = event();
+		Harness harness = harness(List.of(row));
+
+		harness.dispatcher().sendBatch(List.of(row), Instant.now().minusSeconds(1));
+
+		verify(harness.client(), never()).post(any());
+		assertThat(row.getStatus()).isEqualTo("PENDING");
+		assertThat(row.getAttempts()).isEqualTo(1);
+		verify(harness.outbox()).save(row);
+	}
+
+	@Test
+	@DisplayName("FIN-B17: skipped delivery parks the row, never marks it sent")
+	void skippedParksRow() throws Exception {
+		AlertEvent row = event();
+		Harness harness = harness(List.of(row));
+		when(harness.client().post(any())).thenReturn(new AlertmanagerClient.PostResult(false, false, true));
+
+		harness.dispatcher().dispatch();
+
+		assertThat(row.getStatus()).isEqualTo("SKIPPED");
+		verify(harness.outbox()).save(row);
+	}
+
+	@Test
 	@DisplayName("retryable failures back off with a future retry horizon")
 	void retryableBacksOff() throws Exception {
 		AlertEvent row = event();
 		Harness harness = harness(List.of(row));
-		when(harness.client().post(any())).thenReturn(new AlertmanagerClient.PostResult(false, true));
+		when(harness.client().post(any())).thenReturn(new AlertmanagerClient.PostResult(false, true, false));
 
 		Instant before = Instant.now();
 		harness.dispatcher().dispatch();
@@ -112,7 +193,7 @@ class AlertDispatcherTest {
 			row.backoff(Instant.now());
 		}
 		Harness harness = harness(List.of(row));
-		when(harness.client().post(any())).thenReturn(new AlertmanagerClient.PostResult(false, true));
+		when(harness.client().post(any())).thenReturn(new AlertmanagerClient.PostResult(false, true, false));
 
 		harness.dispatcher().dispatch();
 
@@ -127,7 +208,7 @@ class AlertDispatcherTest {
 		Harness harness = harness(List.of(poison, healthy));
 		when(harness.client().post(any()))
 				.thenThrow(new RuntimeException("boom"))
-				.thenReturn(new AlertmanagerClient.PostResult(true, false));
+				.thenReturn(new AlertmanagerClient.PostResult(true, false, false));
 
 		harness.dispatcher().dispatch();
 
@@ -205,7 +286,7 @@ class AlertDispatcherTest {
 		Harness harness = harness(List.of(row));
 		ArgumentCaptor<List<Map<String, Object>>> batch = ArgumentCaptor.forClass(List.class);
 		when(harness.client().post(batch.capture()))
-				.thenReturn(new AlertmanagerClient.PostResult(true, false));
+				.thenReturn(new AlertmanagerClient.PostResult(true, false, false));
 
 		harness.dispatcher().dispatch();
 
@@ -221,7 +302,7 @@ class AlertDispatcherTest {
 		Harness harness = harness(List.of(row));
 		ArgumentCaptor<List<Map<String, Object>>> batch = ArgumentCaptor.forClass(List.class);
 		when(harness.client().post(batch.capture()))
-				.thenReturn(new AlertmanagerClient.PostResult(true, false));
+				.thenReturn(new AlertmanagerClient.PostResult(true, false, false));
 
 		harness.dispatcher().dispatch();
 

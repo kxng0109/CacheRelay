@@ -1,9 +1,11 @@
 package io.github.kxng0109.cacherelay.a2a.protocol;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.SequenceInputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -17,6 +19,7 @@ import io.github.kxng0109.cacherelay.a2a.config.A2aGatewayProperties;
 import io.github.kxng0109.cacherelay.a2a.registry.A2aAgentRegistry;
 import io.github.kxng0109.cacherelay.a2a.resilience.A2aAgentCircuitBreakerManager;
 import io.github.kxng0109.cacherelay.a2a.security.A2aRbacPolicyEngine;
+import io.github.kxng0109.cacherelay.a2a.security.A2aTaskOwnershipIndex;
 import io.github.kxng0109.cacherelay.config.OpenApiConfig;
 import io.github.kxng0109.cacherelay.config.SensitiveString;
 import io.github.kxng0109.cacherelay.contracts.RateLimitDecision;
@@ -88,9 +91,37 @@ public class A2aProxyController {
 	private static final Set<String> COST_BEARING_METHODS =
 			Set.of("message/send", "message/stream");
 
+	/**
+	 * Methods gated by the key's RPM budget (A2A-B04): messaging dispatches agent work, and
+	 * {@code tasks/get} / {@code tasks/cancel} each dispatch an upstream call under the shared
+	 * agent credential — unthrottled task polling would be free upstream work. Reads stay in the
+	 * same RPM set (no separate cheap bucket exists); denial burns the caller's own quota.
+	 */
+	private static final Set<String> THROTTLED_METHODS =
+			Set.of("message/send", "message/stream", "tasks/get", "tasks/cancel");
+
 	private static final String HEADER_A2A_VERSION = "A2A-Version";
 
 	private static final int STREAM_COPY_BUFFER_BYTES = 8_192;
+
+	/**
+	 * Structured SSE media-type check (A2A-B08): the spec mandates exactly
+	 * {@code text/event-stream}, so detection is case-insensitive equality on the
+	 * type/subtype with any {@code ;}-parameters ignored — never a substring test,
+	 * which false-positives on lookalikes like
+	 * {@code application/x-text-event-stream-evil}.
+	 *
+	 * @param contentType raw upstream {@code Content-Type}, possibly {@code null}
+	 * @return true only for the SSE media type
+	 */
+	static boolean isSseContentType(@Nullable String contentType) {
+		if (contentType == null) {
+			return false;
+		}
+		int params = contentType.indexOf(';');
+		String mediaType = (params < 0 ? contentType : contentType.substring(0, params)).trim();
+		return "text/event-stream".equalsIgnoreCase(mediaType);
+	}
 
 	private final A2aGatewayProperties properties;
 
@@ -107,6 +138,13 @@ public class A2aProxyController {
 	private final ObjectMapper objectMapper;
 
 	private final HttpClient httpClient;
+
+	/**
+	 * Task-ownership bindings created through this gateway instance (A2A-B02). Built from
+	 * configuration here (not injected) so the controller stays directly constructible;
+	 * the TTL and size knobs live on {@link A2aGatewayProperties}.
+	 */
+	private final A2aTaskOwnershipIndex taskOwnership;
 
 	/**
 	 * @param properties            A2A gateway configuration
@@ -136,6 +174,8 @@ public class A2aProxyController {
 		this.rateLimitEngine = rateLimitEngine;
 		this.objectMapper = objectMapper;
 		this.httpClient = httpClient;
+		this.taskOwnership = new A2aTaskOwnershipIndex(
+				properties.getTaskIndexMaxSize(), properties.getTaskIndexTtl());
 	}
 
 	/**
@@ -220,11 +260,11 @@ public class A2aProxyController {
 			return ResponseEntity.status(HttpStatus.ACCEPTED).build();
 		}
 
-		// Flood gate for the cost-bearing methods only: messaging dispatches upstream
-		// work, so the key's RPM applies here; tasks/get and tasks/cancel are local
-		// reads and stay unthrottled (MCP tools/call precedent). Denied calls burn the
-		// caller's own quota, which is self-defeating for attackers.
-		if (COST_BEARING_METHODS.contains(method)) {
+		// Flood gate for messaging and task methods: messaging dispatches upstream
+		// work, and tasks/get + tasks/cancel each dispatch an upstream call under the
+		// shared agent credential, so all four burn the key's RPM budget (A2A-B04).
+		// Denied calls burn the caller's own quota, which is self-defeating for attackers.
+		if (THROTTLED_METHODS.contains(method)) {
 			ResponseEntity<StreamingResponseBody> limited = enforceRateLimit(id, apiKey, httpRequest);
 			if (limited != null) {
 				return limited;
@@ -241,6 +281,31 @@ public class A2aProxyController {
 		}
 		A2aAgentConfig agent = resolved.get();
 
+		// A2A-B02: tasks/get and tasks/cancel run under the agent's shared credential,
+		// so task ids are bearer-equivalent. Only the tenant that created the task
+		// through this gateway may read or cancel it; unknown and foreign ids answer
+		// the same 404 without ever reaching upstream (no enumeration oracle).
+		if ("tasks/get".equals(method) || "tasks/cancel".equals(method)) {
+			String taskId = tree.path("params").path("id").asString("");
+			if (taskId.isBlank()) {
+				return jsonRpc(HttpStatus.BAD_REQUEST,
+						McpJsonRpcResponse.failure(id,
+								McpJsonRpcError.invalidParams("Task id is required")));
+			}
+			String owner = taskOwnership.ownerOf(agentName, taskId);
+			if (owner == null || !owner.equals(apiKey.ownerId())) {
+				return jsonRpc(HttpStatus.NOT_FOUND,
+						McpJsonRpcResponse.failure(id,
+								McpJsonRpcError.internalError("Task not available")));
+			}
+		}
+
+		ResponseEntity<StreamingResponseBody> versionVerdict =
+				rejectUnsupportedVersion(agent, protocolVersion, id);
+		if (versionVerdict != null) {
+			return versionVerdict;
+		}
+
 		if (!circuitBreakerManager.tryAcquire(agentName)) {
 			return jsonRpc(HttpStatus.OK,
 					McpJsonRpcResponse.failure(id,
@@ -249,9 +314,9 @@ public class A2aProxyController {
 		}
 
 		if ("message/stream".equals(method)) {
-			return streamRelay(agentName, agent, rawBody, protocolVersion, id);
+			return streamRelay(agentName, agent, rawBody, protocolVersion, id, apiKey.ownerId());
 		}
-		return jsonRelay(agentName, agent, rawBody, protocolVersion, id);
+		return jsonRelay(agentName, agent, rawBody, protocolVersion, id, apiKey.ownerId());
 	}
 
 	/**
@@ -269,7 +334,8 @@ public class A2aProxyController {
 			A2aAgentConfig agent,
 			String rawBody,
 			@Nullable String protocolVersion,
-			JsonNode id
+			JsonNode id,
+			@Nullable String ownerId
 	) {
 		HttpRequest.Builder builder = baseRequest(agent, rawBody, protocolVersion)
 				.header("Accept", "application/json")
@@ -283,6 +349,7 @@ public class A2aProxyController {
 
 			if (upstream.statusCode() >= 200 && upstream.statusCode() < 300) {
 				circuitBreakerManager.recordSuccess(agentName);
+				noteTaskOwnership(agentName, ownerId, upstream.body());
 				return relayJsonObject(id, upstream.body());
 			}
 
@@ -320,7 +387,8 @@ public class A2aProxyController {
 			A2aAgentConfig agent,
 			String rawBody,
 			@Nullable String protocolVersion,
-			JsonNode id
+			JsonNode id,
+			@Nullable String ownerId
 	) {
 		HttpRequest request = baseRequest(agent, rawBody, protocolVersion)
 				.header("Accept", "text/event-stream")
@@ -342,7 +410,7 @@ public class A2aProxyController {
 
 		String contentType = upstream.headers().firstValue("Content-Type").orElse("");
 		if (upstream.statusCode() < 200 || upstream.statusCode() >= 300
-				|| !contentType.contains("text/event-stream")) {
+				|| !isSseContentType(contentType)) {
 			// Pre-stream failure (or a non-SSE body): buffer it bounded and answer a
 			// normal JSON-RPC response.
 			try (InputStream body = upstream.body()) {
@@ -362,14 +430,119 @@ public class A2aProxyController {
 			}
 		}
 
+		PeekedStream peek = peekFirstFrame(agentName, ownerId, upstream.body());
 		StreamingResponseBody stream = out -> copyStream(
-				agentName, upstream.body(), out,
+				agentName, peek.stream(), out,
 				System.nanoTime() + properties.getStreamMaxDuration().toNanos());
 		return ResponseEntity.ok()
 				.contentType(MediaType.TEXT_EVENT_STREAM)
 				.header("Cache-Control", "no-cache")
 				.header("X-Accel-Buffering", "no")
 				.body(stream);
+	}
+
+	/**
+	 * Peek window for the streaming first frame (A2A-B02): bounded so a hostile agent
+	 * cannot force buffering of the whole stream before relay begins.
+	 */
+	private static final int STREAM_PEEK_BYTES = 65_536;
+
+	/**
+	 * Records task ownership from a buffered non-streaming upstream body (A2A-B02).
+	 * Failures parse to nothing and never disturb the relay path.
+	 *
+	 * @param agentName upstream agent name
+	 * @param ownerId   creating tenant, possibly {@code null}
+	 * @param body      upstream response body, possibly {@code null}
+	 */
+	private void noteTaskOwnership(String agentName, @Nullable String ownerId, @Nullable String body) {
+		if (body == null || body.isBlank()) {
+			return;
+		}
+		try {
+			JsonNode taskId = objectMapper.readTree(body).path("result").path("id");
+			if (taskId.isString()) {
+				taskOwnership.record(agentName, taskId.asString(), ownerId);
+			}
+		} catch (Exception ignored) {
+			// Unparseable bodies carry no indexable task; the relay is unaffected.
+		}
+	}
+
+	/**
+	 * Peeks the first SSE data frame of a stream to index its task id (A2A-B02), returning
+	 * a stream that replays the peeked bytes first so relay stays byte-transparent.
+	 *
+	 * @param agentName upstream agent name
+	 * @param ownerId   creating tenant, possibly {@code null}
+	 * @param raw       upstream byte stream (ownership transfers to the returned stream)
+	 * @return peeked head plus the rejoined stream
+	 */
+	private PeekedStream peekFirstFrame(String agentName, @Nullable String ownerId, @Nullable InputStream raw) {
+		if (raw == null) {
+			// Preserve the legacy null-body behavior exactly (fail fast on first
+			// read downstream); there is nothing to peek and nothing to index.
+			return new PeekedStream(null);
+		}
+		// Read only up to the first frame boundary: blocking for a fixed byte count
+		// would stall relay start on slow streams.
+		ByteArrayOutputStream head = new ByteArrayOutputStream();
+		try {
+			int previous = -1;
+			int current;
+			while (head.size() < STREAM_PEEK_BYTES
+					&& (current = raw.read()) != -1) {
+				head.write(current);
+				if (previous == '\n' && current == '\n') {
+					break;
+				}
+				previous = current;
+			}
+		} catch (IOException readFailed) {
+			// Peek failed: relay the untouched remainder without indexing.
+			return new PeekedStream(raw);
+		}
+		byte[] headBytes = head.toByteArray();
+		if (headBytes.length == 0) {
+			// Empty stream: nothing to replay and nothing to index — hand the
+			// original stream back so read/close delegation stays byte-identical.
+			return new PeekedStream(raw);
+		}
+		String taskId = firstFrameTaskId(new String(headBytes, StandardCharsets.UTF_8));
+		if (taskId != null) {
+			taskOwnership.record(agentName, taskId, ownerId);
+		}
+		InputStream replay = new SequenceInputStream(new ByteArrayInputStream(headBytes), raw);
+		return new PeekedStream(replay);
+	}
+
+	/**
+	 * Extracts the task id from the first SSE data frame in a peek window.
+	 *
+	 * @param window peeked stream head as text
+	 * @return the {@code result.id} string of the first data frame, or {@code null}
+	 */
+	private @Nullable String firstFrameTaskId(String window) {
+		for (String line : window.split("\n")) {
+			String trimmed = line.trim();
+			if (!trimmed.startsWith("data:")) {
+				continue;
+			}
+			try {
+				JsonNode taskId = objectMapper.readTree(trimmed.substring(5).trim())
+						.path("result").path("id");
+				if (taskId.isString() && !taskId.asString().isBlank()) {
+					return taskId.asString();
+				}
+				return null;
+			} catch (Exception unparsable) {
+				return null;
+			}
+		}
+		return null;
+	}
+
+	private record PeekedStream(InputStream stream) {
 	}
 
 	/**
@@ -406,7 +579,10 @@ public class A2aProxyController {
 				}
 				total += read;
 				if (total > properties.getMaxResultBytes()) {
-					circuitBreakerManager.recordFailure(agentName);
+					// A2A-B01: the byte cap is a local policy stop, not an upstream
+					// fault — the agent delivered bytes correctly. Close the stream
+					// without recording a breaker failure so a long stream cannot
+					// trip the agent breaker fleet-wide.
 					log.warn("A2A stream from agent '{}' exceeded {} bytes; closing stream",
 							agentName, properties.getMaxResultBytes());
 					return;
@@ -441,6 +617,80 @@ public class A2aProxyController {
 			builder.header("Authorization", "Bearer " + upstreamKey.value());
 		}
 		return builder;
+	}
+
+	/**
+	 * Validates the caller {@code A2A-Version} against the agent's pinned version (A2A-B08,
+	 * spec section 3.6: versions negotiate on {@code Major.Minor}, patch ignored; empty means
+	 * 0.3 and is always accepted). A present version that is unparsable answers {@code -32602};
+	 * one whose {@code Major.Minor} differs from the pin answers {@code -32009} — the agent
+	 * would otherwise process the call under the wrong semantics. Absent versions fall back
+	 * to the agent pin downstream and are never rejected here.
+	 *
+	 * @param agent           resolved agent configuration carrying the pin
+	 * @param protocolVersion caller version, possibly {@code null}
+	 * @param id              request id for error shaping
+	 * @return a 400 response on violation, or {@code null} to proceed
+	 */
+	private @Nullable ResponseEntity<StreamingResponseBody> rejectUnsupportedVersion(
+			A2aAgentConfig agent,
+			@Nullable String protocolVersion,
+			JsonNode id
+	) {
+		if (protocolVersion == null || protocolVersion.isBlank()) {
+			return null;
+		}
+		int[] requested = majorMinor(protocolVersion.trim());
+		if (requested == null) {
+			return jsonRpc(HttpStatus.BAD_REQUEST,
+					McpJsonRpcResponse.failure(id,
+							McpJsonRpcError.invalidParams(
+									"Invalid A2A-Version '" + protocolVersion.trim() + "'")));
+		}
+		int[] pinned = majorMinor(agent.protocolVersionOrDefault());
+		if (pinned != null
+				&& (requested[0] != pinned[0] || requested[1] != pinned[1])) {
+			return jsonRpc(HttpStatus.BAD_REQUEST,
+					McpJsonRpcResponse.failure(id,
+							McpJsonRpcError.versionNotSupported(
+									"agent '" + agent.name() + "' speaks "
+											+ agent.protocolVersionOrDefault()
+											+ ", caller asked for " + protocolVersion.trim())));
+		}
+		return null;
+	}
+
+	/**
+	 * Parses a {@code Major.Minor[.patch]} version, ignoring the patch.
+	 *
+	 * @param version raw version string
+	 * @return major/minor pair, or {@code null} when unparsable
+	 */
+	private static int @Nullable [] majorMinor(String version) {
+		String[] parts = version.split("\\.", -1);
+		if (parts.length < 2) {
+			return null;
+		}
+		try {
+			return new int[]{Integer.parseInt(parts[0]), Integer.parseInt(parts[1])};
+		} catch (NumberFormatException notNumeric) {
+			return null;
+		}
+	}
+
+	/**
+	 * Whether a resolved card target stays on the agent origin (A2A-B06).
+	 *
+	 * @param base     registered agent base URL
+	 * @param resolved resolution of the configured card path against the base
+	 * @return true when scheme and authority match (case-insensitive host)
+	 */
+	private static boolean isSameOrigin(URI base, URI resolved) {
+		if (resolved.getScheme() == null || resolved.getAuthority() == null) {
+			return false;
+		}
+		return resolved.getScheme().equalsIgnoreCase(base.getScheme())
+				&& resolved.getAuthority().equalsIgnoreCase(base.getAuthority());
 	}
 
 	/**
@@ -518,14 +768,51 @@ public class A2aProxyController {
 		if (!keyManagementService.isUsable(apiKey)) {
 			return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
 		}
+		// A2A-B07: the card fetch dispatches upstream work under the agent credential,
+		// so it burns the key's RPM budget and honors breaker admission like every
+		// other upstream dispatch. Denied calls burn the caller's own quota.
+		SHA256Hash keyHash = keyHashOf(httpRequest);
+		if (keyHash != null) {
+			RateLimitDecision decision;
+			try {
+				decision = rateLimitEngine.checkRequestRate(keyHash, apiKey);
+			} catch (RateLimitUnavailableException e) {
+				log.warn("A2A rate limiter unavailable; failing closed");
+				return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
+			}
+			if (decision instanceof RateLimitDecision.Rejected rejected) {
+				return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+						.header("Retry-After",
+								String.valueOf(Math.max(1, rejected.retryAfterSeconds())))
+						.build();
+			}
+		}
 		Optional<A2aAgentConfig> resolved = agentRegistry.resolve(agentName);
 		if (resolved.isEmpty() || !rbacPolicyEngine.isAgentAllowed(agentName, apiKey)) {
 			return ResponseEntity.notFound().build();
 		}
+		if (!circuitBreakerManager.tryAcquire(agentName)) {
+			return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
+		}
 		A2aAgentConfig agent = resolved.get();
 
+		// A2A-B06: the card path is operator configuration, but an absolute URI (or a
+		// scheme-relative //host reference) would override the agent origin and carry
+		// the agent bearer to a foreign host. Require a relative reference and verify
+		// the resolved target stays same-origin before attaching any credential.
+		URI cardUri;
 		try {
-			URI cardUri = agent.baseUrl().resolve(agent.cardPathOrDefault());
+			URI cardRef = new URI(agent.cardPathOrDefault());
+			cardUri = agent.baseUrl().resolve(cardRef);
+		} catch (Exception malformed) {
+			return ResponseEntity.badRequest().build();
+		}
+		if (!isSameOrigin(agent.baseUrl(), cardUri)) {
+			log.warn("A2A card path for agent '{}' escapes the agent origin; refusing to fetch",
+					agentName);
+			return ResponseEntity.badRequest().build();
+		}
+		try {
 			HttpRequest.Builder builder = HttpRequest.newBuilder(cardUri)
 					.timeout(properties.getClientRequestTimeout())
 					.header("Accept", "application/json")
@@ -540,6 +827,7 @@ public class A2aProxyController {
 					new BoundedResultBodyHandler(properties.getMaxResultBytes())
 			);
 			if (upstream.statusCode() < 200 || upstream.statusCode() >= 300) {
+				circuitBreakerManager.recordFailure(agentName);
 				return ResponseEntity.status(HttpStatus.BAD_GATEWAY).build();
 			}
 
@@ -550,6 +838,18 @@ public class A2aProxyController {
 				JsonNode additionalInterfaces = objectCard.get("additionalInterfaces");
 				if (additionalInterfaces != null && additionalInterfaces.isArray()) {
 					for (JsonNode entry : additionalInterfaces) {
+						if (entry instanceof ObjectNode objectEntry) {
+							objectEntry.put("url", proxyUrl);
+						}
+					}
+				}
+				// A2A-B03 (verified): v1.0 cards carry no top-level url — endpoints live
+				// in supportedInterfaces[*].url. Rewrite those to the gateway; leave
+				// provider/documentation/icon and OAuth/OIDC URLs untouched (third parties,
+				// not the proxied endpoint — rewriting them would break auth).
+				JsonNode supportedInterfaces = objectCard.get("supportedInterfaces");
+				if (supportedInterfaces != null && supportedInterfaces.isArray()) {
+					for (JsonNode entry : supportedInterfaces) {
 						if (entry instanceof ObjectNode objectEntry) {
 							objectEntry.put("url", proxyUrl);
 						}

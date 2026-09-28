@@ -26,18 +26,31 @@ import java.util.Locale;
 public class SsrfValidator {
 
 	/**
-	 * Ranges no legitimate public LLM provider can live in, per the OWASP minimum deny-list: cloud metadata lives
-	 * inside link-local space; loopback, RFC 1918 private, this-network, and multicast cover the remaining internal
-	 * attack surface for both address families.
+	 * Ranges no legitimate public LLM provider can live in, per the OWASP minimum deny-list plus the
+	 * IANA IPv4/IPv6 Special-Purpose Registries (verified 2026-09-26 against
+	 * https://www.iana.org/assignments/iana-ipv4-special-registry and RFCs
+	 * 6598, 5737, 2544, 1112): cloud metadata lives inside link-local space;
+	 * loopback, RFC 1918 private, CGNAT shared space, benchmark, TEST-NET
+	 * documentation, protocol-assignment, deprecated 6to4-relay, reserved
+	 * Class E, NAT64, and IPv6 documentation ranges cover the remaining
+	 * non-public surface for both address families.
 	 */
 	private static final List<CidrRange> BLOCKED_RANGES = List.of(
 			new CidrRange(InetAddress.ofLiteral("0.0.0.0"), 8),
 			new CidrRange(InetAddress.ofLiteral("10.0.0.0"), 8),
+			new CidrRange(InetAddress.ofLiteral("100.64.0.0"), 10),
 			new CidrRange(InetAddress.ofLiteral("172.16.0.0"), 12),
 			new CidrRange(InetAddress.ofLiteral("192.168.0.0"), 16),
 			new CidrRange(InetAddress.ofLiteral("169.254.0.0"), 16),
 			new CidrRange(InetAddress.ofLiteral("127.0.0.0"), 8),
+			new CidrRange(InetAddress.ofLiteral("192.0.0.0"), 24),
+			new CidrRange(InetAddress.ofLiteral("192.0.2.0"), 24),
+			new CidrRange(InetAddress.ofLiteral("192.88.99.0"), 24),
+			new CidrRange(InetAddress.ofLiteral("198.18.0.0"), 15),
+			new CidrRange(InetAddress.ofLiteral("198.51.100.0"), 24),
+			new CidrRange(InetAddress.ofLiteral("203.0.113.0"), 24),
 			new CidrRange(InetAddress.ofLiteral("224.0.0.0"), 4),
+			new CidrRange(InetAddress.ofLiteral("240.0.0.0"), 4),
 			new CidrRange(InetAddress.ofLiteral("::"), 128),
 			new CidrRange(InetAddress.ofLiteral("::1"), 128),
 			new CidrRange(InetAddress.ofLiteral("fc00::"), 7),
@@ -45,7 +58,9 @@ public class SsrfValidator {
 			new CidrRange(InetAddress.ofLiteral("ff00::"), 8),
 			new CidrRange(InetAddress.ofLiteral("100::"), 64),
 			new CidrRange(InetAddress.ofLiteral("2001::"), 23),
-			new CidrRange(InetAddress.ofLiteral("2002::"), 16)
+			new CidrRange(InetAddress.ofLiteral("2002::"), 16),
+			new CidrRange(InetAddress.ofLiteral("64:ff9b::"), 96),
+			new CidrRange(InetAddress.ofLiteral("2001:db8::"), 32)
 	);
 
 	/**

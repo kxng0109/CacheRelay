@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import io.github.kxng0109.cacherelay.contracts.BootstrapKey;
 import io.github.kxng0109.cacherelay.contracts.GatewayProperties;
@@ -43,6 +44,7 @@ class KeyAgentScopesTest {
 	private KeyManagementService newService() {
 		when(redisTemplate.<String, String>opsForHash()).thenReturn(hashOps);
 		when(redisTemplate.<String, String>opsForSet()).thenReturn(setOps);
+		when(redisTemplate.execute(any(), anyList(), any(Object[].class))).thenReturn(1L);
 		return new KeyManagementService(redisTemplate);
 	}
 
@@ -81,6 +83,7 @@ class KeyAgentScopesTest {
 	@Test
 	void createKeyPersistsAgentSets() {
 		KeyManagementService service = newService();
+		AtomicReference<List<Object>> argv = AtomicStoreCapture.captureScriptArgv(redisTemplate);
 
 		KeyManagementService.CreatedKey created = service.createKey(
 				"owner", "name", 5, 50, Set.of(), Set.of(), Set.of(), Set.of(),
@@ -89,12 +92,10 @@ class KeyAgentScopesTest {
 
 		assertEquals(Set.of("research-*", "support"), created.key().allowedAgents());
 		assertEquals(Set.of("prod-*"), created.key().deniedAgents());
-		@SuppressWarnings("unchecked")
-		ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
-		verify(hashOps).putAll(eq(redisKey(created.hash())), fieldsCaptor.capture());
+		Map<String, String> stored = AtomicStoreCapture.scriptFields(argv.get());
 		assertEquals(Set.of("research-*", "support"),
-				Set.of(fieldsCaptor.getValue().get("allowedAgents").split(",")));
-		assertEquals("prod-*", fieldsCaptor.getValue().get("deniedAgents"));
+				Set.of(stored.get("allowedAgents").split(",")));
+		assertEquals("prod-*", stored.get("deniedAgents"));
 	}
 
 	@Test

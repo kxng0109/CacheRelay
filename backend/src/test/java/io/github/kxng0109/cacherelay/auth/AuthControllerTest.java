@@ -93,7 +93,7 @@ class AuthControllerTest {
 	}
 
 	@Test
-	@DisplayName("redeem maps missing to 404 and gone to 410")
+	@DisplayName("ADM-B02: redeem maps missing and gone to a single 404 (no token oracle)")
 	void redeemStatuses() {
 		when(invites.redeem(any(), any(), any(), any(), any())).thenReturn(
 				new InviteService.RedeemResult.Missing());
@@ -113,7 +113,7 @@ class AuthControllerTest {
 				new MockHttpServletRequest()))
 				.isInstanceOf(ResponseStatusException.class)
 				.satisfies(e -> assertThat(
-						((ResponseStatusException) e).getStatusCode().value()).isEqualTo(410));
+						((ResponseStatusException) e).getStatusCode().value()).isEqualTo(404));
 	}
 
 	@Test

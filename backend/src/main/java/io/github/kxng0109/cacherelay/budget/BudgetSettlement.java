@@ -10,9 +10,13 @@ import java.util.Set;
 import io.github.kxng0109.cacherelay.contracts.ProviderType;
 import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
 import io.github.kxng0109.cacherelay.security.ratelimit.RateLimitUnavailableException;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 /**
@@ -34,11 +38,42 @@ public class BudgetSettlement {
 
 	private final BudgetSettlementProperties properties;
 
+	private volatile MeterRegistry meterRegistry = new SimpleMeterRegistry();
+
+	private volatile Counter renewRenewed = counter("renewed", new SimpleMeterRegistry());
+
+	private volatile Counter renewMissing = counter("missing", new SimpleMeterRegistry());
+
+	private volatile Counter renewFailed = counter("failed", new SimpleMeterRegistry());
+
 	public BudgetSettlement(BudgetEnforcer enforcer, BudgetGapRepository gapRepository,
 	                        BudgetSettlementProperties properties) {
 		this.enforcer = enforcer;
 		this.gapRepository = gapRepository;
 		this.properties = properties;
+	}
+
+	/**
+	 * Wires the registry for the hold-renewal counters. Optional on purpose:
+	 * without it renewals still run, only unobserved.
+	 *
+	 * @param meterRegistry registry hosting the renewal counters, if available
+	 */
+	@Autowired
+	public void setMeterRegistry(@Nullable MeterRegistry meterRegistry) {
+		if (meterRegistry != null) {
+			this.meterRegistry = meterRegistry;
+			this.renewRenewed = counter("renewed", meterRegistry);
+			this.renewMissing = counter("missing", meterRegistry);
+			this.renewFailed = counter("failed", meterRegistry);
+		}
+	}
+
+	private static Counter counter(String result, MeterRegistry registry) {
+		return Counter.builder("budget.hold.renew.total")
+				.description("Live-stream hold renewals by outcome")
+				.tag("result", result)
+				.register(registry);
 	}
 
 	/**
@@ -90,6 +125,50 @@ public class BudgetSettlement {
 	}
 
 	/**
+	 * Renews a live hold's TTL so a stream longer than the hold TTL still
+	 * settles actuals instead of lapsing to a gap (FIN-B20). Never throws:
+	 * a failed renewal only means the sweeper may gap the hold later — the
+	 * safe over-count direction — so the stream is never broken for
+	 * bookkeeping.
+	 *
+	 * @param holdId hold id from creation
+	 * @return {@code true} when the hold still exists and was renewed
+	 */
+	public boolean renewHold(String holdId) {
+		try {
+			boolean renewed = enforcer.renewHold(holdId, properties.holdTtlSeconds());
+			if (renewed) {
+				renewRenewed.increment();
+			} else {
+				renewMissing.increment();
+			}
+			return renewed;
+		} catch (RuntimeException ex) {
+			log.warn("Hold renewal failed for hold {}; sweeper will gap it if it lapses", holdId);
+			renewFailed.increment();
+			return false;
+		}
+	}
+
+	/**
+	 * Renews the hold when the coarse cadence elapsed since the last renewal
+	 * (FIN-B20): callers check every N written lines, but Redis sees at most
+	 * one round trip per {@code renewal-interval-seconds} per stream.
+	 *
+	 * @param holdId hold id from creation
+	 * @param lastRenewalNanos {@link System#nanoTime} of the last renewal attempt
+	 * @param nowNanos current {@link System#nanoTime}
+	 * @return {@code nowNanos} when a renewal was attempted, else {@code lastRenewalNanos}
+	 */
+	public long renewHoldIfDue(String holdId, long lastRenewalNanos, long nowNanos) {
+		if (nowNanos - lastRenewalNanos < properties.renewalIntervalSeconds() * 1_000_000_000L) {
+			return lastRenewalNanos;
+		}
+		renewHold(holdId);
+		return nowNanos;
+	}
+
+	/**
 	 * Trues a hold up to measured actual spend at stream end.
 	 *
 	 * @param actualMicros measured actual cost A (micro dollars, >= 0)
@@ -107,7 +186,8 @@ public class BudgetSettlement {
 		if (outcome.gapSet()) {
 			String reason = !origMonth.equals(currMonth) ? "ROLLOVER"
 					: (abort ? "ABORTED" : "EXPIRED");
-			persistGap(holdId, keyHex, outcome.amountApplied(), currMonth, origMonth, reason, actualMicros);
+			persistGap(holdId, keyHex, ownerId, outcome.amountApplied(), currMonth, origMonth, reason,
+					actualMicros);
 		}
 		return outcome;
 	}
@@ -183,8 +263,10 @@ public class BudgetSettlement {
 		}
 		if (outcome.gapSet()) {
 			String reason = fields.isEmpty() ? "EXPIRED" : ("ABORTED".equals(state) ? "ABORTED" : "CRASH");
+			String gapKeyHex = keyHex.isEmpty() ? holdId : keyHex;
+			String gapTeam = team.isEmpty() ? null : team;
 			try {
-				gapRepository.save(new BudgetGapRecord(holdId, "KEY", keyHex.isEmpty() ? holdId : keyHex,
+				gapRepository.save(new BudgetGapRecord(holdId, gapLevel(gapTeam), gapSubject(gapTeam, gapKeyHex),
 						held, 0L, origMonth.isEmpty() ? currMonth : origMonth, currMonth, reason));
 			} catch (RuntimeException ex) {
 				log.warn("Gap-row persistence failed for {}; re-arming for retry", holdHashKey);
@@ -202,16 +284,38 @@ public class BudgetSettlement {
 		return enforcer.dueHoldKeys(limit, Instant.now().getEpochSecond());
 	}
 
-	private void persistGap(String holdId, String keyHex, long applied, String currMonth, String origMonth,
-	                        String reason, long settledMicros) {
+	private void persistGap(String holdId, String keyHex, @Nullable String ownerId, long applied,
+	                        String currMonth, String origMonth, String reason, long settledMicros) {
 		try {
-			gapRepository.save(new BudgetGapRecord(holdId, "KEY", keyHex, applied, settledMicros,
-					origMonth, currMonth, reason));
+			gapRepository.save(new BudgetGapRecord(holdId, gapLevel(ownerId), gapSubject(ownerId, keyHex),
+					applied, settledMicros, origMonth, currMonth, reason));
 		} catch (RuntimeException ex) {
 			// Audit-only: the money already moved atomically; a lost gap row degrades chargeback detail,
 			// never correctness of the counters.
 			log.warn("Gap-row persistence failed for hold {}", holdId);
 		}
+	}
+
+	/**
+	 * Gap-row level attribution (FIN-B23): team-owned holds attribute to their
+	 * team so chargeback by level stays truthful; key-only holds stay KEY.
+	 *
+	 * @param ownerId owning tenant, possibly {@code null} or blank
+	 * @return {@code TEAM} when an owner is present, else {@code KEY}
+	 */
+	private static String gapLevel(@Nullable String ownerId) {
+		return ownerId != null && !ownerId.isBlank() ? "TEAM" : "KEY";
+	}
+
+	/**
+	 * Gap-row subject attribution (FIN-B23): the team when present, else the key.
+	 *
+	 * @param ownerId owning tenant, possibly {@code null} or blank
+	 * @param keyHex  key hex fallback
+	 * @return attribution subject
+	 */
+	private static String gapSubject(@Nullable String ownerId, String keyHex) {
+		return ownerId != null && !ownerId.isBlank() ? ownerId : keyHex;
 	}
 
 	private void rearm(String holdHashKey, long scoreEpochSec) {

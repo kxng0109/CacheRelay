@@ -7,7 +7,11 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
+import java.time.Duration;
+import java.util.Locale;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 @DisplayName("MCP JSON Schema Draft 2020-12 Validator Unit Tests")
 class McpJsonSchemaValidatorTest {
@@ -18,6 +22,134 @@ class McpJsonSchemaValidatorTest {
 	@BeforeEach
 	void setUp() {
 		validator = new McpJsonSchemaValidator();
+	}
+
+	@Test
+	@DisplayName("MCP-B13: invalid upstream patterns fail closed, never throw")
+	void invalidPatternFailsClosed() throws Exception {
+		JsonNode schema = objectMapper.readTree(
+				"{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\",\"pattern\":\"([a-\"}}}");
+		JsonNode args = objectMapper.readTree("{\"q\":\"hello\"}");
+
+		McpJsonSchemaValidator.ValidationResult res = validator.validate(args, schema);
+
+		assertThat(res.isValid()).isFalse();
+		assertThat(res.errorMessage()).contains("pattern");
+	}
+
+	@Test
+	@DisplayName("MCP-B13: adversarial pattern input completes within the bound")
+	void adversarialPatternCompletesFast() throws Exception {
+		JsonNode schema = objectMapper.readTree(
+				"{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\",\"pattern\":\"^(a+)+$\"}}}");
+		JsonNode args = objectMapper.readTree("{\"q\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaab\"}");
+
+		McpJsonSchemaValidator.ValidationResult res =
+				assertTimeoutPreemptively(Duration.ofSeconds(5), () -> validator.validate(args, schema));
+
+		assertThat(res.isValid()).isFalse();
+	}
+
+	@Test
+	@DisplayName("MCP-B13: nested-repetition scanner matrix (true and false shapes)")
+	void nestedRepetitionMatrix() {
+		assertThat(McpJsonSchemaValidator.hasNestedRepetition("(a+)+")).isTrue();
+		assertThat(McpJsonSchemaValidator.hasNestedRepetition("((a+))+")).isTrue();
+		assertThat(McpJsonSchemaValidator.hasNestedRepetition("(a{2,})+")).isTrue();
+		assertThat(McpJsonSchemaValidator.hasNestedRepetition("(?:a+)+")).isTrue();
+		assertThat(McpJsonSchemaValidator.hasNestedRepetition("(a*)+")).isTrue();
+		assertThat(McpJsonSchemaValidator.hasNestedRepetition("a+")).isFalse();
+		assertThat(McpJsonSchemaValidator.hasNestedRepetition("(ab)+")).isFalse();
+		assertThat(McpJsonSchemaValidator.hasNestedRepetition("[a)+]")).isFalse();
+		assertThat(McpJsonSchemaValidator.hasNestedRepetition("\\(a+\\)+")).isFalse();
+		assertThat(McpJsonSchemaValidator.hasNestedRepetition("(a")).isFalse();
+		assertThat(McpJsonSchemaValidator.hasNestedRepetition("a{2,3}")).isFalse();
+		assertThat(McpJsonSchemaValidator.hasNestedRepetition("(a{2})+")).isFalse();
+		assertThat(McpJsonSchemaValidator.hasNestedRepetition("(a{b})+")).isFalse();
+		assertThat(McpJsonSchemaValidator.hasNestedRepetition("(a+)")).isFalse();
+	}
+
+	@Test
+	@DisplayName("MCP-B13: over-long patterns fail closed without compiling")
+	void overLongPatternFailsClosed() throws Exception {
+		JsonNode schema = objectMapper.readTree(
+				"{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\",\"pattern\":\""
+						+ "a".repeat(1025) + "\"}}}");
+		JsonNode args = objectMapper.readTree("{\"q\":\"hello\"}");
+
+		McpJsonSchemaValidator.ValidationResult res = validator.validate(args, schema);
+
+		assertThat(res.isValid()).isFalse();
+		assertThat(res.errorMessage()).contains("invalid or unsafe pattern");
+	}
+
+	@Test
+	@DisplayName("MCP-B13: cached patterns serve repeated validations")
+	void patternCacheHitServesRepeatedValidations() throws Exception {
+		JsonNode schema = objectMapper.readTree(
+				"{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\",\"pattern\":\"^[a-z]+$\"}}}");
+		JsonNode args = objectMapper.readTree("{\"q\":\"hello\"}");
+
+		assertThat(validator.validate(args, schema).isValid()).isTrue();
+		assertThat(validator.validate(args, schema).isValid()).isTrue();
+	}
+
+	@Test
+	@DisplayName("MCP-B29: undecodable percent sequences keep their raw form")
+	void undecodablePercentKeepsRawForm() throws Exception {
+		JsonNode schema = objectMapper.readTree(
+				"{\"type\":\"object\",\"properties\":{\"filePath\":{\"type\":\"string\"}}}");
+		JsonNode args = objectMapper.readTree("{\"filePath\":\"100%\"}");
+
+		McpJsonSchemaValidator.ValidationResult res = validator.validate(args, schema);
+
+		assertThat(res.isValid()).isTrue();
+	}
+
+	@Test
+	@DisplayName("MCP-B14: absent arguments are treated as {} for schemas without required")
+	void missingArgumentsTreatedAsEmpty() throws Exception {
+		JsonNode schema = objectMapper.readTree(
+				"{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}}");
+		JsonNode missing = objectMapper.readTree("{}").path("absent");
+
+		McpJsonSchemaValidator.ValidationResult res = validator.validate(missing, schema);
+
+		assertThat(res.isValid()).isTrue();
+	}
+
+	@Test
+	@DisplayName("MCP-B29: percent-encoded traversal is rejected after decoding")
+	void encodedTraversalRejected() throws Exception {
+		JsonNode schema = objectMapper.readTree(
+				"{\"type\":\"object\",\"properties\":{\"filePath\":{\"type\":\"string\"}}}");
+		JsonNode args = objectMapper.readTree("{\"filePath\":\"..%2f..%2fetc%2fpasswd\"}");
+
+		McpJsonSchemaValidator.ValidationResult res = validator.validate(args, schema);
+
+		assertThat(res.isValid()).isFalse();
+		assertThat(res.errorMessage()).contains("traversal");
+	}
+
+	@Test
+	@DisplayName("MCP-B29: path-parameter detection is locale-independent")
+	void pathDetectionLocaleIndependent() throws Exception {
+		// "FILE" lowercases to "fıle" (dotless i) under Turkish locale: only a
+		// ROOT-locale fold still recognizes it as path-like.
+		JsonNode schema = objectMapper.readTree(
+				"{\"type\":\"object\",\"properties\":{\"FILE\":{\"type\":\"string\"}}}");
+		JsonNode args = objectMapper.readTree("{\"FILE\":\"../../etc/passwd\"}");
+
+		Locale previous = Locale.getDefault();
+		Locale.setDefault(Locale.forLanguageTag("tr-TR"));
+		try {
+			McpJsonSchemaValidator.ValidationResult res = validator.validate(args, schema);
+
+			assertThat(res.isValid()).isFalse();
+			assertThat(res.errorMessage()).contains("traversal");
+		} finally {
+			Locale.setDefault(previous);
+		}
 	}
 
 	@Test

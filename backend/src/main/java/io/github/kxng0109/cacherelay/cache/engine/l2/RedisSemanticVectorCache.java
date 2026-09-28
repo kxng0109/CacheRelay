@@ -214,6 +214,27 @@ public class RedisSemanticVectorCache {
 	 */
 	public @Nullable CacheEntry findSemanticMatch(
 			CompoundCacheKey key, Double temperature, @Nullable Map<String, float[]> embeddingMemo) {
+		return findSemanticMatch(
+				key, temperature, embeddingMemo, properties.getSemantic().getSimilarityThreshold());
+	}
+
+	/**
+	 * L2 semantic lookup with an explicit similarity threshold (ADM-B08): the gateway
+	 * honors the {@code X-CacheRelay-Semantic-Threshold} request header when valid,
+	 * falling back to the configured threshold otherwise (see
+	 * {@link CachePolicyEngine#resolveSimilarityThreshold}).
+	 *
+	 * @param key         compound partition key
+	 * @param temperature sampling temperature of the incoming request, or null to bypass filtering
+	 * @param embeddingMemo per-request prompt-text to vector cache, or {@code null} for no sharing
+	 * @param threshold   minimum similarity score in [0.0, 1.0]
+	 * @return matching entry or null
+	 */
+	public @Nullable CacheEntry findSemanticMatch(
+			CompoundCacheKey key,
+			Double temperature,
+			@Nullable Map<String, float[]> embeddingMemo,
+			double threshold) {
 		if (!properties.getSemantic().isEnabled() || key.promptText().isBlank()) {
 			return null;
 		}
@@ -237,7 +258,6 @@ public class RedisSemanticVectorCache {
 
 		VectorSearchResult bestMatch = results.getFirst();
 		float score = bestMatch.similarityScore();
-		double threshold = properties.getSemantic().getSimilarityThreshold();
 		double gap = results.size() > 1 ? (double) score - results.get(1).similarityScore() : Double.NaN;
 
 		if (score < threshold) {

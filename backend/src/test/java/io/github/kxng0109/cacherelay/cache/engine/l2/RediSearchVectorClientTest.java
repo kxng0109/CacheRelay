@@ -74,6 +74,14 @@ class RediSearchVectorClientTest {
 	}
 
 	@Test
+	@DisplayName("ADM-B13: backslashes are escaped first so tags cannot break out")
+	void escapeTagBackslash() {
+		assertThat(RediSearchVectorClient.escapeTag("a\\b")).isEqualTo("a\\\\b");
+		assertThat(RediSearchVectorClient.escapeTag("evil\\}injection")).isEqualTo("evil\\\\\\}injection");
+		assertThat(RediSearchVectorClient.escapeTag("\\")).isEqualTo("\\\\");
+	}
+
+	@Test
 	@DisplayName("createIndexIfNotExists dispatches FT.CREATE command and handles existing index gracefully")
 	void createIndexIfNotExists() {
 		RediSearchVectorClient client = new RediSearchVectorClient(factory, null);

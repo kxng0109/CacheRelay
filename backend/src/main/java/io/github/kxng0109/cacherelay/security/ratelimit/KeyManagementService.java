@@ -12,7 +12,9 @@ import tools.jackson.databind.ObjectMapper;
 import io.github.kxng0109.cacherelay.contracts.GatewayProperties;
 import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
 import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
+import org.jspecify.annotations.Nullable;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -20,6 +22,7 @@ import org.springframework.stereotype.Service;
 
 import lombok.extern.slf4j.Slf4j;
 
+import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
@@ -546,6 +549,10 @@ public class KeyManagementService {
 	/**
 	 * Lists all virtual API keys registered in the gateway, optionally filtered by owner ID.
 	 *
+	 * <p>Bulk-loads every hash in a single pipeline round trip (ADM-B16) instead of
+	 * one read per key: listing cost is constant in round trips no matter the fleet
+	 * size. Malformed rows degrade to absent exactly as on the single-key path.</p>
+	 *
 	 * @param ownerId optional owner ID to filter by; if null or blank, returns all keys
 	 * @return list of virtual API keys sorted by creation time descending
 	 */
@@ -554,18 +561,31 @@ public class KeyManagementService {
 		if (hexes == null || hexes.isEmpty()) {
 			return List.of();
 		}
-		List<VirtualApiKey> keys = new ArrayList<>();
+		List<SHA256Hash> hashes = new ArrayList<>();
 		for (String hex : hexes) {
 			try {
-				SHA256Hash hash = SHA256Hash.fromHex(hex);
-				findByHash(hash).ifPresent(key -> {
-					if (ownerId == null || ownerId.isBlank() || ownerId.equals(key.ownerId())) {
-						keys.add(key);
-					}
-				});
+				hashes.add(SHA256Hash.fromHex(hex));
 			} catch (IllegalArgumentException ignored) {
 				// skip invalid hex entry in index
 			}
+		}
+		if (hashes.isEmpty()) {
+			return List.of();
+		}
+		List<Object> raws = redisTemplate.executePipelined((RedisCallback<Object>) connection -> {
+			for (SHA256Hash hash : hashes) {
+				connection.hashCommands().hGetAll(redisKey(hash).getBytes(StandardCharsets.UTF_8));
+			}
+			return null;
+		});
+		List<VirtualApiKey> keys = new ArrayList<>();
+		for (int i = 0; i < hashes.size(); i++) {
+			Object raw = raws != null && i < raws.size() ? raws.get(i) : null;
+			parseRow(hashes.get(i), toStringMap(raw)).ifPresent(key -> {
+				if (ownerId == null || ownerId.isBlank() || ownerId.equals(key.ownerId())) {
+					keys.add(key);
+				}
+			});
 		}
 		keys.sort(Comparator.comparing(VirtualApiKey::createdAt).reversed());
 		return Collections.unmodifiableList(keys);
@@ -746,11 +766,14 @@ public class KeyManagementService {
 	}
 
 	/**
-	 * Updates an existing key's metadata including full governance rules, cache
-	 * scopes, and A2A agent policies, invalidating the local cache.
+	 * Atomically patches a key's owner and metadata (ADM-B04): every precondition
+	 * (owner activity, revocation rule, stored-tenant sanity) is validated before
+	 * any write, and the mutation lands as one hash write plus one cache eviction —
+	 * a later validation can never 400 after an earlier write already applied.
 	 *
-	 * @param hash               key hash to update
-	 * @param name               new name (or null to keep)
+	 * @param hash               key hash to patch
+	 * @param ownerUserId        new owning account id (or null to keep); must resolve active
+	 * @param name               new label (or null to keep)
 	 * @param rpmLimit           new RPM limit (or null to keep)
 	 * @param tpmLimit           new TPM limit (or null to keep)
 	 * @param allowedModels      new allowed models (or null to keep)
@@ -763,11 +786,15 @@ public class KeyManagementService {
 	 * @param deniedPrompts      new denied prompt globs (or null to keep)
 	 * @param injectionBlock     new injection handling (or null to keep)
 	 * @param allowedCacheScopes new cache isolation scopes (or null to keep)
+	 * @param allowedAgents      new allowed A2A agents (or null to keep)
+	 * @param deniedAgents       new denied A2A agents (or null to keep)
 	 * @param enabled            new enabled state (or null to keep)
 	 * @return the updated key metadata, or empty if key was not found
+	 * @throws IllegalArgumentException when a precondition fails (nothing is written)
 	 */
-	public Optional<VirtualApiKey> updateKey(
+	public Optional<VirtualApiKey> patchKey(
 			SHA256Hash hash,
+			@Nullable UUID ownerUserId,
 			String name,
 			Integer rpmLimit,
 			Integer tpmLimit,
@@ -785,6 +812,9 @@ public class KeyManagementService {
 			Set<String> deniedAgents,
 			Boolean enabled
 	) {
+		if (ownerUserId != null) {
+			requireActiveOwner(ownerUserId);
+		}
 		String key = redisKey(hash);
 		if (Boolean.FALSE.equals(redisTemplate.hasKey(key))) {
 			return Optional.empty();
@@ -796,7 +826,50 @@ public class KeyManagementService {
 		if (current.get().revoked() && Boolean.TRUE.equals(enabled)) {
 			throw new IllegalArgumentException("terminally revoked keys cannot be re-enabled");
 		}
+		if (ownerUserId != null) {
+			Object storedOwner = redisTemplate.opsForHash().get(key, "ownerId");
+			if (storedOwner != null) {
+				TenantIds.requireValidTenant(storedOwner.toString());
+			}
+		}
 		Map<String, String> updates = new LinkedHashMap<>();
+		if (ownerUserId != null) {
+			updates.put("ownerUserId", ownerUserId.toString());
+		}
+		collectFieldUpdates(updates, name, rpmLimit, tpmLimit, allowedModels, allowedProviders,
+				allowedTools, deniedTools, allowedResources, deniedResources, allowedPrompts,
+				deniedPrompts, injectionBlock, allowedCacheScopes, allowedAgents, deniedAgents,
+				enabled);
+		if (!updates.isEmpty()) {
+			redisTemplate.opsForHash().putAll(key, updates);
+			cache.invalidate(hash);
+		}
+		return findByHash(hash);
+	}
+
+	/**
+	 * Collects the field-level hash updates shared by {@link #updateKey} and
+	 * {@link #patchKey} (null = keep).
+	 */
+	private static void collectFieldUpdates(
+			Map<String, String> updates,
+			String name,
+			Integer rpmLimit,
+			Integer tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts,
+			Boolean injectionBlock,
+			Set<CacheScope> allowedCacheScopes,
+			Set<String> allowedAgents,
+			Set<String> deniedAgents,
+			Boolean enabled
+	) {
 		if (name != null) {
 			updates.put("name", name);
 		}
@@ -845,11 +918,30 @@ public class KeyManagementService {
 		if (enabled != null) {
 			updates.put("enabled", enabled.toString());
 		}
-		if (!updates.isEmpty()) {
-			redisTemplate.opsForHash().putAll(key, updates);
-			cache.invalidate(hash);
-		}
-		return findByHash(hash);
+	}
+	public Optional<VirtualApiKey> updateKey(
+			SHA256Hash hash,
+			String name,
+			Integer rpmLimit,
+			Integer tpmLimit,
+			Set<String> allowedModels,
+			Set<String> allowedProviders,
+			Set<String> allowedTools,
+			Set<String> deniedTools,
+			Set<String> allowedResources,
+			Set<String> deniedResources,
+			Set<String> allowedPrompts,
+			Set<String> deniedPrompts,
+			Boolean injectionBlock,
+			Set<CacheScope> allowedCacheScopes,
+			Set<String> allowedAgents,
+			Set<String> deniedAgents,
+			Boolean enabled
+	) {
+		return patchKey(hash, null, name, rpmLimit, tpmLimit, allowedModels, allowedProviders,
+				allowedTools, deniedTools, allowedResources, deniedResources, allowedPrompts,
+				deniedPrompts, injectionBlock, allowedCacheScopes, allowedAgents, deniedAgents,
+				enabled);
 	}
 
 	/**
@@ -1168,6 +1260,37 @@ public class KeyManagementService {
 	}
 
 	/**
+	 * Resolves owning account ids to login names in one batch query (ADM-B16):
+	 * the admin key list must not issue one lookup per key.
+	 * Best-effort like {@link #usernameOf}: unknown accounts and failures read as
+	 * absent entries rather than failing reads.
+	 *
+	 * @param ownerUserIds owning account ids, possibly {@code null} or empty
+	 * @return id to login-name map (no entry for unknown ids)
+	 */
+	public Map<UUID, String> usernamesOf(@Nullable Set<UUID> ownerUserIds) {
+		if (ownerUserIds == null || ownerUserIds.isEmpty()) {
+			return Map.of();
+		}
+		UserAccountRepository users = this.userAccountRepository;
+		if (users == null) {
+			return Map.of();
+		}
+		try {
+			Map<UUID, String> names = new LinkedHashMap<>();
+			for (UserAccount account : users.findAllById(ownerUserIds)) {
+				if (account != null && account.getId() != null && account.getUsername() != null) {
+					names.put(account.getId(), account.getUsername());
+				}
+			}
+			return names;
+		} catch (RuntimeException ex) {
+			log.debug("Dropping owner username batch lookup: {}", ex.getMessage());
+			return Map.of();
+		}
+	}
+
+	/**
 	 * Resolves an owning account id to its login name for admin attribution.
 	 * Best-effort: unknown accounts and unwired repositories read as
 	 * {@code null} rather than failing reads.
@@ -1341,6 +1464,9 @@ public class KeyManagementService {
 			Set<String> deniedAgents,
 			UUID ownerUserId
 	) {
+		// ADM-B14: the hash and the index entry land in one Lua execution — a crash
+		// between two split writes used to leave an index-less working key that
+		// listKeys could never see or manage. Same script as the bootstrap seeder.
 		SHA256Hash hash = SHA256Hash.fromRawKey(plaintextKey);
 		Map<String, String> fields = new LinkedHashMap<>();
 		fields.put("ownerId", ownerId);
@@ -1353,8 +1479,17 @@ public class KeyManagementService {
 				injectionBlock, allowedCacheScopes, allowedAgents, deniedAgents, ownerUserId, false);
 		fields.put("createdAt", Instant.now().toString());
 		fields.put("keyPrefix", prefixOf(plaintextKey));
-		redisTemplate.opsForHash().putAll(redisKey(hash), fields);
-		redisTemplate.opsForSet().add(INDEX_KEY, hash.hex());
+		List<Object> args = new ArrayList<>();
+		for (Map.Entry<String, String> field : fields.entrySet()) {
+			args.add(field.getKey());
+			args.add(field.getValue());
+		}
+		args.add(hash.hex());
+		Long claimed = redisTemplate.execute(
+				SEED_IF_ABSENT_SCRIPT, List.of(redisKey(hash), INDEX_KEY), args.toArray());
+		if (!Long.valueOf(1L).equals(claimed)) {
+			throw new IllegalStateException("key hash collision on create; retry key creation");
+		}
 		cache.invalidate(hash);
 		return hash;
 	}
@@ -1368,30 +1503,80 @@ public class KeyManagementService {
 		if (raw.isEmpty()) {
 			return Optional.empty();
 		}
+		return parseRow(hash, toStringMap(raw));
+	}
+
+	/**
+	 * Normalizes a raw hash payload to a string map. Lettuce pipeline reads arrive
+	 * as {@code byte[]} pairs; template reads arrive as strings.
+	 *
+	 * @param raw raw payload, possibly {@code null}
+	 * @return string map, empty when absent or malformed
+	 */
+	private static Map<String, String> toStringMap(@Nullable Object raw) {
+		if (!(raw instanceof Map<?, ?> map) || map.isEmpty()) {
+			return Map.of();
+		}
+		Map<String, String> out = new LinkedHashMap<>();
+		for (Map.Entry<?, ?> entry : map.entrySet()) {
+			if (entry.getKey() == null || entry.getValue() == null) {
+				return Map.of();
+			}
+			out.put(decodeRedisString(entry.getKey()), decodeRedisString(entry.getValue()));
+		}
+		return out;
+	}
+
+	/**
+	 * Decodes one Redis hash field or value.
+	 *
+	 * @param value raw value
+	 * @return UTF-8 text
+	 */
+	private static String decodeRedisString(Object value) {
+		if (value instanceof byte[] bytes) {
+			return new String(bytes, StandardCharsets.UTF_8);
+		}
+		return String.valueOf(value);
+	}
+
+	/**
+	 * Parses one stored key row. Redis access stays outside: connectivity failures
+	 * must propagate (fail closed). Only malformed or incomplete stored data
+	 * degrades to a miss.
+	 *
+	 * @param hash key hash
+	 * @param raw  normalized string fields
+	 * @return the key if present and parsable, otherwise empty
+	 */
+	private Optional<VirtualApiKey> parseRow(SHA256Hash hash, Map<String, String> raw) {
+		if (raw.isEmpty()) {
+			return Optional.empty();
+		}
 		// Redis access stays outside the try: connectivity failures must propagate
 		// (fail closed). Only malformed or incomplete stored data degrades to a miss.
 		try {
-			String ownerId = (String) raw.get("ownerId");
-			String name = (String) raw.get("name");
-			int rpmLimit = Integer.parseInt((String) raw.get("rpmLimit"));
-			int tpmLimit = Integer.parseInt((String) raw.get("tpmLimit"));
-			boolean enabled = Boolean.parseBoolean((String) raw.get("enabled"));
-			Set<String> allowedModels = parseCsv((String) raw.get("allowedModels"));
-			Set<String> allowedProviders = parseCsv((String) raw.get("allowedProviders"));
-			Set<String> allowedTools = parseCsv((String) raw.get("allowedTools"));
-			Set<String> deniedTools = parseCsv((String) raw.get("deniedTools"));
-			Set<String> allowedResources = parseSetField((String) raw.get("allowedResources"));
-			Set<String> deniedResources = parseSetField((String) raw.get("deniedResources"));
-			Set<String> allowedPrompts = parseSetField((String) raw.get("allowedPrompts"));
-			Set<String> deniedPrompts = parseSetField((String) raw.get("deniedPrompts"));
-			boolean injectionBlock = !"false".equalsIgnoreCase((String) raw.get("injectionBlock"));
-			Set<CacheScope> allowedCacheScopes = parseScopes((String) raw.get("allowedCacheScopes"));
-			Set<String> allowedAgents = parseCsv((String) raw.get("allowedAgents"));
-			Set<String> deniedAgents = parseCsv((String) raw.get("deniedAgents"));
-			UUID ownerUserId = parseOwnerUserId((String) raw.get("ownerUserId"));
-			boolean revoked = parseRevoked((String) raw.get("revoked"));
-			Instant createdAt = Instant.parse((String) raw.get("createdAt"));
-			String keyPrefix = (String) raw.getOrDefault("keyPrefix", KEY_PREFIX_RAW);
+			String ownerId = raw.get("ownerId");
+			String name = raw.get("name");
+			int rpmLimit = Integer.parseInt(raw.get("rpmLimit"));
+			int tpmLimit = Integer.parseInt(raw.get("tpmLimit"));
+			boolean enabled = Boolean.parseBoolean(raw.get("enabled"));
+			Set<String> allowedModels = parseCsv(raw.get("allowedModels"));
+			Set<String> allowedProviders = parseCsv(raw.get("allowedProviders"));
+			Set<String> allowedTools = parseCsv(raw.get("allowedTools"));
+			Set<String> deniedTools = parseCsv(raw.get("deniedTools"));
+			Set<String> allowedResources = parseSetField(raw.get("allowedResources"));
+			Set<String> deniedResources = parseSetField(raw.get("deniedResources"));
+			Set<String> allowedPrompts = parseSetField(raw.get("allowedPrompts"));
+			Set<String> deniedPrompts = parseSetField(raw.get("deniedPrompts"));
+			boolean injectionBlock = !"false".equalsIgnoreCase(raw.get("injectionBlock"));
+			Set<CacheScope> allowedCacheScopes = parseScopes(raw.get("allowedCacheScopes"));
+			Set<String> allowedAgents = parseCsv(raw.get("allowedAgents"));
+			Set<String> deniedAgents = parseCsv(raw.get("deniedAgents"));
+			UUID ownerUserId = parseOwnerUserId(raw.get("ownerUserId"));
+			boolean revoked = parseRevoked(raw.get("revoked"));
+			Instant createdAt = Instant.parse(raw.get("createdAt"));
+			String keyPrefix = raw.getOrDefault("keyPrefix", KEY_PREFIX_RAW);
 			return Optional.of(new VirtualApiKey(
 					hash,
 					keyPrefix,

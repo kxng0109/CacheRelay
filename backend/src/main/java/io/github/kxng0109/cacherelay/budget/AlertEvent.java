@@ -84,6 +84,10 @@ public class AlertEvent {
 		this.status = "SENT";
 	}
 
+	public void markSkipped() {
+		this.status = "SKIPPED";
+	}
+
 	public void markResolved() {
 		this.status = "RESOLVED";
 	}

@@ -66,12 +66,34 @@ class CacheRelayCacheServiceTest {
 		MockHttpServletRequest httpReq = new MockHttpServletRequest();
 		when(l0Cache.get(any())).thenReturn(null);
 		when(l1Cache.get(any())).thenReturn(null);
-		when(l2Cache.findSemanticMatch(any(), any(), any())).thenReturn(null);
+		when(l2Cache.findSemanticMatch(any(), any(), any(), anyDouble())).thenReturn(null);
 
 		keyedService.evaluateCache(request, httpReq, "tenant1", null);
 		keyedService.storeResponse(request, httpReq, "tenant1", null, "{\"content\":\"Hi\"}", 5, 10);
 
 		verify(mockedGenerator, times(1)).generateKey(any(), any(), any(), any(), anyInt());
+	}
+
+	@Test
+	@DisplayName("ADM-B08: header similarity threshold reaches the L2 lookup")
+	void headerThresholdReachesL2() {
+		OpenAiChatRequest request = new OpenAiChatRequest(
+				"gpt-4o",
+				List.of(new OpenAiChatRequest.Message("user", objectMapper.valueToTree("Hello"))),
+				0.0, null, null, null, null, true, null
+		);
+		MockHttpServletRequest httpReq = new MockHttpServletRequest();
+		httpReq.addHeader("X-CacheRelay-Semantic-Threshold", "0.95");
+		when(l0Cache.get(any())).thenReturn(null);
+		when(l1Cache.get(any())).thenReturn(null);
+		when(l2Cache.findSemanticMatch(any(), any(), any(), anyDouble())).thenReturn(null);
+
+		CacheLookupResult result = cacheService.evaluateCache(request, httpReq, "tenant1", null);
+
+		assertThat(result.status()).isEqualTo(CacheStatus.MISS);
+		ArgumentCaptor<Double> threshold = ArgumentCaptor.forClass(Double.class);
+		verify(l2Cache).findSemanticMatch(any(), any(), any(), threshold.capture());
+		assertThat(threshold.getValue()).isEqualTo(0.95);
 	}
 
 	@Test
@@ -85,7 +107,7 @@ class CacheRelayCacheServiceTest {
 		MockHttpServletRequest httpReq = new MockHttpServletRequest();
 		when(l0Cache.get(any())).thenReturn(null);
 		when(l1Cache.get(any())).thenReturn(null);
-		when(l2Cache.findSemanticMatch(any(), any(), any())).thenReturn(null);
+		when(l2Cache.findSemanticMatch(any(), any(), any(), anyDouble())).thenReturn(null);
 
 		CacheLookupResult result = cacheService.evaluateCache(request, httpReq, "   ", null);
 
@@ -193,7 +215,7 @@ class CacheRelayCacheServiceTest {
 				0.94f,
 				null
 		);
-		when(l2Cache.findSemanticMatch(any(), any(), any())).thenReturn(entry);
+		when(l2Cache.findSemanticMatch(any(), any(), any(), anyDouble())).thenReturn(entry);
 
 		CacheLookupResult result = cacheService.evaluateCache(request, httpReq, "tenant1", null);
 		assertThat(result.isHit()).isTrue();
@@ -214,7 +236,7 @@ class CacheRelayCacheServiceTest {
 
 		when(l0Cache.get(anyString())).thenReturn(null);
 		when(l1Cache.get(any())).thenReturn(null);
-		when(l2Cache.findSemanticMatch(any(), any(), any())).thenReturn(null);
+		when(l2Cache.findSemanticMatch(any(), any(), any(), anyDouble())).thenReturn(null);
 
 		CacheLookupResult result = cacheService.evaluateCache(request, httpReq, "tenant1", null);
 		assertThat(result.isHit()).isFalse();

@@ -35,6 +35,7 @@ import io.github.kxng0109.cacherelay.auth.SsoMembershipRepository;
 import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
 import io.github.kxng0109.cacherelay.security.ratelimit.KeyManagementService;
 import jakarta.persistence.EntityManager;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -60,6 +61,7 @@ import org.springframework.web.server.ResponseStatusException;
  * exactly like absent teams. The scope-type vocabulary reserves future
  * grains.</p>
  */
+@Slf4j
 @Service
 public class DashboardService {
 
@@ -270,7 +272,11 @@ public class DashboardService {
 			if (!window.to().isAfter(cached.watermark())) {
 				return toView(cached.rows(), cached.generatedAt(), cached.watermark());
 			}
-			List<OwnerModelUsageRecord> delta = queryDetail(owners, cached.watermark(), window.to());
+			// FIN-B11: detail rows are inclusive on both ends, and the cached rows
+			// already cover everything up to the watermark — the delta starts one
+			// nanosecond after it, or boundary rows count twice.
+			List<OwnerModelUsageRecord> delta =
+					queryDetail(owners, cached.watermark().plusNanos(1), window.to());
 			List<OwnerModelUsageRecord> merged = new ArrayList<>(cached.rows().size() + delta.size());
 			merged.addAll(cached.rows());
 			merged.addAll(delta);
@@ -311,6 +317,8 @@ public class DashboardService {
 			List<DashboardBucket> dayRows = byDay.getOrDefault(day, List.of());
 			if (dayRows.isEmpty()) {
 				dayRows = persistDay(scope, scopeKey, owners, day);
+			} else {
+				dayRows = reconcileDay(scope, scopeKey, owners, day, dayRows);
 			}
 			for (DashboardBucket bucket : dayRows) {
 				rows.add(toRecord(bucket));
@@ -326,19 +334,55 @@ public class DashboardService {
 		if (coveredFrom == null) {
 			rows.addAll(queryDetail(owners, window.from(), window.to()));
 		} else {
+			// FIN-B11: settled buckets already cover [coveredFrom, coveredTo]; the
+			// head and tail fills exclude those boundaries (inclusive detail rows
+			// would double-count them).
 			if (window.from().isBefore(coveredFrom)) {
-				rows.addAll(queryDetail(owners, window.from(), coveredFrom));
+				rows.addAll(queryDetail(owners, window.from(), coveredFrom.minusNanos(1)));
 			}
 			if (coveredTo.isBefore(window.to())) {
-				rows.addAll(queryDetail(owners, coveredTo, window.to()));
+				rows.addAll(queryDetail(owners, coveredTo.plusNanos(1), window.to()));
 			}
 		}
 		return rows;
 	}
 
-	private List<DashboardBucket> persistDay(String scope, String scopeKey,
-			Set<String> owners, LocalDate day) {
+	/**
+	 * Reconciles one settled day's grains against late-arriving ledger rows
+	 * (FIN-B10): spillway replays and slow drains can land rows for a day after
+	 * its buckets persisted, and immutable buckets would under-report them
+	 * forever. When the ledger holds more rows for the day than the grains
+	 * cover, the day's grains are replaced by a fresh persist. A lower ledger
+	 * count (retention archiving) keeps the grains — they are the surviving
+	 * history.
+	 *
+	 * @param scope     scope grain
+	 * @param scopeKey  scope identity
+	 * @param owners    owner filter, possibly {@code null} for global scope
+	 * @param day       settled day
+	 * @param dayRows   stored grains for the day
+	 * @return fresh or stored grains
+	 */
+	private List<DashboardBucket> reconcileDay(
+			String scope, String scopeKey, Set<String> owners, LocalDate day,
+			List<DashboardBucket> dayRows
+	) {
 		Instant dayStart = day.atStartOfDay(ZoneOffset.UTC).toInstant();
+		Instant dayEnd = dayStart.plus(Duration.ofDays(1)).minusMillis(1);
+		long bucketed = dayRows.stream().mapToLong(DashboardBucket::getRequests).sum();
+		long ledgered = owners == null
+				? detail.countByCreatedAtBetween(dayStart, dayEnd)
+				: detail.countByOwnerIdInAndCreatedAtBetween(owners, dayStart, dayEnd);
+		if (ledgered <= bucketed) {
+			return dayRows;
+		}
+		log.info("Recomputing {} buckets for {} after late ledger rows arrived", day, scopeKey);
+		buckets.deleteByScopeTypeAndScopeKeyAndBucketDay(scope, scopeKey, day);
+		return persistDay(scope, scopeKey, owners, day);
+	}
+
+	private List<DashboardBucket> persistDay(String scope, String scopeKey,
+			Set<String> owners, LocalDate day) {		Instant dayStart = day.atStartOfDay(ZoneOffset.UTC).toInstant();
 		Instant dayEnd = dayStart.plus(Duration.ofDays(1)).minusMillis(1);
 		List<OwnerModelUsageRecord> grains = queryDetail(owners, dayStart, dayEnd);
 		Instant now = clock.instant();

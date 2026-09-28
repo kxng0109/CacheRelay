@@ -4,9 +4,11 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Base64;
 import java.util.Map;
 import java.util.UUID;
 
+import io.github.kxng0109.cacherelay.proxy.IdempotencyKeys;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -113,8 +115,23 @@ public class ReplayService {
 		if (payload.isEmpty()) {
 			return new Miss();
 		}
+		// FIN-B30: the hot tier stores Base64, never a String round-trip (non-UTF8
+		// bytes would corrupt). Decode, then verify the SHA-256 against the stored
+		// fingerprint before serving: legacy plain-text rows and tampered rows fail
+		// closed to a miss (re-proxy, safe over-count) instead of wrong bytes.
+		final byte[] decoded;
+		try {
+			decoded = Base64.getDecoder().decode(payload);
+		} catch (IllegalArgumentException corrupt) {
+			count("corrupt");
+			return new Miss();
+		}
+		if (!IdempotencyKeys.sha256Hex(decoded).equals(stringField(fields, "body_hash"))) {
+			count("corrupt");
+			return new Miss();
+		}
 		count("hit");
-		return new Hit(payload.getBytes(StandardCharsets.UTF_8),
+		return new Hit(decoded,
 				"1".equals(stringField(fields, "sse")),
 				resolveExpiresAt(namespacedKey));
 	}
@@ -222,8 +239,11 @@ public class ReplayService {
 		Instant expiresAt = Instant.now().plus(HOT_TTL).truncatedTo(ChronoUnit.MILLIS);
 		boolean hotOk = false;
 		try {
+			// FIN-B30: Base64 preserves arbitrary bytes exactly; a String
+			// round-trip would corrupt non-UTF8 payloads while the durable tier
+			// keeps the raw bytes, leaving the tiers in permanent disagreement.
 			cacheTemplate.opsForHash().putAll(namespacedKey, Map.of(
-					"body", new String(body, StandardCharsets.UTF_8),
+					"body", Base64.getEncoder().encodeToString(body),
 					"body_hash", bodyHashHex,
 					"sse", sseFramed ? "1" : "0"));
 			cacheTemplate.expire(namespacedKey, HOT_TTL);

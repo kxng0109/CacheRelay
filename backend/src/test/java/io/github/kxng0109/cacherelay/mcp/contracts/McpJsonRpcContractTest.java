@@ -180,4 +180,24 @@ class McpJsonRpcContractTest {
 			assertThat(node.has("id")).isTrue();
 		}
 	}
+
+	@Nested
+	@DisplayName("MCP-B27 upstream code forwardability")
+	class Forwardability {
+
+		@ParameterizedTest
+		@ValueSource(ints = {-32700, -32600, -32601, -32602, -32603, -32009, -32019, -32000,
+				-32020, -32021, -32022})
+		@DisplayName("standard, spec-defined MCP, and grandfathered legacy codes forward verbatim")
+		void forwardableCodesPassThrough(int code) {
+			assertThat(McpJsonRpcError.isForwardableUpstreamCode(code)).isTrue();
+		}
+
+		@ParameterizedTest
+		@ValueSource(ints = {-32023, -32099, -31999, 0, 1, -32604})
+		@DisplayName("reserved and unknown codes remap instead of forwarding")
+		void reservedCodesRemap(int code) {
+			assertThat(McpJsonRpcError.isForwardableUpstreamCode(code)).isFalse();
+		}
+	}
 }

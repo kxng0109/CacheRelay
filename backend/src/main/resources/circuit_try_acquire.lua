@@ -4,18 +4,24 @@
 -- Cluster). Time is read from the Redis server (TIME) so cooldown math never
 -- depends on a gateway instance's local clock.
 --
+-- PRX-B09: HALF_OPEN admits exactly one in-flight probe fleet-wide. The
+-- transitioner owns the probe; every concurrent attempt — same instance or
+-- not — is rejected until the probe settles (success closes, failure reopens)
+-- or its lease expires (a hung probe becomes stealable). probeOwner is
+-- informational (which instance holds the probe); arbitration is lease-only.
+--
 -- KEYS:
 --   KEYS[1] = "circuit:{provider}"  hash: state, failures, openedAt, probeOwner, probeStartedAt
 --
 -- ARGV:
---   ARGV[1] = instanceId         owner claiming the HALF_OPEN probe on transitions
+--   ARGV[1] = instanceId         recorded as probe owner on transitions (observability only)
 --   ARGV[2] = cooldownMillis     how long OPEN lasts before a probe is allowed
 --   ARGV[3] = failureThreshold   unused here; kept for symmetry with the other scripts
 --   ARGV[4] = probeLeaseMillis   max age of a probe before another instance may steal it
 --
 -- Returns:
---   1 = the caller may probe/call now (CLOSED, or this instance owns a live probe)
---   0 = reject (OPEN before cooldown, or a live probe is owned by another instance)
+--   1 = the caller may probe/call now (CLOSED, or won the HALF_OPEN probe/steal)
+--   0 = reject (OPEN before cooldown, or a live probe is already in flight)
 
 local now = redis.call('TIME')
 local nowMs = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
@@ -30,10 +36,6 @@ if state == 'OPEN' then
 		return 1
 	end
 	return 0
-end
-local owner = redis.call('HGET', KEYS[1], 'probeOwner')
-if owner == ARGV[1] then
-	return 1
 end
 local started = tonumber(redis.call('HGET', KEYS[1], 'probeStartedAt') or '0')
 if nowMs - started >= tonumber(ARGV[4]) then

@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
@@ -37,5 +39,26 @@ class CspNonceFilterTest {
 		assertThat(firstHeader)
 				.contains((String) first.getAttribute(CspNonceFilter.NONCE_ATTRIBUTE));
 		assertThat(secondHeader).as("nonces differ per response").isNotEqualTo(firstHeader);
+	}
+
+	@Test
+	@DisplayName("configured extra origins extend connect-src, absent config leaves it self-only")
+	void extraOriginsExtendConnectSrc() throws Exception {
+		FilterChain chain = mock(FilterChain.class);
+
+		MockHttpServletRequest request = new MockHttpServletRequest("GET", "/");
+		MockHttpServletResponse response = new MockHttpServletResponse();
+		new CspNonceFilter(List.of("http://localhost:9091")).doFilter(
+				request, response, chain);
+
+		assertThat(response.getHeader("Content-Security-Policy"))
+				.contains("connect-src 'self' http://localhost:9091");
+
+		MockHttpServletRequest plain = new MockHttpServletRequest("GET", "/");
+		MockHttpServletResponse plainResponse = new MockHttpServletResponse();
+		new CspNonceFilter().doFilter(plain, plainResponse, chain);
+
+		assertThat(plainResponse.getHeader("Content-Security-Policy"))
+				.contains("connect-src 'self';");
 	}
 }

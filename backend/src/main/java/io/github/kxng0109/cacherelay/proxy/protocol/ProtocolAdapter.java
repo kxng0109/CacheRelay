@@ -32,6 +32,21 @@ public sealed interface ProtocolAdapter permits OpenAiPassthroughAdapter,
 	URI buildUpstreamUrl(ProviderConfig config);
 
 	/**
+	 * Builds the upstream endpoint URL for an explicit streaming mode
+	 * (PRX-B10): URL-driven dialects (Gemini) route {@code stream:false} to
+	 * the document endpoint instead of the SSE one. Defaults to the
+	 * streaming endpoint; body-driven dialects ignore the flag here and
+	 * honor it in {@link #buildRequestBody}.
+	 *
+	 * @param config    the provider to contact
+	 * @param streaming {@code true} for the SSE endpoint, {@code false} for single-document
+	 * @return the full upstream endpoint for the requested mode
+	 */
+	default URI buildUpstreamUrl(ProviderConfig config, boolean streaming) {
+		return buildUpstreamUrl(config);
+	}
+
+	/**
 	 * Translates the client body into the provider's native request body.
 	 *
 	 * @param rawRequestBody the client body, OpenAI shaped

@@ -315,7 +315,8 @@ class McpAdversarialCoverageTest {
 				null,
 				request
 		);
-		assertThat(resp3.getBody()).contains("-32603").contains("Connection reset by peer");
+		assertThat(resp3.getBody()).contains("-32603").contains("correlationId");
+		assertThat(resp3.getBody()).doesNotContain("Connection reset by peer");
 	}
 
 	@Test
@@ -361,7 +362,7 @@ class McpAdversarialCoverageTest {
 		when(circuitBreakerManager.tryAcquire("nokey")).thenReturn(true);
 		when(hitlSuspensionEngine.evaluateOrSuspend(any(), any(), any(), any(), any())).thenReturn(Optional.empty());
 
-		String upstreamImageJson = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[{\"type\":\"image\",\"data\":\"base64image\"}]}}";
+		String upstreamImageJson = "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"content\":[{\"type\":\"image\",\"data\":\"base64image\"}]}}";
 		when(mockHttpResponse.statusCode()).thenReturn(200);
 		when(mockHttpResponse.body()).thenReturn(upstreamImageJson);
 		when(httpClient.send(

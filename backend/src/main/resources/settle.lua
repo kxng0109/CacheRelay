@@ -75,11 +75,26 @@ end
 
 local hold = redis.call('HGETALL', KEYS[3])
 -- Missing hold record (TTL lapsed before settle): H stays counted (safe
--- over-count direction); the marker tells Java to persist a gap row.
+-- over-count direction). FIN-B20: when actuals are known (true settle, not
+-- expire-only which returns above), charge A to the current-month counters so
+-- measured spend is metered; the gap marker stays set so Java documents the
+-- over-count (H + A) in a gap row. Orig-month is unknown (record gone), so the
+-- current month takes the charge; empty-key levels stay skipped.
 if #hold == 0 then
 	redis.call('SET', KEYS[2], '1', 'NX', 'EX', 86400)
 	redis.call('ZREM', KEYS[10], KEYS[3])
-	return { 0, 3, 0, -1, 1 }
+	local lvl = 1
+	while lvl <= 3 do
+		local currKey = KEYS[lvl + 6]
+		if currKey ~= '' then
+			redis.call('INCRBY', currKey, actual)
+			if redis.call('TTL', currKey) < 0 then
+				redis.call('EXPIRE', currKey, 3888000)
+			end
+		end
+		lvl = lvl + 1
+	end
+	return { 1, 3, actual, -1, 1 }
 end
 
 local held = 0

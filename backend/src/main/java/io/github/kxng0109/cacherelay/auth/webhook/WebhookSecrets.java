@@ -13,7 +13,7 @@ import java.security.NoSuchAlgorithmException;
  * (unconfigured receiver) never matches; a {@code null} presented value never
  * matches.</p>
  */
-final class WebhookSecrets {
+public final class WebhookSecrets {
 
 	private WebhookSecrets() {
 	}
@@ -25,7 +25,7 @@ final class WebhookSecrets {
 	 * @param presented presented secret, possibly {@code null}
 	 * @return {@code true} only on an exact match with a non-blank expected value
 	 */
-	static boolean constantTimeEquals(String expected, String presented) {
+	public static boolean constantTimeEquals(String expected, String presented) {
 		if (expected == null || expected.isBlank() || presented == null) {
 			return false;
 		}

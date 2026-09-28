@@ -13,6 +13,8 @@ import org.springframework.stereotype.Service;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -56,8 +58,9 @@ import java.util.stream.Stream;
  * upstream provider from generating (and billing) further tokens.</p>
  *
  * <p>Per provider circuit breakers skip known broken providers entirely, and
- * provider URLs are validated once against the SSRF control before the first
- * attempt.</p>
+ * provider URLs are validated against the SSRF control before the first
+ * attempt and revalidated past {@link #VALIDATION_TTL} (DNS-rebinding
+ * TOCTOU bound).</p>
  */
 @Slf4j
 @Service
@@ -73,6 +76,19 @@ public class FailoverOrchestrator {
 
 	private final Map<String, Boolean> validatedProviders = new ConcurrentHashMap<>();
 	private final Map<String, Boolean> blockedProviders = new ConcurrentHashMap<>();
+
+	/**
+	 * Upper bound for trusting a validation verdict (PRX-B15 DNS-rebinding
+	 * TOCTOU): provider URLs originate from trusted configuration, but a
+	 * validate-once cache leaves the rebinding window open forever. Past this
+	 * age the next attempt revalidates before connecting; a failed
+	 * revalidation blocks the provider fail-closed. Residual: JVM DNS caching
+	 * ({@code networkaddress.cache.ttl}) may still serve stale records inside
+	 * the window — tune it where rebinding is in the threat model.
+	 */
+	static final Duration VALIDATION_TTL = Duration.ofMinutes(5);
+
+	private final Map<String, Instant> validatedAt = new ConcurrentHashMap<>();
 
 	/**
 	 * Convenience constructor for existing tests and contexts without compliance components.
@@ -105,13 +121,37 @@ public class FailoverOrchestrator {
 			@Nullable GeoSovereigntyRouter sovereigntyRouter,
 			@Nullable GuardrailProperties guardrailProperties
 	) {
+		this(clientAdapter, urlValidator, gatewayProperties, circuitBreakerFactory,
+				sovereigntyRouter, guardrailProperties, Clock.systemUTC());
+	}
+
+	/**
+	 * Full constructor with an injectable clock (validation TTL tests).
+	 *
+	 * @param clientAdapter          the provider client adapter
+	 * @param urlValidator           validates provider URLs before first use and on TTL expiry
+	 * @param gatewayProperties      the configured providers and aliases
+	 * @param circuitBreakerFactory  the shared, Redis backed breaker store
+	 * @param sovereigntyRouter      geo-sovereignty router
+	 * @param guardrailProperties    guardrail configuration properties
+	 * @param clock                  clock for validation TTL expiry
+	 */
+	public FailoverOrchestrator(
+			ProviderClientAdapter clientAdapter,
+			UpstreamUrlValidator urlValidator,
+			GatewayProperties gatewayProperties,
+			CircuitBreakerFactory circuitBreakerFactory,
+			@Nullable GeoSovereigntyRouter sovereigntyRouter,
+			@Nullable GuardrailProperties guardrailProperties,
+			Clock clock
+	) {
 		this.clientAdapter = clientAdapter;
 		this.urlValidator = urlValidator;
 		this.gatewayProperties = gatewayProperties;
 		this.circuitBreakerFactory = circuitBreakerFactory;
 		this.sovereigntyRouter = sovereigntyRouter;
 		this.guardrailProperties = guardrailProperties;
-		this.clock = Clock.systemUTC();
+		this.clock = clock;
 	}
 
 	/**
@@ -414,21 +454,25 @@ attempt.response().whenComplete((response, error) -> {
 		if (blockedProviders.containsKey(name)) {
 			return false;
 		}
-		return validatedProviders.computeIfAbsent(
-				name, key -> {
-					try {
-						urlValidator.validate(config.baseUrl());
-						return true;
-					} catch (RuntimeException ex) {
-						log.warn(
-								"Provider {} is not usable because its target was rejected: {}",
-								name, ex.getMessage()
-						);
-						blockedProviders.put(name, true);
-						return false;
-					}
-				}
-		);
+		Instant validated = validatedAt.get(name);
+		if (validatedProviders.getOrDefault(name, false) && validated != null
+				&& clock.instant().isBefore(validated.plus(VALIDATION_TTL))) {
+			return true;
+		}
+		return validatedProviders.compute(name, (key, old) -> {
+			try {
+				urlValidator.validate(config.baseUrl());
+				validatedAt.put(name, clock.instant());
+				return true;
+			} catch (RuntimeException ex) {
+				log.warn(
+						"Provider {} is not usable because its target was rejected: {}",
+						name, ex.getMessage()
+				);
+				blockedProviders.put(name, true);
+				return false;
+			}
+		});
 	}
 
 	private AttemptOutcome classify(HttpResponse<Stream<String>> response) {

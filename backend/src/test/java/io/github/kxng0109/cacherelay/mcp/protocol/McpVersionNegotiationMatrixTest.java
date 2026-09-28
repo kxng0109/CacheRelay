@@ -175,7 +175,7 @@ class McpVersionNegotiationMatrixTest {
 				),
 				Arguments.of(
 						"2026-07-28", "2026-07-28", "{}", "tools/call",
-						HttpStatus.BAD_REQUEST, -32021
+						HttpStatus.OK, -32602
 				)
 		);
 	}
@@ -220,7 +220,7 @@ class McpVersionNegotiationMatrixTest {
 		ResponseEntity<String> resp = controller.handleStreamableHttp(
 				raw(
 						"tools/call",
-						"{\"name\":\"x\",\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}"
+						"{\"name\":\"x\",\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":\"tools\"}}"
 				),
 				"2026-07-28", null, keyedRequest()
 		);
@@ -228,7 +228,7 @@ class McpVersionNegotiationMatrixTest {
 		assertThat(tree.path("error").path("code").asInt()).isEqualTo(-32021);
 		JsonNode caps = tree.path("error").path("data").path("requiredCapabilities");
 		assertThat(caps.isObject()).isTrue();
-		assertThat(caps.has("tools")).isTrue();
+		assertThat(caps.has("clientCapabilities")).isTrue();
 	}
 
 	@ParameterizedTest

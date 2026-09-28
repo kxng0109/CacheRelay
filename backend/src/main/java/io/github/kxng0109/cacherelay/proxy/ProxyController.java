@@ -77,6 +77,7 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -720,9 +721,31 @@ public class ProxyController {
 			accumulatedContent = new StringBuilder();
 		}
 		boolean accumulationTruncated = false;
+		boolean upstreamFault = false;
+		long linesWritten = 0;
+		long lastRenewalNanos = startedNanos;
 		try {
 			try (var lines = providerResponse.response().body()) {
-				for (String line : (Iterable<String>) lines::iterator) {
+				Iterator<String> iterator = lines.iterator();
+				while (true) {
+					String line;
+					try {
+						if (!iterator.hasNext()) {
+							break;
+						}
+						line = iterator.next();
+					} catch (RuntimeException iteratorFailed) {
+						if (iteratorFailed instanceof LineTooLongException tooLong) {
+							// Body handler ceiling: the dedicated handler below
+							// owns this fault, not the upstream-fault path.
+							throw tooLong;
+						}
+						// PRX-B05: the upstream died mid-stream. Flag it so the
+						// handler below emits a terminal error event instead of
+						// misreporting a client disconnect.
+						upstreamFault = true;
+						throw new IOException("Upstream terminated the stream", iteratorFailed);
+					}
 					// Guard the raw upstream line before normalization
 					List<String> guarded = lineGuard.checkLine(
 							line,
@@ -787,8 +810,23 @@ public class ProxyController {
 					byte[] bytes = toWrite.getBytes(StandardCharsets.UTF_8);
 						out.write(bytes);
 						out.write('\n');
+						// FIN-B20: coarse hold renewal at write checkpoints — the
+						// cadence gate inside renewHoldIfDue keeps Redis to one
+						// round trip per interval per stream, never per chunk.
+						if (settlementContext != null && (++linesWritten & 63) == 0) {
+							lastRenewalNanos = renewHoldIfDue(settlementContext, lastRenewalNanos);
+						}
 						if (flushHandle != null && servletOut != null) {
 							if (flushStrategy.onWrite(servletOut, bytes.length + 1)) {
+								// PRX-B07: backpressure kills reuse the error+abort
+								// path (terminal event, best-effort) instead of a
+								// silent truncation.
+								try {
+									writeSseError(out, "FLUSH_BACKPRESSURE",
+											"Downstream backpressure exceeded the flush budget", providerName);
+								} catch (IOException | RuntimeException ignored) {
+								}
+								lineGuard.onStreamAbort("flush_backpressure");
 								settlePromptKnown(settlementContext, true);
 								replayReleaseQuietly(replayFlight);
 								return;
@@ -822,6 +860,18 @@ public class ProxyController {
 			replayReleaseQuietly(replayFlight);
 			return;
 		} catch (IOException ex) {
+			if (upstreamFault) {
+				// PRX-B05: the stream died upstream, not downstream. Tell the
+				// client with a terminal error event (best-effort: the socket
+				// may be gone too) instead of a silent truncation, then settle
+				// the partial usage like every other abort path.
+				try {
+					writeSseError(out, "UPSTREAM_FAULT",
+							"Upstream terminated the stream mid-response", providerName);
+				} catch (IOException | RuntimeException ignored) {
+				}
+				lineGuard.onStreamAbort("upstream_fault");
+			}
 			// Downstream client disconnected: settle the input-known portion and re-arm the output hold.
 			settlePromptKnown(settlementContext, true);
 			replayReleaseQuietly(replayFlight);
@@ -850,6 +900,8 @@ public class ProxyController {
 			} else if (normalizer instanceof DeepSeekSseNormalizer deepSeekNormalizer) {
 				cacheRead = deepSeekNormalizer.cachedTokens() != null ? deepSeekNormalizer.cachedTokens() : 0L;
 				reasoning = deepSeekNormalizer.reasoningTokens() != null ? deepSeekNormalizer.reasoningTokens() : 0L;
+			} else if (normalizer instanceof GeminiSseNormalizer geminiNormalizer) {
+				reasoning = geminiNormalizer.reasoningTokens();
 			}
 			long uncachedPrompt = Math.max(0L, usage.promptTokens() - cacheRead);
 
@@ -1044,7 +1096,7 @@ public class ProxyController {
 			relayRawLine(out, json);
 			return;
 		}
-		JsonNode normalized = normalizeCompletion(root, requestedModel, providerName);
+		JsonNode normalized = normalizeCompletion(root, requestedModel, providerName, providerType);
 		recordUsageAndCache(
 				normalized, root, chatRequest, providerType, providerName, requestedModel,
 				ownerId, requestId, servletRequest, settlementContext, replayFlight
@@ -1076,7 +1128,8 @@ public class ProxyController {
 		out.flush();
 	}
 
-	private JsonNode normalizeCompletion(JsonNode root, String requestedModel, String providerName) {
+	private JsonNode normalizeCompletion(JsonNode root, String requestedModel, String providerName,
+			ProviderType providerType) {
 		ObjectNode normalized = objectMapper.createObjectNode();
 		String id = root.path("id").isString() ? root.path("id").asString() : "chatcmpl-" + UUID.randomUUID();
 		long created = root.path("created").isNumber() ? root.path("created").asLong() : Instant.now().getEpochSecond();
@@ -1114,7 +1167,53 @@ public class ProxyController {
 		if (usage.isObject()) {
 			normalized.set("usage", usage);
 		}
+		mapDialectUsage(root, providerType, normalized);
 		return normalized;
+	}
+
+	/**
+	 * Maps dialect-native usage shapes onto the OpenAI {@code usage} node the
+	 * billing path reads (PRX-B24): without this, non-streaming Anthropic,
+	 * Gemini, and Ollama completions bill zero tokens.
+	 *
+	 * @param root         upstream response root
+	 * @param providerType upstream dialect
+	 * @param normalized   completion being built (its {@code usage} replaced when mapped)
+	 */
+	private void mapDialectUsage(JsonNode root, ProviderType providerType, ObjectNode normalized) {
+		long prompt = -1L;
+		long completion = -1L;
+		switch (providerType) {
+			case ANTHROPIC -> {
+				JsonNode usage = root.path("usage");
+				if (usage.isObject()) {
+					prompt = usage.path("input_tokens").asLong(-1L);
+					completion = usage.path("output_tokens").asLong(-1L);
+				}
+			}
+			case GEMINI, VERTEX_AI -> {
+				JsonNode meta = root.path("usageMetadata");
+				if (meta.isObject()) {
+					prompt = meta.path("promptTokenCount").asLong(-1L);
+					completion = meta.path("candidatesTokenCount").asLong(-1L);
+				}
+			}
+			case OLLAMA -> {
+				if (root.has("prompt_eval_count") || root.has("eval_count")) {
+					prompt = root.path("prompt_eval_count").asLong(-1L);
+					completion = root.path("eval_count").asLong(-1L);
+				}
+			}
+			default -> {
+			}
+		}
+		if (prompt >= 0 && completion >= 0) {
+			ObjectNode mapped = objectMapper.createObjectNode();
+			mapped.put("prompt_tokens", prompt);
+			mapped.put("completion_tokens", completion);
+			mapped.put("total_tokens", prompt + completion);
+			normalized.set("usage", mapped);
+		}
 	}
 
 	private void recordUsageAndCache(
@@ -1425,6 +1524,22 @@ public class ProxyController {
 	}
 
 	/**
+	 * Coarse live-stream hold renewal that can never break the response: the
+	 * settlement absorbs every failure and the cadence gate absorbs the clock.
+	 *
+	 * @param context live-stream settlement context, never {@code null} here
+	 * @param lastRenewalNanos {@link System#nanoTime} of the last renewal attempt
+	 * @return updated renewal timestamp for the next checkpoint
+	 */
+	private long renewHoldIfDue(SettlementContext context, long lastRenewalNanos) {
+		BudgetSettlement settlement = this.budgetSettlement;
+		if (settlement == null) {
+			return lastRenewalNanos;
+		}
+		return settlement.renewHoldIfDue(context.holdId(), lastRenewalNanos, System.nanoTime());
+	}
+
+	/**
 	 * Stream-end true-up that can never break the response: every failure is logged and absorbed (the hold H
 	 * stays counted — the safe over-count direction).
 	 */
@@ -1499,6 +1614,17 @@ public class ProxyController {
 				+ " bytes (actual: " + actualBytes + ")");
 		error.put("limit", limitBytes);
 		error.put("actual", actualBytes);
+		error.put("provider", provider);
+		String json = objectMapper.writeValueAsString(error);
+		writeSse(out, "event: error");
+		writeSse(out, "data: " + json);
+		writeSse(out, "");
+	}
+
+	private void writeSseError(OutputStream out, String code, String message, String provider) throws IOException {
+		ObjectNode error = objectMapper.createObjectNode();
+		error.put("code", code);
+		error.put("message", message);
 		error.put("provider", provider);
 		String json = objectMapper.writeValueAsString(error);
 		writeSse(out, "event: error");

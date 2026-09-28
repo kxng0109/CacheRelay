@@ -39,6 +39,15 @@ public class LedgerStagingDrainer {
 
 	static final Duration RETENTION = Duration.ofDays(30);
 
+	/**
+	 * Retention for the usage ledger itself (FIN-B39): 365 days, deliberately
+	 * longer than the 90-day maximum query window so no legal detail query can
+	 * address a purged row. This window is also the honest dedupe horizon —
+	 * retries older than this may re-record (idempotency keys are short-lived;
+	 * the fill lock lives 24h), while everything inside it dedupes.
+	 */
+	static final Duration LEDGER_RETENTION = Duration.ofDays(365);
+
 	static final long MAX_BACKOFF_SECONDS = 3_600L;
 
 	private final LedgerStagingRepository staging;
@@ -111,6 +120,18 @@ public class LedgerStagingDrainer {
 	public void purge() {
 		requiresNew.executeWithoutResult(ignored ->
 				staging.purgeCompleted(Instant.now().minus(RETENTION)));
+	}
+
+	/**
+	 * Purges usage-ledger rows past the ledger retention window (FIN-B39).
+	 * Daily, in its own transaction; the {@code created_at} index keeps the
+	 * scan cheap. Dashboard grains survive as history (see
+	 * {@code DashboardService.reconcileDay}).
+	 */
+	@Scheduled(fixedDelay = 86_400_000, initialDelay = 3_600_000)
+	public void purgeLedger() {
+		requiresNew.executeWithoutResult(ignored ->
+				ledger.purgeBefore(Instant.now().minus(LEDGER_RETENTION)));
 	}
 
 	private enum DrainOutcome {

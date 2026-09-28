@@ -1,6 +1,7 @@
 package io.github.kxng0109.cacherelay.ledger;
 
 import io.github.kxng0109.cacherelay.contracts.ProviderType;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -23,6 +24,19 @@ class ModelPriceCatalogTest {
 
 	private final ModelPricingRepository repository = mock(ModelPricingRepository.class);
 	private final ModelPriceCatalog catalog = new ModelPriceCatalog(repository);
+
+	@Test
+	@DisplayName("null registry falls back to an isolated registry without failing lookups")
+	void nullRegistryFallsBack() {
+		ModelPriceCatalog fallback = new ModelPriceCatalog(repository, null);
+		when(repository.findAll()).thenReturn(List.of(
+				entity("gpt-5.6-sol", "openai", "0.000004", "0.00002")));
+
+		Optional<ModelPricingEntry> found = fallback.lookup(ProviderType.OPENAI, "gpt-5.6-sol");
+
+		assertTrue(found.isPresent());
+		assertEquals("openai", found.get().provider());
+	}
 
 	@Test
 	@DisplayName("matches an exact model id, preferring the same provider")
@@ -63,6 +77,21 @@ class ModelPriceCatalogTest {
 
 		assertTrue(found.isPresent());
 		assertEquals("ollama", found.get().provider());
+	}
+
+	@Test
+	@DisplayName("FIN-B28: fallback billing is metered by strategy")
+	void fallbackBillingMetered() {
+		SimpleMeterRegistry registry = new SimpleMeterRegistry();
+		ModelPriceCatalog metered = new ModelPriceCatalog(repository, registry);
+		when(repository.findAll()).thenReturn(List.of(
+				entity("claude-sonnet-5", "anthropic", "0.000004", "0.00002")
+		));
+
+		assertTrue(metered.lookup(ProviderType.ANTHROPIC, "claude-sonnet-5-20251001").isPresent());
+
+		assertEquals(1.0, registry.get("cacherelay.pricing.fallback.total")
+				.tag("strategy", "prefix").tag("provider", "anthropic").counter().count());
 	}
 
 	@Test

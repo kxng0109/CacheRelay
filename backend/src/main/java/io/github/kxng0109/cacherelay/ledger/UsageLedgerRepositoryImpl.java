@@ -226,6 +226,14 @@ public class UsageLedgerRepositoryImpl implements UsageLedgerRepositoryCustom {
 			return new PageImpl<>(List.of(), pageable, 0);
 		}
 
+		// ADM-B15: the offset is a long (page * size) but JPA addresses rows by int.
+		// Past the total — or past the int range entirely — the page is empty by
+		// definition; casting blindly would wrap negative and misaddress rows.
+		long offset = pageable.getOffset();
+		if (offset >= total || offset > Integer.MAX_VALUE) {
+			return new PageImpl<>(List.of(), pageable, total);
+		}
+
 		CriteriaQuery<UsageLedgerEntry> cq = cb.createQuery(UsageLedgerEntry.class);
 		Root<UsageLedgerEntry> root = cq.from(UsageLedgerEntry.class);
 		Predicate[] predicates = buildPredicates(cb, root, filter);
@@ -237,7 +245,7 @@ public class UsageLedgerRepositoryImpl implements UsageLedgerRepositoryCustom {
 		cq.orderBy(orders);
 
 		List<UsageLedgerEntry> content = em.createQuery(cq)
-		                                   .setFirstResult((int) pageable.getOffset())
+		                                   .setFirstResult((int) offset)
 		                                   .setMaxResults(pageable.getPageSize())
 		                                   .getResultList();
 

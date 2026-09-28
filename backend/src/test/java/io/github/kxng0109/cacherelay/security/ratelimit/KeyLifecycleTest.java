@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -69,6 +70,7 @@ class KeyLifecycleTest {
 		when(redisTemplate.<String, String>opsForSet()).thenReturn(setOps);
 		when(redisTemplate.<String, String>opsForValue()).thenReturn(valueOps);
 		when(redisTemplate.<String, String>opsForValue()).thenReturn(valueOps);
+		when(redisTemplate.execute(any(), anyList(), any(Object[].class))).thenReturn(1L);
 		users = mock(UserAccountRepository.class);
 		service = new KeyManagementService(redisTemplate);
 		service.setUserAccountRepository(users);
@@ -148,14 +150,13 @@ class KeyLifecycleTest {
 	@Test
 	@DisplayName("created keys persist the owner")
 	void createdKeysPersistOwner() {
+		AtomicReference<List<Object>> argv = AtomicStoreCapture.captureScriptArgv(redisTemplate);
 		KeyManagementService.CreatedKey created = createOwned();
 
 		assertEquals(ownerId, created.key().ownerUserId());
-		@SuppressWarnings("unchecked")
-		ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
-		verify(hashOps).putAll(any(), fieldsCaptor.capture());
-		assertEquals(ownerId.toString(), fieldsCaptor.getValue().get("ownerUserId"));
-		assertEquals("false", fieldsCaptor.getValue().get("revoked"));
+		Map<String, String> stored = AtomicStoreCapture.scriptFields(argv.get());
+		assertEquals(ownerId.toString(), stored.get("ownerUserId"));
+		assertEquals("false", stored.get("revoked"));
 	}
 
 	@Test
@@ -290,13 +291,12 @@ class KeyLifecycleTest {
 	void generateKeyResolvesOwner() {
 		UserAccount local = new UserAccount("local", null, null, false);
 		when(users.findByUsernameIgnoreCase("local")).thenReturn(Optional.of(local));
+		AtomicReference<List<Object>> argv = AtomicStoreCapture.captureScriptArgv(redisTemplate);
 
 		service.generateKey(template("local"));
 
-		@SuppressWarnings("unchecked")
-		ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
-		verify(hashOps).putAll(any(), fieldsCaptor.capture());
-		assertEquals(local.getId().toString(), fieldsCaptor.getValue().get("ownerUserId"));
+		Map<String, String> stored = AtomicStoreCapture.scriptFields(argv.get());
+		assertEquals(local.getId().toString(), stored.get("ownerUserId"));
 	}
 
 	private BootstrapKey template(String ownerUsername) {

@@ -158,6 +158,94 @@ class PricingSyncServiceTest {
 	}
 
 	@Test
+	@DisplayName("FIN-B26: negative catalog prices are skipped, never stored")
+	void negativePricesSkipped() {
+		server.enqueue(new MockResponse().setResponseCode(200).setBody("""
+				{"good-model": {"litellm_provider": "openai", "mode": "chat",
+				  "input_cost_per_token": 0.000004, "output_cost_per_token": 0.00002},
+				 "evil-model": {"litellm_provider": "openai", "mode": "chat",
+				  "input_cost_per_token": -0.5, "output_cost_per_token": 0.00002}}
+				"""));
+
+		service.refresh();
+
+		verify(repository).upsert(
+				eq("good-model"), eq("openai"), eq("chat"),
+				any(), any(), any(), any(), any(), any(), anyString());
+		verify(repository, never()).upsert(
+				eq("evil-model"), anyString(), anyString(),
+				any(), any(), any(), any(), any(), any(), anyString());
+	}
+
+	@Test
+	@DisplayName("FIN-B27: transient 500 is retried and the catalog still lands")
+	void transientServerErrorRetried() {
+		server.enqueue(new MockResponse().setResponseCode(500).setBody("boom"));
+		server.enqueue(new MockResponse().setResponseCode(200).setBody("""
+				{"retry-model": {"litellm_provider": "openai", "mode": "chat",
+				  "input_cost_per_token": 0.000004, "output_cost_per_token": 0.00002}}
+				"""));
+
+		service.refresh();
+
+		verify(repository).upsert(
+				eq("retry-model"), eq("openai"), eq("chat"),
+				any(), any(), any(), any(), any(), any(), anyString());
+		assertThat(server.getRequestCount()).isEqualTo(2);
+	}
+
+	@Test
+	@DisplayName("FIN-B27: 429 rate-limit is retried like a 5xx")
+	void rateLimitedRetried() {
+		server.enqueue(new MockResponse().setResponseCode(429).setBody("slow down"));
+		server.enqueue(new MockResponse().setResponseCode(200).setBody("""
+				{"patient-model": {"litellm_provider": "openai", "mode": "chat",
+				  "input_cost_per_token": 0.000004, "output_cost_per_token": 0.00002}}
+				"""));
+
+		service.refresh();
+
+		verify(repository).upsert(
+				eq("patient-model"), eq("openai"), eq("chat"),
+				any(), any(), any(), any(), any(), any(), anyString());
+	}
+
+	@Test
+	@DisplayName("FIN-B27: permanent 4xx fails fast without retry or upsert")
+	void permanentClientErrorNotRetried() {
+		server.enqueue(new MockResponse().setResponseCode(404).setBody("gone"));
+
+		service.refresh();
+
+		verify(repository, never()).upsert(
+				anyString(), anyString(), anyString(),
+				any(), any(), any(), any(), any(), any(), anyString());
+		assertThat(server.getRequestCount()).isEqualTo(1);
+	}
+
+	@Test
+	@DisplayName("FIN-B26: negative cache read/write prices are skipped, never stored")
+	void negativeCachePricesSkipped() {
+		server.enqueue(new MockResponse().setResponseCode(200).setBody("""
+				{"read-evil": {"litellm_provider": "openai", "mode": "chat",
+				  "input_cost_per_token": 0.000004, "output_cost_per_token": 0.00002,
+				  "cache_read_input_token_cost": -0.1},
+				 "write-evil": {"litellm_provider": "openai", "mode": "chat",
+				  "input_cost_per_token": 0.000004, "output_cost_per_token": 0.00002,
+				  "cache_creation_input_token_cost": -0.5}}
+				"""));
+
+		service.refresh();
+
+		verify(repository, never()).upsert(
+				eq("read-evil"), anyString(), anyString(),
+				any(), any(), any(), any(), any(), any(), anyString());
+		verify(repository, never()).upsert(
+				eq("write-evil"), anyString(), anyString(),
+				any(), any(), any(), any(), any(), any(), anyString());
+	}
+
+	@Test
 	@DisplayName("a successful sync invalidates the cached catalog snapshot")
 	void successfulSyncInvalidatesCatalog() {
 		server.enqueue(new MockResponse().setResponseCode(200).setBody(CATALOG));

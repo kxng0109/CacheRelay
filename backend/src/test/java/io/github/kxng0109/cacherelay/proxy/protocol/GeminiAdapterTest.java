@@ -5,6 +5,7 @@ import io.github.kxng0109.cacherelay.contracts.ProviderConfig;
 import io.github.kxng0109.cacherelay.contracts.ProviderType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -20,6 +21,40 @@ class GeminiAdapterTest {
 
 	private final ObjectMapper objectMapper = new ObjectMapper();
 	private final GeminiAdapter adapter = new GeminiAdapter(objectMapper);
+
+	@Test
+	@DisplayName("PRX-B26: remote image URLs are rejected explicitly, never dropped silently")
+	void remoteImageUrlRejected() {
+		String body = """
+				{"model":"gemini-2.5-flash","messages":[
+				  {"role":"user","content":[
+				    {"type":"text","text":"what is this?"},
+				    {"type":"image_url","image_url":{"url":"https://example.com/pic.png"}}]}]}""";
+
+		assertThrows(
+				ResponseStatusException.class,
+				() -> adapter.buildRequestBody(body, null));
+	}
+
+	@Test
+	@DisplayName("PRX-B10: non-streaming requests target generateContent")
+	void nonStreamingTargetsGenerateContent() {
+		ProviderConfig config = new ProviderConfig(
+				"gemini-dev",
+				ProviderType.GEMINI,
+				URI.create("https://generativelanguage.googleapis.com"),
+				new SensitiveString("gemini-test-key"),
+				Duration.ofSeconds(3),
+				Duration.ofSeconds(30)
+		);
+
+		URI streaming = adapter.buildUpstreamUrl(config, true);
+		URI document = adapter.buildUpstreamUrl(config, false);
+
+		assertTrue(streaming.toString().contains(":streamGenerateContent?alt=sse"));
+		assertTrue(document.toString().contains(":generateContent"));
+		assertFalse(document.toString().contains(":streamGenerateContent"));
+	}
 
 	@Test
 	@DisplayName("builds Developer API URL and sets x-goog-api-key header")
@@ -268,7 +303,7 @@ class GeminiAdapterTest {
 				    {
 				      "role": "user",
 				      "content": [
-				        {"type": "image_url", "image_url": {"url": "https://example.com/image.png"}},
+				        {"type": "image_url", "image_url": {"url": "data:image/gif;base64,R0lGODdh"}},
 				        {"type": "other"}
 				      ]
 				    }
@@ -394,8 +429,8 @@ class GeminiAdapterTest {
 				      "content": [
 				        {"type": "text", "text": ""},
 				        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,123456"}},
-				        {"type": "image_url", "image_url": {"url": "data:missing-base64"}},
-				        {"type": "image_url", "image_url": {"url": "https://remote.com/pic.jpg"}}
+				        {"type": "image_url", "image_url": {"url": "data:image/gif;base64,R0lGODdh"}},
+				        {"type": "image_url", "image_url": {"url": "data:missing-base64"}}
 				      ]
 				    }
 				  ],

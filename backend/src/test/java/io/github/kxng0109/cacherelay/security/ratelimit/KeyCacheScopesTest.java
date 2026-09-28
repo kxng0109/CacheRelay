@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -37,6 +38,7 @@ class KeyCacheScopesTest {
 	private KeyManagementService newService() {
 		when(redisTemplate.<String, String>opsForHash()).thenReturn(hashOps);
 		when(redisTemplate.<String, String>opsForSet()).thenReturn(setOps);
+		when(redisTemplate.execute(any(), anyList(), any(Object[].class))).thenReturn(1L);
 		return new KeyManagementService(redisTemplate);
 	}
 
@@ -71,6 +73,7 @@ class KeyCacheScopesTest {
 	@Test
 	void createKeyPersistsCacheScopes() {
 		KeyManagementService service = newService();
+		AtomicReference<List<Object>> argv = AtomicStoreCapture.captureScriptArgv(redisTemplate);
 
 		KeyManagementService.CreatedKey created = service.createKey(
 				"owner", "name", 5, 50, Set.of(), Set.of(), Set.of(), Set.of(),
@@ -78,15 +81,14 @@ class KeyCacheScopesTest {
 				Set.of(CacheScope.GLOBAL, CacheScope.TENANT), Set.of(), Set.of(), UUID.randomUUID());
 
 		assertEquals(Set.of(CacheScope.GLOBAL, CacheScope.TENANT), created.key().allowedCacheScopes());
-		@SuppressWarnings("unchecked")
-		ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
-		verify(hashOps).putAll(eq(redisKey(created.hash())), fieldsCaptor.capture());
-		assertEquals("GLOBAL,TENANT", fieldsCaptor.getValue().get("allowedCacheScopes"));
+		Map<String, String> stored = AtomicStoreCapture.scriptFields(argv.get());
+		assertEquals("GLOBAL,TENANT", stored.get("allowedCacheScopes"));
 	}
 
 	@Test
 	void createKeyWithNullSetsPersistsEmpty() {
 		KeyManagementService service = newService();
+		AtomicReference<List<Object>> argv = AtomicStoreCapture.captureScriptArgv(redisTemplate);
 
 		KeyManagementService.CreatedKey created = service.createKey(
 				"owner", "name", 5, 50, null, null, null, null,
@@ -94,11 +96,9 @@ class KeyCacheScopesTest {
 
 		assertTrue(created.key().allowedModels().isEmpty());
 		assertTrue(created.key().allowedCacheScopes().contains(CacheScope.TENANT));
-		@SuppressWarnings("unchecked")
-		ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
-		verify(hashOps).putAll(eq(redisKey(created.hash())), fieldsCaptor.capture());
-		assertEquals("[]", fieldsCaptor.getValue().get("allowedResources"));
-		assertEquals("", fieldsCaptor.getValue().get("allowedCacheScopes"));
+		Map<String, String> stored = AtomicStoreCapture.scriptFields(argv.get());
+		assertEquals("[]", stored.get("allowedResources"));
+		assertEquals("", stored.get("allowedCacheScopes"));
 	}
 
 	@Test

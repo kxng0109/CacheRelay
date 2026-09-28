@@ -29,6 +29,7 @@ class SseLineGuardPropertiesTest {
 		assertThat(defaults.perProvider()).isEmpty();
 		assertThat(defaults.writeTimeout()).isEqualTo(Duration.ofSeconds(30));
 		assertThat(defaults.writeTimeoutCheckInterval()).isEqualTo(Duration.ofSeconds(5));
+		assertThat(defaults.upstreamIdleTimeout()).isEqualTo(Duration.ofMinutes(5));
 	}
 
 	@Test
@@ -36,7 +37,7 @@ class SseLineGuardPropertiesTest {
 	void globalDefaultBytesMustBePositive() {
 		assertThatThrownBy(() -> new SseLineGuardProperties(
 				true, 0, 10, SseLineGuard.Action.REJECT_LINE_AND_CLOSE,
-				Map.of(), Duration.ofSeconds(30), Duration.ofSeconds(5)
+				Map.of(), Duration.ofSeconds(30), Duration.ofSeconds(5), Duration.ofMinutes(5)
 		))
 				.isInstanceOf(IllegalArgumentException.class)
 				.hasMessageContaining("globalDefaultBytes");
@@ -47,13 +48,13 @@ class SseLineGuardPropertiesTest {
 	void safetyMarginPercentMustBeInRange() {
 		assertThatThrownBy(() -> new SseLineGuardProperties(
 				true, 1024, 101, SseLineGuard.Action.REJECT_LINE_AND_CLOSE,
-				Map.of(), Duration.ofSeconds(30), Duration.ofSeconds(5)
+				Map.of(), Duration.ofSeconds(30), Duration.ofSeconds(5), Duration.ofMinutes(5)
 		))
 				.isInstanceOf(IllegalArgumentException.class)
 				.hasMessageContaining("safetyMarginPercent");
 		assertThatThrownBy(() -> new SseLineGuardProperties(
 				true, 1024, -1, SseLineGuard.Action.REJECT_LINE_AND_CLOSE,
-				Map.of(), Duration.ofSeconds(30), Duration.ofSeconds(5)
+				Map.of(), Duration.ofSeconds(30), Duration.ofSeconds(5), Duration.ofMinutes(5)
 		))
 				.isInstanceOf(IllegalArgumentException.class)
 				.hasMessageContaining("safetyMarginPercent");
@@ -64,7 +65,7 @@ class SseLineGuardPropertiesTest {
 	void writeTimeoutMustNotBeNull() {
 		assertThatThrownBy(() -> new SseLineGuardProperties(
 				true, 1024, 10, SseLineGuard.Action.REJECT_LINE_AND_CLOSE,
-				Map.of(), null, Duration.ofSeconds(5)
+				Map.of(), null, Duration.ofSeconds(5), Duration.ofMinutes(5)
 		))
 				.isInstanceOf(IllegalArgumentException.class)
 				.hasMessageContaining("writeTimeout");
@@ -75,10 +76,21 @@ class SseLineGuardPropertiesTest {
 	void writeTimeoutCheckIntervalMustNotBeNull() {
 		assertThatThrownBy(() -> new SseLineGuardProperties(
 				true, 1024, 10, SseLineGuard.Action.REJECT_LINE_AND_CLOSE,
-				Map.of(), Duration.ofSeconds(30), null
+				Map.of(), Duration.ofSeconds(30), null, Duration.ofMinutes(5)
 		))
 				.isInstanceOf(IllegalArgumentException.class)
 				.hasMessageContaining("writeTimeoutCheckInterval");
+	}
+
+	@Test
+	@DisplayName("upstreamIdleTimeout must not be null")
+	void upstreamIdleTimeoutMustNotBeNull() {
+		assertThatThrownBy(() -> new SseLineGuardProperties(
+				true, 1024, 10, SseLineGuard.Action.REJECT_LINE_AND_CLOSE,
+				Map.of(), Duration.ofSeconds(30), Duration.ofSeconds(5), null
+		))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessageContaining("upstreamIdleTimeout");
 	}
 
 	@Test
@@ -86,7 +98,7 @@ class SseLineGuardPropertiesTest {
 	void perProviderMustNotBeNull() {
 		assertThatThrownBy(() -> new SseLineGuardProperties(
 				true, 1024, 10, SseLineGuard.Action.REJECT_LINE_AND_CLOSE,
-				null, Duration.ofSeconds(30), Duration.ofSeconds(5)
+				null, Duration.ofSeconds(30), Duration.ofSeconds(5), Duration.ofMinutes(5)
 		))
 				.isInstanceOf(IllegalArgumentException.class)
 				.hasMessageContaining("perProvider");

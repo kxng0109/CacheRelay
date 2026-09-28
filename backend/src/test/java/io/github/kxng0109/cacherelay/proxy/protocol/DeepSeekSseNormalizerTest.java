@@ -15,6 +15,20 @@ class DeepSeekSseNormalizerTest {
 	private final ObjectMapper objectMapper = new ObjectMapper();
 
 	@Test
+	@DisplayName("PRX-B11: provider error chunks map to a terminal OpenAI error")
+	void providerErrorIsTerminal() {
+		DeepSeekSseNormalizer normalizer = new DeepSeekSseNormalizer(objectMapper, "deepseek-reasoner", true);
+
+		List<String> out = normalizer.normalizeLine(
+				"data: {\"error\":{\"message\":\"Rate limited\",\"type\":\"rate_limit\",\"code\":429}}");
+
+		assertEquals(1, out.size());
+		assertTrue(out.getFirst().contains("\"error\""));
+		assertTrue(out.getFirst().contains("Rate limited"));
+		assertTrue(normalizer.isDone());
+	}
+
+	@Test
 	@DisplayName("normalizes reasoning deltas, content deltas, and prompt cache hit telemetry")
 	void normalizesDeepSeekStreaming() throws Exception {
 		DeepSeekSseNormalizer normalizer = new DeepSeekSseNormalizer(objectMapper, "deepseek-reasoner", true);

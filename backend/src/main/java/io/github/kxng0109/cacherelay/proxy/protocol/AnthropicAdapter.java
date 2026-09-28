@@ -47,7 +47,7 @@ public final class AnthropicAdapter implements ProtocolAdapter {
 
 		ObjectNode body = objectMapper.createObjectNode();
 		body.put("model", model);
-		body.put("stream", true);
+		body.put("stream", request.stream() == null || request.stream());
 
 		List<OpenAiChatRequest.Message> messages = new ArrayList<>();
 		StringBuilder system = new StringBuilder();

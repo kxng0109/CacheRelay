@@ -4,10 +4,12 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.AbstractPlatformTransactionManager;
 import org.springframework.transaction.support.DefaultTransactionStatus;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -95,6 +97,20 @@ class LedgerStagingDrainerUnitTest {
 		assertThat(LedgerStagingDrainer.resolvePodId("worker-7")).isEqualTo("worker-7");
 		assertThat(LedgerStagingDrainer.resolvePodId(null)).startsWith("pod-");
 		assertThat(LedgerStagingDrainer.resolvePodId("   ")).startsWith("pod-");
+	}
+
+	@Test
+	@DisplayName("FIN-B39: ledger purge deletes rows older than the retention window")
+	void ledgerPurgeDeletesBeyondRetention() {
+		ArgumentCaptor<Instant> cutoffCaptor = ArgumentCaptor.forClass(Instant.class);
+
+		drainer.purgeLedger();
+
+		verify(ledger).purgeBefore(cutoffCaptor.capture());
+		Instant cutoff = cutoffCaptor.getValue();
+		assertThat(Duration.between(cutoff, Instant.now()).toDays())
+				.as("retention window in days")
+				.isBetween(360L, 370L);
 	}
 
 	@Test

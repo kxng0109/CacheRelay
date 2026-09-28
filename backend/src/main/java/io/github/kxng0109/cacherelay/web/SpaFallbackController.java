@@ -29,6 +29,18 @@ public class SpaFallbackController {
 	public static final String SPA_PATH_PATTERN = "/{spa:^(?!v1$|actuator$|v3$|swagger-ui$|error$|assets$)[^.]*}/**";
 
 	/**
+	 * Serves the shell at the root by forwarding to {@code /index.html}, so
+	 * {@code /} carries the same per-response CSP nonce substitution as the
+	 * shell entry point instead of Boot's untransformed welcome page.
+	 *
+	 * @return forward to {@code /index.html}
+	 */
+	@GetMapping("/")
+	public String root() {
+		return "forward:/index.html";
+	}
+
+	/**
 	 * Forwards an SPA route to the shell.
 	 *
 	 * @return forward to {@code /index.html}

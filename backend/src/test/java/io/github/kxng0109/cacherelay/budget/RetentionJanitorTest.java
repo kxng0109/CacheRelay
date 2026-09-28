@@ -10,12 +10,14 @@ import java.util.List;
 
 import javax.sql.DataSource;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -66,6 +68,17 @@ class RetentionJanitorTest {
 
 		verify(harness.jdbc()).execute(sql.capture());
 		assertThat(sql.getValue()).contains("DETACH PARTITION " + old);
+	}
+
+	@Test
+	@DisplayName("null meter registry leaves the roll unobserved without failing")
+	void nullMeterRegistryLeavesRollUnobserved() throws Exception {
+		Harness harness = harness();
+		harness.janitor().setMeterRegistry(null);
+		when(harness.jdbc().update(anyString(), anyString())).thenReturn(0, 0);
+		when(harness.jdbc().update(anyString())).thenReturn(0);
+
+		assertThatNoException().isThrownBy(() -> harness.janitor().archiveOldAlerts());
 	}
 
 	@Test
@@ -158,5 +171,32 @@ class RetentionJanitorTest {
 				new RetentionJanitor(mock(JdbcTemplate.class), dataSource, MaintenanceProperties.DEFAULTS);
 
 		janitor.retain();
+	}
+
+	@Test
+	@DisplayName("FIN-B36: partition detach is concurrent, never blocking")
+	void detachIsConcurrent() throws Exception {
+		JdbcTemplate jdbc = mock(JdbcTemplate.class);
+		DataSource dataSource = mock(DataSource.class);
+		when(jdbc.queryForList(anyString(), eq(String.class)))
+				.thenReturn(List.of("replay_store_2020_01"));
+		RetentionJanitor janitor = new RetentionJanitor(jdbc, dataSource, MaintenanceProperties.DEFAULTS);
+
+		janitor.detachExpiredReplayPartitions();
+
+		verify(jdbc).execute(eq("ALTER TABLE replay_store DETACH PARTITION replay_store_2020_01 CONCURRENTLY"));
+	}
+
+	@Test
+	@DisplayName("successful tick records the last-tick gauge")
+	void successfulTickRecordsGauge() throws Exception {
+		Harness harness = harness();
+		SimpleMeterRegistry registry = new SimpleMeterRegistry();
+		harness.janitor().setMeterRegistry(registry);
+
+		harness.janitor().retain();
+
+		assertThat(registry.get("cacherelay.job.last_tick_seconds")
+				.tag("job", "retention-janitor").gauge().value()).isPositive();
 	}
 }

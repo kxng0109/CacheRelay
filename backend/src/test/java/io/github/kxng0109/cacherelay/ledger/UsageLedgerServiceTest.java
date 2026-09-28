@@ -6,6 +6,7 @@ import io.github.kxng0109.cacherelay.admin.dto.LedgerSummaryResponse;
 import io.github.kxng0109.cacherelay.admin.dto.PageResponse;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -34,14 +35,14 @@ class UsageLedgerServiceTest {
 	void getSummarySuccess() {
 		LedgerFilter filter = new LedgerFilter("owner-1", "openai", "gpt-4o", null, null);
 
-		when(repository.getTotals(filter)).thenReturn(new UsageTotals(10L, 1000L, 500L, 1500L, 14_000L, 120.0));
-		when(repository.getBreakdownByOwner(filter)).thenReturn(List.of(
+		when(repository.getTotals(any())).thenReturn(new UsageTotals(10L, 1000L, 500L, 1500L, 14_000L, 120.0));
+		when(repository.getBreakdownByOwner(any())).thenReturn(List.of(
 				new OwnerUsageRecord("owner-1", 10L, 1000L, 500L, 1500L, 14_000L, 120.0)
 		));
-		when(repository.getBreakdownByModel(filter)).thenReturn(List.of(
+		when(repository.getBreakdownByModel(any())).thenReturn(List.of(
 				new ModelUsageRecord("openai", "gpt-4o", 10L, 1000L, 500L, 1500L, 14_000L, 120.0)
 		));
-		when(repository.getBreakdownByProvider(filter)).thenReturn(List.of(
+		when(repository.getBreakdownByProvider(any())).thenReturn(List.of(
 				new ProviderUsageRecord("openai", 10L, 1000L, 500L, 1500L, 14_000L, 120.0)
 		));
 
@@ -71,10 +72,10 @@ class UsageLedgerServiceTest {
 	void getSummaryZeroMatches() {
 		LedgerFilter filter = new LedgerFilter(null, null, null, null, null);
 
-		when(repository.getTotals(filter)).thenReturn(new UsageTotals(0L, 0L, 0L, 0L, 0L, 0.0));
-		when(repository.getBreakdownByOwner(filter)).thenReturn(List.of());
-		when(repository.getBreakdownByModel(filter)).thenReturn(List.of());
-		when(repository.getBreakdownByProvider(filter)).thenReturn(List.of());
+		when(repository.getTotals(any())).thenReturn(new UsageTotals(0L, 0L, 0L, 0L, 0L, 0.0));
+		when(repository.getBreakdownByOwner(any())).thenReturn(List.of());
+		when(repository.getBreakdownByModel(any())).thenReturn(List.of());
+		when(repository.getBreakdownByProvider(any())).thenReturn(List.of());
 
 		LedgerSummaryResponse summary = service.getSummary(filter);
 
@@ -117,6 +118,38 @@ class UsageLedgerServiceTest {
 	}
 
 	@Test
+	@DisplayName("ADM-B03: missing bounds default and the window is always enforced")
+	void missingBoundsDefaulted() {
+		when(repository.getTotals(any())).thenReturn(new UsageTotals(0L, 0L, 0L, 0L, 0L, 0.0));
+		when(repository.getBreakdownByOwner(any())).thenReturn(List.of());
+		when(repository.getBreakdownByModel(any())).thenReturn(List.of());
+		when(repository.getBreakdownByProvider(any())).thenReturn(List.of());
+		Instant now = Instant.now();
+		ArgumentCaptor<LedgerFilter> captor = ArgumentCaptor.forClass(LedgerFilter.class);
+
+		// from-only: to defaults to now
+		service.getSummary(new LedgerFilter(null, null, null, now.minus(Duration.ofHours(1)), null));
+		verify(repository).getTotals(captor.capture());
+		assertThat(captor.getValue().from()).isEqualTo(now.minus(Duration.ofHours(1)));
+		assertThat(captor.getValue().to()).isNotNull();
+
+		// fully unbounded: both default to a bounded window
+		service.getSummary(new LedgerFilter(null, null, null, null, null));
+		verify(repository, times(2)).getTotals(captor.capture());
+		LedgerFilter bounded = captor.getValue();
+		assertThat(bounded.from()).isNotNull();
+		assertThat(bounded.to()).isNotNull();
+		assertThat(Duration.between(bounded.from(), bounded.to()))
+				.isLessThanOrEqualTo(Duration.ofDays(90));
+
+		// future from is rejected
+		assertThatThrownBy(() -> service.getSummary(
+				new LedgerFilter(null, null, null, now.plusSeconds(60), null)))
+				.isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("future");
+	}
+
+	@Test
 	@DisplayName("getEntries clamps page size and maps to PageResponse")
 	void getEntriesPaginationAndClamping() {
 		LedgerFilter filter = new LedgerFilter("owner-1", null, null, null, null);
@@ -128,7 +161,7 @@ class UsageLedgerServiceTest {
 				100, 50, 150, 1400L, 200L, now
 		);
 
-		when(repository.findEntries(eq(filter), any(Pageable.class)))
+		when(repository.findEntries(any(LedgerFilter.class), any(Pageable.class)))
 				.thenReturn(new PageImpl<>(List.of(entry), PageRequest.of(0, 20), 1));
 
 		// Normal request
@@ -140,7 +173,7 @@ class UsageLedgerServiceTest {
 
 		// Oversized page size is clamped to 100
 		service.getEntries(filter, PageRequest.of(0, 500));
-		verify(repository).findEntries(eq(filter), argThat(p -> p.getPageSize() == 100));
+		verify(repository).findEntries(any(LedgerFilter.class), argThat(p -> p.getPageSize() == 100));
 
 		// Custom pageable with negative page or zero size
 		Pageable customPageable = mock(Pageable.class);
@@ -150,12 +183,13 @@ class UsageLedgerServiceTest {
 		when(customPageable.getSort()).thenReturn(Sort.unsorted());
 
 		service.getEntries(filter, customPageable);
-		verify(repository).findEntries(eq(filter), argThat(p -> p.getPageSize() == 1 && p.getPageNumber() == 0));
+		verify(repository).findEntries(
+				any(LedgerFilter.class), argThat(p -> p.getPageSize() == 1 && p.getPageNumber() == 0));
 
 		// Unpaged defaults to 20
 		service.getEntries(filter, Pageable.unpaged());
 		verify(repository, times(2)).findEntries(
-				eq(filter),
+				any(LedgerFilter.class),
 				argThat(p -> p.getPageSize() == 20 && p.getPageNumber() == 0)
 		);
 	}

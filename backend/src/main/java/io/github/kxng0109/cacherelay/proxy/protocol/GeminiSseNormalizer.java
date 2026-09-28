@@ -5,6 +5,7 @@ import org.jspecify.annotations.Nullable;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -34,6 +35,15 @@ public final class GeminiSseNormalizer implements SseNormalizer {
 	private @Nullable Long outputTokens;
 	private @Nullable Long cachedTokens;
 	private @Nullable Long reasoningTokens;
+
+	/**
+	 * Returns thought tokens observed from Gemini usage metadata.
+	 *
+	 * @return thought token count or 0 if not reported
+	 */
+	public long reasoningTokens() {
+		return reasoningTokens != null ? reasoningTokens : 0L;
+	}
 	private @Nullable String upstreamModel;
 	private boolean hasToolCalls;
 	private int toolCallIndex;
@@ -70,6 +80,25 @@ public final class GeminiSseNormalizer implements SseNormalizer {
 		JsonNode node = parse(json);
 		if (node == null || !node.isObject()) {
 			return List.of();
+		}
+
+		if (node.has("error") && node.get("error").isObject()) {
+			// PRX-B11: provider errors terminate with an OpenAI error chunk
+			// instead of an empty candidate list that reads as clean truncation.
+			done = true;
+			JsonNode detail = node.get("error");
+			ObjectNode error = objectMapper.createObjectNode();
+			error.put("message", detail.path("message").asString("Upstream provider error"));
+			String status = detail.path("status").asString("");
+			if (!status.isEmpty()) {
+				error.put("type", status);
+			}
+			if (detail.has("code")) {
+				error.put("code", detail.path("code").asString(""));
+			}
+			ObjectNode envelope = objectMapper.createObjectNode();
+			envelope.set("error", error);
+			return List.of("data: " + envelope.toString());
 		}
 
 		if (node.has("modelVersion") && node.get("modelVersion").isString()) {

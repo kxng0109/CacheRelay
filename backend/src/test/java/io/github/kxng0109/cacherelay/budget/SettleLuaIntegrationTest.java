@@ -187,7 +187,7 @@ class SettleLuaIntegrationTest extends SharedContainersBase {
 	}
 
 	@Test
-	@DisplayName("settle with a missing hold record reports expired with a gap")
+	@DisplayName("FIN-B20: settle with a missing hold record still charges actuals with a gap")
 	void missingHoldReportsExpiredGap() {
 		StringRedisTemplate template = template();
 		BudgetEnforcer enforcer = enforcer(template);
@@ -200,7 +200,8 @@ class SettleLuaIntegrationTest extends SharedContainersBase {
 
 		assertThat(outcome.outcome()).isEqualTo(BudgetEnforcer.SETTLE_EXPIRED);
 		assertThat(outcome.gapSet()).isTrue();
-		assertThat(monthCount(template, "KEY", keyHex, month)).isZero();
+		assertThat(outcome.amountApplied()).isEqualTo(4_000L);
+		assertThat(monthCount(template, "KEY", keyHex, month)).isEqualTo(4_000L);
 	}
 
 	@Test

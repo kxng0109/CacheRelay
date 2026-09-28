@@ -63,6 +63,15 @@ public class AuthConfig {
 		this.issuer = properties.jwtIssuer();
 		validateInviteBaseUrl(properties.inviteBaseUrl());
 		if (properties.inviteBaseUrl().isBlank()) {
+			if (!isRelaxedProfile(activeProfiles)) {
+				// ADM-B02: emailed invite links must never derive from the client Host
+				// header outside dev/test — a poisoned Host would mail hostile links.
+				throw new IllegalStateException(
+						"gateway.auth.invite-base-url (GATEWAY_AUTH_INVITE_BASE_URL) is required "
+								+ "outside the dev/test profiles: invite links must come from a "
+								+ "configured public origin, never the request host. Active profiles: "
+								+ activeProfiles);
+			}
 			log.warn("gateway.auth.invite-base-url is blank: invite links derive from the incoming "
 					+ "request host. Set GATEWAY_AUTH_INVITE_BASE_URL to the public frontend origin "
 					+ "in split-origin deployments.");

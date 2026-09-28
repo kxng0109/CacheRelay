@@ -3,8 +3,7 @@ package io.github.kxng0109.cacherelay.config;
 import io.github.kxng0109.cacherelay.ledger.LedgerExecutorProperties;
 import io.github.kxng0109.cacherelay.proxy.embeddings.EmbeddingProperties;
 import io.github.kxng0109.cacherelay.proxy.sse.SseCapacityProperties;
-import io.github.kxng0109.cacherelay.security.ratelimit.RateLimitProperties;
-import lombok.RequiredArgsConstructor;
+import io.github.kxng0109.cacherelay.security.ratelimit.RateLimitProperties;import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -28,6 +27,7 @@ public class CapacityReportRunner implements ApplicationRunner {
 	private final LedgerExecutorProperties ledgerExecutor;
 	private final RateLimitProperties rateLimit;
 	private final EmbeddingProperties embeddings;
+	private final CapacityProfileProperties capacity;
 
 	@Override
 	public void run(ApplicationArguments args) {
@@ -40,7 +40,8 @@ public class CapacityReportRunner implements ApplicationRunner {
 	 * @return human-readable effective ceilings
 	 */
 	String formatReport() {
-		return "sse[max-connections=%d, tick-ms=%d, watchdog-ms=%d] ".formatted(
+		return "capacity[profile=%s, weight=%d] ".formatted(capacity.profile(), capacity.instanceWeight())
+				+ "sse[max-connections=%d, tick-ms=%d, watchdog-ms=%d] ".formatted(
 				sseCapacity.maxConnections(), sseCapacity.tickPeriodMs(), sseCapacity.watchdogTimeoutMs())
 				+ "ledger[executor=%d/%d/q%d/await%ds] ".formatted(
 				ledgerExecutor.corePoolSize(), ledgerExecutor.maxPoolSize(),
