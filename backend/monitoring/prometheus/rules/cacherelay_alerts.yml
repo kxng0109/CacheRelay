@@ -100,7 +100,9 @@ groups:
           description: "Replay consumers rejected journal records; every record is preserved durably. Investigate the downstream outage before the dead-letter backlog grows."
 
       # -----------------------------------------------------------------------
-      # 7. Redis Exporter & Memory Pressure
+      # 7. Redis Exporter & Memory Pressure (tier-scoped: accounting "redis"
+      # is noeviction — pressure/evictions threaten writes; cache
+      # "redis-cache" is allkeys-lru — evictions are normal operation).
       # -----------------------------------------------------------------------
       - alert: RedisExporterDown
         expr: up{job="redis"} == 0
@@ -112,10 +114,21 @@ groups:
           summary: "Redis exporter scrape failing"
           description: "Prometheus cannot scrape redis-exporter:9121. Redis internals are blind."
 
+      - alert: RedisCacheExporterDown
+        expr: up{job="redis-cache"} == 0
+        for: 1m
+        labels:
+          severity: warning
+          team: data-infra
+        annotations:
+          summary: "Redis cache exporter scrape failing"
+          description: "Prometheus cannot scrape redis-cache-exporter:9121. Cache-tier internals are blind."
+
       - alert: RedisMemoryPressure
         # Ratio against the real 256MB maxmemory cap (verified live via INFO memory).
         # The max_bytes>0 guard keeps the rule safe if maxmemory is ever unset.
-        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.8 and redis_memory_max_bytes > 0
+        # Accounting tier only: the cache tier tolerates higher fill (see below).
+        expr: redis_memory_used_bytes{job="redis"} / redis_memory_max_bytes{job="redis"} > 0.8 and redis_memory_max_bytes{job="redis"} > 0
         for: 5m
         labels:
           severity: warning
@@ -124,8 +137,20 @@ groups:
           summary: "Redis memory above 80% of maxmemory"
           description: "Redis holds pressure against its maxmemory cap. Evictions under noeviction fail writes."
 
+      - alert: RedisCacheMemoryPressure
+        # Cache tier runs allkeys-lru: pressure matters only near-full, and the
+        # response is letting evictions work, not paging.
+        expr: redis_memory_used_bytes{job="redis-cache"} / redis_memory_max_bytes{job="redis-cache"} > 0.95 and redis_memory_max_bytes{job="redis-cache"} > 0
+        for: 5m
+        labels:
+          severity: warning
+          team: data-infra
+        annotations:
+          summary: "Redis cache memory above 95% of maxmemory"
+          description: "Cache tier nearly full: hit ratio will decay. Evictions are normal here; add memory if the hit ratio drops."
+
       - alert: RedisMainThreadSaturation
-        expr: sum(rate(redis_cpu_user_main_thread_seconds_total[2m])) + sum(rate(redis_cpu_sys_main_thread_seconds_total[2m])) > 0.9
+        expr: sum by (job) (rate(redis_cpu_user_main_thread_seconds_total[2m])) + sum by (job) (rate(redis_cpu_sys_main_thread_seconds_total[2m])) > 0.9
         for: 5m
         labels:
           severity: warning
@@ -135,7 +160,9 @@ groups:
           description: "Single-threaded command execution is the bottleneck; per-request Lua/KNN volume is too high."
 
       - alert: RedisEvictionsActive
-        expr: increase(redis_evicted_keys_total[1h]) > 0
+        # Accounting tier only: under noeviction, evictions mean writes are
+        # failing. The cache tier evicts by design (allkeys-lru) and has no rule.
+        expr: increase(redis_evicted_keys_total{job="redis"}[1h]) > 0
         for: 5m
         labels:
           severity: critical
@@ -158,7 +185,9 @@ groups:
           description: "Prometheus cannot scrape postgres-exporter:9187. Postgres internals are blind."
 
       - alert: PostgresConnectionsHigh
-        expr: sum(pg_stat_database_numbackends) / pg_settings_max_connections > 0.8
+        # Template databases excluded: their backends are not workload and
+        # would inflate the ratio (OPS-B20 no-data/label mismatch).
+        expr: sum(pg_stat_database_numbackends{datname!~"template.*"}) / pg_settings_max_connections > 0.8
         for: 2m
         labels:
           severity: warning
@@ -244,7 +273,7 @@ groups:
       # JVM / container ergonomics (PERF-15: 2 vCPU / 2 GB profile)
       # -----------------------------------------------------------------------
       - alert: JvmDirectMemoryHigh
-        expr: jvm_buffer_memory_used_bytes{bufferPool="direct"} / (256 * 1024 * 1024) > 0.8
+        expr: jvm_buffer_memory_used_bytes{id="direct"} / (256 * 1024 * 1024) > 0.8
         for: 2m
         labels:
           severity: warning

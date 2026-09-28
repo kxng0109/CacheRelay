@@ -1,7 +1,7 @@
 # HPA on workload metrics, NOT CPU (SSE holds are I/O-bound; CPU stays low
 # while connections are the constraint). Requires Prometheus Adapter serving
-# custom.metrics.k8s.io (see R3 research): map pods/admission_rps and
-# pods/p99_latency_seconds via adapter rules before this HPA can act.
+# custom.metrics.k8s.io with prometheus-adapter.yaml applied alongside the
+# adapter chart; without it the HPA stays pending at minReplicas (fail-safe).
 # Scale-down keeps the 300s default stabilization (pinned streams drain).
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler

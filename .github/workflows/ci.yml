@@ -193,7 +193,6 @@ jobs:
           fail_ci_if_error: false
 
       - name: Scan dependencies for known vulnerabilities
-        continue-on-error: true
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         working-directory: backend
@@ -203,5 +202,52 @@ jobs:
             exit 0
           fi
           ./mvnw -B -ntp org.owasp:dependency-check-maven:13.0.0:check \
-            -DfailBuildOnCVSS=11 \
+            -DfailBuildOnCVSS=7 \
             -Dformat=HTML,SARIF
+
+  ops-gates:
+    name: Ops config gates and image scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate compose config
+        run: docker compose config --quiet
+
+      - name: promtool check config and test rules
+        run: |
+          docker run --rm --entrypoint promtool \
+            -v "${{ github.workspace }}/backend/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+            -v "${{ github.workspace }}/backend/monitoring/prometheus/rules:/etc/prometheus/rules:ro" \
+            prom/prometheus:v3.13.3 \
+            check config /etc/prometheus/prometheus.yml
+          docker run --rm --entrypoint promtool \
+            -v "${{ github.workspace }}/backend/monitoring/prometheus/rules:/etc/prometheus/rules:ro" \
+            prom/prometheus:v3.13.3 \
+            test rules /etc/prometheus/rules/tests/cacherelay_alerts_test.yml
+
+      - name: amtool check alertmanager config
+        run: |
+          docker run --rm --entrypoint amtool \
+            -v "${{ github.workspace }}/backend/monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro" \
+            prom/alertmanager:v0.34.1 \
+            check-config /etc/alertmanager/alertmanager.yml
+
+      - name: Build backend image for scan
+        run: docker build -t cacherelay:ci -f backend/Dockerfile .
+
+      - name: Scan image for OS and library CVEs (fails on HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: cacherelay:ci
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          sarif_file: trivy-results.sarif

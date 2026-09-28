@@ -1,7 +1,9 @@
 # Alertmanager v0.34.0 — routes gateway detector alerts (POSTed to /api/v2/alerts by the
-# AlertDispatcher) to the operator webhook. The default receiver points at the app itself as a
-# documented placeholder: set ALERTMANAGER_WEBHOOK_URL to the real incident endpoint (PagerDuty,
-# Opsgenie, Teams workflow, Slack webhook) before relying on pages.
+# AlertDispatcher) to the operator webhook. The receiver is the gateway's dedicated
+# webhook endpoint (AlertWebhookController at /v1/alerts/webhook): it validates a
+# bearer credential from the file mounted read-only below, so the admin key is never
+# distributed to monitoring. Point url at a real incident endpoint (PagerDuty,
+# Opsgenie, Teams workflow, Slack webhook) instead before relying on pages.
 global:
   resolve_timeout: 5m
 
@@ -15,7 +17,13 @@ route:
 receivers:
   - name: ops-webhook
     webhook_configs:
-      - url: http://cacherelay:8080/v1/admin/alerts/webhook
+      - url: http://cacherelay:8080/v1/alerts/webhook
         send_resolved: true
+        # Authenticate the receiver with the dedicated webhook secret (generated
+        # by scripts/init-env.* into secrets/alertmanager-webhook-secret.txt and
+        # mounted read-only by compose):
+        http_config:
+          authorization:
+            credentials_file: /etc/alertmanager/alerts-webhook-secret.txt
 
 templates: []

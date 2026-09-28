@@ -23,6 +23,16 @@ spec:
       labels:
         app.kubernetes.io/name: cacherelay
     spec:
+      # Least privilege: no service-account token (no k8s API use), default-deny
+      # seccomp, non-root filesystem ownership.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone
@@ -90,6 +100,22 @@ spec:
             limits:
               cpu: "2"
               memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: ledger-logs
+              mountPath: /app/logs
           livenessProbe:
             httpGet:
               path: /actuator/health/liveness
@@ -115,3 +141,8 @@ spec:
                 command: ["sh", "-c", "sleep 30"]
       # 60s+ streams need drain headroom: 30s preStop + 60s SIGTERM + margin.
       terminationGracePeriodSeconds: 120
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: ledger-logs
+          emptyDir: {}

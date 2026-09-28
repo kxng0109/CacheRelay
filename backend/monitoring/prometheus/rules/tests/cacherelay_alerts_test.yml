@@ -9,6 +9,38 @@ evaluation_interval: 1m
 tests:
   - interval: 1m
     input_series:
+      - series: 'pg_stat_database_numbackends{datname="cacherelay"}'
+        values: 85+0x29
+      - series: 'pg_settings_max_connections'
+        values: 100+0x29
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: PostgresConnectionsHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: data-infra
+            exp_annotations:
+              summary: "Postgres connections above 80% of max"
+              description: "Connection pressure vs Hikari pool (10). Scale pool or investigate idle-in-transaction."
+
+  - interval: 1m
+    input_series:
+      - series: 'pg_stat_database_numbackends{datname="cacherelay"}'
+        values: 10+0x29
+      - series: 'pg_stat_database_numbackends{datname="template0"}'
+        values: 50+0x29
+      - series: 'pg_stat_database_numbackends{datname="template1"}'
+        values: 50+0x29
+      - series: 'pg_settings_max_connections'
+        values: 100+0x29
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: PostgresConnectionsHigh
+        exp_alerts: [ ]
+
+  - interval: 1m
+    input_series:
       - series: 'cacherelay_ratelimit_evaluations_total{decision="allowed"}'
         values: 100+100x29
       - series: 'cacherelay_ratelimit_evaluations_total{decision="denied"}'
@@ -80,7 +112,7 @@ tests:
 
   - interval: 1m
     input_series:
-      - series: 'redis_evicted_keys_total'
+      - series: 'redis_evicted_keys_total{job="redis"}'
         values: 0+0x29
     alert_rule_test:
       - eval_time: 30m
@@ -89,13 +121,14 @@ tests:
 
   - interval: 1m
     input_series:
-      - series: 'redis_evicted_keys_total'
+      - series: 'redis_evicted_keys_total{job="redis"}'
         values: 0+0x9 5+0x19
     alert_rule_test:
       - eval_time: 30m
         alertname: RedisEvictionsActive
         exp_alerts:
           - exp_labels:
+              job: redis
               severity: critical
               team: data-infra
             exp_annotations:
@@ -104,9 +137,18 @@ tests:
 
   - interval: 1m
     input_series:
-      - series: 'redis_memory_used_bytes'
+      - series: 'redis_evicted_keys_total{job="redis-cache"}'
+        values: 0+0x9 50+0x19
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: RedisEvictionsActive
+        exp_alerts: [ ]
+
+  - interval: 1m
+    input_series:
+      - series: 'redis_memory_used_bytes{job="redis"}'
         values: 100000000+0x29
-      - series: 'redis_memory_max_bytes'
+      - series: 'redis_memory_max_bytes{job="redis"}'
         values: 268435456+0x29
     alert_rule_test:
       - eval_time: 30m
@@ -115,20 +157,50 @@ tests:
 
   - interval: 1m
     input_series:
-      - series: 'redis_memory_used_bytes'
+      - series: 'redis_memory_used_bytes{job="redis"}'
         values: 100000000+5000000x29
-      - series: 'redis_memory_max_bytes'
+      - series: 'redis_memory_max_bytes{job="redis"}'
         values: 268435456+0x29
     alert_rule_test:
       - eval_time: 30m
         alertname: RedisMemoryPressure
         exp_alerts:
           - exp_labels:
+              job: redis
               severity: warning
               team: data-infra
             exp_annotations:
               summary: "Redis memory above 80% of maxmemory"
               description: "Redis holds pressure against its maxmemory cap. Evictions under noeviction fail writes."
+
+  - interval: 1m
+    input_series:
+      - series: 'redis_memory_used_bytes{job="redis-cache"}'
+        values: 240000000+500000x29
+      - series: 'redis_memory_max_bytes{job="redis-cache"}'
+        values: 268435456+0x29
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: RedisCacheMemoryPressure
+        exp_alerts: [ ]
+
+  - interval: 1m
+    input_series:
+      - series: 'redis_memory_used_bytes{job="redis-cache"}'
+        values: 240000000+500000x29
+      - series: 'redis_memory_max_bytes{job="redis-cache"}'
+        values: 256000000+0x29
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: RedisCacheMemoryPressure
+        exp_alerts:
+          - exp_labels:
+              job: redis-cache
+              severity: warning
+              team: data-infra
+            exp_annotations:
+              summary: "Redis cache memory above 95% of maxmemory"
+              description: "Cache tier nearly full: hit ratio will decay. Evictions are normal here; add memory if the hit ratio drops."
 
   - interval: 1m
     input_series:
@@ -157,7 +229,7 @@ tests:
 
   - interval: 1m
     input_series:
-      - series: 'jvm_buffer_memory_used_bytes{bufferPool="direct"}'
+      - series: 'jvm_buffer_memory_used_bytes{id="direct"}'
         values: 230000000+0x29
     alert_rule_test:
       - eval_time: 10m
@@ -166,7 +238,7 @@ tests:
           - exp_labels:
               severity: warning
               team: platform-core
-              bufferPool: direct
+              id: direct
             exp_annotations:
               summary: "JVM direct memory above 80% of the 256m cap"
               description: "Netty/Lettuce pooled buffers near MaxDirectMemorySize; exhaustion OOMs without ExitOnOutOfMemoryError (JDK-8257790). Denominator tracks the Dockerfile cap — update together."

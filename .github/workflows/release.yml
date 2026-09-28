@@ -30,10 +30,6 @@ jobs:
           java-version: "25"
           cache: maven
 
-      - name: Build the jar and SBOM
-        working-directory: backend
-        run: ./mvnw -B -ntp package
-
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -48,6 +44,16 @@ jobs:
       - name: Build the frontend bundle
         working-directory: frontend
         run: npm run build
+
+      - name: Stage the console shell into the JAR sources (FE-02)
+        run: |
+          rm -rf backend/src/main/resources/static
+          mkdir -p backend/src/main/resources/static
+          cp -r frontend/dist/. backend/src/main/resources/static/
+
+      - name: Build the jar and SBOM
+        working-directory: backend
+        run: ./mvnw -B -ntp package
 
       - name: Stage release artifacts
         run: |

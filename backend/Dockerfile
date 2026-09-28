@@ -8,6 +8,25 @@
 # handling it requires. Re-record the digest whenever the base is refreshed.
 
 # -----------------------------------------------------------------------------
+# Stage 0: Build operator console (FE-02)
+# -----------------------------------------------------------------------------
+# Node base tracks the project's .nvmrc/engines (Node 24): the Vite bundle is
+# built here and staged into the JAR's static dir below, so the gateway — the
+# documented production host — serves the console itself. Build context is the
+# repository root (see docker-compose.yml); frontend sources are build input
+# only and never edited by this stage.
+FROM node:24-bookworm-slim AS frontend
+
+WORKDIR /ui
+
+# Cache the dependency layer separately from sources
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+COPY frontend/ ./
+RUN npm run build
+
+# -----------------------------------------------------------------------------
 # Stage 1: Build Application
 # -----------------------------------------------------------------------------
 FROM eclipse-temurin:25-jdk-noble AS builder
@@ -15,12 +34,15 @@ FROM eclipse-temurin:25-jdk-noble AS builder
 WORKDIR /workspace
 
 # Cache Maven dependencies layer
-COPY .mvn/ .mvn/
-COPY mvnw pom.xml ./
+COPY backend/.mvn/ .mvn/
+COPY backend/mvnw backend/pom.xml ./
 RUN ./mvnw dependency:go-offline -B -ntp
 
 # Build executable JAR without tests
-COPY src/ src/
+COPY backend/src/ src/
+# FE-02: stage the console bundle into the JAR's static dir BEFORE packaging
+# so the image serves the shell at / with immutable /assets/**.
+COPY --from=frontend /ui/dist/ src/main/resources/static/
 RUN ./mvnw clean package -DskipTests -B -ntp
 
 # -----------------------------------------------------------------------------
@@ -48,10 +70,10 @@ COPY --from=builder --chown=cacherelay:cacherelay /workspace/target/CacheRelay-*
 
 USER cacherelay:cacherelay
 
-EXPOSE 8080
+EXPOSE 8080 9091
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 \
-  CMD curl -fsS http://localhost:8080/actuator/health || exit 1
+  CMD curl -fsS http://localhost:9091/actuator/health || exit 1
 
 # 2 vCPU / 2 GB cgroup profile (PERF-15): heap 1152m + direct 256m + ~200m
 # metaspace/native stays under the limit with headroom (cgroup kills are NOT
