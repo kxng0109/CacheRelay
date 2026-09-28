@@ -2060,6 +2060,111 @@ class ProxyControllerTest {
 		assertEquals(5, captor.getValue().completionTokens());
 	}
 
+	@Test
+	@DisplayName("PRX-B24: non-streaming Gemini usageMetadata is billed, not zeroed")
+	void nonStreamingGeminiUsageBilled() throws Exception {
+		gatewayProperties.setAliases(Map.of(
+				"gpt-5.6-luna", new ModelAlias(
+						List.of(new ProviderRef("openai", null)), FailoverStrategy.SEQUENTIAL),
+				"gemini-2.0-flash", new ModelAlias(
+						List.of(new ProviderRef("gemini", null)), FailoverStrategy.SEQUENTIAL)
+		));
+		gatewayProperties.setProviders(Map.of(
+				"openai", new ProviderConfig(
+						"openai", ProviderType.OPENAI, URI.create("https://api.openai.com"),
+						new SensitiveString("sk-test"), Duration.ofSeconds(3), Duration.ofSeconds(30)
+				),
+				"gemini", new ProviderConfig(
+						"gemini", ProviderType.GEMINI, URI.create("https://generativelanguage.googleapis.com"),
+						new SensitiveString("sk-gem"), Duration.ofSeconds(3), Duration.ofSeconds(30)
+				)
+		));
+		String upstream = "{\"id\":\"resp-1\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+				+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
+				+ "\"usageMetadata\":{\"promptTokenCount\":7,\"candidatesTokenCount\":3}}";
+		ProviderResponse response = providerResponse("gemini", 200, jsonHeaders(), Stream.of(upstream));
+		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(
+				"{\"model\":\"gemini-2.0-flash\",\"messages\":[]}", request());
+		body(entity);
+
+		ArgumentCaptor<TokenUsageEvent> captor = ArgumentCaptor.forClass(TokenUsageEvent.class);
+		verify(eventPublisher).publishEvent(captor.capture());
+		assertEquals(7, captor.getValue().promptTokens());
+		assertEquals(3, captor.getValue().completionTokens());
+	}
+
+	@Test
+	@DisplayName("PRX-B24: non-streaming Ollama eval counts are billed, not zeroed")
+	void nonStreamingOllamaUsageBilled() throws Exception {
+		gatewayProperties.setAliases(Map.of(
+				"gpt-5.6-luna", new ModelAlias(
+						List.of(new ProviderRef("openai", null)), FailoverStrategy.SEQUENTIAL),
+				"llama3.2", new ModelAlias(
+						List.of(new ProviderRef("ollama", null)), FailoverStrategy.SEQUENTIAL)
+		));
+		gatewayProperties.setProviders(Map.of(
+				"openai", new ProviderConfig(
+						"openai", ProviderType.OPENAI, URI.create("https://api.openai.com"),
+						new SensitiveString("sk-test"), Duration.ofSeconds(3), Duration.ofSeconds(30)
+				),
+				"ollama", new ProviderConfig(
+						"ollama", ProviderType.OLLAMA, URI.create("http://localhost:11434"),
+						new SensitiveString(""), Duration.ofSeconds(3), Duration.ofSeconds(30)
+				)
+		));
+		String upstream = "{\"id\":\"resp-2\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+				+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
+				+ "\"prompt_eval_count\":11,\"eval_count\":4}";
+		ProviderResponse response = providerResponse("ollama", 200, jsonHeaders(), Stream.of(upstream));
+		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(
+				"{\"model\":\"llama3.2\",\"messages\":[]}", request());
+		body(entity);
+
+		ArgumentCaptor<TokenUsageEvent> captor = ArgumentCaptor.forClass(TokenUsageEvent.class);
+		verify(eventPublisher).publishEvent(captor.capture());
+		assertEquals(11, captor.getValue().promptTokens());
+		assertEquals(4, captor.getValue().completionTokens());
+	}
+
+	@Test
+	@DisplayName("non-JSON 200 bodies settle the prompt-known portion and relay raw")
+	void nonJsonBodySettlesPromptKnown() throws Exception {
+		BudgetEnforcer mockEnforcer = mock(BudgetEnforcer.class);
+		BudgetSettlement mockSettlement = mock(BudgetSettlement.class);
+		controller.setBudgetEnforcer(mockEnforcer);
+		controller.setBudgetSettlement(mockSettlement);
+		try {
+			when(mockSettlement.authorize(any(), any(), any(), anyString(), anyInt(), any(), any(), any()))
+					.thenReturn(new BudgetEnforcer.HoldAuthorization(
+							new BudgetDecision.Allowed(100L, 60L), 9_000L, "2026-09"));
+			when(mockSettlement.createHold(anyString(), anyString(), any(), any()))
+					.thenReturn(true);
+			ProviderResponse response = providerResponse("openai", 200, jsonHeaders(),
+					Stream.of("this is not json"));
+			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+					.thenReturn(CompletableFuture.completedFuture(response));
+			MockHttpServletRequest req = request();
+			req.setAttribute("cacherelay.keyHash", "ab".repeat(32));
+
+			ResponseEntity<StreamingResponseBody> entity =
+					controller.proxyChatCompletions(PATH_BODY, req);
+
+			assertEquals(200, entity.getStatusCode().value());
+			assertTrue(body(entity).contains("this is not json"));
+			verify(mockSettlement).settleStream(anyString(), anyString(), eq("owner-1"),
+					eq("2026-09"), anyLong(), eq(false));
+		} finally {
+			controller.setBudgetEnforcer(null);
+			controller.setBudgetSettlement(null);
+		}
+	}
+
 	@SuppressWarnings("unchecked")
 	@Test
 	@DisplayName("non-streaming 200 JSON completion is normalized and served as JSON")

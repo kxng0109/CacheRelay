@@ -401,4 +401,92 @@ class BudgetEnforcerTest {
 
 		assertThrows(RateLimitUnavailableException.class, () -> enforcer.renewHold("hold-1", 3600L));
 	}
+
+	@Test
+	@DisplayName("present claims are deleted on release")
+	void releasedPresentClaimDeletesIt() {
+		enforcer.releaseIdempotencyClaim("claim-1");
+
+		verify(redisTemplate).delete(BudgetEnforcer.dedupeKey("claim-1"));
+	}
+
+	@Test
+	@DisplayName("release failures degrade silently (TTL bounds the stale claim)")
+	void releaseFailureDegradesSilently() {
+		when(redisTemplate.delete(anyString())).thenThrow(new RedisConnectionFailureException("down"));
+
+		assertDoesNotThrow(() -> enforcer.releaseIdempotencyClaim("claim-1"));
+	}
+
+	@Test
+	@DisplayName("settle rejects malformed script shapes fail-closed")
+	void settleRejectsMalformedShape() {
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any()))
+				.thenReturn(List.of(1L));
+
+		assertThrows(RateLimitUnavailableException.class, () -> enforcer.settle(
+				"hold-1", "KEY", "sub", "owner-1", "hex", "2026-09", "2026-09", 100L, 0L));
+	}
+
+	@Test
+	@DisplayName("settle accepts string wire values like integers")
+	void settleAcceptsStringWireValues() {
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any()))
+				.thenReturn(List.of("1", "0", "500", "60", "2"));
+
+		BudgetEnforcer.SettleOutcome outcome = enforcer.settle(
+				"hold-1", "KEY", "sub", "owner-1", "hex", "2026-09", "2026-09", 100L, 0L);
+
+		assertFalse(outcome.gapSet());
+	}
+
+	@Test
+	@DisplayName("settle rejects non-numeric and foreign wire values fail-closed")
+	void settleRejectsBadWireValues() {
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any()))
+				.thenReturn(List.of("1", "0", "nope", "60", "2"));
+
+		assertThrows(RateLimitUnavailableException.class, () -> enforcer.settle(
+				"hold-1", "KEY", "sub", "owner-1", "hex", "2026-09", "2026-09", 100L, 0L));
+
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any()))
+				.thenReturn(List.of(1L, 0L, true, 60L, 2L));
+
+		assertThrows(RateLimitUnavailableException.class, () -> enforcer.settle(
+				"hold-1", "KEY", "sub", "owner-1", "hex", "2026-09", "2026-09", 100L, 0L));
+	}
+
+	@Test
+	@DisplayName("checkBudget rejects non-numeric values and blank months fail-closed")
+	void checkBudgetRejectsBadWireValues() {
+		when(costCalculator.calculate(any(), any(), anyLong(), anyLong())).thenReturn(4_000L);
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(List.of("1", "0", "nope", "60", "2", "2026-09"));
+
+		assertThrows(RateLimitUnavailableException.class, () -> enforcer.checkBudget(
+				keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null));
+
+		when(redisTemplate.execute(any(), anyList(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(List.of(1L, 0L, 500L, 60L, 2L, "  "));
+
+		assertThrows(RateLimitUnavailableException.class, () -> enforcer.checkBudget(
+				keyHash(), "owner-1", ProviderType.OPENAI, "gpt-5.6-luna", 10, null, null));
+	}
+
+	@Test
+	@DisplayName("rearmHold re-adds the expiry score and fails closed when Redis is down")
+	@SuppressWarnings("unchecked")
+	void rearmHoldAddsAndFailsClosed() {
+		ZSetOperations<String, String> zset = mock(ZSetOperations.class);
+		when(redisTemplate.opsForZSet()).thenReturn(zset);
+
+		enforcer.rearmHold(BudgetEnforcer.holdKey("hold-1"), 123L);
+
+		verify(zset).add(BudgetEnforcer.holdExpiryKey(), BudgetEnforcer.holdKey("hold-1"), 123.0);
+
+		when(redisTemplate.opsForZSet()).thenThrow(new RedisConnectionFailureException("down"));
+
+		assertThrows(RateLimitUnavailableException.class,
+				() -> enforcer.rearmHold(BudgetEnforcer.holdKey("hold-1"), 123L));
+	}
 }
