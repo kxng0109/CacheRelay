@@ -212,6 +212,13 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Provision local env for compose validation
+        # init-env fills every hard-required secret with a local random value
+        # (values never printed); without it `compose config` fails on the
+        # empty shipped defaults, exactly as it would for an operator who
+        # skipped the bootstrap.
+        run: ./scripts/init-env.sh
+
       - name: Validate compose config
         run: docker compose config --quiet
 
