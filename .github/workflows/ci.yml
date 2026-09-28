@@ -52,8 +52,15 @@ jobs:
           set -uo pipefail
           fail=0
           while IFS= read -r spec; do
-            repo="${spec%@*}"
+            ref="${spec%@*}"
             sha="${spec#*@}"
+            # Subpath actions ({owner}/{repo}/{path}@{ref} per the workflow
+            # syntax) resolve to a commit of owner/repo: the API repo is
+            # always the first two path segments, never the action subpath.
+            owner="${ref%%/*}"
+            second="${ref#*/}"
+            second="${second%%/*}"
+            repo="${owner}/${second}"
             if resolved="$(gh api "repos/${repo}/commits/${sha}" --jq .sha 2>/dev/null)"; then
               if [ "${resolved}" = "${sha}" ]; then
                 echo "OK ${spec}"
@@ -65,7 +72,7 @@ jobs:
               echo "::error::Unresolvable action pin ${spec}"
               fail=1
             fi
-          done < <(grep -rhoE '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40}' .github/workflows/ | sort -u)
+          done < <(grep -rhoE '[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+@[0-9a-f]{40}' .github/workflows/ | sort -u)
           exit "${fail}"
 
   commitlint:
@@ -216,8 +223,8 @@ jobs:
         # init-env fills every hard-required secret with a local random value
         # (values never printed); without it `compose config` fails on the
         # empty shipped defaults, exactly as it would for an operator who
-        # skipped the bootstrap.
-        run: ./scripts/init-env.sh
+        # skipped the bootstrap. Invoked via sh: the script needs no exec bit.
+        run: sh ./scripts/init-env.sh
 
       - name: Validate compose config
         run: docker compose config --quiet
