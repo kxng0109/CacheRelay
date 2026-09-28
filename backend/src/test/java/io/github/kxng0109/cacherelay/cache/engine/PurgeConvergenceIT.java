@@ -67,10 +67,17 @@ class PurgeConvergenceIT extends SharedContainersBase {
 				5, 7, 12, Instant.now(), 1.0f, null));
 		assertThat(podBL0.get("exact-key-1")).isNotNull();
 
-		new JdbcTemplate(SharedContainersBase.newDataSource())
-				.execute("SELECT pg_notify('cache_purge_all', 'ALL')");
+		// The listener has no readiness latch: a notify sent before its
+		// LISTEN is active is lost (PG notifies active listeners only), so
+		// retry the notify across poll windows instead of trusting one shot.
+		boolean evicted = false;
+		for (int attempt = 0; attempt < 3 && !evicted; attempt++) {
+			new JdbcTemplate(SharedContainersBase.newDataSource())
+					.execute("SELECT pg_notify('cache_purge_all', 'ALL')");
+			evicted = pollForEviction("exact-key-1", Duration.ofSeconds(10));
+		}
 
-		assertThat(pollForEviction("exact-key-1", Duration.ofSeconds(10)))
+		assertThat(evicted)
 				.as("pod B flushes L0 on pod A's purge")
 				.isTrue();
 	}
