@@ -447,10 +447,12 @@ class FailoverOrchestratorTest {
 		assertThat(loser).as("loser future tracked").isNotNull();
 		// cancelLosers runs in the winner's callback just after raceResult
 		// completes, so join() can return first: poll for settlement. Note:
-		// the JDK returns MinimalFuture, whose cancel() aborts the exchange
-		// and completes with CancellationException without setting the
-		// cancelled bit — so the terminal outcome (not isCancelled) is the
-		// proof of a true cancel.
+		// the JDK returns MinimalFuture, whose abort completes the future
+		// with a CancellationException value but WITHOUT setting the
+		// cancelled bit (proven by diagnostic: cancelled=false,
+		// exception=CancellationException: Request cancelled) — so the
+		// exception value (not isCancelled, not bare isDone) is the proof
+		// of a true cancel. Never assert via isCancelled() here.
 		boolean settled = false;
 		long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
 		while (System.nanoTime() < deadline) {
