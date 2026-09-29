@@ -215,6 +215,12 @@ jobs:
   ops-gates:
     name: Ops config gates and image scan
     runs-on: ubuntu-latest
+    # Least privilege: the SARIF upload needs security-events:write, which the
+    # workflow default (contents:read) deliberately withholds. Scoped to this
+    # job only; every other job keeps the restrictive default.
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
