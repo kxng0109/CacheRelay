@@ -146,11 +146,43 @@ export function CommandPalette({ actions = [] }: { actions?: PaletteAction[] }):
       },
     },
     {
+      id: 'nav-notif',
+      label: 'Go to Notifications',
+      audience: 'admin',
+      run: () => {
+        go('/notifications')
+      },
+    },
+    {
+      id: 'nav-inv',
+      label: 'Go to Invites',
+      audience: 'admin',
+      run: () => {
+        go('/invites')
+      },
+    },
+    {
+      id: 'nav-users',
+      label: 'Go to Users',
+      audience: 'admin',
+      run: () => {
+        go('/users')
+      },
+    },
+    {
       id: 'nav-mcp',
       label: 'Go to MCP',
       audience: 'public',
       run: () => {
         go('/mcp')
+      },
+    },
+    {
+      id: 'nav-a2a',
+      label: 'Go to A2A',
+      audience: 'public',
+      run: () => {
+        go('/a2a')
       },
     },
     {

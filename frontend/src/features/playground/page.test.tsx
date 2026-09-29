@@ -83,6 +83,91 @@ describe('PlaygroundPage', () => {
     })
   })
 
+  it('surfaces stream provenance in the run detail panel', async () => {
+    const user = userEvent.setup()
+    server.use(
+      catalog(),
+      http.post('*/v1/chat/completions', () => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            ctrl.enqueue(new TextEncoder().encode(STREAM))
+            ctrl.close()
+          },
+        })
+        return new HttpResponse(stream, {
+          headers: {
+            'content-type': 'text/event-stream',
+            'X-CacheRelay-Provider': 'openai',
+            'X-CacheRelay-Tried': 'openai',
+            'X-CacheRelay-Audit-Receipt': 'merkle:page1',
+          },
+        })
+      }),
+    )
+    renderApp(<PlaygroundPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
+    await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
+    await user.click(screen.getByRole('button', { name: /stream completion/i }))
+    await waitFor(
+      () => {
+        expect(screen.getByRole('log')).toHaveTextContent('Hello')
+      },
+      { timeout: 5000 },
+    )
+    await waitFor(() => {
+      expect(screen.getByText('merkle:page1')).toBeInTheDocument()
+    })
+  })
+
+  it('stops a hanging stream and reports the neutral status', async () => {
+    const user = userEvent.setup()
+    server.use(
+      catalog(),
+      http.post('*/v1/chat/completions', () => {
+        const hanging = new ReadableStream<Uint8Array>({})
+        return new HttpResponse(hanging, { headers: { 'content-type': 'text/event-stream' } })
+      }),
+    )
+    renderApp(<PlaygroundPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
+    await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
+    await user.click(screen.getByRole('button', { name: /stream completion/i }))
+    await user.click(await screen.findByRole('button', { name: /^stop$/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/phase: stopped/i)).toBeInTheDocument()
+    })
+  })
+
+  it('maps incomplete streams to the detail error status', async () => {
+    const user = userEvent.setup()
+    server.use(
+      catalog(),
+      http.post('*/v1/chat/completions', () => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            ctrl.enqueue(
+              new TextEncoder().encode('data: {"choices":[{"delta":{"content":"part"}}]}\n\n'),
+            )
+            setTimeout(() => {
+              ctrl.error(new Error('upstream reset'))
+            }, 50)
+          },
+        })
+        return new HttpResponse(stream, { headers: { 'content-type': 'text/event-stream' } })
+      }),
+    )
+    renderApp(<PlaygroundPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
+    await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
+    await user.click(screen.getByRole('button', { name: /stream completion/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/phase: incomplete/i)).toBeInTheDocument()
+    })
+  })
+
   it('falls back to non-streaming completions when the flag is off', async () => {
     vi.stubEnv('VITE_FEATURE_STREAMING', 'false')
     const user = userEvent.setup()
@@ -104,6 +189,33 @@ describe('PlaygroundPage', () => {
       expect(screen.getByRole('log')).toHaveTextContent('static hi')
     })
     expect(screen.queryByText(/phase:/i)).not.toBeInTheDocument()
+  })
+
+  it('sends sampling options with static completions', async () => {
+    vi.stubEnv('VITE_FEATURE_STREAMING', 'false')
+    const user = userEvent.setup()
+    let body: unknown = null
+    server.use(
+      catalog(),
+      http.post('*/v1/chat/completions', async ({ request }) => {
+        body = await request.json()
+        return HttpResponse.json({
+          choices: [{ message: { role: 'assistant', content: 'static hi' } }],
+          model: 'gpt-4o-mini',
+        })
+      }),
+    )
+    renderApp(<PlaygroundPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
+    await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
+    await user.type(screen.getByLabelText(/temperature/i), '0.7')
+    await user.type(screen.getByLabelText(/seed/i), '42')
+    await user.click(screen.getByRole('button', { name: /send completion/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('log')).toHaveTextContent('static hi')
+    })
+    expect(body).toMatchObject({ temperature: 0.7, seed: 42 })
   })
 
   it('reports non-streaming failures as alerts', async () => {

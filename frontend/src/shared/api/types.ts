@@ -16,7 +16,20 @@ export interface ChatCompletionRequest {
   messages: ChatMessage[]
   temperature?: number
   max_tokens?: number
+  max_completion_tokens?: number
+  top_p?: number
+  stop?: unknown
   stream?: boolean
+  stream_options?: unknown
+  tools?: unknown
+  tool_choice?: unknown
+  parallel_tool_calls?: boolean
+  response_format?: unknown
+  reasoning_effort?: string
+  thinking?: unknown
+  frequency_penalty?: number
+  presence_penalty?: number
+  seed?: number
 }
 
 export interface ChatCompletionChoice {
@@ -37,6 +50,9 @@ export interface ChatCompletionResponse {
 export interface EmbeddingRequest {
   model: string
   input: string | string[]
+  dimensions?: number
+  encoding_format?: string
+  user?: string
 }
 
 export interface EmbeddingData {
@@ -44,9 +60,15 @@ export interface EmbeddingData {
   index: number
 }
 
+export interface EmbeddingUsage {
+  prompt_tokens: number
+  total_tokens: number
+}
+
 export interface EmbeddingResponse {
   data: EmbeddingData[]
   model: string
+  usage?: EmbeddingUsage
 }
 
 export interface ProblemDetail {
@@ -111,6 +133,67 @@ export interface CircuitSnapshot {
   cooldownMsRemaining: number
   /** Whether a half-open trial request is currently in flight. */
   halfOpenProbe: boolean
+}
+
+/**
+ * Spend-vs-cap for one budget subject. Absent caps read as zero —
+ * indistinguishable from a zero-spend capped subject by design.
+ */
+export interface BudgetBalance {
+  level: string
+  subject: string
+  minuteLimitMicros: number
+  minuteSpentMicros: number
+  monthLimitMicros: number
+  monthSpentMicros: number
+}
+
+/**
+ * One budget hold. Live holds read `HOLD`, never `ACTIVE` (the docs-only
+ * synonym); settled writes are SETTLED, ABORTED, or EXPIRED.
+ */
+export interface BudgetHold {
+  requestId: string
+  subject: string
+  heldMicros: number
+  settledMicros: number | null
+  state: string
+}
+
+/**
+ * One cache tier probe. Every metric except reachability is nullable:
+ * dead tiers degrade to absent metrics, never errors.
+ */
+export interface TierStats {
+  reachable: boolean
+  usedBytes: number | null
+  maxBytes: number | null
+  usedPercent: number | null
+  maxmemoryPolicy: string | null
+  evictedKeysTotal: number | null
+  keyspaceHits: number | null
+  keyspaceMisses: number | null
+}
+
+/**
+ * Tier telemetry: memoised probe with generation time plus both tiers.
+ */
+export interface CacheTiers {
+  generatedAt: string
+  accounting: TierStats
+  cache: TierStats
+}
+
+/**
+ * Cache purge receipt. `evictedKeys` counts Redis SCAN-deletes only
+ * (L0 and vector docs are uncounted); `evictedScope` is ALL, a tenant
+ * id, or INVALID on glob-rejected purges.
+ */
+export interface CachePurge {
+  success: boolean
+  message: string
+  evictedScope: string
+  evictedKeys: number
 }
 
 export interface ApiKeyRecord {
@@ -277,13 +360,22 @@ export interface LedgerSummary {
 /**
  * One billed request in the audit log.
  *
- * @remarks Narrow server subset: the list view reads four identity fields.
- * The inspector hydrates the full twelve-field receipt on demand.
+ * @remarks Mirrors the twelve-field server receipt (`LedgerEntryResponse`).
+ * `costUsd` is the exact decimal string, displayed verbatim.
  */
 export interface LedgerLogEntry {
+  id: string
   requestId: string
+  ownerId: string
+  provider: string
   model: string
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
   costUsdMicros: number
+  /** Exact decimal string (`"0.000005"`); displayed verbatim, never divided. */
+  costUsd: string
+  durationMs: number
   createdAt: string
 }
 
@@ -323,11 +415,29 @@ export interface PageResponse<T> {
   hasNext: boolean
 }
 
+/**
+ * One pending gated tool invocation. Identity is the path token id —
+ * never a separate approval id. Mirrors the backend
+ * `PendingApprovalSummary` record field for field.
+ */
 export interface HitlApproval {
-  approvalId: string
+  tokenId: string
   toolName: string
-  requestedAt: string
-  requestedBy: string
+  serverName: string
+  ownerId: string
+  keyName: string
+  createdAt: string
+  expiresAt: string
+}
+
+/**
+ * Decision receipt: the server echoes status, token, and message.
+ * Toasts render this receipt, never a fabricated outcome.
+ */
+export interface HitlDecision {
+  status: string
+  tokenId: string
+  message: string
 }
 
 export interface McpSuspended {
@@ -372,6 +482,69 @@ export interface OrgTeam {
   name: string
   idpGroupId: string
   activeMembers: number
+}
+
+/**
+ * One admin model-catalog entry with pricing, windows, and quality.
+ * Mirrors the backend `ModelCatalogEntryResponse` record field for field;
+ * four cost/window/quality fields are nullable.
+ */
+export interface ModelCatalogEntry {
+  modelId: string
+  provider: string
+  mode: string
+  inputCostPerToken: number
+  outputCostPerToken: number
+  cacheReadInputTokenCost: number | null
+  cacheCreationInputTokenCost: number | null
+  maxInputTokens: number | null
+  maxOutputTokens: number | null
+  qualityTier: string | null
+  benchmarkRefs: string | null
+}
+
+/**
+ * One model quality rating. Mirrors the backend `QualityResponse` record.
+ */
+export interface ModelQuality {
+  modelId: string
+  tier: string
+  benchmarkRefs: string | null
+  updatedAt: string
+}
+
+/**
+ * One alert subscription. Mirrors the backend `NotificationResponse`:
+ * `secretRef` names an environment variable, never a secret value.
+ */
+export interface NotificationPreference {
+  id: string
+  scope: string
+  channel: string
+  target: string
+  secretRef: string | null
+  minSeverity: string
+  createdAt: string
+}
+
+/**
+ * Invite creation receipt: always a link, plus whether mail was sent.
+ */
+export interface InviteReceipt {
+  link: string
+  emailed: boolean
+}
+
+/**
+ * One A2A agent card with rewritten URLs. Mirrors the gateway card:
+ * unknown fields are ignored, never cast blindly.
+ */
+export interface A2aAgentCard {
+  protocolVersion: string
+  name: string
+  url: string
+  description: string | null
+  version: string | null
 }
 
 /**

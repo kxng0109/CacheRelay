@@ -62,4 +62,17 @@ describe('ProviderBoard', () => {
     expect(section).toHaveTextContent('Unknown')
     expect(section).not.toHaveTextContent('sk-')
   })
+
+  it('shows provider type, timeouts, and embedding mode', async () => {
+    server.use(
+      http.get('*/v1/admin/models', () => HttpResponse.json({ models: [] })),
+      providers(),
+    )
+    renderApp(<ModelsPage />, { adminSession: true })
+    const section = await screen.findByRole('region', { name: /^providers$/i })
+    await waitFor(() => {
+      expect(section).toHaveTextContent('OPENAI')
+    })
+    expect(section).toHaveTextContent('5s / 60s')
+  })
 })

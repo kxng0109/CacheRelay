@@ -67,6 +67,7 @@ export function SummaryBoard({ view }: SummaryBoardProps): React.JSX.Element {
           className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft"
         >
           {`Updated ${formatRelativeTime(view.generatedAt) ?? 'recently'}`}
+          {view.watermark === null ? null : ` · watermark ${view.watermark}`}
         </p>
       )}
       <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3">

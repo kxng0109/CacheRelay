@@ -25,6 +25,7 @@ vi.mock('./shared/echarts/setup.js', () => ({
 const PUBLIC_LEGS: [string, string][] = [
   ['/playground', 'Playground'],
   ['/embeddings', 'Embeddings'],
+  ['/a2a', 'A2A'],
 ]
 
 const SESSION_LEGS: [string, string][] = [
@@ -46,6 +47,9 @@ const ADMIN_LEGS = [
   '/ledger/user/123e4567-e89b-12d3-a456-426614174000',
   '/cache',
   '/approvals',
+  '/notifications',
+  '/invites',
+  '/users',
 ]
 
 describe('application boot', () => {

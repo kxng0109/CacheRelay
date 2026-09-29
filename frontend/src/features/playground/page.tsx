@@ -20,6 +20,9 @@ const schema = z.object({
   model: z.string().min(1, 'Model is required'),
   prompt: z.string().min(1, 'Prompt is required').max(8000, 'Prompt is too long'),
   key: z.string().optional().default(''),
+  temperature: z.string().optional().default(''),
+  topP: z.string().optional().default(''),
+  seed: z.string().optional().default(''),
 })
 
 /** Sanctioned samples: each fills the prompt box only, never fabricates output. */
@@ -107,7 +110,14 @@ export function PlaygroundPage(): React.JSX.Element {
   } = useForm<FormData>({
     resolver: zodResolver(schema),
     mode: 'onSubmit',
-    defaultValues: { model: '', prompt: '', key: gatewayKey ?? '' },
+    defaultValues: {
+      model: '',
+      prompt: '',
+      key: gatewayKey ?? '',
+      temperature: '',
+      topP: '',
+      seed: '',
+    },
   })
   const promptLength = useWatch({ control, name: 'prompt' }).length
   const modelValue = useWatch({ control, name: 'model' })
@@ -127,6 +137,22 @@ export function PlaygroundPage(): React.JSX.Element {
     () => [{ role: 'user' as const, content: submitted?.prompt ?? '' }],
     [submitted],
   )
+
+  /**
+   * Extra chat fields for the submitted run. Numeric strings parse;
+   * blanks and garbage never send (backend remains the validator).
+   */
+  const chatOptions = useMemo(() => {
+    if (submitted === null) return {}
+    const out: Record<string, unknown> = {}
+    const temp = Number.parseFloat(submitted.temperature ?? '')
+    if (Number.isFinite(temp)) out.temperature = temp
+    const topP = Number.parseFloat(submitted.topP ?? '')
+    if (Number.isFinite(topP)) out.top_p = topP
+    const seed = Number.parseInt(submitted.seed ?? '', 10)
+    if (Number.isInteger(seed)) out.seed = seed
+    return out
+  }, [submitted])
 
   const onSubmit = (d: FormData): void => {
     if (accountMode && ownedKeyId === '') {
@@ -154,7 +180,19 @@ export function PlaygroundPage(): React.JSX.Element {
       const client = accountMode ? new GatewayClient() : new GatewayClient({ token: pastedKey })
       void client
         .chat(
-          { model: d.model, messages: [{ role: 'user', content: d.prompt }] },
+          {
+            model: d.model,
+            messages: [{ role: 'user', content: d.prompt }],
+            ...(Number.isFinite(Number.parseFloat(d.temperature ?? ''))
+              ? { temperature: Number.parseFloat(d.temperature ?? '') }
+              : {}),
+            ...(Number.isFinite(Number.parseFloat(d.topP ?? ''))
+              ? { top_p: Number.parseFloat(d.topP ?? '') }
+              : {}),
+            ...(Number.isInteger(Number.parseInt(d.seed ?? '', 10))
+              ? { seed: Number.parseInt(d.seed ?? '', 10) }
+              : {}),
+          },
           accountMode ? { actAsKey: ownedKeyId } : { ignoreSession: true },
         )
         .then((out) => {
@@ -326,6 +364,47 @@ export function PlaygroundPage(): React.JSX.Element {
                 </p>
               )}
             </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div>
+                <label htmlFor="pg-temperature" className="mb-1 block text-[13px] font-medium">
+                  Temperature (optional)
+                </label>
+                <input
+                  id="pg-temperature"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  {...register('temperature')}
+                  placeholder="e.g. 0.7"
+                  className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
+                />
+              </div>
+              <div>
+                <label htmlFor="pg-top-p" className="mb-1 block text-[13px] font-medium">
+                  Top P (optional)
+                </label>
+                <input
+                  id="pg-top-p"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  {...register('topP')}
+                  placeholder="e.g. 0.9"
+                  className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
+                />
+              </div>
+              <div>
+                <label htmlFor="pg-seed" className="mb-1 block text-[13px] font-medium">
+                  Seed (optional)
+                </label>
+                <input
+                  id="pg-seed"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  {...register('seed')}
+                  placeholder="e.g. 42"
+                  className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
+                />
+              </div>
+            </div>
             <div className="flex items-center justify-between gap-3">
               <p className="min-w-0 flex-1 truncate font-mono text-xs text-ink-soft dark:text-parchment-soft">
                 run #{runId + 1} ·{' '}
@@ -405,6 +484,7 @@ export function PlaygroundPage(): React.JSX.Element {
                     : {})}
                   model={submitted.model}
                   messages={messages}
+                  chatOptions={chatOptions}
                   onSummary={setStreamSummary}
                 />
               ) : (
@@ -451,6 +531,10 @@ export function PlaygroundPage(): React.JSX.Element {
                                 cacheTier: streamSummary.cacheTier,
                                 similarity: streamSummary.similarity,
                                 age: streamSummary.age,
+                                provider: streamSummary.provider,
+                                tried: streamSummary.tried,
+                                receipt: streamSummary.receipt,
+                                replayed: streamSummary.replayed,
                                 ...(streamSummary.error === undefined
                                   ? {}
                                   : { error: streamSummary.error }),

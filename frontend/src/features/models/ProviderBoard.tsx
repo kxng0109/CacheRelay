@@ -83,6 +83,9 @@ export function ProviderBoard(): React.JSX.Element {
                   Provider
                 </th>
                 <th scope="col" className="py-2 pr-3 font-medium">
+                  Type
+                </th>
+                <th scope="col" className="py-2 pr-3 font-medium">
                   Validation
                 </th>
                 <th scope="col" className="py-2 pr-3 font-medium">
@@ -90,6 +93,9 @@ export function ProviderBoard(): React.JSX.Element {
                 </th>
                 <th scope="col" className="py-2 pr-3 font-medium">
                   Circuit
+                </th>
+                <th scope="col" className="py-2 pr-3 font-medium">
+                  Timeouts
                 </th>
                 <th scope="col" className="py-2 text-right font-medium">
                   Aliases
@@ -104,6 +110,14 @@ export function ProviderBoard(): React.JSX.Element {
                     <td className="py-2 pr-3 font-mono text-[13px]" title={p.baseUrl ?? undefined}>
                       {p.name}
                     </td>
+                    <td
+                      className="py-2 pr-3 font-mono text-[13px]"
+                      title={
+                        p.embeddingSingleAsString ? 'Embeddings sent as single string' : undefined
+                      }
+                    >
+                      {p.type}
+                    </td>
                     <td className="py-2 pr-3">
                       <span className={`rounded px-2 py-1 text-[13px] tnum ${badge.classes}`}>
                         {badge.label}
@@ -113,6 +127,12 @@ export function ProviderBoard(): React.JSX.Element {
                       {p.keyConfigured ? 'set' : 'unset'}
                     </td>
                     <td className="py-2 pr-3 font-mono text-[13px]">{p.circuitState}</td>
+                    <td
+                      className="py-2 pr-3 font-mono text-[13px] tnum"
+                      title={`connect ${String(p.connectTimeoutSeconds)}s, request ${String(p.requestTimeoutSeconds)}s`}
+                    >
+                      {p.connectTimeoutSeconds}s / {p.requestTimeoutSeconds}s
+                    </td>
                     <td className="py-2 text-right text-[13px] tnum">{p.aliasReferences}</td>
                   </tr>
                 )

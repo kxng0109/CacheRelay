@@ -157,6 +157,23 @@ describe('UsagePage', () => {
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
   })
 
+  it('retries the dashboard on demand after an error', async () => {
+    const user = userEvent.setup()
+    let calls = 0
+    server.use(
+      http.get('*/v1/me/usage', () => {
+        calls += 1
+        return new HttpResponse('x', { status: 500 })
+      }),
+    )
+    renderApp(<UsagePage />, { route: '/usage', nonAdminSession: true })
+    await screen.findByRole('alert')
+    await user.click(screen.getByRole('button', { name: /retry/i }))
+    await waitFor(() => {
+      expect(calls).toBeGreaterThanOrEqual(2)
+    })
+  })
+
   it('hides custom dates until the custom range is picked', async () => {
     server.use(usageOk())
     renderApp(<UsagePage />, { route: '/usage', nonAdminSession: true })

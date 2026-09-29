@@ -8,15 +8,36 @@ import { server } from '../../test/setup.js'
 import { renderApp } from '../../test/utils.js'
 import { ApprovalsPage } from './page.js'
 
+const TOKEN = '9f8e7d6c5b4a32109f8e7d6c5b4a3210'
+
 const PENDING = {
   approvals: [
     {
-      approvalId: 'a1',
+      tokenId: TOKEN,
       toolName: 'send-email',
-      requestedAt: '2026-09-17T00:00:00Z',
-      requestedBy: 'agent',
+      serverName: 'mail',
+      ownerId: 'tenant-corp',
+      keyName: 'production-key',
+      createdAt: '2026-09-17T00:00:00Z',
+      expiresAt: '2026-09-17T00:05:00Z',
     },
   ],
+}
+
+function approvedReceipt() {
+  return HttpResponse.json({
+    status: 'APPROVED',
+    tokenId: TOKEN,
+    message: 'Tool invocation approved. Client may resume execution.',
+  })
+}
+
+function rejectedReceipt() {
+  return HttpResponse.json({
+    status: 'REJECTED',
+    tokenId: TOKEN,
+    message: 'Tool invocation rejected and purged.',
+  })
 }
 
 beforeEach(() => {
@@ -54,7 +75,7 @@ describe('ApprovalsPage', () => {
     })
   })
 
-  it('approves a pending tool call', async () => {
+  it('approves a pending tool call with the server receipt', async () => {
     const user = userEvent.setup()
     let calls = 1
     server.use(
@@ -63,47 +84,83 @@ describe('ApprovalsPage', () => {
       ),
       http.post('*/v1/admin/mcp/approvals/:id/approve', () => {
         calls = 0
-        return new HttpResponse(null, { status: 200 })
+        return approvedReceipt()
       }),
     )
     renderBoard()
     await user.click(await screen.findByRole('button', { name: /^approve$/i }))
     await waitFor(() => {
-      expect(screen.getByText(/a1: approved/i)).toBeInTheDocument()
+      expect(screen.getByText(/client may resume execution/i)).toBeInTheDocument()
     })
   })
 
-  it('attributes the decision to the session username', async () => {
+  it('sends the rationale with the decision', async () => {
     const user = userEvent.setup()
     let body: unknown = null
     server.use(
       http.get('*/v1/admin/mcp/approvals/pending', () => HttpResponse.json(PENDING)),
       http.post('*/v1/admin/mcp/approvals/:id/approve', async ({ request }) => {
         body = await request.json()
-        return new HttpResponse(null, { status: 200 })
+        return approvedReceipt()
       }),
     )
     renderBoard()
+    await screen.findByRole('button', { name: /^approve$/i })
+    await user.type(screen.getByLabelText(/rationale/i), 'Looks safe')
     await user.click(await screen.findByRole('button', { name: /^approve$/i }))
     await waitFor(() => {
-      expect(screen.getByText(/a1: approved/i)).toBeInTheDocument()
+      expect(screen.getByText(/client may resume execution/i)).toBeInTheDocument()
     })
-    expect(body).toMatchObject({ decidedBy: 'test-admin' })
+    expect(body).toMatchObject({ reason: 'Looks safe', decidedBy: 'test-admin' })
+  })
+
+  it('inspects decrypted args before deciding', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/mcp/approvals/pending', () => HttpResponse.json(PENDING)),
+      http.get('*/v1/admin/mcp/approvals/:id', () =>
+        HttpResponse.json({ tokenId: TOKEN, toolName: 'send-email', args: { to: 'ops@x.com' } }),
+      ),
+    )
+    renderBoard()
+    await user.click(await screen.findByRole('button', { name: /inspect args/i }))
+    expect(await screen.findByText(/ops@x\.com/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /hide args/i }))
+    expect(screen.queryByText(/ops@x\.com/)).not.toBeInTheDocument()
+  })
+
+  it('reports args hydration failures honestly', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/mcp/approvals/pending', () => HttpResponse.json(PENDING)),
+      http.get('*/v1/admin/mcp/approvals/:id', () => new HttpResponse('x', { status: 500 })),
+    )
+    renderBoard()
+    await user.click(await screen.findByRole('button', { name: /inspect args/i }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/HTTP 500/)
+  })
+
+  it('names gone invocations honestly when the detail is empty', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/mcp/approvals/pending', () => HttpResponse.json(PENDING)),
+      http.get('*/v1/admin/mcp/approvals/:id', () => HttpResponse.json(null, { status: 200 })),
+    )
+    renderBoard()
+    await user.click(await screen.findByRole('button', { name: /inspect args/i }))
+    expect(await screen.findByText(/no args returned/i)).toBeInTheDocument()
   })
 
   it('rejects a pending tool call', async () => {
     const user = userEvent.setup()
     server.use(
       http.get('*/v1/admin/mcp/approvals/pending', () => HttpResponse.json(PENDING)),
-      http.post(
-        '*/v1/admin/mcp/approvals/:id/reject',
-        () => new HttpResponse(null, { status: 200 }),
-      ),
+      http.post('*/v1/admin/mcp/approvals/:id/reject', () => rejectedReceipt()),
     )
     renderBoard()
     await user.click(await screen.findByRole('button', { name: /^reject$/i }))
     await waitFor(() => {
-      expect(screen.getByText(/a1: rejected/i)).toBeInTheDocument()
+      expect(screen.getByText(/rejected and purged/i)).toBeInTheDocument()
     })
   })
 
@@ -117,7 +174,7 @@ describe('ApprovalsPage', () => {
       http.get('*/v1/admin/mcp/approvals/pending', () => HttpResponse.json(PENDING)),
       http.post('*/v1/admin/mcp/approvals/:id/approve', async () => {
         await gate
-        return new HttpResponse(null, { status: 200 })
+        return approvedReceipt()
       }),
     )
     renderBoard()
@@ -131,7 +188,7 @@ describe('ApprovalsPage', () => {
     }
     release()
     await waitFor(() => {
-      expect(screen.getByText(/a1: approved/i)).toBeInTheDocument()
+      expect(screen.getByText(/client may resume execution/i)).toBeInTheDocument()
     })
   })
 
@@ -147,7 +204,9 @@ describe('ApprovalsPage', () => {
     renderBoard()
     await user.click(await screen.findByRole('button', { name: /^approve$/i }))
     await waitFor(() => {
-      expect(screen.getByText(/a1:.*HTTP 409/)).toBeInTheDocument()
+      expect(
+        screen.getByText(new RegExp(`${TOKEN.slice(0, 8)}.*conflict`, 'i')),
+      ).toBeInTheDocument()
     })
   })
 

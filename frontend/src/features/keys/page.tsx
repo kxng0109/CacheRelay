@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRef, useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import * as z from 'zod/v4'
 import { GatewayClient } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
@@ -36,6 +36,54 @@ async function copyText(text: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+/**
+ * Catalog-backed model picker for the key modal. Appends catalog ids to
+ * the free-text field; glob patterns and manual entries keep working.
+ *
+ * @param props - Current field text plus the pick handler.
+ * @returns Suggestion chips, or nothing when the catalog is unreachable.
+ */
+function KeyModelPicker({
+  current,
+  onPick,
+}: {
+  current: string
+  onPick: (id: string) => void
+}): React.JSX.Element | null {
+  const catalog = useQuery({
+    queryKey: ['key-model-suggestions'],
+    queryFn: ({ signal }) => new GatewayClient().searchModelCatalog({ limit: 50 }, { signal }),
+    retry: false,
+    staleTime: 60_000,
+  })
+  const ids = catalog.data?.models.map((m) => m.modelId) ?? []
+  const picked = new Set(
+    current
+      .split(',')
+      .map((m) => m.trim())
+      .filter((m) => m.length > 0),
+  )
+  const suggestions = ids.filter((id) => !picked.has(id)).slice(0, 8)
+  if (catalog.isPending || catalog.isError || suggestions.length === 0) return null
+  return (
+    <div className="mt-2 flex flex-wrap gap-1">
+      {suggestions.map((id) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => {
+            onPick(id)
+          }}
+          aria-label={`Add model ${id}`}
+          className="rounded-full border border-ink/15 px-2 py-0.5 font-mono text-xs dark:border-parchment/15"
+        >
+          + {id}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 /**
@@ -74,8 +122,16 @@ function KeysBoard(): React.JSX.Element {
     register,
     handleSubmit,
     reset,
+    setValue,
+    getValues,
+    control,
     formState: { errors, isSubmitting },
-  } = useForm<FormData>({ resolver: zodResolver(schema), mode: 'onSubmit' })
+  } = useForm<FormData>({
+    resolver: zodResolver(schema),
+    mode: 'onSubmit',
+    defaultValues: { ownerId: '', ownerUserId: '', name: '', models: '', rpmLimit: 0, tpmLimit: 0 },
+  })
+  const modelsValue = useWatch({ control, name: 'models' })
 
   const onCreate = async (d: FormData): Promise<void> => {
     setError(null)
@@ -325,6 +381,19 @@ function KeysBoard(): React.JSX.Element {
                   id="key-models"
                   {...register('models')}
                   className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
+                />
+                <KeyModelPicker
+                  current={modelsValue}
+                  onPick={(id) => {
+                    const raw = getValues('models')
+                    const parts = raw
+                      .split(',')
+                      .map((m) => m.trim())
+                      .filter((m) => m.length > 0)
+                    if (!parts.includes(id)) {
+                      setValue('models', [...parts, id].join(', '), { shouldDirty: true })
+                    }
+                  }}
                 />
               </div>
               <div>

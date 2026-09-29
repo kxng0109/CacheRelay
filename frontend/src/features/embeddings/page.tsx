@@ -10,6 +10,7 @@ import { ModelSelect } from '../../shared/models/ModelSelect.js'
 import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
 import { KeySourcePicker, type KeySource } from '../../shared/components/KeySourcePicker.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
+import { Select } from '../../shared/components/Select.js'
 import { TableScroll } from '../../shared/components/TableScroll.js'
 import { formatShortDate } from '../../shared/utils/format.js'
 
@@ -17,6 +18,9 @@ const schema = z.object({
   model: z.string().min(1, 'Model is required'),
   input: z.string().min(1, 'Input text is required').max(8000, 'Input is too long'),
   key: z.string().optional().default(''),
+  dimensions: z.string().optional().default(''),
+  encodingFormat: z.string().optional().default('float'),
+  user: z.string().optional().default(''),
 })
 
 type FormData = z.input<typeof schema>
@@ -31,6 +35,7 @@ interface UsageRecord {
   chars: number
   vecs: number | null
   dims: number | null
+  tokens: number | null
   status: 'ok' | 'fail'
   error: string | null
   input: string
@@ -76,11 +81,19 @@ export function EmbeddingsPage(): React.JSX.Element {
   } = useForm<FormData>({
     resolver: zodResolver(schema),
     mode: 'onSubmit',
-    defaultValues: { model: '', input: '', key: gatewayKey ?? '' },
+    defaultValues: {
+      model: '',
+      input: '',
+      key: gatewayKey ?? '',
+      dimensions: '',
+      encodingFormat: 'float',
+      user: '',
+    },
   })
   const inputLength = useWatch({ control, name: 'input' }).length
   const keyValue = useWatch({ control, name: 'key' })
   const modelValue = useWatch({ control, name: 'model' })
+  const encodingValue = useWatch({ control, name: 'encodingFormat' }) ?? 'float'
   const overLimit = inputLength > 8000
   const [keySource, setKeySource] = useState<KeySource>(session === null ? 'paste' : 'account')
   const [ownedKeyId, setOwnedKeyId] = useState('')
@@ -100,10 +113,19 @@ export function EmbeddingsPage(): React.JSX.Element {
     setError(null)
     try {
       const client = accountMode ? new GatewayClient() : new GatewayClient({ token: pastedKey })
+      const dims = d.dimensions === undefined ? '' : d.dimensions.trim()
+      const dimNum = dims === '' ? null : Number.parseInt(dims, 10)
       const out = await client.embeddings(
         {
           model: d.model,
           input: d.input,
+          ...(dimNum === null || !Number.isInteger(dimNum) || dimNum <= 0
+            ? {}
+            : { dimensions: dimNum }),
+          ...(d.encodingFormat === undefined || d.encodingFormat === 'float'
+            ? {}
+            : { encoding_format: d.encodingFormat }),
+          ...((d.user ?? '').trim().length === 0 ? {} : { user: (d.user ?? '').trim() }),
         },
         accountMode ? { actAsKey: ownedKeyId } : { ignoreSession: true },
       )
@@ -118,6 +140,7 @@ export function EmbeddingsPage(): React.JSX.Element {
             chars: d.input.length,
             vecs: out.data.length,
             dims: first === undefined ? 0 : first.embedding.length,
+            tokens: out.usage?.total_tokens ?? null,
             status: 'ok' as const,
             error: null,
             input: d.input,
@@ -138,6 +161,7 @@ export function EmbeddingsPage(): React.JSX.Element {
             chars: d.input.length,
             vecs: null,
             dims: null,
+            tokens: null,
             status: 'fail' as const,
             error: message,
             input: d.input,
@@ -333,6 +357,47 @@ export function EmbeddingsPage(): React.JSX.Element {
                 </p>
               )}
             </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div>
+                <label htmlFor="emb-dimensions" className="mb-1 block text-[13px] font-medium">
+                  Dimensions (optional)
+                </label>
+                <input
+                  id="emb-dimensions"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  {...register('dimensions')}
+                  placeholder="e.g. 512"
+                  className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
+                />
+              </div>
+              <div>
+                <Select
+                  id="emb-encoding"
+                  label="Encoding format"
+                  value={encodingValue}
+                  options={[
+                    { value: 'float', label: 'float' },
+                    { value: 'base64', label: 'base64' },
+                  ]}
+                  onChange={(v) => {
+                    setValue('encodingFormat', v, { shouldDirty: true })
+                  }}
+                />
+              </div>
+              <div>
+                <label htmlFor="emb-user" className="mb-1 block text-[13px] font-medium">
+                  User (optional)
+                </label>
+                <input
+                  id="emb-user"
+                  autoComplete="off"
+                  {...register('user')}
+                  placeholder="abuse-tracking id"
+                  className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
+                />
+              </div>
+            </div>
             <div className="flex items-center justify-between gap-3">
               <p className="min-w-0 flex-1 truncate font-mono text-xs text-ink-soft dark:text-parchment-soft">
                 run #{runs.length + 1}
@@ -392,6 +457,9 @@ export function EmbeddingsPage(): React.JSX.Element {
                     <th scope="col" className="py-2 pr-3 text-right font-medium">
                       Dims
                     </th>
+                    <th scope="col" className="py-2 pr-3 text-right font-medium">
+                      Tokens
+                    </th>
                     <th scope="col" className="py-2 text-right font-medium">
                       Status
                     </th>
@@ -417,6 +485,9 @@ export function EmbeddingsPage(): React.JSX.Element {
                       <td className="py-2 pr-3 text-right text-[13px] tnum">{r.chars}</td>
                       <td className="py-2 pr-3 text-right text-[13px] tnum">{r.vecs ?? 'n/a'}</td>
                       <td className="py-2 pr-3 text-right text-[13px] tnum">{r.dims ?? 'n/a'}</td>
+                      <td className="py-2 pr-3 text-right text-[13px] tnum">
+                        {r.tokens === null ? 'n/a' : `${String(r.tokens)} tok`}
+                      </td>
                       <td className="py-2 text-right text-[13px]">
                         {r.status === 'ok' ? '● ok' : '■ fail'}
                       </td>
@@ -464,6 +535,12 @@ export function EmbeddingsPage(): React.JSX.Element {
                 <dt className="text-ink-soft dark:text-parchment-soft">Chars / vectors / dims</dt>
                 <dd className="tnum">
                   {inspected.chars} / {inspected.vecs ?? 'n/a'} / {inspected.dims ?? 'n/a'}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink-soft dark:text-parchment-soft">Tokens</dt>
+                <dd className="tnum">
+                  {inspected.tokens === null ? 'n/a' : `${String(inspected.tokens)} tok`}
                 </dd>
               </div>
               {inspected.error === null ? null : (

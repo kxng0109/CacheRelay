@@ -20,11 +20,28 @@ const summary: LedgerSummary = {
   byProvider: [],
 }
 
+function fullEntry(requestId: string, model: string, costUsdMicros: number, createdAt: string) {
+  return {
+    id: `id-${requestId}`,
+    requestId,
+    ownerId: 'tenant-corp',
+    provider: 'openai',
+    model,
+    promptTokens: 8,
+    completionTokens: 4,
+    totalTokens: 12,
+    costUsdMicros,
+    costUsd: '0.000012',
+    durationMs: 41,
+    createdAt,
+  }
+}
+
 function entriesPage(
   content: { requestId: string; model: string; costUsdMicros: number; createdAt: string }[],
 ) {
   return HttpResponse.json({
-    content,
+    content: content.map((c) => fullEntry(c.requestId, c.model, c.costUsdMicros, c.createdAt)),
     page: 0,
     size: 5,
     totalElements: content.length,

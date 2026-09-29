@@ -31,7 +31,7 @@ export function LiveStrip({
 }): React.JSX.Element {
   const tail = useQuery({
     queryKey: ['ledger-tail'],
-    queryFn: ({ signal }) => new GatewayClient().ledgerLogs(0, TAIL_SIZE, { signal }),
+    queryFn: ({ signal }) => new GatewayClient().ledgerLogs(0, TAIL_SIZE, {}, { signal }),
     refetchInterval: POLL_MS,
     retry: false,
   })

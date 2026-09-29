@@ -1,7 +1,7 @@
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { server } from '../../test/setup.js'
 import { renderApp } from '../../test/utils.js'
 import { CachePage } from './page.js'
@@ -20,6 +20,20 @@ const STATS = {
 }
 
 describe('CachePage', () => {
+  beforeEach(() => {
+    // Tier telemetry fires on mount; default to an unreachable probe so
+    // stats/budget-focused tests stay isolated (scenarios override).
+    server.use(
+      http.get('*/v1/admin/cache/tiers', () =>
+        HttpResponse.json({
+          generatedAt: '2026-09-01T12:00:00Z',
+          accounting: { reachable: false },
+          cache: { reachable: false },
+        }),
+      ),
+    )
+  })
+
   it('mounts the board without a session (router guards access)', () => {
     renderApp(<CachePage />)
     expect(screen.getByText(/loading cache config/i)).toBeInTheDocument()
@@ -67,6 +81,197 @@ describe('CachePage', () => {
     })
   })
 
+  it('renders tier telemetry with dead-tier honesty', async () => {
+    server.use(
+      http.get('*/v1/admin/cache/stats', () => HttpResponse.json(STATS)),
+      http.get('*/v1/admin/budgets', () => HttpResponse.json([])),
+      http.get('*/v1/admin/cache/tiers', () =>
+        HttpResponse.json({
+          generatedAt: '2026-09-01T12:00:00Z',
+          accounting: { reachable: false },
+          cache: {
+            reachable: true,
+            usedBytes: 1024,
+            maxBytes: 4096,
+            usedPercent: 25,
+            maxmemoryPolicy: 'allkeys-lru',
+            evictedKeysTotal: 3,
+            keyspaceHits: 100,
+            keyspaceMisses: 10,
+          },
+        }),
+      ),
+    )
+    renderApp(<CachePage />, { adminSession: true })
+    expect(await screen.findByText('accounting')).toBeInTheDocument()
+    expect(screen.getByText(/tier telemetry/i)).toBeInTheDocument()
+    expect(screen.getByText(/accounting.*unreachable/i)).toBeInTheDocument()
+    expect(screen.getByText(/25%/)).toBeInTheDocument()
+  })
+
+  it('inspects a budget with live spend, edits caps, and deletes', async () => {
+    const user = userEvent.setup()
+    const budget = {
+      id: 'b1',
+      level: 'KEY',
+      subjectId: 'abc',
+      minuteMicros: 1000,
+      monthMicros: 10000,
+      webhookUrl: null,
+      createdAt: '2026-09-01T12:00:00Z',
+      updatedAt: '2026-09-01T12:00:00Z',
+    }
+    server.use(
+      http.get('*/v1/admin/cache/stats', () => HttpResponse.json(STATS)),
+      http.get('*/v1/admin/budgets', () => HttpResponse.json([budget])),
+      http.get('*/v1/admin/budgets/KEY/abc/balance', () =>
+        HttpResponse.json({
+          level: 'KEY',
+          subject: 'abc',
+          minuteLimitMicros: 1000,
+          minuteSpentMicros: 100,
+          monthLimitMicros: 10000,
+          monthSpentMicros: 500,
+        }),
+      ),
+      http.put('*/v1/admin/budgets/:id', () =>
+        HttpResponse.json({ ...budget, minuteMicros: 2000 }),
+      ),
+      http.delete('*/v1/admin/budgets/:id', () => new HttpResponse(null, { status: 204 })),
+    )
+    renderApp(<CachePage />, { adminSession: true })
+    await user.click(await screen.findByRole('button', { name: /inspect budget abc/i }))
+    expect(await screen.findByText(/minute spent/i)).toBeInTheDocument()
+    await user.clear(screen.getByLabelText(/minute cap/i))
+    await user.type(screen.getByLabelText(/minute cap/i), '2000')
+    await user.clear(screen.getByLabelText(/month cap/i))
+    await user.type(screen.getByLabelText(/month cap/i), '20000')
+    await user.click(screen.getByRole('button', { name: /save caps/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(/budget updated/i)
+    })
+    await user.click(screen.getByRole('button', { name: /^delete budget$/i }))
+    await user.click(screen.getByRole('button', { name: /^no$/i }))
+    expect(screen.queryByText(/budget deleted/i)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /^delete budget$/i }))
+    await user.click(screen.getByRole('button', { name: /^yes, delete$/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(/budget deleted/i)
+    })
+  })
+
+  it('closes the budget inspector without mutating', async () => {
+    const user = userEvent.setup()
+    const budget = {
+      id: 'b1',
+      level: 'KEY',
+      subjectId: 'abc',
+      minuteMicros: 1000,
+      monthMicros: 10000,
+      webhookUrl: null,
+      createdAt: '2026-09-01T12:00:00Z',
+      updatedAt: '2026-09-01T12:00:00Z',
+    }
+    server.use(
+      http.get('*/v1/admin/cache/stats', () => HttpResponse.json(STATS)),
+      http.get('*/v1/admin/budgets', () => HttpResponse.json([budget])),
+      http.get('*/v1/admin/budgets/KEY/abc/balance', () =>
+        HttpResponse.json({
+          level: 'KEY',
+          subject: 'abc',
+          minuteLimitMicros: 1000,
+          minuteSpentMicros: 100,
+          monthLimitMicros: 10000,
+          monthSpentMicros: 500,
+        }),
+      ),
+    )
+    renderApp(<CachePage />, { adminSession: true })
+    await user.click(await screen.findByRole('button', { name: /inspect budget abc/i }))
+    await screen.findByRole('dialog', { name: /budget inspector/i })
+    await user.click(screen.getByRole('button', { name: /close inspector/i }))
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /budget inspector/i })).not.toBeInTheDocument()
+    })
+  })
+
+  it('looks up a hold by request id and names expired holds honestly', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/cache/stats', () => HttpResponse.json(STATS)),
+      http.get('*/v1/admin/budgets', () => HttpResponse.json([])),
+      http.get('*/v1/admin/budgets/holds/:id', ({ params }) =>
+        params.id === 'live-1'
+          ? HttpResponse.json({
+              requestId: 'live-1',
+              subject: 'abc',
+              heldMicros: 50,
+              settledMicros: null,
+              state: 'HOLD',
+            })
+          : new HttpResponse(null, { status: 404 }),
+      ),
+    )
+    renderApp(<CachePage />, { adminSession: true })
+    await user.type(screen.getByLabelText(/hold request id/i), 'live-1')
+    await user.click(screen.getByRole('button', { name: /inspect hold/i }))
+    expect(await screen.findByText('HOLD')).toBeInTheDocument()
+    await user.clear(screen.getByLabelText(/hold request id/i))
+    await user.type(screen.getByLabelText(/hold request id/i), 'gone-9')
+    await user.click(screen.getByRole('button', { name: /inspect hold/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/hold expired or unknown/i)).toBeInTheDocument()
+    })
+  })
+
+  it('reports tier probe failures honestly', async () => {
+    server.use(
+      http.get('*/v1/admin/cache/stats', () => HttpResponse.json(STATS)),
+      http.get('*/v1/admin/budgets', () => HttpResponse.json([])),
+      http.get('*/v1/admin/cache/tiers', () => new HttpResponse('x', { status: 503 })),
+    )
+    renderApp(<CachePage />, { adminSession: true })
+    expect(await screen.findByText(/tier telemetry/i)).toBeInTheDocument()
+    expect(await screen.findByText(/temporarily unavailable/i)).toBeInTheDocument()
+  })
+
+  it('reports budget save and delete failures honestly', async () => {
+    const user = userEvent.setup()
+    const budget = {
+      id: 'b1',
+      level: 'KEY',
+      subjectId: 'abc',
+      minuteMicros: 1000,
+      monthMicros: 10000,
+      webhookUrl: null,
+      createdAt: '2026-09-01T12:00:00Z',
+      updatedAt: '2026-09-01T12:00:00Z',
+    }
+    server.use(
+      http.get('*/v1/admin/cache/stats', () => HttpResponse.json(STATS)),
+      http.get('*/v1/admin/budgets', () => HttpResponse.json([budget])),
+      http.get('*/v1/admin/budgets/KEY/abc/balance', () =>
+        HttpResponse.json({
+          level: 'KEY',
+          subject: 'abc',
+          minuteLimitMicros: 1000,
+          minuteSpentMicros: 100,
+          monthLimitMicros: 10000,
+          monthSpentMicros: 500,
+        }),
+      ),
+      http.put('*/v1/admin/budgets/:id', () => new HttpResponse('x', { status: 409 })),
+      http.delete('*/v1/admin/budgets/:id', () => new HttpResponse('x', { status: 404 })),
+    )
+    renderApp(<CachePage />, { adminSession: true })
+    await user.click(await screen.findByRole('button', { name: /inspect budget abc/i }))
+    await user.click(screen.getByRole('button', { name: /save caps/i }))
+    expect(await screen.findByText(/conflict/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /^delete budget$/i }))
+    await user.click(screen.getByRole('button', { name: /^yes, delete$/i }))
+    expect(await screen.findByText(/not found/i)).toBeInTheDocument()
+  })
+
   it('opens the create dialog with focus in the form', async () => {
     const user = userEvent.setup()
     server.use(
@@ -108,14 +313,19 @@ describe('CachePage', () => {
       http.get('*/v1/admin/cache/stats', () => HttpResponse.json(STATS)),
       http.get('*/v1/admin/budgets', () => HttpResponse.json([])),
       http.delete('*/v1/admin/cache', () =>
-        HttpResponse.json({ success: true, evictedScope: 'ALL' }),
+        HttpResponse.json({
+          success: true,
+          message: 'Global cache purge completed successfully: 7 keys',
+          evictedScope: 'ALL',
+          evictedKeys: 7,
+        }),
       ),
     )
     renderApp(<CachePage />, { adminSession: true })
     await user.click(await screen.findByRole('button', { name: /^purge/i }))
     await user.click(await screen.findByRole('button', { name: /purge now/i }))
     await waitFor(() => {
-      expect(screen.getByText(/cache purged \(ALL\)/i)).toBeInTheDocument()
+      expect(screen.getByText(/cache purged \(ALL, 7 keys\)/i)).toBeInTheDocument()
     })
   })
 
@@ -127,7 +337,12 @@ describe('CachePage', () => {
       http.get('*/v1/admin/budgets', () => HttpResponse.json([])),
       http.delete('*/v1/admin/cache', ({ request }) => {
         scope = new URL(request.url).searchParams.get('ownerId')
-        return HttpResponse.json({ success: true, evictedScope: scope ?? 'ALL' })
+        return HttpResponse.json({
+          success: true,
+          message: `Purged cache for tenant ${scope ?? 'ALL'}: 3 keys`,
+          evictedScope: scope ?? 'ALL',
+          evictedKeys: 3,
+        })
       }),
     )
     renderApp(<CachePage />, { adminSession: true })
@@ -135,7 +350,7 @@ describe('CachePage', () => {
     await user.type(screen.getByLabelText(/owner scope/i), 'tenant-corp')
     await user.click(screen.getByRole('button', { name: /purge now/i }))
     await waitFor(() => {
-      expect(screen.getByText(/cache purged \(tenant-corp\)/i)).toBeInTheDocument()
+      expect(screen.getByText(/cache purged \(tenant-corp, 3 keys\)/i)).toBeInTheDocument()
     })
     expect(scope).toBe('tenant-corp')
   })
@@ -148,7 +363,12 @@ describe('CachePage', () => {
       http.get('*/v1/admin/budgets', () => HttpResponse.json([])),
       http.delete('*/v1/admin/cache', () => {
         calls += 1
-        return HttpResponse.json({ success: true, evictedScope: 'ALL' })
+        return HttpResponse.json({
+          success: true,
+          message: 'Global cache purge completed successfully: 7 keys',
+          evictedScope: 'ALL',
+          evictedKeys: 7,
+        })
       }),
     )
     renderApp(<CachePage />, { adminSession: true })

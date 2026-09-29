@@ -256,7 +256,7 @@ function CircuitsBoard(): React.JSX.Element {
                     Cooldown (ms)
                   </th>
                   <th scope="col" className="py-2 pl-1 font-medium">
-                    <span className="sr-only">Open circuit</span>
+                    <span className="sr-only">Inspect circuit</span>
                   </th>
                 </tr>
               </thead>
@@ -296,9 +296,9 @@ function CircuitsBoard(): React.JSX.Element {
                             setSelected(active ? null : c.provider)
                           }}
                           aria-label={`Inspect circuit ${c.provider}`}
-                          className="rounded px-1 text-ink-soft dark:text-parchment-soft"
+                          className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
                         >
-                          <span aria-hidden="true">›</span>
+                          Inspect
                         </button>
                       </td>
                     </tr>
@@ -364,6 +364,112 @@ function CircuitsBoard(): React.JSX.Element {
 }
 
 /**
+ * MCP server breakers: same snapshot shape, separate namespace.
+ *
+ * @remarks Backend truth (`AdminMcpCircuitController`): the shared
+ * `CircuitStateResponse` DTO is reused with the `provider` key carrying
+ * the MCP server name (for example `postgres`), never an LLM provider.
+ * Unknown servers answer 404 on reset.
+ *
+ * @returns The MCP circuits section.
+ */
+function McpCircuits(): React.JSX.Element {
+  const qc = useQueryClient()
+  const [notice, setNotice] = useState<string | null>(null)
+  const query = useQuery({
+    queryKey: ['mcp-circuits'],
+    queryFn: ({ signal }) => new GatewayClient().listMcpCircuits({ signal }),
+    retry: false,
+  })
+
+  const reset = async (server: string): Promise<void> => {
+    setNotice(null)
+    try {
+      const out = await new GatewayClient().resetMcpCircuit(server)
+      setNotice(`${out.provider}: ${out.state}`)
+      await qc.invalidateQueries({ queryKey: ['mcp-circuits'] })
+    } catch (e) {
+      setNotice(toErrorMessage(e, 'MCP reset failed.'))
+    }
+  }
+
+  const circuits = query.data?.circuits ?? []
+  return (
+    <section aria-label="MCP circuits" className="space-y-2">
+      <h2 className="font-display text-xl font-medium tracking-tight">MCP circuits</h2>
+      {notice === null ? null : (
+        <p role="status" className="text-[13px]">
+          {notice}
+        </p>
+      )}
+      {query.isPending ? (
+        <p role="status" className="text-sm">
+          Loading MCP circuits…
+        </p>
+      ) : query.error instanceof Error ? (
+        <p role="alert" className="text-sm text-danger dark:text-danger-soft">
+          {query.error.message}
+        </p>
+      ) : circuits.length === 0 ? (
+        <p className="text-sm text-ink-soft dark:text-parchment-soft">No MCP servers reported.</p>
+      ) : (
+        <TableScroll>
+          <table className="w-full text-left text-sm">
+            <caption className="sr-only">MCP server circuit states</caption>
+            <thead className="sticky top-0 bg-paper dark:bg-night">
+              <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+                <th scope="col" className="py-2 pr-3 font-medium">
+                  Server
+                </th>
+                <th scope="col" className="py-2 pr-3 font-medium">
+                  State
+                </th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">
+                  Failures
+                </th>
+                <th scope="col" className="py-2 text-right font-medium">
+                  <span className="sr-only">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {circuits.map((c) => {
+                const meta = stateMeta(c.state)
+                return (
+                  <tr key={c.provider} className="border-t border-ink/10 dark:border-parchment/10">
+                    <td className="py-2 pr-3 font-mono text-[13px]">{c.provider}</td>
+                    <td className="py-2 pr-3">
+                      <span
+                        className={`rounded px-2 py-1 text-[13px] tnum ${meta.badge} ${meta.dark}`}
+                      >
+                        {meta.label}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-3 text-right text-[13px] tnum">{c.failures}</td>
+                    <td className="py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void reset(c.provider)
+                        }}
+                        aria-label={`Reset MCP circuit ${c.provider}`}
+                        className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+                      >
+                        Reset
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </TableScroll>
+      )}
+    </section>
+  )
+}
+
+/**
  * Circuit breaker screen: live board behind the admin route guard.
  *
  * @remarks The router renders `NotFound` for non-admins, so no unlock
@@ -387,6 +493,7 @@ export function CircuitsPage(): React.JSX.Element {
         </p>
       </div>
       <CircuitsBoard />
+      <McpCircuits />
     </div>
   )
 }

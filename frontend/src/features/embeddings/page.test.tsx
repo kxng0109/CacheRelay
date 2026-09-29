@@ -88,6 +88,18 @@ describe('EmbeddingsPage', () => {
     )
   })
 
+  it('requires an api key in paste mode before sending', async () => {
+    const user = userEvent.setup()
+    server.use(catalog())
+    renderApp(<EmbeddingsPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
+    await user.type(screen.getByLabelText(/input text/i), 'hello world')
+    await user.clear(screen.getByLabelText(/api key/i))
+    await user.click(screen.getByRole('button', { name: /create embeddings/i }))
+    expect(await screen.findByText(/api key is required/i)).toBeInTheDocument()
+  })
+
   it('reports dimensions and vector count on success', async () => {
     const user = userEvent.setup()
     server.use(
@@ -107,6 +119,80 @@ describe('EmbeddingsPage', () => {
     const table = await screen.findByRole('table')
     expect(table).toHaveTextContent('text-embedding-3-small')
     expect(table).toHaveTextContent('● ok')
+  })
+
+  it('sends embedding options and records token usage per run', async () => {
+    const user = userEvent.setup()
+    let body: unknown = null
+    server.use(
+      catalog(),
+      http.post('*/v1/embeddings', async ({ request }) => {
+        body = await request.json()
+        return HttpResponse.json({
+          data: [{ embedding: [0.1, 0.2], index: 0 }],
+          model: 'text-embedding-3-small',
+          usage: { prompt_tokens: 5, total_tokens: 5 },
+        })
+      }),
+    )
+    renderApp(<EmbeddingsPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
+    await user.type(screen.getByLabelText(/input text/i), 'hello world')
+    await user.clear(screen.getByLabelText(/dimensions/i))
+    await user.type(screen.getByLabelText(/dimensions/i), '512')
+    await user.type(screen.getByLabelText(/user/i), 'op-1')
+    await user.click(screen.getByRole('button', { name: /create embeddings/i }))
+    const table = await screen.findByRole('table')
+    expect(table).toHaveTextContent('5 tok')
+    expect(body).toMatchObject({ dimensions: 512 })
+  })
+
+  it('sends base64 encoding via the shared dropdown', async () => {
+    const user = userEvent.setup()
+    let body: unknown = null
+    server.use(
+      catalog(),
+      http.post('*/v1/embeddings', async ({ request }) => {
+        body = await request.json()
+        return HttpResponse.json({
+          data: [{ embedding: [0.1], index: 0 }],
+          model: 'text-embedding-3-small',
+        })
+      }),
+    )
+    renderApp(<EmbeddingsPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
+    await user.type(screen.getByLabelText(/input text/i), 'hello world')
+    await selectOption(user, /encoding format/i, 'base64')
+    await user.click(screen.getByRole('button', { name: /create embeddings/i }))
+    await screen.findByRole('table')
+    expect(body).toMatchObject({ encoding_format: 'base64' })
+  })
+
+  it('omits malformed dimensions instead of sending NaN', async () => {
+    const user = userEvent.setup()
+    let body: unknown = null
+    server.use(
+      catalog(),
+      http.post('*/v1/embeddings', async ({ request }) => {
+        body = await request.json()
+        return HttpResponse.json({
+          data: [{ embedding: [0.1], index: 0 }],
+          model: 'text-embedding-3-small',
+        })
+      }),
+    )
+    renderApp(<EmbeddingsPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
+    await user.type(screen.getByLabelText(/input text/i), 'hello world')
+    await user.type(screen.getByLabelText(/dimensions/i), 'abc')
+    await user.click(screen.getByRole('button', { name: /create embeddings/i }))
+    await screen.findByRole('table')
+    expect(body).not.toMatchObject({ dimensions: 512 })
+    expect(body).not.toHaveProperty('dimensions')
   })
 
   it('shows the model chip and counters after a run', async () => {

@@ -1,7 +1,8 @@
 /**
  * Single-letter destinations after the `g` prefix (Railway-style chords).
  * Keys stay mnemonic: overview, playground, embeddings, observability,
- * circuits, keys, ledger, approvals, mcp, usage, teams.
+ * circuits, keys, ledger, approvals, mcp, usage, teams, notifications,
+ * invites, users, agents.
  */
 const CHORDS = new Map<string, string>([
   ['o', '/'],
@@ -15,6 +16,10 @@ const CHORDS = new Map<string, string>([
   ['m', '/mcp'],
   ['u', '/usage'],
   ['t', '/teams'],
+  ['n', '/notifications'],
+  ['i', '/invites'],
+  ['s', '/users'],
+  ['g', '/a2a'],
 ])
 
 /** Milliseconds the `g` prefix waits for its second key. */

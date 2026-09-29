@@ -36,22 +36,29 @@ function summary() {
   )
 }
 
+function fullEntry(requestId: string, costUsdMicros: number, createdAt: string) {
+  return {
+    id: `id-${requestId}`,
+    requestId,
+    ownerId: 'tenant-corp',
+    provider: 'openai',
+    model: 'gpt-4o-mini',
+    promptTokens: 8,
+    completionTokens: 4,
+    totalTokens: 12,
+    costUsdMicros,
+    costUsd: '0.000012',
+    durationMs: 41,
+    createdAt,
+  }
+}
+
 function entries() {
   return http.get('*/v1/admin/ledger/entries', () =>
     HttpResponse.json({
       content: [
-        {
-          requestId: 'r9',
-          model: 'gpt-4o-mini',
-          costUsdMicros: 12,
-          createdAt: '2026-09-21T00:00:00Z',
-        },
-        {
-          requestId: 'r10',
-          model: 'gpt-4o-mini',
-          costUsdMicros: 0,
-          createdAt: '2026-09-21T00:01:00Z',
-        },
+        fullEntry('r9', 12, '2026-09-21T00:00:00Z'),
+        fullEntry('r10', 0, '2026-09-21T00:01:00Z'),
       ],
       page: 0,
       size: 25,
@@ -189,9 +196,17 @@ describe('RunInspector', () => {
         HttpResponse.json({
           content: [
             {
+              id: 'id-r-free',
               requestId: 'r-free',
+              ownerId: 'tenant-corp',
+              provider: 'local',
               model: 'qwen',
+              promptTokens: 0,
+              completionTokens: 0,
+              totalTokens: 9,
               costUsdMicros: 0,
+              costUsd: '0.000000',
+              durationMs: 12,
               createdAt: '2026-09-21T00:01:00Z',
             },
           ],
@@ -235,9 +250,17 @@ describe('RunInspector', () => {
         HttpResponse.json({
           content: [
             {
+              id: 'id-r-odd',
               requestId: 'r-odd',
+              ownerId: 'tenant-corp',
+              provider: 'local',
               model: 'qwen',
+              promptTokens: 1,
+              completionTokens: 2,
+              totalTokens: 3,
               costUsdMicros: 0,
+              costUsd: '0.000000',
+              durationMs: 5,
               createdAt: 'not-a-date',
             },
           ],
@@ -280,9 +303,17 @@ describe('RunInspector', () => {
         HttpResponse.json({
           content: [
             {
+              id: 'id-r-live',
               requestId: 'r-live',
+              ownerId: 'tenant-corp',
+              provider: 'openai',
               model: 'gpt-4o-mini',
+              promptTokens: 20,
+              completionTokens: 10,
+              totalTokens: 30,
               costUsdMicros: 50,
+              costUsd: '0.000050',
+              durationMs: 200,
               createdAt: '2026-09-21T00:02:00Z',
             },
           ],

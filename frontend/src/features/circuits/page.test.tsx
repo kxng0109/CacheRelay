@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { server } from '../../test/setup.js'
 import { renderApp } from '../../test/utils.js'
 import { CircuitsPage } from './page.js'
@@ -47,6 +47,12 @@ function providers(names: string[], unconfigured: string[] = []) {
 }
 
 describe('CircuitsPage', () => {
+  beforeEach(() => {
+    // MCP breaker section fires on mount; default to empty so
+    // provider-focused tests stay isolated (scenarios override).
+    server.use(http.get('*/v1/admin/mcp/circuits', () => HttpResponse.json([])))
+  })
+
   it('renders provider states with icon and text', async () => {
     server.use(
       http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)),
@@ -117,7 +123,13 @@ describe('CircuitsPage', () => {
     server.use(
       http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)),
       http.post('*/v1/admin/circuits/*/reset', () =>
-        HttpResponse.json({ provider: 'openai', state: 'CLOSED' }),
+        HttpResponse.json({
+          provider: 'openai',
+          state: 'CLOSED',
+          failures: 0,
+          cooldownMsRemaining: 0,
+          halfOpenProbe: false,
+        }),
       ),
       providers(['openai']),
     )
@@ -444,12 +456,80 @@ describe('CircuitsPage', () => {
     })
   })
 
+  it('lists MCP server breakers separately and resets one', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)),
+      providers(['openai']),
+      http.get('*/v1/admin/mcp/circuits', () =>
+        HttpResponse.json([
+          {
+            provider: 'postgres',
+            state: 'OPEN',
+            failures: 3,
+            cooldownMsRemaining: 1000,
+            halfOpenProbe: false,
+          },
+        ]),
+      ),
+      http.post('*/v1/admin/mcp/circuits/*/reset', () =>
+        HttpResponse.json({
+          provider: 'postgres',
+          state: 'CLOSED',
+          failures: 0,
+          cooldownMsRemaining: 0,
+          halfOpenProbe: false,
+        }),
+      ),
+    )
+    renderBoard()
+    const section = await screen.findByRole('region', { name: /mcp circuits/i })
+    await within(section).findByText('postgres')
+    await user.click(within(section).getByRole('button', { name: /reset mcp circuit postgres/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(/postgres: CLOSED/i)
+    })
+  })
+
+  it('reports MCP reset failures honestly', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)),
+      providers(['openai']),
+      http.get('*/v1/admin/mcp/circuits', () =>
+        HttpResponse.json([
+          {
+            provider: 'postgres',
+            state: 'OPEN',
+            failures: 3,
+            cooldownMsRemaining: 1000,
+            halfOpenProbe: false,
+          },
+        ]),
+      ),
+      http.post('*/v1/admin/mcp/circuits/*/reset', () => new HttpResponse('x', { status: 500 })),
+    )
+    renderBoard()
+    const section = await screen.findByRole('region', { name: /mcp circuits/i })
+    await within(section).findByText('postgres')
+    await user.click(within(section).getByRole('button', { name: /reset mcp circuit postgres/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(/HTTP 500/)
+    })
+  })
+
   it('inspects a row and resets from the inspector', async () => {
     const user = userEvent.setup()
     server.use(
       http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)),
       http.post('*/v1/admin/circuits/*/reset', () =>
-        HttpResponse.json({ provider: 'openai', state: 'CLOSED' }),
+        HttpResponse.json({
+          provider: 'openai',
+          state: 'CLOSED',
+          failures: 0,
+          cooldownMsRemaining: 0,
+          halfOpenProbe: false,
+        }),
       ),
       providers(['openai']),
     )

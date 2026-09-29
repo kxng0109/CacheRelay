@@ -115,4 +115,46 @@ describe('RunDetailPanel', () => {
       })
     }
   })
+
+  it('reports clipboard write rejection without throwing', async () => {
+    const user = userEvent.setup()
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: () => Promise.reject(new Error('denied')) },
+    })
+    try {
+      renderApp(
+        <RunDetailPanel detail={{ runId: 5, model: 'm', streaming: false, status: 'done' }} />,
+      )
+      await user.click(screen.getByText(/raw json/i))
+      await user.click(screen.getByRole('button', { name: /^copy$/i }))
+      expect(await screen.findByText(/copy failed/i)).toBeInTheDocument()
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: undefined,
+      })
+    }
+  })
+
+  it('renders stream provenance facts when reported', () => {
+    renderApp(
+      <RunDetailPanel
+        detail={{
+          runId: 6,
+          model: 'm',
+          streaming: false,
+          status: 'done',
+          provider: 'openai',
+          tried: 'openai,anthropic',
+          receipt: 'merkle:abc',
+          replayed: true,
+        }}
+      />,
+    )
+    expect(screen.getByText('openai')).toBeInTheDocument()
+    expect(screen.getByText('openai,anthropic')).toBeInTheDocument()
+    expect(screen.getByText('merkle:abc')).toBeInTheDocument()
+    expect(screen.getByText('true')).toBeInTheDocument()
+  })
 })

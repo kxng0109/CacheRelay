@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { GatewayClient, keyFingerprint } from '../../shared/api/client.js'
+import { toErrorMessage } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
 import { TableScroll } from '../../shared/components/TableScroll.js'
@@ -21,6 +22,91 @@ function permissionBadges(
   if (annotations.idempotentHint === true) out.push('idempotent')
   if (annotations.openWorldHint === true) out.push('network')
   return out
+}
+
+/**
+ * Tool invocation: JSON args in, result or code-mapped fault out.
+ *
+ * @remarks Backend truth: `tools/call` over `POST /v1/mcp`. RPC errors
+ * map through `mcpErrorMessage` so unknown methods and bad args name
+ * the contract fault. Args must parse as a JSON object — raw text
+ * never sends.
+ *
+ * @param props - Tool name plus the paste-mode gateway key.
+ * @returns The invoke form plus result viewer.
+ */
+function ToolInvoker({ toolName, token }: { toolName: string; token: string }): React.JSX.Element {
+  const [argsText, setArgsText] = useState('{}')
+  const [result, setResult] = useState<string | null>(null)
+  const [problem, setProblem] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const invoke = (): void => {
+    setResult(null)
+    setProblem(null)
+    let args: Record<string, unknown>
+    try {
+      const parsed: unknown = JSON.parse(argsText)
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        setProblem('Args must be a JSON object.')
+        return
+      }
+      args = parsed as Record<string, unknown>
+    } catch {
+      setProblem('Args must be valid JSON.')
+      return
+    }
+    setBusy(true)
+    const client = new GatewayClient({ token })
+    void client
+      .mcpCall(toolName, args, { ignoreSession: true })
+      .then((out) => {
+        setResult(JSON.stringify(out, null, 2))
+      })
+      .catch((e: unknown) => {
+        setProblem(toErrorMessage(e, 'Tool invocation failed.'))
+      })
+      .finally(() => {
+        setBusy(false)
+      })
+  }
+
+  return (
+    <div className="space-y-2">
+      <div>
+        <label htmlFor={`mcp-args-${toolName}`} className="mb-1 block text-[13px] font-medium">
+          Arguments (JSON object)
+        </label>
+        <textarea
+          id={`mcp-args-${toolName}`}
+          rows={4}
+          value={argsText}
+          onChange={(e) => {
+            setArgsText(e.target.value)
+          }}
+          className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-xs dark:border-parchment/15"
+        />
+      </div>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={invoke}
+        className="rounded-md border border-ink/15 px-3 py-2 text-[13px] disabled:cursor-not-allowed dark:border-parchment/15"
+      >
+        Invoke tool
+      </button>
+      {result === null ? null : (
+        <pre className="max-h-64 overflow-auto rounded-md border border-ink/10 p-2 font-mono text-xs whitespace-pre-wrap dark:border-parchment/10">
+          {result}
+        </pre>
+      )}
+      {problem === null ? null : (
+        <p role="alert" className="text-[13px] text-danger dark:text-danger-soft">
+          {problem}
+        </p>
+      )}
+    </div>
+  )
 }
 
 /**
@@ -210,6 +296,7 @@ export function McpPage(): React.JSX.Element {
                   {JSON.stringify(inspected.inputSchema, null, 2)}
                 </pre>
               </div>
+              <ToolInvoker toolName={inspected.name} token={gatewayKey} />
             </InspectorShell>
           )}
         </div>

@@ -66,6 +66,7 @@ describe('SummaryBoard', () => {
   it('renders freshness, tiles, and breakdowns with tabular figures', () => {
     renderApp(<SummaryBoard view={viewOf()} />)
     expect(screen.getByRole('status')).toHaveTextContent(/updated .* ago/i)
+    expect(screen.getByRole('status')).toHaveTextContent(/watermark 2026-09-24T09:59:00Z/i)
     expect(screen.getAllByText('7').length).toBeGreaterThan(0)
     expect(screen.getByText('openai/gpt-56-luna')).toBeInTheDocument()
     expect(screen.getAllByText('openai').length).toBeGreaterThan(0)

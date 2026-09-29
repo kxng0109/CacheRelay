@@ -169,6 +169,27 @@ describe('OverviewPage', () => {
     })
   })
 
+  it('retries totals on demand after a failure', async () => {
+    const user = userEvent.setup()
+    let calls = 0
+    server.use(
+      http.get('*/v1/admin/ledger/summary', () => {
+        calls += 1
+        return new HttpResponse('x', { status: 500 })
+      }),
+      http.get(
+        '*/actuator/prometheus',
+        () => new HttpResponse('', { headers: { 'Content-Type': 'text/plain' } }),
+      ),
+    )
+    renderApp(<OverviewPage />, { adminSession: true })
+    await screen.findByRole('alert')
+    await user.click(screen.getByRole('button', { name: /^retry$/i }))
+    await waitFor(() => {
+      expect(calls).toBeGreaterThanOrEqual(2)
+    })
+  })
+
   it('shows a waiting live-RPS cell before two scrapes exist', async () => {
     server.use(
       http.get('*/v1/admin/ledger/summary', () =>

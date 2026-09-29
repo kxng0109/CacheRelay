@@ -1,8 +1,13 @@
 import type {
+  A2aAgentCard,
   ApiKeyCreated,
   ApiKeyRecord,
+  BudgetBalance,
+  BudgetHold,
   BudgetRecord,
+  CachePurge,
   CacheStats,
+  CacheTiers,
   ChatCompletionRequest,
   ChatCompletionResponse,
   CircuitSnapshot,
@@ -10,6 +15,8 @@ import type {
   EmbeddingRequest,
   EmbeddingResponse,
   HitlApproval,
+  HitlDecision,
+  InviteReceipt,
   LedgerLogEntry,
   LedgerReceipt,
   LedgerSummary,
@@ -17,6 +24,9 @@ import type {
   McpTool,
   McpToolAnnotations,
   ModelAliasRecord,
+  ModelCatalogEntry,
+  ModelQuality,
+  NotificationPreference,
   OrgTeam,
   OwnedKey,
   ProviderStatus,
@@ -301,10 +311,20 @@ export function safeErrorMessage(status: number, body: string): string {
       return 'Request refused by gateway policy. Check the route and key scope, then retry.'
     case 404:
       return 'Resource not found. Refresh the list and try again.'
+    case 409:
+      return 'Conflict: the resource already exists or changed concurrently. Refresh and resolve, then retry.'
+    case 413:
+      return 'Request body too large. Shrink the payload and try again.'
+    case 422:
+      return 'Unprocessable request: a guardrail or idempotency check refused it. See details, then retry.'
     case 429:
       return 'Rate limit reached. Wait for the reset window, then retry.'
+    case 502:
+      return 'No upstream provider could serve this request. Check circuits, then retry.'
     case 503:
       return 'Gateway is temporarily unavailable. Retry shortly.'
+    case 504:
+      return 'Upstream request timed out. Retry, or narrow the request.'
     default:
       return `Request failed (HTTP ${String(status)}). Retry, or contact support if it persists.`
   }
@@ -517,6 +537,40 @@ const circuitRowSchema = z.object({
   halfOpenProbe: z.boolean(),
 })
 
+const budgetBalanceSchema = z.object({
+  level: z.string(),
+  subject: z.string(),
+  minuteLimitMicros: z.number(),
+  minuteSpentMicros: z.number(),
+  monthLimitMicros: z.number(),
+  monthSpentMicros: z.number(),
+})
+
+const budgetHoldSchema = z.object({
+  requestId: z.string(),
+  subject: z.string(),
+  heldMicros: z.number(),
+  settledMicros: z.number().nullable(),
+  state: z.string(),
+})
+
+const tierStatsSchema = z.object({
+  reachable: z.boolean(),
+  usedBytes: z.number().nullable().default(null),
+  maxBytes: z.number().nullable().default(null),
+  usedPercent: z.number().nullable().default(null),
+  maxmemoryPolicy: z.string().nullable().default(null),
+  evictedKeysTotal: z.number().nullable().default(null),
+  keyspaceHits: z.number().nullable().default(null),
+  keyspaceMisses: z.number().nullable().default(null),
+})
+
+const cacheTiersSchema = z.object({
+  generatedAt: z.string(),
+  accounting: tierStatsSchema,
+  cache: tierStatsSchema,
+})
+
 const apiKeyRowSchema = z.object({
   keyId: z.string(),
   keyPrefix: z.string(),
@@ -595,9 +649,17 @@ const EMPTY_LEDGER_SUMMARY: LedgerSummary = {
 }
 
 const ledgerRowSchema = z.object({
+  id: z.string(),
   requestId: z.string(),
+  ownerId: z.string(),
+  provider: z.string(),
   model: z.string(),
+  promptTokens: z.number(),
+  completionTokens: z.number(),
+  totalTokens: z.number(),
   costUsdMicros: z.number(),
+  costUsd: z.string(),
+  durationMs: z.number(),
   createdAt: z.string(),
 })
 
@@ -647,17 +709,74 @@ const budgetRowSchema = z.object({
 })
 
 const hitlRowSchema = z.object({
-  approvalId: z.string(),
+  tokenId: z.string(),
   toolName: z.string(),
-  requestedAt: z.string(),
-  requestedBy: z.string(),
+  serverName: z.string(),
+  ownerId: z.string(),
+  keyName: z.string(),
+  createdAt: z.string(),
+  expiresAt: z.string(),
+})
+
+const hitlDecisionSchema = z.object({
+  status: z.string(),
+  tokenId: z.string(),
+  message: z.string(),
 })
 
 const hitlEnvelopeSchema = z.object({ approvals: z.array(z.unknown()) })
 
 const modelIdRowSchema = z.object({ id: z.string() })
 
+const modelQualitySchema = z.object({
+  modelId: z.string(),
+  tier: z.string(),
+  benchmarkRefs: z.string().nullable(),
+  updatedAt: z.string(),
+})
+
+const notificationRowSchema = z.object({
+  id: z.string(),
+  scope: z.string(),
+  channel: z.string(),
+  target: z.string(),
+  secretRef: z.string().nullable(),
+  minSeverity: z.string(),
+  createdAt: z.string(),
+})
+
+const a2aCardSchema = z.object({
+  protocolVersion: z.string(),
+  name: z.string(),
+  url: z.string(),
+  description: z.string().nullable(),
+  version: z.string().nullable(),
+})
+
+const alertProbeReceiptSchema = z.object({
+  received: z.number(),
+})
+
+const inviteReceiptSchema = z.object({
+  link: z.string(),
+  emailed: z.boolean(),
+})
+
 const modelEnvelopeSchema = z.object({ data: z.array(z.unknown()) })
+
+const modelCatalogEntrySchema = z.object({
+  modelId: z.string(),
+  provider: z.string(),
+  mode: z.string(),
+  inputCostPerToken: z.number(),
+  outputCostPerToken: z.number(),
+  cacheReadInputTokenCost: z.number().nullable(),
+  cacheCreationInputTokenCost: z.number().nullable(),
+  maxInputTokens: z.number().nullable(),
+  maxOutputTokens: z.number().nullable(),
+  qualityTier: z.string().nullable(),
+  benchmarkRefs: z.string().nullable(),
+})
 
 /**
  * Mutation/creation response shapes. Read paths degrade to empty states,
@@ -687,11 +806,6 @@ const modelAliasSchema = z.object({
   source: z.string(),
 })
 
-const resetCircuitSchema = z.object({
-  provider: z.string(),
-  state: z.string(),
-})
-
 const cacheStatsSchema = z.object({
   enabled: z.boolean(),
   defaultScope: z.string(),
@@ -707,7 +821,9 @@ const cacheStatsSchema = z.object({
 
 const purgeCacheSchema = z.object({
   success: z.boolean(),
+  message: z.string(),
   evictedScope: z.string(),
+  evictedKeys: z.number(),
 })
 
 /**
@@ -975,6 +1091,58 @@ export class GatewayClient {
   }
 
   /**
+   * Validates a 64-char SHA-256 hex key hash before self-service calls.
+   *
+   * @remarks Backend truth (`MeKeyController`): malformed hashes answer
+   * 400 `malformed key hash`; the client rejects them before sending.
+   *
+   * @param hash - Key hash to check.
+   * @param label - Human subject for the error.
+   */
+  private static assertKeyHash(hash: string, label: string): void {
+    if (!/^[a-fA-F0-9]{64}$/.test(hash)) {
+      throw new Error(`${label} needs a 64-char hex key hash.`)
+    }
+  }
+
+  /**
+   * Sets the default act-as key for the session account. Answers 204;
+   * foreign or unknown hashes answer 404 (never 403, no oracle).
+   *
+   * @param keyId - 64-char hex hash of an owned key.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @throws Error synchronously when the hash is malformed (never sent).
+   */
+  setDefaultKey(keyId: string, opts?: RequestOptions): Promise<void> {
+    GatewayClient.assertKeyHash(keyId, 'Default key')
+    return this.requestEmpty(
+      '/v1/me/keys/default',
+      {
+        method: 'PUT',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ keyId }),
+      },
+      opts,
+    )
+  }
+
+  /**
+   * Revokes one owned key (terminal tombstone, no inverse).
+   *
+   * @param hashHex - 64-char hex hash of an owned key.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @throws Error synchronously when the hash is malformed (never sent).
+   */
+  revokeOwnKey(hashHex: string, opts?: RequestOptions): Promise<void> {
+    GatewayClient.assertKeyHash(hashHex, 'Key revocation')
+    return this.requestEmpty(
+      `/v1/me/keys/${encodeURIComponent(hashHex)}/revoke`,
+      { method: 'POST', headers: this.headers() },
+      opts,
+    )
+  }
+
+  /**
    * Lists every effective model alias with its origin. Admin only.
    *
    * @remarks Backend truth (`AdminModelController`): `GET
@@ -1065,6 +1233,134 @@ export class GatewayClient {
   }
 
   /**
+   * Reads one model quality rating. Unrated models answer 404
+   * (`model is unrated`), which reads as null — the unrated state,
+   * never an error.
+   *
+   * @remarks Backend truth (`AdminModelQualityController`): `GET
+   * /v1/admin/model-quality/{modelId}` returns `QualityResponse`;
+   * tier is one of FRONTIER, STANDARD, BUDGET.
+   *
+   * @param modelId - Exact model id.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The rating, or null when unrated.
+   */
+  async getModelQuality(modelId: string, opts?: RequestOptions): Promise<ModelQuality | null> {
+    try {
+      const raw: unknown = await this.request<unknown>(
+        `/v1/admin/model-quality/${encodeURIComponent(modelId)}`,
+        { headers: this.headers() },
+        opts,
+      )
+      const parsed = modelQualitySchema.safeParse(raw)
+      if (!parsed.success) {
+        noteDrift('model-quality')
+        return null
+      }
+      return parsed.data
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return null
+      throw error
+    }
+  }
+
+  /**
+   * Rates or re-rates a model (create-or-replace).
+   *
+   * @remarks Backend truth: `PUT /v1/admin/model-quality/{modelId}`
+   * with `{ tier, benchmarkRefs }`; tier is required and uppercase;
+   * blank refs read as null. Invalid ids, tiers, and refs answer 400.
+   *
+   * @param modelId - Exact model id (max 128, `[\w./:-]+`).
+   * @param body - Tier plus optional benchmark refs.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The stored rating.
+   */
+  async setModelQuality(
+    modelId: string,
+    body: { tier: string; benchmarkRefs?: string | null },
+    opts?: RequestOptions,
+  ): Promise<ModelQuality> {
+    if (!/^[\w./:-]{1,128}$/.test(modelId)) {
+      throw new Error('Invalid model id.')
+    }
+    if (body.tier !== 'FRONTIER' && body.tier !== 'STANDARD' && body.tier !== 'BUDGET') {
+      throw new Error('Tier must be FRONTIER, STANDARD, or BUDGET.')
+    }
+    const refs = body.benchmarkRefs ?? null
+    if (refs !== null && refs.length > 2000) {
+      throw new Error('Benchmark refs too long (max 2000).')
+    }
+    const raw: unknown = await this.request<unknown>(
+      `/v1/admin/model-quality/${encodeURIComponent(modelId)}`,
+      {
+        method: 'PUT',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ tier: body.tier, benchmarkRefs: refs }),
+      },
+      opts,
+    )
+    return valueOrThrow(modelQualitySchema, raw, 'model-quality-write', 'Quality rating')
+  }
+
+  /**
+   * Removes a model quality rating. Absent ratings answer 404.
+   *
+   * @param modelId - Exact model id.
+   * @param opts - Optional request options (abort signal, headers listener).
+   */
+  clearModelQuality(modelId: string, opts?: RequestOptions): Promise<void> {
+    return this.requestEmpty(
+      `/v1/admin/model-quality/${encodeURIComponent(modelId)}`,
+      { method: 'DELETE', headers: this.headers() },
+      opts,
+    )
+  }
+
+  /**
+   * Searches the admin model catalog with pricing, windows, and quality.
+   *
+   * @remarks Backend truth (`AdminModelCatalogController`): `GET
+   * /v1/admin/model-catalog` returns a `{ models }` envelope ordered by
+   * model id. `limit` defaults to 50 and clamps to 1-200; `provider`
+   * (max 64) and `q` (max 128) are optional filters. Four cost/window/
+   * quality fields are nullable. Drifted bodies degrade to empty.
+   *
+   * @param query - Optional provider substring, query, and limit.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns Catalog entries.
+   */
+  async searchModelCatalog(
+    query: { provider?: string; q?: string; limit?: number } = {},
+    opts?: RequestOptions,
+  ): Promise<{ models: ModelCatalogEntry[] }> {
+    const limit = Math.min(200, Math.max(1, Math.floor(query.limit ?? 50)))
+    const params = new URLSearchParams({ limit: String(limit) })
+    if (query.provider !== undefined && query.provider.length > 0) {
+      params.set('provider', query.provider.slice(0, 64))
+    }
+    if (query.q !== undefined && query.q.length > 0) {
+      params.set('q', query.q.slice(0, 128))
+    }
+    const body: unknown = await this.request<unknown>(
+      `/v1/admin/model-catalog?${params.toString()}`,
+      { headers: this.headers() },
+      opts,
+    )
+    if (typeof body !== 'object' || body === null || !('models' in body)) {
+      noteDrift('model-catalog')
+      return { models: [] }
+    }
+    return {
+      models: rowsOrEmpty(
+        modelCatalogEntrySchema,
+        (body as Record<string, unknown>).models,
+        'model-catalog',
+      ),
+    }
+  }
+
+  /**
    * Reads configured upstream providers with live routing health.
    *
    * @remarks Backend truth (DTO-verified): `GET /v1/admin/providers`
@@ -1117,18 +1413,44 @@ export class GatewayClient {
   }
 
   /**
+   * Reads one provider circuit. Unknown providers answer 404, which
+   * reads as null — never a crash.
+   *
+   * @param provider - Provider name.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The snapshot, or null when unknown.
+   */
+  async getCircuit(provider: string, opts?: RequestOptions): Promise<CircuitSnapshot | null> {
+    try {
+      const raw: unknown = await this.request<unknown>(
+        `/v1/admin/circuits/${encodeURIComponent(provider)}`,
+        { headers: this.headers() },
+        opts,
+      )
+      const parsed = circuitRowSchema.safeParse(raw)
+      if (!parsed.success) {
+        noteDrift('circuits-single')
+        return null
+      }
+      return { ...parsed.data, state: parsed.data.state as CircuitSnapshot['state'] }
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return null
+      throw error
+    }
+  }
+
+  /**
    * Force-resets a provider circuit. Live-verified against the gateway.
    *
-   * @remarks The reset receipt is validated before the toast reads it
-   * (DEF-09).
+   * @remarks The reset answer is the observed post-reset snapshot in the
+   * full `CircuitStateResponse` shape (not a separate receipt): unknown
+   * future states validate as strings and render via the Unknown chip.
    *
    * @param provider - Provider name (for example `openai`).
    * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The post-reset snapshot.
    */
-  async resetCircuit(
-    provider: string,
-    opts?: RequestOptions,
-  ): Promise<{ provider: string; state: string }> {
+  async resetCircuit(provider: string, opts?: RequestOptions): Promise<CircuitSnapshot> {
     const raw: unknown = await this.request<unknown>(
       `/v1/admin/circuits/${encodeURIComponent(provider)}/reset`,
       {
@@ -1137,7 +1459,73 @@ export class GatewayClient {
       },
       opts,
     )
-    return valueOrThrow(resetCircuitSchema, raw, 'circuits-reset', 'Circuit reset')
+    const parsed = valueOrThrow(circuitRowSchema, raw, 'circuits-reset', 'Circuit reset')
+    return { ...parsed, state: parsed.state as CircuitSnapshot['state'] }
+  }
+
+  /**
+   * Reads MCP per-server breaker states. The shared `CircuitStateResponse`
+   * DTO is reused: the `provider` key carries the MCP server name.
+   *
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns One snapshot per MCP server.
+   */
+  async listMcpCircuits(opts?: RequestOptions): Promise<{ circuits: CircuitSnapshot[] }> {
+    const body: unknown = await this.request<unknown>(
+      '/v1/admin/mcp/circuits',
+      { headers: this.headers() },
+      opts,
+    )
+    const rows = rowsOrEmpty(circuitRowSchema, body, 'mcp-circuits')
+    return {
+      circuits: rows.map((r) => ({ ...r, state: r.state as CircuitSnapshot['state'] })),
+    }
+  }
+
+  /**
+   * Reads one MCP server circuit. Unknown servers answer 404 → null.
+   *
+   * @param server - MCP server id (for example `postgres`).
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The snapshot, or null when unknown.
+   */
+  async getMcpCircuit(server: string, opts?: RequestOptions): Promise<CircuitSnapshot | null> {
+    try {
+      const raw: unknown = await this.request<unknown>(
+        `/v1/admin/mcp/circuits/${encodeURIComponent(server)}`,
+        { headers: this.headers() },
+        opts,
+      )
+      const parsed = circuitRowSchema.safeParse(raw)
+      if (!parsed.success) {
+        noteDrift('mcp-circuits-single')
+        return null
+      }
+      return { ...parsed.data, state: parsed.data.state as CircuitSnapshot['state'] }
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return null
+      throw error
+    }
+  }
+
+  /**
+   * Force-resets one MCP server circuit, returning the post-reset snapshot.
+   *
+   * @param server - MCP server id.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The post-reset snapshot.
+   */
+  async resetMcpCircuit(server: string, opts?: RequestOptions): Promise<CircuitSnapshot> {
+    const raw: unknown = await this.request<unknown>(
+      `/v1/admin/mcp/circuits/${encodeURIComponent(server)}/reset`,
+      {
+        method: 'POST',
+        headers: this.headers(),
+      },
+      opts,
+    )
+    const parsed = valueOrThrow(circuitRowSchema, raw, 'mcp-circuits-reset', 'MCP circuit reset')
+    return { ...parsed, state: parsed.state as CircuitSnapshot['state'] }
   }
 
   /**
@@ -1266,19 +1654,35 @@ export class GatewayClient {
    *
    * @remarks Backend truth (`AdminLedgerController`): the path is
    * `/v1/admin/ledger/entries` returning a `PageResponse` envelope —
-   * never `/logs`, never a bare `{ entries }` array.
+   * never `/logs`, never a bare `{ entries }` array. Optional filters
+   * scope server-side (unknown sort props fall back to newest first);
+   * the 90-day window is enforced server-side with 400 on violation.
    *
    * @param page - Zero-based page index.
    * @param size - Page size (backend clamps to its maximum).
+   * @param filters - Optional server filters (owner, provider, model,
+   * window) plus sort property.
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns The page envelope with entry rows.
    */
   async ledgerLogs(
     page: number,
     size: number,
+    filters: {
+      ownerId?: string
+      provider?: string
+      model?: string
+      from?: string
+      to?: string
+      sort?: string
+    } = {},
     opts?: RequestOptions,
   ): Promise<PageResponse<LedgerLogEntry>> {
     const q = new URLSearchParams({ page: String(page), size: String(size) })
+    for (const key of ['ownerId', 'provider', 'model', 'from', 'to', 'sort'] as const) {
+      const value = filters[key]
+      if (value !== undefined && value.trim().length > 0) q.set(key, value.trim())
+    }
     const body: unknown = await this.request<unknown>(
       `/v1/admin/ledger/entries?${q.toString()}`,
       { headers: this.headers() },
@@ -1336,19 +1740,37 @@ export class GatewayClient {
   }
 
   /**
+   * Reads live tier telemetry: fill, eviction, and hit/miss counters.
+   *
+   * @remarks Backend truth: `GET /v1/admin/cache/tiers` answers a
+   * memoised probe; dead tiers degrade to absent metrics, never errors —
+   * check `reachable` before reading any numeric.
+   *
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns Generation time plus both tier probes.
+   */
+  async cacheTiers(opts?: RequestOptions): Promise<CacheTiers> {
+    const raw: unknown = await this.request<unknown>(
+      '/v1/admin/cache/tiers',
+      { headers: this.headers() },
+      opts,
+    )
+    return valueOrThrow(cacheTiersSchema, raw, 'cache-tiers', 'Cache tiers')
+  }
+
+  /**
    * Purges cache entries, optionally scoped to one owner.
    *
    * @remarks Backend truth (live-verified): `DELETE /v1/admin/cache`
-   * with optional `ownerId` scope; the response names the evicted scope.
+   * with optional `ownerId` scope. Glob characters in `ownerId` answer
+   * 400 with an INVALID receipt. `evictedKeys` counts Redis SCAN-deletes
+   * only. Unknown drift rejects with a safe error (DEF-09).
    *
    * @param ownerId - Optional tenant scope; omitted purges globally.
    * @param opts - Optional request options (abort signal, headers listener).
-   * @returns Purge outcome with the evicted scope.
+   * @returns Full purge receipt with message and evicted key count.
    */
-  async purgeCache(
-    ownerId?: string,
-    opts?: RequestOptions,
-  ): Promise<{ success: boolean; evictedScope: string }> {
+  async purgeCache(ownerId?: string, opts?: RequestOptions): Promise<CachePurge> {
     const q = ownerId === undefined ? '' : `?${new URLSearchParams({ ownerId }).toString()}`
     const raw: unknown = await this.request<unknown>(
       `/v1/admin/cache${q}`,
@@ -1412,7 +1834,106 @@ export class GatewayClient {
   }
 
   /**
-   * Lists pending HITL approvals.
+   * Reads spend-vs-cap for one budget subject. Absent caps read as zero
+   * (indistinguishable from zero-spend by design); Redis outage answers
+   * 503.
+   *
+   * @param level - KEY, TEAM, or ORG.
+   * @param subject - Budget subject id.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns Limits plus live spend.
+   */
+  async getBudgetBalance(
+    level: string,
+    subject: string,
+    opts?: RequestOptions,
+  ): Promise<BudgetBalance> {
+    const raw: unknown = await this.request<unknown>(
+      `/v1/admin/budgets/${encodeURIComponent(level)}/${encodeURIComponent(subject)}/balance`,
+      { headers: this.headers() },
+      opts,
+    )
+    return valueOrThrow(budgetBalanceSchema, raw, 'budgets-balance', 'Budget balance')
+  }
+
+  /**
+   * Reads one budget hold. Expired or unknown ids answer 404, which
+   * reads as null — never a crash, never fabricated spend.
+   *
+   * @remarks Live holds read `HOLD`, never the docs-only `ACTIVE`.
+   *
+   * @param requestId - Hold correlation id.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The hold, or null when expired/unknown.
+   */
+  async getBudgetHold(requestId: string, opts?: RequestOptions): Promise<BudgetHold | null> {
+    try {
+      const raw: unknown = await this.request<unknown>(
+        `/v1/admin/budgets/holds/${encodeURIComponent(requestId)}`,
+        { headers: this.headers() },
+        opts,
+      )
+      const parsed = budgetHoldSchema.safeParse(raw)
+      if (!parsed.success) {
+        noteDrift('budgets-hold')
+        return null
+      }
+      return parsed.data
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return null
+      throw error
+    }
+  }
+
+  /**
+   * Replaces both caps (and webhook) of a budget. Full-replace
+   * semantics: omitted caps read as zero (no cap), not preserved.
+   * Level and subject are immutable post-create. Concurrent races
+   * answer 409 `budget changed concurrently, retry`.
+   *
+   * @param id - Budget UUID.
+   * @param body - Replacement caps plus optional webhook (null clears it).
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The updated record.
+   */
+  async updateBudget(
+    id: string,
+    body: { minuteMicros: number; monthMicros: number; webhookUrl?: string | null },
+    opts?: RequestOptions,
+  ): Promise<BudgetRecord> {
+    const raw: unknown = await this.request<unknown>(
+      `/v1/admin/budgets/${encodeURIComponent(id)}`,
+      {
+        method: 'PUT',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(body),
+      },
+      opts,
+    )
+    return valueOrThrow(budgetRowSchema, raw, 'budgets-update', 'Budget update')
+  }
+
+  /**
+   * Deletes a budget. Live spend snapshots into audit — chargeback
+   * survives the cap. Unknown ids answer 404.
+   *
+   * @param id - Budget UUID.
+   * @param opts - Optional request options (abort signal, headers listener).
+   */
+  deleteBudget(id: string, opts?: RequestOptions): Promise<void> {
+    return this.requestEmpty(
+      `/v1/admin/budgets/${encodeURIComponent(id)}`,
+      { method: 'DELETE', headers: this.headers() },
+      opts,
+    )
+  }
+
+  /**
+   * Lists pending HITL approvals (newest first, capped server-side).
+   *
+   * @remarks Backend truth (`AdminMcpApprovalController`): the envelope
+   * `{ approvals }` carries `PendingApprovalSummary` rows with tool args
+   * stripped. There is no `approvalId` — identity is `tokenId`.
    *
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns Pending approval queue.
@@ -1423,7 +1944,7 @@ export class GatewayClient {
       { headers: this.headers() },
       opts,
     )
-    // The live gateway answers a bare array; the contract promises an
+    // Older doubles answered a bare array; the contract promises an
     // envelope. Both validate row by row, never crash.
     const envelope = Array.isArray(body)
       ? { approvals: body }
@@ -1432,29 +1953,64 @@ export class GatewayClient {
   }
 
   /**
-   * Decides a HITL approval.
+   * Hydrates one pending approval with decrypted tool args for review.
    *
-   * @param approvalId - Approval identifier.
-   * @param approved - True to approve, false to reject.
-   * @param decidedBy - Operator identity for the audit trail.
+   * @remarks Backend truth: `GET
+   * /v1/admin/mcp/approvals/{tokenId}` returns the full metadata JSON
+   * with sealed args decrypted; undecryptable values render as a
+   * placeholder. Malformed ids answer 400; missing/expired answer 404.
+   *
+   * @param tokenId - 32-char lowercase hex approval token.
    * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The metadata JSON (shape varies by tool).
+   * @throws Error synchronously on malformed token ids (never sent).
    */
-  decideHitl(
-    approvalId: string,
+  async hitlDetail(tokenId: string, opts?: RequestOptions): Promise<unknown> {
+    if (!/^[0-9a-f]{32}$/.test(tokenId)) {
+      throw new Error('Approval token must be 32 lowercase hex chars.')
+    }
+    return this.request<unknown>(
+      `/v1/admin/mcp/approvals/${encodeURIComponent(tokenId)}`,
+      { headers: this.headers() },
+      opts,
+    )
+  }
+
+  /**
+   * Decides a HITL approval with an optional human rationale.
+   *
+   * @remarks Backend truth: identity is path-only; the body carries an
+   * optional `reason` (max 500). `decidedBy` is accepted but ignored —
+   * the server records the authenticated identity. Approve holds 300s;
+   * reject tombstones 24h. The `{ status, tokenId, message }` receipt
+   * drives the toast.
+   *
+   * @param tokenId - Approval token id.
+   * @param approved - True to approve, false to reject.
+   * @param meta - Optional reason plus operator identity for the trail.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The decision receipt.
+   */
+  async decideHitl(
+    tokenId: string,
     approved: boolean,
-    decidedBy: string,
+    meta: { reason?: string; decidedBy?: string } = {},
     opts?: RequestOptions,
-  ): Promise<void> {
+  ): Promise<HitlDecision> {
     const action = approved ? 'approve' : 'reject'
-    return this.requestEmpty(
-      `/v1/admin/mcp/approvals/${encodeURIComponent(approvalId)}/${action}`,
+    const raw: unknown = await this.request<unknown>(
+      `/v1/admin/mcp/approvals/${encodeURIComponent(tokenId)}/${action}`,
       {
         method: 'POST',
         headers: this.headers({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ approvalId, decidedBy }),
+        body: JSON.stringify({
+          ...(meta.reason === undefined ? {} : { reason: meta.reason.slice(0, 500) }),
+          ...(meta.decidedBy === undefined ? {} : { decidedBy: meta.decidedBy.slice(0, 128) }),
+        }),
       },
       opts,
     )
+    return valueOrThrow(hitlDecisionSchema, raw, 'hitl-decide', 'Approval decision')
   }
 
   /**
@@ -1537,6 +2093,178 @@ export class GatewayClient {
       })
     }
     return { tools }
+  }
+
+  /**
+   * Invokes one MCP tool via JSON-RPC `tools/call`.
+   *
+   * @remarks Backend truth: `POST /v1/mcp` with `{ jsonrpc, id,
+   * method: 'tools/call', params: { name, arguments } }`. RPC errors
+   * map through {@link mcpErrorMessage} so `METHOD_NOT_FOUND` and
+   * `INVALID_PARAMS` name the contract fault instead of generic text.
+   *
+   * @param toolName - Tool name (`server__tool`).
+   * @param args - Tool arguments (must be JSON-serializable).
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The result payload (shape varies by tool).
+   */
+  async mcpCall(
+    toolName: string,
+    args: Record<string, unknown>,
+    opts?: RequestOptions,
+  ): Promise<unknown> {
+    const init: RequestInit = {
+      method: 'POST',
+      headers: this.headers(
+        { 'Content-Type': 'application/json' },
+        opts?.actAsKey,
+        opts?.ignoreSession,
+      ),
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: `call-${String(Date.now())}`,
+        method: 'tools/call',
+        params: { name: toolName, arguments: args },
+      }),
+    }
+    if (opts?.signal !== undefined) init.signal = opts.signal
+    let res: Response
+    try {
+      res = await fetch(`${this.base}/v1/mcp`, init)
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      throw new Error('Network unreachable. Check the gateway URL and connection, then retry.', {
+        cause: error,
+      })
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new ApiError({
+        message: safeErrorMessage(res.status, text),
+        status: res.status,
+        requestId: res.headers.get('X-Request-Id'),
+        rateLimit: parseRateLimit(res.headers),
+        cacheStatus: res.headers.get('X-Cache-Status'),
+        debugId: res.headers.get('X-Request-Debug'),
+        code: parseGatewayErrorCode(text),
+      })
+    }
+    const body: unknown = await res.json().catch(() => null)
+    ;(opts?.onHeaders ?? headersReporter)?.(res.headers, null)
+    if (typeof body !== 'object' || body === null) throw new Error('Tool returned no payload.')
+    const envelope = body as Record<string, unknown>
+    if (typeof envelope.error === 'object' && envelope.error !== null) {
+      const errRecord = envelope.error as Record<string, unknown>
+      const code = typeof errRecord.code === 'number' ? errRecord.code : -32603
+      const message = typeof errRecord.message === 'string' ? errRecord.message : null
+      throw new Error(mcpErrorMessage(code, message))
+    }
+    return envelope.result ?? null
+  }
+
+  /**
+   * Reads one A2A agent card with gateway-rewritten URLs.
+   *
+   * @remarks Backend truth (`A2aProxyController`): `GET
+   * /v1/a2a/{agent}/card` is key-gated with RBAC; unknown, disabled, or
+   * denied agents answer indistinguishable 404. Card `url` fields are
+   * rewritten to the public base.
+   *
+   * @param agent - Agent identifier.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The agent card.
+   */
+  async a2aCard(agent: string, opts?: RequestOptions): Promise<A2aAgentCard> {
+    const raw: unknown = await this.request<unknown>(
+      `/v1/a2a/${encodeURIComponent(agent)}/card`,
+      {
+        headers: this.headers(undefined, opts?.actAsKey, opts?.ignoreSession),
+      },
+      opts,
+    )
+    return valueOrThrow(a2aCardSchema, raw, 'a2a-card', 'Agent card')
+  }
+
+  /**
+   * Relays one JSON-RPC call to an A2A agent.
+   *
+   * @remarks Backend truth: `POST /v1/a2a/{agent}` accepts exactly
+   * `message/send`, `message/stream`, `tasks/get`, `tasks/cancel`;
+   * unknown methods answer 200 + `-32601`. RPC faults map through
+   * {@link mcpErrorMessage}.
+   *
+   * @param agent - Agent identifier.
+   * @param method - One of the four supported methods.
+   * @param params - Method params (must be JSON-serializable).
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The result payload (shape varies by method).
+   */
+  async a2aInvoke(
+    agent: string,
+    method: string,
+    params: Record<string, unknown>,
+    opts?: RequestOptions,
+  ): Promise<unknown> {
+    if (
+      method !== 'message/send' &&
+      method !== 'message/stream' &&
+      method !== 'tasks/get' &&
+      method !== 'tasks/cancel'
+    ) {
+      throw new Error(
+        `Unknown A2A method: ${method}. Use message/send, message/stream, tasks/get, or tasks/cancel.`,
+      )
+    }
+    const raw: unknown = await this.request<unknown>(
+      `/v1/a2a/${encodeURIComponent(agent)}`,
+      {
+        method: 'POST',
+        headers: this.headers(
+          { 'Content-Type': 'application/json' },
+          opts?.actAsKey,
+          opts?.ignoreSession,
+        ),
+        body: JSON.stringify({ jsonrpc: '2.0', id: `a2a-${String(Date.now())}`, method, params }),
+      },
+      opts,
+    )
+    if (typeof raw !== 'object' || raw === null) throw new Error('Agent returned no payload.')
+    const envelope = raw as Record<string, unknown>
+    if (typeof envelope.error === 'object' && envelope.error !== null) {
+      const errRecord = envelope.error as Record<string, unknown>
+      const code = typeof errRecord.code === 'number' ? errRecord.code : -32603
+      const message = typeof errRecord.message === 'string' ? errRecord.message : null
+      throw new Error(mcpErrorMessage(code, message))
+    }
+    return envelope.result ?? null
+  }
+
+  /**
+   * Probes the admin alert webhook with a batch of alerts.
+   *
+   * @remarks Backend truth (`AdminAlertWebhookController`): `POST
+   * /v1/admin/alerts/webhook` accepts a non-empty JSON array of at most
+   * 100 alerts and answers `{ received }`. Counted and logged only —
+   * no human delivery. Client-validated before sending (never a 400
+   * surprise).
+   *
+   * @param alerts - Non-empty array of at most 100 alert payloads.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The receipt count.
+   */
+  async sendAlertProbe(alerts: unknown[], opts?: RequestOptions): Promise<{ received: number }> {
+    if (alerts.length === 0) throw new Error('Alert batch must be a non-empty array.')
+    if (alerts.length > 100) throw new Error('Alert batch holds at most 100 alerts.')
+    const raw: unknown = await this.request<unknown>(
+      '/v1/admin/alerts/webhook',
+      {
+        method: 'POST',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(alerts),
+      },
+      opts,
+    )
+    return valueOrThrow(alertProbeReceiptSchema, raw, 'alerts-probe', 'Alert probe')
   }
 
   /**
@@ -1644,6 +2372,179 @@ export class GatewayClient {
   }
 
   /**
+   * Disables or re-enables an account. The body is explicit by design:
+   * an absent flag answers 400 instead of silently re-enabling.
+   * Re-enabling never resurrects tombstoned keys.
+   *
+   * @param id - Account UUID.
+   * @param disabled - True to disable, false to re-enable.
+   * @param opts - Optional request options (abort signal, headers listener).
+   */
+  setUserDisabled(id: string, disabled: boolean, opts?: RequestOptions): Promise<void> {
+    return this.requestEmpty(
+      `/v1/admin/users/${encodeURIComponent(id)}/disabled`,
+      {
+        method: 'PUT',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ disabled }),
+      },
+      opts,
+    )
+  }
+
+  /**
+   * Deletes an account. Terminally revokes every attached key and clears
+   * the default key first — the cascade is irreversible.
+   *
+   * @param id - Account UUID.
+   * @param opts - Optional request options (abort signal, headers listener).
+   */
+  deleteUser(id: string, opts?: RequestOptions): Promise<void> {
+    return this.requestEmpty(
+      `/v1/admin/users/${encodeURIComponent(id)}`,
+      { method: 'DELETE', headers: this.headers() },
+      opts,
+    )
+  }
+
+  /**
+   * Mints an invite. The link is always returned, even when mailed.
+   *
+   * @remarks Backend truth (`AdminInviteController`): `POST
+   * /v1/admin/invites` answers 201 `{ link, emailed }`; an invalid
+   * email answers 400; auth denial is stealth 404, never 401.
+   *
+   * @param body - Optional email (null = link-only) and admin flag.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The redeem link plus whether mail was sent.
+   */
+  async createInvite(
+    body: { email?: string | null; admin?: boolean },
+    opts?: RequestOptions,
+  ): Promise<InviteReceipt> {
+    if (body.email !== undefined && body.email !== null && !/^\S+@\S+\.\S+$/.test(body.email)) {
+      throw new Error('Invite email must be valid.')
+    }
+    const raw: unknown = await this.request<unknown>(
+      '/v1/admin/invites',
+      {
+        method: 'POST',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ email: body.email ?? null, admin: body.admin ?? false }),
+      },
+      opts,
+    )
+    return valueOrThrow(inviteReceiptSchema, raw, 'invites-create', 'Invite creation')
+  }
+
+  /**
+   * Lists alert subscriptions for one scope. Scope is required:
+   * omitting it answers 400, never "list all".
+   *
+   * @param scope - Alert scope to list.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns Subscriptions for the scope.
+   * @throws Error synchronously when scope is blank (never sent).
+   */
+  async listNotifications(
+    scope: string,
+    opts?: RequestOptions,
+  ): Promise<{ notifications: NotificationPreference[] }> {
+    if (scope.trim().length === 0) throw new Error('Notification scope is required.')
+    const q = new URLSearchParams({ scope: scope.trim() })
+    const body: unknown = await this.request<unknown>(
+      `/v1/admin/notifications?${q.toString()}`,
+      { headers: this.headers() },
+      opts,
+    )
+    if (!Array.isArray(body)) {
+      noteDrift('notifications')
+      return { notifications: [] }
+    }
+    return {
+      notifications: rowsOrEmpty(notificationRowSchema, body, 'notifications'),
+    }
+  }
+
+  /**
+   * Creates an alert subscription. Secrets travel by reference only:
+   * `secretRef` names an environment variable, never a secret value.
+   *
+   * @remarks Backend truth: channel is email/teams/slack/webhook;
+   * `minSeverity` defaults to warning; duplicates answer 409.
+   *
+   * @param body - Scope, channel, target, plus optional secret ref/severity.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The stored subscription.
+   */
+  async createNotification(
+    body: {
+      scope: string
+      channel: string
+      target: string
+      secretRef?: string | null
+      minSeverity?: string | null
+    },
+    opts?: RequestOptions,
+  ): Promise<NotificationPreference> {
+    if (body.scope.trim().length === 0 || body.scope.length > 160) {
+      throw new Error('Notification scope must be 1-160 chars.')
+    }
+    if (!['email', 'teams', 'slack', 'webhook'].includes(body.channel)) {
+      throw new Error('Channel must be email, teams, slack, or webhook.')
+    }
+    if (body.target.trim().length === 0 || body.target.length > 512) {
+      throw new Error('Notification target must be 1-512 chars.')
+    }
+    if (
+      body.secretRef !== undefined &&
+      body.secretRef !== null &&
+      !/^[A-Z][A-Z0-9_]{0,127}$/.test(body.secretRef)
+    ) {
+      throw new Error('Secret ref must name an environment variable ([A-Z][A-Z0-9_]*).')
+    }
+    if (
+      body.minSeverity !== undefined &&
+      body.minSeverity !== null &&
+      body.minSeverity !== 'warning' &&
+      body.minSeverity !== 'critical'
+    ) {
+      throw new Error('Minimum severity must be warning or critical.')
+    }
+    const raw: unknown = await this.request<unknown>(
+      '/v1/admin/notifications',
+      {
+        method: 'POST',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          scope: body.scope,
+          channel: body.channel,
+          target: body.target,
+          secretRef: body.secretRef ?? null,
+          minSeverity: body.minSeverity ?? null,
+        }),
+      },
+      opts,
+    )
+    return valueOrThrow(notificationRowSchema, raw, 'notifications-create', 'Notification creation')
+  }
+
+  /**
+   * Deletes an alert subscription. Unknown ids are a silent no-op
+   * (204), never 404 — safe to retry.
+   *
+   * @param id - Subscription UUID.
+   * @param opts - Optional request options (abort signal, headers listener).
+   */
+  deleteNotification(id: string, opts?: RequestOptions): Promise<void> {
+    return this.requestEmpty(
+      `/v1/admin/notifications/${encodeURIComponent(id)}`,
+      { method: 'DELETE', headers: this.headers() },
+      opts,
+    )
+  }
+
+  /**
    * Reads the session identity for the current bearer token.
    *
    * @remarks Used to complete SSO fragment logins: the redirect carries
@@ -1663,6 +2564,38 @@ export class GatewayClient {
     if (parsed.success) return parsed.data
     noteDrift('auth-me')
     throw new Error('Session identity changed shape. Try again.')
+  }
+}
+
+/**
+ * Maps a JSON-RPC error code to a human diagnosis. Unknown codes render
+ * with their numeric value, never a generic blob.
+ *
+ * @param code - Numeric RPC error code.
+ * @param message - Server message, or null when absent.
+ * @returns A user-safe diagnosis naming the contract fault.
+ */
+export function mcpErrorMessage(code: number, message: string | null): string {
+  const detail = message !== null && message.length > 0 ? `: ${message}` : ''
+  switch (code) {
+    case -32700:
+      return `Parse error${detail}. The request was not valid JSON.`
+    case -32600:
+      return `Invalid request${detail}. Check the envelope shape.`
+    case -32601:
+      return `Method not found${detail}. The tool or method is unknown.`
+    case -32602:
+      return `Invalid params${detail}. Check the tool arguments.`
+    case -32603:
+      return `Tool failed${detail}. Retry, or inspect the tool logs.`
+    case -32020:
+      return `Header mismatch${detail}. Check protocol headers.`
+    case -32021:
+      return `Missing capability${detail}. The server lacks a required feature.`
+    case -32022:
+      return `Unsupported protocol version${detail}. Negotiate a listed version.`
+    default:
+      return `Tool error (${String(code)})${detail}.`
   }
 }
 

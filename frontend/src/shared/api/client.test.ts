@@ -4,6 +4,7 @@ import {
   GatewayClient,
   isStreamingEnabled,
   keyFingerprint,
+  mcpErrorMessage,
   parseGatewayErrorCode,
   parseRateLimit,
   resolveApiBase,
@@ -70,13 +71,33 @@ describe('wire drift', () => {
     ])
   })
 
-  it('accepts the live bare-array approvals shape', async () => {
-    stubJson([{ approvalId: 'a1', toolName: 't', requestedAt: 'r', requestedBy: 'b' }])
-    await expect(new GatewayClient().hitlPending()).resolves.toEqual({
-      approvals: [{ approvalId: 'a1', toolName: 't', requestedAt: 'r', requestedBy: 'b' }],
-    })
+  it('reads the spec-shaped approvals envelope with server identity', async () => {
+    const row = {
+      tokenId: '9f8e7d6c5b4a3210',
+      toolName: 'postgres__run_query',
+      serverName: 'postgres',
+      ownerId: 'tenant-corp',
+      keyName: 'production-key',
+      createdAt: '2026-09-01T12:00:00Z',
+      expiresAt: '2026-09-01T12:05:00Z',
+    }
+    stubJson({ approvals: [row, { nope: true }] })
+    await expect(new GatewayClient().hitlPending()).resolves.toEqual({ approvals: [row] })
   })
 
+  it('hydrates decrypted approval args and returns decision receipts', async () => {
+    stubJson({ tokenId: 'abc', toolName: 't', args: { q: 'select 1' } })
+    const detail = await new GatewayClient().hitlDetail('9f8e7d6c5b4a32109f8e7d6c5b4a3210')
+    expect(detail).toMatchObject({ tokenId: 'abc' })
+    await expect(new GatewayClient().hitlDetail('bad id!')).rejects.toThrow(/lowercase hex/i)
+    stubJson({ status: 'APPROVED', tokenId: '9f8e7d6c5b4a3210', message: 'ok' })
+    await expect(
+      new GatewayClient().decideHitl('9f8e7d6c5b4a3210', true, {
+        reason: 'Looks safe',
+        decidedBy: 'on-call',
+      }),
+    ).resolves.toMatchObject({ status: 'APPROVED' })
+  })
   it('drops malformed rows but keeps valid ones', async () => {
     const drifted: string[] = []
     setDriftReporter((endpoint) => {
@@ -102,6 +123,241 @@ describe('wire drift', () => {
     const keys = await new GatewayClient().listKeys()
     expect(keys.keys.map((k) => k.name)).toEqual(['good'])
     expect(drifted).toEqual(['keys'])
+  })
+
+  it('searches the admin model catalog with defaults, clamping, and drift safety', async () => {
+    const seen: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: unknown) => {
+        seen.push(String(url))
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              models: [
+                {
+                  modelId: 'gpt-4o',
+                  provider: 'openai',
+                  mode: 'chat',
+                  inputCostPerToken: 0.000005,
+                  outputCostPerToken: 0.000015,
+                  cacheReadInputTokenCost: null,
+                  cacheCreationInputTokenCost: null,
+                  maxInputTokens: 128000,
+                  maxOutputTokens: 16384,
+                  qualityTier: 'FRONTIER',
+                  benchmarkRefs: null,
+                },
+                { modelId: 42 },
+              ],
+            }),
+            { headers: { 'content-type': 'application/json' } },
+          ),
+        )
+      }),
+    )
+    const out = await new GatewayClient().searchModelCatalog({
+      provider: 'openai',
+      q: 'gpt',
+      limit: 500,
+    })
+    expect(out.models.map((m) => m.modelId)).toEqual(['gpt-4o'])
+    expect(seen[0]).toContain('/v1/admin/model-catalog')
+    expect(seen[0]).toContain('limit=200')
+    stubJson({ models: {} })
+    await expect(new GatewayClient().searchModelCatalog()).resolves.toEqual({ models: [] })
+  })
+
+  it('sets and revokes the self-service default key with hash validation', async () => {
+    const seen: string[] = []
+    let method = 'PUT'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: unknown, init?: { method?: string }) => {
+        seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
+        method = init?.method ?? 'GET'
+        return Promise.resolve(new Response(null, { status: 204 }))
+      }),
+    )
+    const hash = 'a'.repeat(64)
+    await new GatewayClient().setDefaultKey(hash)
+    expect(seen[0]).toContain('/v1/me/keys/default')
+    expect(method).toBe('PUT')
+    await new GatewayClient().revokeOwnKey(hash)
+    expect(seen[1]).toContain(`/v1/me/keys/${hash}/revoke`)
+    expect(() => new GatewayClient().setDefaultKey('short')).toThrow(/64-char/i)
+    expect(() => new GatewayClient().revokeOwnKey('short')).toThrow(/64-char/i)
+  })
+
+  it('creates invites and manages notifications with contract validation', async () => {
+    stubJson({ link: 'http://x/redeem?token=abc', emailed: false })
+    await expect(new GatewayClient().createInvite({})).resolves.toMatchObject({ emailed: false })
+    stubJson([
+      {
+        id: 'n1',
+        scope: 'budgets',
+        channel: 'webhook',
+        target: 'https://ops.example.com/hook',
+        secretRef: null,
+        minSeverity: 'warning',
+        createdAt: '2026-09-01T12:00:00Z',
+      },
+      { id: 7 },
+    ])
+    const notes = await new GatewayClient().listNotifications('budgets')
+    expect(notes.notifications.map((n) => n.id)).toEqual(['n1'])
+    await expect(new GatewayClient().listNotifications('  ')).rejects.toThrow(/scope is required/i)
+    await expect(
+      new GatewayClient().createNotification({ scope: 's', channel: 'pager', target: 't' }),
+    ).rejects.toThrow(/channel must be/i)
+    stubJson({})
+    await new GatewayClient().setUserDisabled('123e4567-e89b-12d3-a456-426614174000', true)
+    await new GatewayClient().deleteUser('123e4567-e89b-12d3-a456-426614174000')
+    await new GatewayClient().deleteNotification('123e4567-e89b-12d3-a456-426614174000')
+  })
+
+  it('reads budget balance and holds without fabricating spend', async () => {
+    stubJson({
+      level: 'KEY',
+      subject: 'abc',
+      minuteLimitMicros: 1000,
+      minuteSpentMicros: 100,
+      monthLimitMicros: 10000,
+      monthSpentMicros: 500,
+    })
+    await expect(new GatewayClient().getBudgetBalance('KEY', 'abc')).resolves.toMatchObject({
+      minuteSpentMicros: 100,
+    })
+    stubJson({
+      requestId: 'r1',
+      subject: 'abc',
+      heldMicros: 50,
+      settledMicros: null,
+      state: 'HOLD',
+    })
+    await expect(new GatewayClient().getBudgetHold('r1')).resolves.toMatchObject({ state: 'HOLD' })
+    stubJson({ nope: true })
+    await expect(new GatewayClient().getBudgetHold('r1')).resolves.toBeNull()
+  })
+
+  it('updates and deletes budgets with full-replace semantics', async () => {
+    const seen: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: unknown, init?: { method?: string }) => {
+        seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
+        if ((init?.method ?? 'GET') === 'DELETE') {
+          return Promise.resolve(new Response(null, { status: 204 }))
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: 'b1',
+              level: 'KEY',
+              subjectId: 'abc',
+              minuteMicros: 1000,
+              monthMicros: 0,
+              webhookUrl: null,
+              createdAt: '2026-09-01T12:00:00Z',
+              updatedAt: '2026-09-01T12:00:00Z',
+            }),
+            { headers: { 'content-type': 'application/json' } },
+          ),
+        )
+      }),
+    )
+    await expect(
+      new GatewayClient().updateBudget('b1', { minuteMicros: 1000, monthMicros: 0 }),
+    ).resolves.toMatchObject({ id: 'b1' })
+    expect(seen[0]).toContain('/v1/admin/budgets/b1')
+    await new GatewayClient().deleteBudget('b1')
+    expect(seen[1]).toContain('/v1/admin/budgets/b1')
+  })
+
+  it('reads cache tiers with nullable dead-tier metrics', async () => {
+    stubJson({
+      generatedAt: '2026-09-01T12:00:00Z',
+      accounting: { reachable: false },
+      cache: {
+        reachable: true,
+        usedBytes: 1024,
+        maxBytes: 4096,
+        usedPercent: 25,
+        maxmemoryPolicy: 'allkeys-lru',
+        evictedKeysTotal: 3,
+        keyspaceHits: 100,
+        keyspaceMisses: 10,
+      },
+    })
+    const tiers = await new GatewayClient().cacheTiers()
+    expect(tiers.accounting.reachable).toBe(false)
+    expect(tiers.accounting.usedBytes).toBeNull()
+    expect(tiers.cache.usedPercent).toBe(25)
+  })
+
+  it('reports purge counts from the full purge receipt', async () => {
+    stubJson({
+      success: true,
+      message: 'Purged cache for tenant t: 7 keys',
+      evictedScope: 't',
+      evictedKeys: 7,
+    })
+    await expect(new GatewayClient().purgeCache('t')).resolves.toMatchObject({ evictedKeys: 7 })
+  })
+
+  it('reads single circuits and MCP circuits with full snapshots', async () => {
+    stubJson({
+      provider: 'openai',
+      state: 'CLOSED',
+      failures: 0,
+      cooldownMsRemaining: 0,
+      halfOpenProbe: false,
+    })
+    await expect(new GatewayClient().getCircuit('openai')).resolves.toMatchObject({
+      failures: 0,
+    })
+    await expect(new GatewayClient().resetCircuit('openai')).resolves.toMatchObject({
+      cooldownMsRemaining: 0,
+    })
+    stubJson([
+      {
+        provider: 'postgres',
+        state: 'OPEN',
+        failures: 3,
+        cooldownMsRemaining: 1000,
+        halfOpenProbe: false,
+      },
+    ])
+    const mcp = await new GatewayClient().listMcpCircuits()
+    expect(mcp.circuits.map((c) => c.provider)).toEqual(['postgres'])
+    stubJson({
+      provider: 'postgres',
+      state: 'CLOSED',
+      failures: 0,
+      cooldownMsRemaining: 0,
+      halfOpenProbe: false,
+    })
+    await expect(new GatewayClient().resetMcpCircuit('postgres')).resolves.toMatchObject({
+      state: 'CLOSED',
+    })
+  })
+
+  it('reads model quality as rated-or-null and writes with tier validation', async () => {
+    stubJson({
+      modelId: 'gpt-4o',
+      tier: 'FRONTIER',
+      benchmarkRefs: null,
+      updatedAt: '2026-09-01T12:00:00Z',
+    })
+    await expect(new GatewayClient().getModelQuality('gpt-4o')).resolves.toMatchObject({
+      tier: 'FRONTIER',
+    })
+    await expect(
+      new GatewayClient().setModelQuality('gpt-4o', { tier: 'STANDARD' }),
+    ).resolves.toMatchObject({ modelId: 'gpt-4o' })
+    await expect(new GatewayClient().setModelQuality('gpt-4o', { tier: 'fancy' })).rejects.toThrow(
+      /tier must be FRONTIER, STANDARD, or BUDGET/i,
+    )
   })
 
   it('degrades drifted summaries to zeros with a notice', async () => {
@@ -131,7 +387,23 @@ describe('wire drift', () => {
     const page = await new GatewayClient().ledgerLogs(0, 10)
     expect(page.content).toEqual([])
     stubJson({
-      content: [{ requestId: 'r1', model: 'm', costUsdMicros: 5, createdAt: 't' }, { nope: true }],
+      content: [
+        {
+          id: 'u1',
+          requestId: 'r1',
+          ownerId: 'tenant-corp',
+          provider: 'openai',
+          model: 'm',
+          promptTokens: 8,
+          completionTokens: 4,
+          totalTokens: 12,
+          costUsdMicros: 5,
+          costUsd: '0.000005',
+          durationMs: 41,
+          createdAt: 't',
+        },
+        { nope: true },
+      ],
       page: 0,
       size: 10,
       totalElements: 2,
@@ -141,6 +413,43 @@ describe('wire drift', () => {
     const mixed = await new GatewayClient().ledgerLogs(0, 10)
     expect(mixed.content.map((e) => e.requestId)).toEqual(['r1'])
     expect(drifted).toEqual(['ledger-entries', 'ledger-entries'])
+  })
+
+  it('scopes ledger pages with server filters and sort', async () => {
+    const seen: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: unknown) => {
+        seen.push(String(url))
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [],
+              page: 0,
+              size: 25,
+              totalElements: 0,
+              totalPages: 0,
+              hasNext: false,
+            }),
+            { headers: { 'content-type': 'application/json' } },
+          ),
+        )
+      }),
+    )
+    await new GatewayClient().ledgerLogs(0, 25, {
+      ownerId: 'tenant-corp',
+      provider: 'openai',
+      model: 'gpt-4o',
+      from: '2026-09-01T00:00:00Z',
+      to: '2026-09-26T00:00:00Z',
+      sort: 'costUsdMicros',
+    })
+    expect(seen[0]).toContain('ownerId=tenant-corp')
+    expect(seen[0]).toContain('provider=openai')
+    expect(seen[0]).toContain('model=gpt-4o')
+    expect(seen[0]).toContain('sort=costUsdMicros')
+    await new GatewayClient().ledgerLogs(0, 25)
+    expect(seen[1]).not.toContain('ownerId=')
   })
 
   it('reads a drifted receipt as gone, never fabricated', async () => {
@@ -473,6 +782,14 @@ describe('safeErrorMessage', () => {
   it('maps unlisted statuses to their HTTP code', () => {
     expect(safeErrorMessage(418, '')).toContain('HTTP 418')
   })
+
+  it('maps conflict, payload, guardrail, and upstream statuses distinctly', () => {
+    expect(safeErrorMessage(409, '')).toContain('Conflict')
+    expect(safeErrorMessage(413, '')).toContain('too large')
+    expect(safeErrorMessage(422, '')).toContain('Unprocessable')
+    expect(safeErrorMessage(502, '')).toContain('provider')
+    expect(safeErrorMessage(504, '')).toContain('timed out')
+  })
 })
 
 describe('resolveApiBase', () => {
@@ -692,6 +1009,51 @@ describe('GatewayClient transport', () => {
     expect((sent as Record<string, unknown>).stream).toBe(false)
   })
 
+  it('passes extended chat and embedding fields through to the wire', async () => {
+    let chatBody: unknown = null
+    let embBody: unknown = null
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init: RequestInit) => {
+        if (url === '/v1/chat/completions') {
+          chatBody = JSON.parse((init.body ?? '{}') as string) as unknown
+          return Promise.resolve(
+            new Response(JSON.stringify({ choices: [], model: 'm' }), { status: 200 }),
+          )
+        }
+        embBody = JSON.parse((init.body ?? '{}') as string) as unknown
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [{ embedding: [0.1], index: 0 }],
+              model: 'e',
+              usage: { prompt_tokens: 5, total_tokens: 5 },
+            }),
+            { status: 200 },
+          ),
+        )
+      }),
+    )
+    await new GatewayClient({ base: '', token: 'gw-test' }).chat({
+      model: 'm',
+      messages: [{ role: 'user', content: 'hi' }],
+      temperature: 0.7,
+      top_p: 0.9,
+      seed: 42,
+      reasoning_effort: 'low',
+    })
+    expect(chatBody).toMatchObject({ temperature: 0.7, top_p: 0.9, seed: 42 })
+    const emb = await new GatewayClient({ base: '', token: 'gw-test' }).embeddings({
+      model: 'e',
+      input: 'hi',
+      dimensions: 512,
+      encoding_format: 'float',
+      user: 'op',
+    })
+    expect(embBody).toMatchObject({ dimensions: 512, encoding_format: 'float', user: 'op' })
+    expect(emb.usage).toMatchObject({ prompt_tokens: 5, total_tokens: 5 })
+  })
+
   it('prefers the session bearer over the constructor token', async () => {
     let headers: Record<string, string> = {}
     vi.stubGlobal(
@@ -809,9 +1171,15 @@ describe('GatewayClient transport', () => {
         url = input
         method = init?.method ?? ''
         return Promise.resolve(
-          new Response(JSON.stringify({ success: true, evictedScope: 'tenant-corp' }), {
-            status: 200,
-          }),
+          new Response(
+            JSON.stringify({
+              success: true,
+              message: 'Purged cache for tenant tenant-corp: 3 keys',
+              evictedScope: 'tenant-corp',
+              evictedKeys: 3,
+            }),
+            { status: 200 },
+          ),
         )
       }),
     )
@@ -1016,6 +1384,270 @@ describe('GatewayClient transport', () => {
     )
     const out = await new GatewayClient({ base: '', token: 'gw-test' }).mcpTools()
     expect(out).toEqual({ suspended: true, status: 403 })
+  })
+
+  it('invokes a tool and maps RPC error codes honestly', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ jsonrpc: '2.0', id: 'call-1', result: { ok: true } }), {
+            status: 200,
+          }),
+        ),
+      ),
+    )
+    await expect(
+      new GatewayClient({ base: '', token: 'gw-test' }).mcpCall('a__b', { q: 1 }),
+    ).resolves.toMatchObject({ ok: true })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: 'call-1',
+              error: { code: -32601, message: 'Method not found' },
+            }),
+            { status: 200 },
+          ),
+        ),
+      ),
+    )
+    await expect(
+      new GatewayClient({ base: '', token: 'gw-test' }).mcpCall('a__b', {}),
+    ).rejects.toThrow(/method not found/i)
+  })
+
+  it('names every RPC fault with and without server detail', () => {
+    expect(mcpErrorMessage(-32700, 'oops')).toContain('Parse error')
+    expect(mcpErrorMessage(-32600, null)).toContain('Invalid request')
+    expect(mcpErrorMessage(-32601, 'gone')).toContain('Method not found')
+    expect(mcpErrorMessage(-32602, '')).toContain('Invalid params')
+    expect(mcpErrorMessage(-32603, 'boom')).toContain('Tool failed')
+    expect(mcpErrorMessage(-32020, null)).toContain('Header mismatch')
+    expect(mcpErrorMessage(-32021, 'cap')).toContain('Missing capability')
+    expect(mcpErrorMessage(-32022, null)).toContain('Unsupported protocol version')
+    expect(mcpErrorMessage(-32099, 'weird')).toContain('-32099')
+    expect(mcpErrorMessage(-32099, null)).toContain('Tool error')
+  })
+
+  it('reads A2A agent cards and relays JSON-RPC with method gating', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              protocolVersion: '0.3',
+              name: 'Helper',
+              url: 'http://localhost:8080/v1/a2a/helper',
+              description: 'Helps out',
+              version: '1.0.0',
+            }),
+            { status: 200 },
+          ),
+        ),
+      ),
+    )
+    await expect(
+      new GatewayClient({ base: '', token: 'gw-test' }).a2aCard('helper'),
+    ).resolves.toMatchObject({ name: 'Helper' })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { done: true } }), {
+            status: 200,
+          }),
+        ),
+      ),
+    )
+    await expect(
+      new GatewayClient({ base: '', token: 'gw-test' }).a2aInvoke('helper', 'message/send', {
+        text: 'hi',
+      }),
+    ).resolves.toMatchObject({ done: true })
+    await expect(
+      new GatewayClient({ base: '', token: 'gw-test' }).a2aInvoke('helper', 'bogus/method', {}),
+    ).rejects.toThrow(/unknown A2A method/i)
+  })
+
+  it('probes alert webhooks and reports the receipt count', async () => {
+    stubJson({ received: 1 })
+    await expect(
+      new GatewayClient().sendAlertProbe([{ labels: { alertname: 'Test' } }]),
+    ).resolves.toEqual({ received: 1 })
+    await expect(new GatewayClient().sendAlertProbe([])).rejects.toThrow(/non-empty/i)
+    await expect(
+      new GatewayClient().sendAlertProbe(new Array(101).fill({ labels: {} })),
+    ).rejects.toThrow(/at most 100/i)
+    stubJson({ nope: true })
+    await expect(new GatewayClient().sendAlertProbe([{ labels: {} }])).rejects.toThrow(
+      /changed shape/i,
+    )
+  })
+
+  it('rejects contract-violating inputs before sending', async () => {
+    await expect(new GatewayClient().createInvite({ email: 'bad' })).rejects.toThrow(/valid/i)
+    await expect(
+      new GatewayClient().createNotification({ scope: '', channel: 'webhook', target: 't' }),
+    ).rejects.toThrow(/1-160/i)
+    await expect(
+      new GatewayClient().createNotification({ scope: 's', channel: 'webhook', target: '' }),
+    ).rejects.toThrow(/1-512/i)
+    await expect(
+      new GatewayClient().createNotification({
+        scope: 's',
+        channel: 'webhook',
+        target: 't',
+        secretRef: 'lowercase',
+      }),
+    ).rejects.toThrow(/environment variable/i)
+    await expect(
+      new GatewayClient().createNotification({
+        scope: 's',
+        channel: 'webhook',
+        target: 't',
+        minSeverity: 'info',
+      }),
+    ).rejects.toThrow(/warning or critical/i)
+    await expect(new GatewayClient().setModelQuality('m', { tier: 'fancy' })).rejects.toThrow(
+      /FRONTIER/i,
+    )
+    await expect(new GatewayClient().setModelQuality('', { tier: 'FRONTIER' })).rejects.toThrow(
+      /model id/i,
+    )
+    await expect(
+      new GatewayClient().setModelQuality('m', {
+        tier: 'FRONTIER',
+        benchmarkRefs: 'x'.repeat(2001),
+      }),
+    ).rejects.toThrow(/2000/i)
+    stubJson({ nope: true })
+    await expect(new GatewayClient().searchModelCatalog()).resolves.toEqual({ models: [] })
+    stubJson({ nope: true })
+    await expect(new GatewayClient().getModelQuality('m')).resolves.toBeNull()
+    stubJson({ nope: true })
+    await expect(new GatewayClient().getBudgetHold('r')).resolves.toBeNull()
+    stubJson({ nope: true })
+    await expect(new GatewayClient().getCircuit('openai')).resolves.toBeNull()
+    stubJson({ nope: true })
+    await expect(new GatewayClient().getMcpCircuit('postgres')).resolves.toBeNull()
+  })
+
+  it('rethrows non-404 failures from nullable single reads', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('x', { status: 500 }))),
+    )
+    await expect(new GatewayClient().getCircuit('openai')).rejects.toThrow(/HTTP 500/)
+    await expect(new GatewayClient().getMcpCircuit('postgres')).rejects.toThrow(/HTTP 500/)
+    await expect(new GatewayClient().getBudgetHold('r1')).rejects.toThrow(/HTTP 500/)
+    await expect(new GatewayClient().getModelQuality('m')).rejects.toThrow(/HTTP 500/)
+  })
+
+  it('reads unknown singles as null without throwing', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('x', { status: 404 }))),
+    )
+    await expect(new GatewayClient().getCircuit('openai')).resolves.toBeNull()
+    await expect(new GatewayClient().getMcpCircuit('postgres')).resolves.toBeNull()
+  })
+
+  it('rejects empty tool payloads and transport failures', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('null', { status: 200 }))),
+    )
+    await expect(new GatewayClient().mcpCall('a__b', {})).rejects.toThrow(/no payload/i)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('x', { status: 502 }))),
+    )
+    await expect(new GatewayClient().mcpCall('a__b', {})).rejects.toThrow(/could serve/i)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new Error('down'))),
+    )
+    await expect(new GatewayClient().mcpCall('a__b', {})).rejects.toThrow(/unreachable/i)
+  })
+
+  it('degrades non-array notification lists to empty', async () => {
+    stubJson({ notifications: {} })
+    await expect(new GatewayClient().listNotifications('budgets')).resolves.toEqual({
+      notifications: [],
+    })
+  })
+
+  it('relays agent faults with defaults and null results', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, error: {} }), { status: 200 }),
+        ),
+      ),
+    )
+    await expect(new GatewayClient().a2aInvoke('helper', 'message/send', {})).rejects.toThrow(
+      /tool failed/i,
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(new Response(JSON.stringify({ jsonrpc: '2.0', id: 1 }), { status: 200 })),
+      ),
+    )
+    await expect(new GatewayClient().a2aInvoke('helper', 'message/send', {})).resolves.toBeNull()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('null', { status: 200 }))),
+    )
+    await expect(new GatewayClient().a2aInvoke('helper', 'message/send', {})).rejects.toThrow(
+      /no payload/i,
+    )
+  })
+
+  it('decides approvals without rationale and maps RPC faults', async () => {
+    stubJson({ status: 'REJECTED', tokenId: 'abc', message: 'purged' })
+    await expect(new GatewayClient().decideHitl('abc', false)).resolves.toMatchObject({
+      status: 'REJECTED',
+    })
+    stubJson({ nope: true })
+    await expect(new GatewayClient().decideHitl('abc', true, { reason: 'x' })).rejects.toThrow(
+      /changed shape/i,
+    )
+    stubJson({ nope: true })
+    await expect(new GatewayClient().a2aCard('helper')).rejects.toThrow(/changed shape/i)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'Bad' } }),
+            { status: 200 },
+          ),
+        ),
+      ),
+    )
+    await expect(new GatewayClient().a2aInvoke('helper', 'message/send', {})).rejects.toThrow(
+      /invalid params/i,
+    )
+  })
+
+  it('rejects empty tool payloads and transport failures', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('null', { status: 200 }))),
+    )
+    await expect(new GatewayClient().mcpCall('a__b', {})).rejects.toThrow(/no payload/i)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('x', { status: 502 }))),
+    )
+    await expect(new GatewayClient().mcpCall('a__b', {})).rejects.toThrow(/could serve/i)
   })
 
   it('parses tools defensively, skipping malformed entries', async () => {

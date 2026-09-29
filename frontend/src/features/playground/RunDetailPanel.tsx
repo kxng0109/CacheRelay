@@ -24,6 +24,14 @@ export interface RunDetail {
   similarity?: string | null
   /** Entry age in seconds, cache hits only. */
   age?: string | null
+  /** Winning provider from `X-CacheRelay-Provider`. */
+  provider?: string | null
+  /** Attempted providers from `X-CacheRelay-Tried`. */
+  tried?: string | null
+  /** Merkle audit receipt. */
+  receipt?: string | null
+  /** True when the gateway replayed an idempotent response. */
+  replayed?: boolean
   /** Failure message, error runs only. */
   error?: string | null
 }
@@ -61,6 +69,14 @@ export function RunDetailPanel({ detail }: { detail: RunDetail }): React.JSX.Ele
         ? {}
         : { similarity: detail.similarity }),
       ...(detail.age === null || detail.age === undefined ? {} : { ageSeconds: detail.age }),
+      ...(detail.provider === null || detail.provider === undefined
+        ? {}
+        : { provider: detail.provider }),
+      ...(detail.tried === null || detail.tried === undefined ? {} : { tried: detail.tried }),
+      ...(detail.receipt === null || detail.receipt === undefined
+        ? {}
+        : { receipt: detail.receipt }),
+      ...(detail.replayed ? { replayed: true as const } : {}),
       ...(detail.error === null || detail.error === undefined ? {} : { error: detail.error }),
     },
     null,
@@ -151,6 +167,30 @@ export function RunDetailPanel({ detail }: { detail: RunDetail }): React.JSX.Ele
           <div className="flex justify-between gap-3">
             <dt className="text-ink-soft dark:text-parchment-soft">age</dt>
             <dd className="tnum">{detail.age}s</dd>
+          </div>
+        )}
+        {detail.provider === null || detail.provider === undefined ? null : (
+          <div className="flex justify-between gap-3">
+            <dt className="text-ink-soft dark:text-parchment-soft">provider</dt>
+            <dd>{detail.provider}</dd>
+          </div>
+        )}
+        {detail.tried === null || detail.tried === undefined ? null : (
+          <div className="flex justify-between gap-3">
+            <dt className="text-ink-soft dark:text-parchment-soft">tried</dt>
+            <dd>{detail.tried}</dd>
+          </div>
+        )}
+        {detail.receipt === null || detail.receipt === undefined ? null : (
+          <div className="flex justify-between gap-3">
+            <dt className="text-ink-soft dark:text-parchment-soft">receipt</dt>
+            <dd className="truncate">{detail.receipt}</dd>
+          </div>
+        )}
+        {detail.replayed !== true ? null : (
+          <div className="flex justify-between gap-3">
+            <dt className="text-ink-soft dark:text-parchment-soft">replayed</dt>
+            <dd>true</dd>
           </div>
         )}
       </dl>

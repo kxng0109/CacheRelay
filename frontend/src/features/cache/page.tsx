@@ -6,10 +6,12 @@ import { Plus } from 'lucide-react'
 import * as z from 'zod/v4'
 import { GatewayClient } from '../../shared/api/client.js'
 import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
+import { InspectorShell } from '../../shared/components/InspectorShell.js'
 import { Modal } from '../../shared/components/Modal.js'
 import { TableScroll } from '../../shared/components/TableScroll.js'
 import { formatBytes, formatMicros } from '../../shared/utils/format.js'
 import { toErrorMessage } from '../../shared/api/client.js'
+import type { BudgetRecord } from '../../shared/api/types.js'
 
 /**
  * Client-side webhook guard (defence in depth; the server is the control).
@@ -66,6 +68,360 @@ export function CachePage(): React.JSX.Element {
 }
 
 /**
+ * Live tier telemetry: fill, eviction, and hit/miss counters per tier.
+ *
+ * @remarks Backend truth (`AdminCacheController`): the probe is memoised;
+ * dead tiers degrade to absent metrics, never errors — `reachable` gates
+ * every numeric, and unknowns render as em dashes.
+ *
+ * @returns The tier telemetry panel.
+ */
+function TierPanel(): React.JSX.Element {
+  const tiers = useQuery({
+    queryKey: ['cache-tiers'],
+    queryFn: ({ signal }) => new GatewayClient().cacheTiers({ signal }),
+    retry: false,
+  })
+  if (tiers.isPending) {
+    return (
+      <p role="status" className="text-sm">
+        Loading tier telemetry…
+      </p>
+    )
+  }
+  if (tiers.error instanceof Error) {
+    return (
+      <p role="alert" className="text-sm text-danger dark:text-danger-soft">
+        {tiers.error.message}
+      </p>
+    )
+  }
+  if (tiers.data === undefined)
+    return (
+      <p role="status" className="text-sm">
+        Loading tier telemetry…
+      </p>
+    )
+  const rows = [
+    { name: 'accounting', stats: tiers.data.accounting },
+    { name: 'cache', stats: tiers.data.cache },
+  ]
+  return (
+    <section aria-label="Tier telemetry" className="space-y-2">
+      <h2 className="text-base font-semibold">Tier telemetry</h2>
+      <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+        generated {tiers.data.generatedAt}
+      </p>
+      <TableScroll>
+        <table className="w-full text-left text-sm">
+          <caption className="sr-only">Tier fill and hit counters</caption>
+          <thead className="sticky top-0 bg-paper dark:bg-night">
+            <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+              <th scope="col" className="py-2 pr-3 font-medium">
+                Tier
+              </th>
+              <th scope="col" className="py-2 pr-3 font-medium">
+                Reachable
+              </th>
+              <th scope="col" className="py-2 pr-3 text-right font-medium">
+                Used
+              </th>
+              <th scope="col" className="py-2 pr-3 text-right font-medium">
+                Fill
+              </th>
+              <th scope="col" className="py-2 pr-3 text-right font-medium">
+                Evicted
+              </th>
+              <th scope="col" className="py-2 text-right font-medium">
+                Hits / misses
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.name} className="border-t border-ink/10 dark:border-parchment/10">
+                <td className="py-2 pr-3 font-mono text-[13px]">{r.name}</td>
+                <td className="py-2 pr-3 text-[13px]">
+                  {r.stats.reachable ? 'yes' : `${r.name} unreachable`}
+                </td>
+                <td className="py-2 pr-3 text-right text-[13px] tnum">
+                  {r.stats.usedBytes === null ? '—' : formatBytes(r.stats.usedBytes)}
+                </td>
+                <td className="py-2 pr-3 text-right text-[13px] tnum">
+                  {r.stats.usedPercent === null ? '—' : `${String(r.stats.usedPercent)}%`}
+                </td>
+                <td className="py-2 pr-3 text-right text-[13px] tnum">
+                  {r.stats.evictedKeysTotal === null ? '—' : String(r.stats.evictedKeysTotal)}
+                </td>
+                <td className="py-2 text-right text-[13px] tnum">
+                  {r.stats.keyspaceHits === null || r.stats.keyspaceMisses === null
+                    ? '—'
+                    : `${String(r.stats.keyspaceHits)} / ${String(r.stats.keyspaceMisses)}`}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </TableScroll>
+    </section>
+  )
+}
+
+/**
+ * Budget inspector: live spend-vs-cap, cap editing, deletion, and hold
+ * lookup for one budget row.
+ *
+ * @remarks Backend truth: balance caps-vs-spend (absent caps read zero);
+ * update is full-replace (omitted caps mean no cap); delete snapshots
+ * spend into audit; holds read HOLD live and null when expired/unknown.
+ *
+ * @param props - Budget row plus selection clearing.
+ * @returns The budget inspector.
+ */
+function BudgetInspector({
+  budget,
+  onClose,
+}: {
+  budget: BudgetRecord
+  onClose: () => void
+}): React.JSX.Element {
+  const qc = useQueryClient()
+  const [minute, setMinute] = useState(String(budget.minuteMicros))
+  const [month, setMonth] = useState(String(budget.monthMicros))
+  const [confirming, setConfirming] = useState(false)
+  const [status, setStatus] = useState<string | null>(null)
+  const [problem, setProblem] = useState<string | null>(null)
+
+  const balance = useQuery({
+    queryKey: ['budget-balance', budget.level, budget.subjectId],
+    queryFn: ({ signal }) =>
+      new GatewayClient().getBudgetBalance(budget.level, budget.subjectId, { signal }),
+    retry: false,
+  })
+
+  const save = (): void => {
+    setProblem(null)
+    setStatus(null)
+    const client = new GatewayClient()
+    void client
+      .updateBudget(budget.id, {
+        minuteMicros: Number(minute),
+        monthMicros: Number(month),
+      })
+      .then(() => {
+        setStatus('Budget updated.')
+        return qc.invalidateQueries({ queryKey: ['budgets'] })
+      })
+      .catch((e: unknown) => {
+        setProblem(toErrorMessage(e, 'Budget update failed.'))
+      })
+  }
+
+  const remove = (): void => {
+    setProblem(null)
+    setStatus(null)
+    const client = new GatewayClient()
+    void client
+      .deleteBudget(budget.id)
+      .then(() => {
+        setStatus('Budget deleted.')
+        return qc.invalidateQueries({ queryKey: ['budgets'] })
+      })
+      .catch((e: unknown) => {
+        setProblem(toErrorMessage(e, 'Budget deletion failed.'))
+      })
+  }
+
+  return (
+    <InspectorShell label="Budget inspector" title={budget.subjectId} onClose={onClose}>
+      <dl className="space-y-2 text-[13px]">
+        <div className="flex justify-between gap-3">
+          <dt className="text-ink-soft dark:text-parchment-soft">Level</dt>
+          <dd className="font-mono">{budget.level}</dd>
+        </div>
+        <div className="flex justify-between gap-3">
+          <dt className="text-ink-soft dark:text-parchment-soft">Minute spent</dt>
+          <dd className="tnum">
+            {balance.data === undefined
+              ? '…'
+              : `${formatMicros(balance.data.minuteSpentMicros)} of ${formatMicros(balance.data.minuteLimitMicros)}`}
+          </dd>
+        </div>
+        <div className="flex justify-between gap-3">
+          <dt className="text-ink-soft dark:text-parchment-soft">Month spent</dt>
+          <dd className="tnum">
+            {balance.data === undefined
+              ? '…'
+              : `${formatMicros(balance.data.monthSpentMicros)} of ${formatMicros(balance.data.monthLimitMicros)}`}
+          </dd>
+        </div>
+      </dl>
+      {balance.error instanceof Error ? (
+        <p role="alert" className="text-[13px] text-danger dark:text-danger-soft">
+          {balance.error.message}
+        </p>
+      ) : null}
+      <div className="grid gap-2">
+        <div>
+          <label
+            htmlFor={`budget-edit-minute-${budget.id}`}
+            className="mb-1 block text-[13px] font-medium"
+          >
+            Minute cap (µ$)
+          </label>
+          <input
+            id={`budget-edit-minute-${budget.id}`}
+            inputMode="numeric"
+            value={minute}
+            onChange={(e) => {
+              setMinute(e.target.value)
+            }}
+            className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
+          />
+        </div>
+        <div>
+          <label
+            htmlFor={`budget-edit-month-${budget.id}`}
+            className="mb-1 block text-[13px] font-medium"
+          >
+            Month cap (µ$)
+          </label>
+          <input
+            id={`budget-edit-month-${budget.id}`}
+            inputMode="numeric"
+            value={month}
+            onChange={(e) => {
+              setMonth(e.target.value)
+            }}
+            className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
+          />
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={save}
+          className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+        >
+          Save caps
+        </button>
+        {confirming ? (
+          <span className="inline-flex items-center gap-2 text-[13px]">
+            Delete? Spend snapshots into audit.
+            <button
+              type="button"
+              onClick={remove}
+              className="rounded-md border border-danger/40 px-2 py-1 text-danger dark:text-danger-soft"
+            >
+              Yes, delete
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setConfirming(false)
+              }}
+              className="rounded-md border border-ink/15 px-2 py-1 dark:border-parchment/15"
+            >
+              No
+            </button>
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              setConfirming(true)
+            }}
+            className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+          >
+            Delete budget
+          </button>
+        )}
+      </div>
+      {status === null ? null : (
+        <p role="status" className="text-[13px]">
+          {status}
+        </p>
+      )}
+      {problem === null ? null : (
+        <p role="alert" className="text-[13px] text-danger dark:text-danger-soft">
+          {problem}
+        </p>
+      )}
+    </InspectorShell>
+  )
+}
+
+/**
+ * Hold lookup: one request id, live state or honest expiry.
+ *
+ * @remarks Backend truth: holds answer HOLD live and 404 when expired
+ * or unknown (reads as null, never fabricated).
+ *
+ * @returns The hold lookup section.
+ */
+function HoldLookup(): React.JSX.Element {
+  const [holdId, setHoldId] = useState('')
+  const [holdSought, setHoldSought] = useState<string | null>(null)
+  const hold = useQuery({
+    queryKey: ['budget-hold', holdSought],
+    queryFn: ({ signal }) => new GatewayClient().getBudgetHold(holdSought ?? '', { signal }),
+    enabled: holdSought !== null,
+    retry: false,
+  })
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="min-w-0 flex-1">
+          <label htmlFor="budget-hold-id" className="mb-1 block text-[13px] font-medium">
+            Hold request id
+          </label>
+          <input
+            id="budget-hold-id"
+            value={holdId}
+            autoComplete="off"
+            onChange={(e) => {
+              setHoldId(e.target.value)
+            }}
+            placeholder="request id"
+            className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setHoldSought(holdId.trim())
+          }}
+          disabled={holdId.trim().length === 0}
+          className="rounded-md border border-ink/15 px-3 py-2 text-[13px] disabled:cursor-not-allowed dark:border-parchment/15"
+        >
+          Inspect hold
+        </button>
+      </div>
+      {holdSought === null ? null : hold.isPending ? (
+        <p role="status" className="text-[13px]">
+          Loading hold…
+        </p>
+      ) : hold.data === undefined || hold.data === null ? (
+        <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
+          Hold expired or unknown.
+        </p>
+      ) : (
+        <dl className="space-y-2 text-[13px]">
+          <div className="flex justify-between gap-3">
+            <dt className="text-ink-soft dark:text-parchment-soft">State</dt>
+            <dd className="font-mono">{hold.data.state}</dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-ink-soft dark:text-parchment-soft">Held</dt>
+            <dd className="tnum">{formatMicros(hold.data.heldMicros)}</dd>
+          </div>
+        </dl>
+      )}
+    </div>
+  )
+}
+
+/**
  * Tier configuration, purge, budget caps, and budget creation.
  *
  * @remarks Behind the admin route guard; the session Bearer attaches
@@ -84,6 +440,7 @@ function CacheBoard(): React.JSX.Element {
   const [purgeScope, setPurgeScope] = useState('')
   const [budgetsCopied, setBudgetsCopied] = useState(false)
   const [budgetsCopyError, setBudgetsCopyError] = useState<string | null>(null)
+  const [selectedBudget, setSelectedBudget] = useState<string | null>(null)
 
   const stats = useQuery({
     queryKey: ['cache-stats'],
@@ -93,6 +450,10 @@ function CacheBoard(): React.JSX.Element {
     queryKey: ['budgets'],
     queryFn: ({ signal }) => new GatewayClient().listBudgets({ signal }),
   })
+  const inspectedBudget =
+    selectedBudget === null
+      ? null
+      : (budgets.data?.budgets.find((b) => b.id === selectedBudget) ?? null)
 
   const {
     register,
@@ -107,7 +468,7 @@ function CacheBoard(): React.JSX.Element {
       const scope = purgeScope.trim()
       const out = await new GatewayClient().purgeCache(scope.length === 0 ? undefined : scope)
       setConfirmingPurge(false)
-      setNotice(`Cache purged (${out.evictedScope}).`)
+      setNotice(`Cache purged (${out.evictedScope}, ${String(out.evictedKeys)} keys).`)
       await qc.invalidateQueries({ queryKey: ['cache-stats'] })
     } catch (e) {
       setNotice(toErrorMessage(e, 'Purge failed.'))
@@ -280,6 +641,7 @@ function CacheBoard(): React.JSX.Element {
           </div>
         </dl>
       )}
+      <TierPanel />
       <div className="space-y-1">
         <div className="flex flex-wrap items-baseline gap-2">
           <h2 className="text-base font-semibold">Budgets</h2>
@@ -363,8 +725,11 @@ function CacheBoard(): React.JSX.Element {
                 <th scope="col" className="py-2 pr-3 text-right font-medium">
                   Minute (µ$)
                 </th>
-                <th scope="col" className="py-2 text-right font-medium">
+                <th scope="col" className="py-2 pr-3 text-right font-medium">
                   Month (µ$)
+                </th>
+                <th scope="col" className="py-2 text-right font-medium">
+                  <span className="sr-only">Actions</span>
                 </th>
               </tr>
             </thead>
@@ -380,12 +745,24 @@ function CacheBoard(): React.JSX.Element {
                       formatMicros(b.minuteMicros)
                     )}
                   </td>
-                  <td className="py-2 text-right text-[13px] tnum">
+                  <td className="py-2 pr-3 text-right text-[13px] tnum">
                     {b.monthMicros === 0 ? (
                       <span className="text-ink-soft dark:text-parchment-soft">no cap</span>
                     ) : (
                       formatMicros(b.monthMicros)
                     )}
+                  </td>
+                  <td className="py-2 text-right">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedBudget(b.id === selectedBudget ? null : b.id)
+                      }}
+                      aria-label={`Inspect budget ${b.subjectId}`}
+                      className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+                    >
+                      Inspect
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -393,6 +770,15 @@ function CacheBoard(): React.JSX.Element {
           </table>
         </TableScroll>
       )}
+      {selectedBudget === null || inspectedBudget === null ? null : (
+        <BudgetInspector
+          budget={inspectedBudget}
+          onClose={() => {
+            setSelectedBudget(null)
+          }}
+        />
+      )}
+      <HoldLookup />
       {creatingBudget ? (
         <Modal
           label="Create budget"

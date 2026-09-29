@@ -26,7 +26,10 @@ export function ApprovalsPage(): React.JSX.Element {
  * Pending gated tool calls with approve/reject decisions.
  *
  * @remarks Behind the admin route guard; the session Bearer attaches
- * automatically, so no credential prop is needed.
+ * automatically, so no credential prop is needed. Identity is the path
+ * token id (never a separate approval id). Reviewers inspect decrypted
+ * tool args before deciding, may attach a rationale, and the server
+ * `{ status, tokenId, message }` receipt drives the toast.
  *
  * @returns The approvals board.
  */
@@ -35,6 +38,8 @@ function ApprovalsBoard(): React.JSX.Element {
   const pushToast = useToastStore((s) => s.push)
   const username = useAuthStore((s) => s.session?.username ?? '')
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set())
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [reasons, setReasons] = useState<Record<string, string>>({})
 
   const pending = useQuery({
     queryKey: ['hitl-pending'],
@@ -42,19 +47,22 @@ function ApprovalsBoard(): React.JSX.Element {
     refetchInterval: 10_000,
   })
 
-  const decide = async (approvalId: string, approved: boolean): Promise<void> => {
-    setBusy((prev) => new Set(prev).add(approvalId))
+  const decide = async (tokenId: string, approved: boolean): Promise<void> => {
+    setBusy((prev) => new Set(prev).add(tokenId))
     try {
-      await new GatewayClient().decideHitl(approvalId, approved, username)
-      const at = new Date().toISOString().slice(11, 19)
-      pushToast('success', `${approvalId}: ${approved ? 'approved' : 'rejected'} · ${at} UTC.`)
+      const reason = reasons[tokenId]?.trim()
+      const receipt = await new GatewayClient().decideHitl(tokenId, approved, {
+        ...(reason === undefined || reason.length === 0 ? {} : { reason }),
+        ...(username.length === 0 ? {} : { decidedBy: username }),
+      })
+      pushToast('success', `${receipt.tokenId}: ${receipt.message}`)
       await qc.invalidateQueries({ queryKey: ['hitl-pending'] })
     } catch (e) {
-      pushToast('error', `${approvalId}: ${toErrorMessage(e, 'Decision failed.')}`)
+      pushToast('error', `${tokenId}: ${toErrorMessage(e, 'Decision failed.')}`)
     } finally {
       setBusy((prev) => {
         const next = new Set(prev)
-        next.delete(approvalId)
+        next.delete(tokenId)
         return next
       })
     }
@@ -77,48 +85,123 @@ function ApprovalsBoard(): React.JSX.Element {
       ) : (
         <ul className="space-y-2">
           {pending.data.approvals.map((a) => {
-            const working = busy.has(a.approvalId)
+            const working = busy.has(a.tokenId)
+            const open = expanded === a.tokenId
             return (
               <li
-                key={a.approvalId}
-                className="flex flex-wrap items-center gap-3 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent"
+                key={a.tokenId}
+                className="space-y-2 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent"
               >
-                <div className="min-w-0 flex-1">
-                  <p className="font-mono text-[13px]">{a.toolName}</p>
-                  <p
-                    className="text-[13px] text-ink-soft tnum dark:text-parchment-soft"
-                    title={a.requestedAt}
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-mono text-[13px]">{a.toolName}</p>
+                    <p
+                      className="text-[13px] text-ink-soft tnum dark:text-parchment-soft"
+                      title={a.createdAt}
+                    >
+                      {a.serverName} · {a.keyName} · expires {formatShortDate(a.expiresAt)}
+                    </p>
+                    <p
+                      className="truncate font-mono text-xs text-ink-soft dark:text-parchment-soft"
+                      title={a.tokenId}
+                    >
+                      {a.tokenId}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExpanded(open ? null : a.tokenId)
+                    }}
+                    aria-expanded={open}
+                    className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
                   >
-                    {a.approvalId} · {formatShortDate(a.requestedAt)}
-                  </p>
+                    {open ? 'Hide args' : 'Inspect args'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={working}
+                    aria-busy={working}
+                    onClick={() => {
+                      void decide(a.tokenId, true)
+                    }}
+                    className="rounded-md bg-success px-3 py-2 text-[13px] text-white disabled:cursor-not-allowed disabled:bg-ink-soft disabled:text-paper dark:disabled:bg-parchment-soft dark:disabled:text-night"
+                  >
+                    {working ? 'Working…' : 'Approve'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={working}
+                    aria-busy={working}
+                    onClick={() => {
+                      void decide(a.tokenId, false)
+                    }}
+                    className="rounded-md border border-danger/40 px-3 py-2 text-[13px] text-danger disabled:cursor-not-allowed disabled:border-ink-soft disabled:text-ink-soft dark:text-danger-soft dark:disabled:border-parchment-soft dark:disabled:text-parchment-soft"
+                  >
+                    {working ? 'Working…' : 'Reject'}
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  disabled={working}
-                  aria-busy={working}
-                  onClick={() => {
-                    void decide(a.approvalId, true)
-                  }}
-                  className="rounded-md bg-success px-3 py-2 text-[13px] text-white disabled:cursor-not-allowed disabled:bg-ink-soft disabled:text-paper dark:disabled:bg-parchment-soft dark:disabled:text-night"
-                >
-                  {working ? 'Working…' : 'Approve'}
-                </button>
-                <button
-                  type="button"
-                  disabled={working}
-                  aria-busy={working}
-                  onClick={() => {
-                    void decide(a.approvalId, false)
-                  }}
-                  className="rounded-md border border-danger/40 px-3 py-2 text-[13px] text-danger disabled:cursor-not-allowed disabled:border-ink-soft disabled:text-ink-soft dark:text-danger-soft dark:disabled:border-parchment-soft dark:disabled:text-parchment-soft"
-                >
-                  {working ? 'Working…' : 'Reject'}
-                </button>
+                <div>
+                  <label
+                    htmlFor={`approve-reason-${a.tokenId}`}
+                    className="mb-1 block text-[13px] font-medium"
+                  >
+                    Rationale (optional, stored with the decision)
+                  </label>
+                  <input
+                    id={`approve-reason-${a.tokenId}`}
+                    value={reasons[a.tokenId] ?? ''}
+                    autoComplete="off"
+                    onChange={(e) => {
+                      const value = e.target.value
+                      setReasons((prev) => ({ ...prev, [a.tokenId]: value }))
+                    }}
+                    placeholder="Looks safe"
+                    className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm dark:border-parchment/15"
+                  />
+                </div>
+                {open ? <ApprovalArgs tokenId={a.tokenId} /> : null}
               </li>
             )
           })}
         </ul>
       )}
     </div>
+  )
+}
+
+/**
+ * Decrypted tool arguments for one pending approval.
+ *
+ * @remarks Sealed values arrive decrypted for review; undecryptable
+ * values render as a placeholder — never a throw, never a blank.
+ *
+ * @param props - Approval token id to hydrate.
+ * @returns The args viewer.
+ */
+function ApprovalArgs({ tokenId }: { tokenId: string }): React.JSX.Element {
+  const detail = useQuery({
+    queryKey: ['hitl-detail', tokenId],
+    queryFn: ({ signal }) => new GatewayClient().hitlDetail(tokenId, { signal }),
+    retry: false,
+  })
+  if (detail.isPending) {
+    return (
+      <p role="status" className="text-[13px]">
+        Loading invocation args…
+      </p>
+    )
+  }
+  if (detail.error instanceof Error) {
+    return (
+      <p role="alert" className="text-[13px] text-danger dark:text-danger-soft">
+        {detail.error.message}
+      </p>
+    )
+  }
+  return (
+    <pre className="overflow-x-auto rounded-md bg-ink/4 p-3 font-mono text-xs whitespace-pre-wrap dark:bg-parchment/6">
+      {JSON.stringify(detail.data ?? 'No args returned.', null, 2)}
+    </pre>
   )
 }

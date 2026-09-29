@@ -35,7 +35,17 @@ const EmbeddingsPage = lazy(() =>
 const ApprovalsPage = lazy(() =>
   import('../features/approvals/page.js').then((m) => ({ default: m.ApprovalsPage })),
 )
+const NotificationsPage = lazy(() =>
+  import('../features/notifications/page.js').then((m) => ({ default: m.NotificationsPage })),
+)
+const InvitesPage = lazy(() =>
+  import('../features/invites/page.js').then((m) => ({ default: m.InvitesPage })),
+)
+const UsersPage = lazy(() =>
+  import('../features/users/page.js').then((m) => ({ default: m.UsersPage })),
+)
 const McpPage = lazy(() => import('../features/mcp/page.js').then((m) => ({ default: m.McpPage })))
+const A2aPage = lazy(() => import('../features/a2a/page.js').then((m) => ({ default: m.A2aPage })))
 const ObservabilityPage = lazy(() =>
   import('../features/observability/page.js').then((m) => ({ default: m.ObservabilityPage })),
 )
@@ -159,7 +169,11 @@ export const router = createBrowserRouter([
       { path: 'cache', element: guard(<CachePage />) },
       { path: 'embeddings', element: suspend(<EmbeddingsPage />) },
       { path: 'approvals', element: guard(<ApprovalsPage />) },
+      { path: 'notifications', element: guard(<NotificationsPage />) },
+      { path: 'invites', element: guard(<InvitesPage />) },
+      { path: 'users', element: guard(<UsersPage />) },
       { path: 'mcp', element: suspend(<McpPage />) },
+      { path: 'a2a', element: suspend(<A2aPage />) },
       { path: 'observability', element: authed(<ObservabilityPage />) },
       { path: '*', element: <NotFound /> },
     ],

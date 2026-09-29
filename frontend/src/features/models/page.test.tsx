@@ -68,6 +68,11 @@ function providersOk() {
 
 beforeEach(() => {
   server.use(providersOk())
+  // Quality reads fire per opened inspector; default to unrated so
+  // alias-focused tests stay isolated (scenarios override).
+  server.use(
+    http.get('*/v1/admin/model-quality/:id', () => new HttpResponse(null, { status: 404 })),
+  )
 })
 
 describe('ModelsPage', () => {
@@ -670,5 +675,156 @@ describe('ModelsPage', () => {
     expect(screen.getByRole('combobox', { name: /provider 1/i })).toHaveTextContent(
       /retired \(removed\)/i,
     )
+  })
+
+  it('shows quality as unrated with a rate action in the inspector', async () => {
+    const user = userEvent.setup()
+    server.use(
+      listOk(),
+      http.get('*/v1/admin/model-quality/:id', () => new HttpResponse(null, { status: 404 })),
+    )
+    renderApp(<ModelsPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByRole('button', { name: /inspect alias db-fast/i }))
+    const inspector = screen.getByRole('dialog', { name: /alias inspector/i })
+    expect(await within(inspector).findByText(/unrated/i)).toBeInTheDocument()
+    expect(within(inspector).getByRole('button', { name: /rate quality/i })).toBeInTheDocument()
+  })
+
+  it('rates quality from the inspector and announces the outcome', async () => {
+    const user = userEvent.setup()
+    let body: unknown = null
+    server.use(
+      listOk(),
+      http.get('*/v1/admin/model-quality/:id', () => new HttpResponse(null, { status: 404 })),
+      http.put('*/v1/admin/model-quality/:id', async ({ request }) => {
+        body = await request.json()
+        return HttpResponse.json({
+          modelId: 'db-fast',
+          tier: 'STANDARD',
+          benchmarkRefs: null,
+          updatedAt: '2026-09-01T12:00:00Z',
+        })
+      }),
+    )
+    renderApp(<ModelsPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByRole('button', { name: /inspect alias db-fast/i }))
+    const inspector = screen.getByRole('dialog', { name: /alias inspector/i })
+    await user.type(within(inspector).getByLabelText(/benchmark refs/i), 'lmarena:12')
+    await selectOption(user, /tier/i, 'STANDARD')
+    await user.click(within(inspector).getByRole('button', { name: /rate quality/i }))
+    await waitFor(() => {
+      expect(within(inspector).getByText(/quality rated standard/i)).toBeInTheDocument()
+    })
+    expect(body).toMatchObject({ tier: 'STANDARD', benchmarkRefs: 'lmarena:12' })
+  })
+
+  it('shows rated quality with refs and clears back to unrated', async () => {
+    const user = userEvent.setup()
+    let rated: Record<string, unknown> | null = {
+      modelId: 'db-fast',
+      tier: 'FRONTIER',
+      benchmarkRefs: 'lmarena:12',
+      updatedAt: '2026-09-01T12:00:00Z',
+    }
+    server.use(
+      listOk(),
+      http.get('*/v1/admin/model-quality/:id', () => HttpResponse.json(rated)),
+      http.delete('*/v1/admin/model-quality/:id', () => {
+        rated = null
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderApp(<ModelsPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByRole('button', { name: /inspect alias db-fast/i }))
+    const inspector = screen.getByRole('dialog', { name: /alias inspector/i })
+    expect(await within(inspector).findByText('lmarena:12')).toBeInTheDocument()
+    await user.click(within(inspector).getByRole('button', { name: /clear to unrated/i }))
+    await waitFor(() => {
+      expect(within(inspector).getByText(/quality cleared/i)).toBeInTheDocument()
+    })
+  })
+
+  it('reports quality fetch and rate failures honestly', async () => {
+    const user = userEvent.setup()
+    server.use(
+      listOk(),
+      http.get('*/v1/admin/model-quality/:id', () => new HttpResponse('x', { status: 500 })),
+    )
+    renderApp(<ModelsPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByRole('button', { name: /inspect alias db-fast/i }))
+    const inspector = screen.getByRole('dialog', { name: /alias inspector/i })
+    expect(await within(inspector).findByRole('alert')).toHaveTextContent(/HTTP 500/)
+  })
+
+  it('reports quality save and clear failures honestly', async () => {
+    const user = userEvent.setup()
+    server.use(
+      listOk(),
+      http.get('*/v1/admin/model-quality/:id', () =>
+        HttpResponse.json({
+          modelId: 'db-fast',
+          tier: 'FRONTIER',
+          benchmarkRefs: null,
+          updatedAt: '2026-09-01T12:00:00Z',
+        }),
+      ),
+      http.put('*/v1/admin/model-quality/:id', () => new HttpResponse('x', { status: 400 })),
+      http.delete('*/v1/admin/model-quality/:id', () => new HttpResponse('x', { status: 404 })),
+    )
+    renderApp(<ModelsPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByRole('button', { name: /inspect alias db-fast/i }))
+    const inspector = screen.getByRole('dialog', { name: /alias inspector/i })
+    await within(inspector).findByRole('button', { name: /clear to unrated/i })
+    await user.click(within(inspector).getByRole('button', { name: /rate quality/i }))
+    expect(await within(inspector).findByText(/invalid request/i)).toBeInTheDocument()
+    await user.click(within(inspector).getByRole('button', { name: /clear to unrated/i }))
+    expect(await within(inspector).findByText(/not found/i)).toBeInTheDocument()
+  })
+
+  it('rejects replace plans with no provider steps', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/models', () =>
+        HttpResponse.json({
+          models: [{ name: 'empty-db', chain: [], strategy: 'SEQUENTIAL', source: 'database' }],
+        }),
+      ),
+    )
+    renderApp(<ModelsPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByRole('button', { name: /inspect alias empty-db/i }))
+    const inspector = screen.getByRole('dialog', { name: /alias inspector/i })
+    await user.click(within(inspector).getByRole('button', { name: /^replace plan$/i }))
+    const editor = await screen.findByRole('heading', { name: /replace plan:/i })
+    const editorCard = editor.closest('div')
+    expect(editorCard).not.toBeNull()
+    if (editorCard instanceof HTMLElement) {
+      await user.click(within(editorCard).getByRole('button', { name: /^replace plan$/i }))
+    }
+    expect(await screen.findByText(/at least one provider step/i)).toBeInTheDocument()
+  })
+
+  it('toggles file-only aliases through the sr-only inspect control', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/models', () =>
+        HttpResponse.json({
+          models: [{ name: 'file-only', chain: [], strategy: 'SEQUENTIAL', source: 'file' }],
+        }),
+      ),
+    )
+    renderApp(<ModelsPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByRole('button', { name: /inspect alias file-only/i }))
+    expect(await screen.findByRole('dialog', { name: /alias inspector/i })).toBeInTheDocument()
+    await user.click(within(table).getByRole('button', { name: /inspect alias file-only/i }))
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /alias inspector/i })).not.toBeInTheDocument()
+    })
   })
 })

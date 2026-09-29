@@ -177,6 +177,161 @@ function ChainEditor({
 }
 
 /**
+ * Model quality editor: rated-or-unrated state plus rate/change/clear.
+ *
+ * @remarks Backend truth (`AdminModelQualityController`): 404 reads as
+ * the unrated state; PUT is create-or-replace with an uppercase tier;
+ * DELETE unrates. Blank refs send as null.
+ *
+ * @param props - Model id under inspection.
+ * @returns The quality section for the alias inspector.
+ */
+function QualityEditor({ modelId }: { modelId: string }): React.JSX.Element {
+  const qc = useQueryClient()
+  const [tier, setTier] = useState('FRONTIER')
+  const [refs, setRefs] = useState('')
+  const [status, setStatus] = useState<string | null>(null)
+  const [problem, setProblem] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const quality = useQuery({
+    queryKey: ['model-quality', modelId],
+    queryFn: ({ signal }) => new GatewayClient().getModelQuality(modelId, { signal }),
+    retry: false,
+  })
+  const rated = quality.data ?? null
+
+  const save = (): void => {
+    setProblem(null)
+    setStatus(null)
+    setBusy(true)
+    const client = new GatewayClient()
+    void client
+      .setModelQuality(modelId, {
+        tier,
+        benchmarkRefs: refs.trim().length === 0 ? null : refs.trim(),
+      })
+      .then((out) => {
+        setStatus(`Quality rated ${out.tier}.`)
+        return qc.invalidateQueries({ queryKey: ['model-quality', modelId] })
+      })
+      .catch((e: unknown) => {
+        setProblem(toErrorMessage(e, 'Quality rating failed.'))
+      })
+      .finally(() => {
+        setBusy(false)
+      })
+  }
+
+  const clear = (): void => {
+    setProblem(null)
+    setStatus(null)
+    setBusy(true)
+    const viewer = new GatewayClient()
+    void viewer
+      .clearModelQuality(modelId)
+      .then(() => {
+        setStatus('Quality cleared to unrated.')
+        return qc.invalidateQueries({ queryKey: ['model-quality', modelId] })
+      })
+      .catch((e: unknown) => {
+        setProblem(toErrorMessage(e, 'Quality clear failed.'))
+      })
+      .finally(() => {
+        setBusy(false)
+      })
+  }
+
+  if (quality.isPending) {
+    return (
+      <p role="status" className="text-[13px]">
+        Loading quality…
+      </p>
+    )
+  }
+  if (quality.error instanceof Error) {
+    return (
+      <p role="alert" className="text-[13px] text-danger dark:text-danger-soft">
+        {quality.error.message}
+      </p>
+    )
+  }
+  return (
+    <div className="space-y-2">
+      <div className="flex justify-between gap-3 text-[13px]">
+        <span className="text-ink-soft dark:text-parchment-soft">Quality</span>
+        <span className="font-mono">{rated === null ? 'Unrated' : rated.tier}</span>
+      </div>
+      {rated?.benchmarkRefs == null ? null : (
+        <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+          {rated.benchmarkRefs}
+        </p>
+      )}
+      <div className="grid gap-2">
+        <div>
+          <Select
+            id={`quality-tier-${modelId}`}
+            label="Tier"
+            value={tier}
+            options={[
+              { value: 'FRONTIER', label: 'FRONTIER' },
+              { value: 'STANDARD', label: 'STANDARD' },
+              { value: 'BUDGET', label: 'BUDGET' },
+            ]}
+            onChange={setTier}
+            placeholder="Select tier"
+          />
+        </div>
+        <div className="flex items-end">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={save}
+            className="w-full rounded-md border border-ink/15 px-3 py-2 text-[13px] disabled:cursor-not-allowed dark:border-parchment/15"
+          >
+            Rate quality
+          </button>
+        </div>
+      </div>
+      <div>
+        <label htmlFor={`quality-refs-${modelId}`} className="mb-1 block text-[13px] font-medium">
+          Benchmark refs (optional)
+        </label>
+        <input
+          id={`quality-refs-${modelId}`}
+          value={refs}
+          autoComplete="off"
+          onChange={(e) => {
+            setRefs(e.target.value)
+          }}
+          placeholder="e.g. lmarena:12, human-eval:91"
+          className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
+        />
+      </div>
+      {rated === null ? null : (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={clear}
+          className="rounded-md border border-ink/15 px-3 py-2 text-[13px] disabled:cursor-not-allowed dark:border-parchment/15"
+        >
+          Clear to unrated
+        </button>
+      )}
+      {status === null ? null : (
+        <p role="status" className="text-[13px]">
+          {status}
+        </p>
+      )}
+      {problem === null ? null : (
+        <p role="alert" className="text-[13px] text-danger dark:text-danger-soft">
+          {problem}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/**
  * Model alias administration: list, create, replace, delete.
  *
  * @remarks Proof-type: live (real `/v1/admin/models` CRUD). File-bound
@@ -353,8 +508,8 @@ function ModelsBoard(): React.JSX.Element {
     <div className="space-y-6">
       <div className="space-y-4">
         <p className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft">
-          {aliases.length} aliases · {fileCount} file bound (read only) ·{' '}
-          {aliases.length - fileCount} database-managed
+          {aliases.length} {aliases.length === 1 ? 'alias' : 'aliases'} · {fileCount} file bound
+          (read only) · {aliases.length - fileCount} database-managed
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <label htmlFor="model-filter" className="sr-only">
@@ -701,6 +856,7 @@ function ModelsBoard(): React.JSX.Element {
               File bound aliases are read only.
             </p>
           )}
+          <QualityEditor modelId={inspected.name} />
         </InspectorShell>
       )}
     </div>

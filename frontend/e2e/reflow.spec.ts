@@ -26,9 +26,17 @@ const SUMMARY = {
 const ENTRIES = {
   content: [
     {
+      id: 'id-r1',
       requestId: 'r1',
+      ownerId: 'tenant-corp',
+      provider: 'openai',
       model: 'gpt-4o-mini',
+      promptTokens: 8,
+      completionTokens: 4,
+      totalTokens: 12,
       costUsdMicros: 12,
+      costUsd: '0.000012',
+      durationMs: 41,
       createdAt: '2026-09-17T00:00:00Z',
     },
   ],

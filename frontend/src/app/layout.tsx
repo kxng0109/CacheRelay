@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   Activity,
+  Bell,
   BookOpen,
+  Bot,
   Brain,
   ChevronsLeft,
   ChevronsRight,
@@ -13,12 +15,14 @@ import {
   Layers,
   LayoutDashboard,
   Lock,
+  MailPlus,
   Menu,
   Moon,
   Plug,
   ShieldCheck,
   Sun,
   SunMoon,
+  UserCog,
   Users,
   Zap,
 } from 'lucide-react'
@@ -302,6 +306,9 @@ export function Layout(): React.JSX.Element {
         },
         { to: '/cache', label: 'Cache & budgets', icon: Database, audience: 'admin' },
         { to: '/keys', label: 'Keys', icon: KeyRound, audience: 'admin' },
+        { to: '/notifications', label: 'Notifications', icon: Bell, audience: 'admin' },
+        { to: '/invites', label: 'Invites', icon: MailPlus, audience: 'admin' },
+        { to: '/users', label: 'Users', icon: UserCog, audience: 'admin' },
       ],
     },
     {
@@ -309,6 +316,7 @@ export function Layout(): React.JSX.Element {
       items: [
         { to: '/ledger', label: 'Ledger', icon: BookOpen, audience: 'admin' },
         { to: '/mcp', label: 'MCP', icon: Plug, audience: 'public' },
+        { to: '/a2a', label: 'A2A', icon: Bot, audience: 'public' },
         { to: '/observability', label: 'Observability', icon: Activity, audience: 'session' },
       ],
     },

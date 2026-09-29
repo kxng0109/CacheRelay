@@ -23,9 +23,17 @@ function summary(body: Record<string, unknown>) {
 
 function entry(requestId: string) {
   return {
+    id: `id-${requestId}`,
     requestId,
+    ownerId: 'tenant-corp',
+    provider: 'openai',
     model: 'gpt-4o-mini',
+    promptTokens: 8,
+    completionTokens: 4,
+    totalTokens: 12,
     costUsdMicros: 12,
+    costUsd: '0.000012',
+    durationMs: 41,
     createdAt: '2026-09-17T00:00:00Z',
   }
 }
@@ -92,6 +100,57 @@ describe('LedgerPage', () => {
     await user.click(screen.getByRole('button', { name: /^clear$/i }))
     expect(screen.getByLabelText(/filter audit log/i)).toHaveValue('')
     expect(screen.getByText('2 on this page')).toBeInTheDocument()
+  })
+
+  it('scopes entries server-side and shows provider plus tokens', async () => {
+    const user = userEvent.setup()
+    let seen = ''
+    server.use(
+      summary({ totalRequests: 1, totalCostUsdMicros: 12, averageDurationMs: 3 }),
+      http.get('*/v1/admin/ledger/entries', ({ request }) => {
+        seen = request.url
+        return HttpResponse.json(pageOf(['r1'], false))
+      }),
+    )
+    renderApp(<LedgerPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    expect(within(table).getByText('openai')).toBeInTheDocument()
+    expect(within(table).getByText('12')).toBeInTheDocument()
+    await user.type(screen.getByLabelText(/server filter by owner/i), 'tenant-corp')
+    await user.type(screen.getByLabelText(/server filter by provider/i), 'openai')
+    await user.type(screen.getByLabelText(/server filter by model/i), 'gpt-4o')
+    await user.type(screen.getByLabelText(/server filter window start/i), '2026-09-01')
+    await user.type(screen.getByLabelText(/server filter window end/i), '2026-09-26')
+    await user.selectOptions(screen.getByLabelText(/server sort property/i), 'costUsdMicros')
+    await user.click(screen.getByRole('button', { name: /apply server filters/i }))
+    await waitFor(() => {
+      expect(seen).toContain('ownerId=tenant-corp')
+    })
+    expect(seen).toContain('provider=openai')
+    expect(seen).toContain('model=gpt-4o')
+    expect(seen).toContain('from=2026-09-01')
+    expect(seen).toContain('to=2026-09-26')
+    expect(seen).toContain('sort=costUsdMicros')
+  })
+
+  it('applies empty server filters as an unscoped page', async () => {
+    const user = userEvent.setup()
+    let seen = ''
+    server.use(
+      summary({ totalRequests: 1, totalCostUsdMicros: 12, averageDurationMs: 3 }),
+      http.get('*/v1/admin/ledger/entries', ({ request }) => {
+        seen = request.url
+        return HttpResponse.json(pageOf(['r1'], false))
+      }),
+    )
+    renderApp(<LedgerPage />, { adminSession: true })
+    await screen.findByRole('table')
+    await user.click(screen.getByRole('button', { name: /apply server filters/i }))
+    await waitFor(() => {
+      expect(seen).toContain('page=0')
+    })
+    expect(seen).not.toContain('ownerId=')
+    expect(seen).toContain('sort=createdAt')
   })
 
   it('jumps to a page number within range', async () => {

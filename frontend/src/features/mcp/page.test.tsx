@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
@@ -56,6 +56,85 @@ describe('McpPage', () => {
     expect(table).toHaveTextContent('postgres__run_query')
     expect(table).toHaveTextContent('read')
     expect(screen.getByText(/tools:/i)).toHaveTextContent('3')
+  })
+
+  it('invokes the inspected tool and renders the result', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.post('*/v1/mcp', async ({ request }) => {
+        const body = (await request.json()) as { method?: string }
+        if (body.method === 'tools/call') {
+          return HttpResponse.json({ jsonrpc: '2.0', id: 'call-1', result: { rows: [1] } })
+        }
+        return HttpResponse.json(toolsList())
+      }),
+    )
+    renderApp(<McpPage />, { gatewayKey: 'gw-test' })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByRole('button', { name: /inspect tool postgres/i }))
+    await user.click(screen.getByRole('button', { name: /invoke tool/i }))
+    expect(await screen.findByText(/"rows"/)).toBeInTheDocument()
+  })
+
+  it('maps tool error codes to contract faults', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.post('*/v1/mcp', async ({ request }) => {
+        const body = (await request.json()) as { method?: string }
+        if (body.method === 'tools/call') {
+          return HttpResponse.json({
+            jsonrpc: '2.0',
+            id: 'call-1',
+            error: { code: -32602, message: 'Bad args' },
+          })
+        }
+        return HttpResponse.json(toolsList())
+      }),
+    )
+    renderApp(<McpPage />, { gatewayKey: 'gw-test' })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByRole('button', { name: /inspect tool postgres/i }))
+    await user.click(screen.getByRole('button', { name: /invoke tool/i }))
+    expect(await screen.findByText(/invalid params/i)).toBeInTheDocument()
+  })
+
+  it('rejects non-object args before sending', async () => {
+    const user = userEvent.setup()
+    let calls = 0
+    server.use(
+      http.post('*/v1/mcp', async ({ request }) => {
+        const body = (await request.json()) as { method?: string }
+        if (body.method === 'tools/call') calls += 1
+        return HttpResponse.json(toolsList())
+      }),
+    )
+    renderApp(<McpPage />, { gatewayKey: 'gw-test' })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByRole('button', { name: /inspect tool postgres/i }))
+    const argsBox = screen.getByLabelText(/arguments/i)
+    fireEvent.change(argsBox, { target: { value: '[1,2]' } })
+    await user.click(screen.getByRole('button', { name: /invoke tool/i }))
+    expect(await screen.findByText(/must be a json object/i)).toBeInTheDocument()
+    fireEvent.change(argsBox, { target: { value: '{oops' } })
+    await user.click(screen.getByRole('button', { name: /invoke tool/i }))
+    expect(await screen.findByText(/must be valid json/i)).toBeInTheDocument()
+    expect(calls).toBe(0)
+  })
+
+  it('reports invoke transport failures honestly', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.post('*/v1/mcp', async ({ request }) => {
+        const body = (await request.json()) as { method?: string }
+        if (body.method === 'tools/call') return new HttpResponse('x', { status: 500 })
+        return HttpResponse.json(toolsList())
+      }),
+    )
+    renderApp(<McpPage />, { gatewayKey: 'gw-test' })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByRole('button', { name: /inspect tool postgres/i }))
+    await user.click(screen.getByRole('button', { name: /invoke tool/i }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/HTTP 500/)
   })
 
   it('sends the pasted gateway key even when a session is present', async () => {

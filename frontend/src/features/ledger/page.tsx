@@ -27,14 +27,28 @@ const PAGE_SIZE = 25
 function LedgerBoard(): React.JSX.Element {
   const [page, setPage] = useState(0)
   const [selected, setSelected] = useState<string | null>(null)
+  const [ownerId, setOwnerId] = useState('')
+  const [provider, setProvider] = useState('')
+  const [model, setModel] = useState('')
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+  const [sort, setSort] = useState('createdAt')
+  const [applied, setApplied] = useState<{
+    ownerId?: string
+    provider?: string
+    model?: string
+    from?: string
+    to?: string
+    sort?: string
+  }>({})
 
   const summary = useQuery({
     queryKey: ['ledger-summary'],
     queryFn: ({ signal }) => new GatewayClient().ledgerSummary({ signal }),
   })
   const logs = useQuery({
-    queryKey: ['ledger-logs', page],
-    queryFn: ({ signal }) => new GatewayClient().ledgerLogs(page, PAGE_SIZE, { signal }),
+    queryKey: ['ledger-logs', page, applied],
+    queryFn: ({ signal }) => new GatewayClient().ledgerLogs(page, PAGE_SIZE, applied, { signal }),
   })
 
   const entries = logs.data?.content ?? []
@@ -111,6 +125,106 @@ function LedgerBoard(): React.JSX.Element {
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-2">
+              <label htmlFor="ledger-owner" className="sr-only">
+                Server filter by owner
+              </label>
+              <input
+                id="ledger-owner"
+                type="search"
+                value={ownerId}
+                onChange={(e) => {
+                  setOwnerId(e.target.value)
+                }}
+                placeholder="Owner"
+                className="w-36 rounded-md border border-ink/15 bg-transparent px-3 py-2 text-[13px] dark:border-parchment/15"
+              />
+              <label htmlFor="ledger-provider" className="sr-only">
+                Server filter by provider
+              </label>
+              <input
+                id="ledger-provider"
+                type="search"
+                value={provider}
+                onChange={(e) => {
+                  setProvider(e.target.value)
+                }}
+                placeholder="Provider"
+                className="w-36 rounded-md border border-ink/15 bg-transparent px-3 py-2 text-[13px] dark:border-parchment/15"
+              />
+              <label htmlFor="ledger-model" className="sr-only">
+                Server filter by model
+              </label>
+              <input
+                id="ledger-model"
+                type="search"
+                value={model}
+                onChange={(e) => {
+                  setModel(e.target.value)
+                }}
+                placeholder="Model"
+                className="w-36 rounded-md border border-ink/15 bg-transparent px-3 py-2 text-[13px] dark:border-parchment/15"
+              />
+              <label htmlFor="ledger-from" className="sr-only">
+                Server filter window start
+              </label>
+              <input
+                id="ledger-from"
+                value={from}
+                onChange={(e) => {
+                  setFrom(e.target.value)
+                }}
+                placeholder="From (ISO)"
+                className="w-44 rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-[13px] dark:border-parchment/15"
+              />
+              <label htmlFor="ledger-to" className="sr-only">
+                Server filter window end
+              </label>
+              <input
+                id="ledger-to"
+                value={to}
+                onChange={(e) => {
+                  setTo(e.target.value)
+                }}
+                placeholder="To (ISO)"
+                className="w-44 rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-[13px] dark:border-parchment/15"
+              />
+              <label htmlFor="ledger-sort" className="sr-only">
+                Server sort property
+              </label>
+              <select
+                id="ledger-sort"
+                value={sort}
+                onChange={(e) => {
+                  setSort(e.target.value)
+                }}
+                className="rounded-md border border-ink/15 bg-transparent px-3 py-2 text-[13px] dark:border-parchment/15"
+              >
+                <option value="createdAt">Newest</option>
+                <option value="costUsdMicros">Cost</option>
+                <option value="totalTokens">Tokens</option>
+                <option value="durationMs">Duration</option>
+                <option value="provider">Provider</option>
+                <option value="model">Model</option>
+              </select>
+              <button
+                type="button"
+                onClick={() => {
+                  setPage(0)
+                  setApplied({
+                    ...(ownerId.trim().length > 0 ? { ownerId: ownerId.trim() } : {}),
+                    ...(provider.trim().length > 0 ? { provider: provider.trim() } : {}),
+                    ...(model.trim().length > 0 ? { model: model.trim() } : {}),
+                    ...(from.trim().length > 0 ? { from: from.trim() } : {}),
+                    ...(to.trim().length > 0 ? { to: to.trim() } : {}),
+                    ...(sort.trim().length > 0 ? { sort: sort.trim() } : {}),
+                  })
+                }}
+                className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+              >
+                Apply server filters
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
               <label htmlFor="ledger-filter" className="sr-only">
                 Filter audit log by request id or model
               </label>
@@ -162,6 +276,12 @@ function LedgerBoard(): React.JSX.Element {
                         <th scope="col" className="py-2 pr-3 font-medium">
                           Model
                         </th>
+                        <th scope="col" className="py-2 pr-3 font-medium">
+                          Provider
+                        </th>
+                        <th scope="col" className="py-2 pr-3 text-right font-medium">
+                          Tokens
+                        </th>
                         <th scope="col" className="py-2 pr-3 text-right font-medium">
                           Cost (µ$)
                         </th>
@@ -189,6 +309,18 @@ function LedgerBoard(): React.JSX.Element {
                           </td>
                           <td className="max-w-40 truncate py-2 pr-3 text-[13px]" title={e.model}>
                             {e.model}
+                          </td>
+                          <td
+                            className="max-w-32 truncate py-2 pr-3 text-[13px]"
+                            title={e.provider}
+                          >
+                            {e.provider}
+                          </td>
+                          <td
+                            className="py-2 pr-3 text-right text-[13px] tnum"
+                            title={`${String(e.promptTokens)} in / ${String(e.completionTokens)} out`}
+                          >
+                            {formatCount(e.totalTokens)}
                           </td>
                           <td className="py-2 pr-3 text-right font-mono text-[13px] tnum">
                             {e.costUsdMicros === 0 ? (

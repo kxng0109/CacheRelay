@@ -19,6 +19,14 @@ export interface StreamSummary {
   similarity: string | null
   /** Entry age in seconds, cache hits only. */
   age: string | null
+  /** Winning provider from `X-CacheRelay-Provider`, null when unreported. */
+  provider: string | null
+  /** Attempted providers from `X-CacheRelay-Tried`, null when unreported. */
+  tried: string | null
+  /** Merkle audit receipt, null when the ledger bean is absent. */
+  receipt: string | null
+  /** True when the gateway replayed an idempotent response. */
+  replayed: boolean
   /** Wall clock milliseconds from mount to settle. */
   durationMs: number
   /**
@@ -38,6 +46,8 @@ interface SseStreamViewerProps {
   actAsKey?: string
   model: string
   messages: ChatMessage[]
+  /** Extra chat request fields (temperature, top_p, seed, …); never secrets. */
+  chatOptions?: Record<string, unknown>
   /**
    * Stream tuning overrides. Production uses client defaults (5 retries,
    * 30 s heartbeat); tests pin small values for fast determinism.
@@ -104,6 +114,7 @@ export function SseStreamViewer({
   actAsKey,
   model,
   messages,
+  chatOptions,
   streamOptions,
   onSummary,
 }: SseStreamViewerProps): React.JSX.Element {
@@ -133,6 +144,15 @@ export function SseStreamViewer({
   const [cacheTier, setCacheTier] = useState<string | null>(null)
   const [cacheSimilarity, setCacheSimilarity] = useState<string | null>(null)
   const [cacheAge, setCacheAge] = useState<string | null>(null)
+  /**
+   * Stream provenance from response headers: winning provider, failover
+   * trail, audit receipt, and idempotent replay flag. All informational —
+   * never secrets, never credentials.
+   */
+  const [provider, setProvider] = useState<string | null>(null)
+  const [tried, setTried] = useState<string | null>(null)
+  const [receipt, setReceipt] = useState<string | null>(null)
+  const [replayed, setReplayed] = useState(false)
   const bufferRef = useRef('')
   const rafRef = useRef(0)
   const ctrlRef = useRef<AbortController | null>(null)
@@ -241,6 +261,10 @@ export function SseStreamViewer({
     let tier: string | null = null
     let similarity: string | null = null
     let age: string | null = null
+    let streamProvider: string | null = null
+    let streamTried: string | null = null
+    let streamReceipt: string | null = null
+    let streamReplayed = false
 
     const flush = (): void => {
       const current = bufferRef.current
@@ -271,6 +295,10 @@ export function SseStreamViewer({
           cacheTier: tier,
           similarity,
           age,
+          provider: streamProvider,
+          tried: streamTried,
+          receipt: streamReceipt,
+          replayed: streamReplayed,
           durationMs: performance.now() - startRef.current,
           phase: 'stopped',
         })
@@ -285,7 +313,7 @@ export function SseStreamViewer({
         Authorization: `Bearer ${token}`,
         ...(actAsKey === undefined || actAsKey.length === 0 ? {} : { 'X-Act-As-Key': actAsKey }),
       },
-      body: { model, messages, stream: true },
+      body: { model, messages, stream: true, ...(chatOptions ?? {}) },
       signal: ctrl.signal,
       readerSlot: readerRef,
       idempotencyKey,
@@ -300,6 +328,14 @@ export function SseStreamViewer({
           setCacheSimilarity(similarity)
           setCacheAge(age)
         }
+        streamProvider = headers.get('X-CacheRelay-Provider')
+        streamTried = headers.get('X-CacheRelay-Tried')
+        streamReceipt = headers.get('X-CacheRelay-Audit-Receipt')
+        streamReplayed = headers.get('Idempotent-Replayed') === 'true'
+        setProvider(streamProvider)
+        setTried(streamTried)
+        setReceipt(streamReceipt)
+        setReplayed(streamReplayed)
       },
       ...(maxRetries === undefined ? {} : { maxRetries }),
       ...(heartbeatMs === undefined ? {} : { heartbeatMs }),
@@ -335,6 +371,10 @@ export function SseStreamViewer({
             cacheTier: tier,
             similarity,
             age,
+            provider: streamProvider,
+            tried: streamTried,
+            receipt: streamReceipt,
+            replayed: streamReplayed,
             durationMs: performance.now() - startRef.current,
             phase: 'incomplete',
             error: e.message,
@@ -348,12 +388,20 @@ export function SseStreamViewer({
         }
         stop(() => {
           setPhase('done')
+          // Success clears any stale error (StrictMode remount abort,
+          // retried runs): a done transcript never carries an alert.
+          // Truncation keeps its own amber status line, untouched here.
+          setError(null)
           summaryRef.current?.({
             frames,
             malformed,
             cacheTier: tier,
             similarity,
             age,
+            provider: streamProvider,
+            tried: streamTried,
+            receipt: streamReceipt,
+            replayed: streamReplayed,
             durationMs: performance.now() - startRef.current,
             phase: 'done',
             ...(truncatedRef.current
@@ -376,6 +424,10 @@ export function SseStreamViewer({
             cacheTier: tier,
             similarity,
             age,
+            provider: streamProvider,
+            tried: streamTried,
+            receipt: streamReceipt,
+            replayed: streamReplayed,
             durationMs: performance.now() - startRef.current,
             phase: 'error',
             error: e.message,
@@ -392,7 +444,7 @@ export function SseStreamViewer({
       ctrl.abort()
       cancelAnimationFrame(rafRef.current)
     }
-  }, [token, actAsKey, model, messages, maxRetries, heartbeatMs, runNonce])
+  }, [token, actAsKey, model, messages, chatOptions, maxRetries, heartbeatMs, runNonce])
 
   return (
     <section
@@ -410,6 +462,15 @@ export function SseStreamViewer({
           cache: {cacheTier ?? 'live'}
           {cacheSimilarity === null ? null : ` · sim ${cacheSimilarity}`}
           {cacheAge === null ? null : ` · age ${cacheAge}s`}
+        </p>
+        <p className="text-[13px] tnum">
+          {provider === null ? null : `provider: ${provider}`}
+          {tried === null ? null : ` · tried: ${tried}`}
+          {receipt === null ? null : ` · receipt: ${receipt}`}
+          {replayed ? ' · replayed' : null}
+          {provider === null && tried === null && receipt === null && !replayed
+            ? 'provenance: live'
+            : null}
         </p>
         <span className="flex-1" />
         <button
@@ -448,7 +509,7 @@ export function SseStreamViewer({
           {copyError}
         </p>
       )}
-      {error === null ? null : (
+      {error === null || (phase !== 'error' && phase !== 'incomplete') ? null : (
         <p role="alert" className="mb-2 text-[13px] text-danger dark:text-danger-soft">
           {error}
         </p>

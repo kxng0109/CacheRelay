@@ -246,6 +246,53 @@ describe('KeysPage', () => {
     expect(screen.getByLabelText(/tokens per minute/i)).toHaveAttribute('min', '0')
   })
 
+  it('appends catalog models without clearing free-text patterns', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/keys', () => HttpResponse.json([])),
+      http.get('*/v1/admin/model-catalog', () =>
+        HttpResponse.json({
+          models: [
+            {
+              modelId: 'gpt-4o-mini',
+              provider: 'openai',
+              mode: 'chat',
+              inputCostPerToken: 0.001,
+              outputCostPerToken: 0.002,
+              cacheReadInputTokenCost: null,
+              cacheCreationInputTokenCost: null,
+              maxInputTokens: null,
+              maxOutputTokens: null,
+              qualityTier: null,
+              benchmarkRefs: null,
+            },
+            {
+              modelId: 'claude-x',
+              provider: 'anthropic',
+              mode: 'chat',
+              inputCostPerToken: 0.001,
+              outputCostPerToken: 0.002,
+              cacheReadInputTokenCost: null,
+              cacheCreationInputTokenCost: null,
+              maxInputTokens: null,
+              maxOutputTokens: null,
+              qualityTier: null,
+              benchmarkRefs: null,
+            },
+          ],
+        }),
+      ),
+    )
+    renderApp(<KeysPage />, { adminSession: true })
+    const dialogTriggers = await screen.findAllByRole('button', { name: /^new key$/i })
+    const dialogTrigger = dialogTriggers[0]
+    if (dialogTrigger === undefined) throw new Error('New key trigger not found')
+    await user.click(dialogTrigger)
+    await user.type(screen.getByLabelText(/models/i), 'custom-*')
+    await user.click(await screen.findByRole('button', { name: /add model gpt-4o-mini/i }))
+    expect(screen.getByLabelText(/models/i)).toHaveValue('custom-*, gpt-4o-mini')
+  })
+
   it('deletes a key and refreshes the list', async () => {
     const user = userEvent.setup()
     let listed = 1

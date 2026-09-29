@@ -335,12 +335,21 @@ describe('Layout', () => {
   })
 
   it('badges live pending approvals for admins', async () => {
+    const row = (tokenId: string) => ({
+      tokenId,
+      toolName: 't',
+      serverName: 's',
+      ownerId: 'o',
+      keyName: 'k',
+      createdAt: '2026-09-01T12:00:00Z',
+      expiresAt: '2026-09-01T12:05:00Z',
+    })
     server.use(
       http.get('*/v1/admin/mcp/approvals/pending', () =>
         HttpResponse.json({
           approvals: [
-            { approvalId: 'a1', toolName: 't', requestedAt: 'r', requestedBy: 'b' },
-            { approvalId: 'a2', toolName: 't', requestedAt: 'r', requestedBy: 'b' },
+            row('9f8e7d6c5b4a32109f8e7d6c5b4a32109'),
+            row('8f8e7d6c5b4a32109f8e7d6c5b4a32108'),
           ],
         }),
       ),
@@ -355,7 +364,15 @@ describe('Layout', () => {
     server.use(
       http.get('*/v1/admin/mcp/approvals/pending', () =>
         HttpResponse.json([
-          { approvalId: 'a1', toolName: 't', requestedAt: 'r', requestedBy: 'b' },
+          {
+            tokenId: '9f8e7d6c5b4a32109f8e7d6c5b4a32109',
+            toolName: 't',
+            serverName: 's',
+            ownerId: 'o',
+            keyName: 'k',
+            createdAt: '2026-09-01T12:00:00Z',
+            expiresAt: '2026-09-01T12:05:00Z',
+          },
         ]),
       ),
     )

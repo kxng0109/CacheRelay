@@ -1,11 +1,11 @@
 # CacheRelay Frontend — Enterprise Console
 
 Vite 8.3.1 + React 19.3.0 + TypeScript 6.0.2 + Tailwind CSS 4.3.3.
-Sixteen lazy routes mapped to real gateway surfaces (`backend/docs/BACKEND_API_REFERENCE.md`):
-Overview, Usage (personal dashboard), Teams, Playground (live SSE), Circuits, Keys,
-Ledger (+ admin user drill-down `/ledger/user/:userId`), Cache & budgets,
-Embeddings, Approvals (HITL), MCP, Observability, Login (password + SSO),
-Redeem. Product name resolves at runtime from `/v3/api-docs` `info.title`
+Twenty lazy routes mapped to real gateway surfaces (`backend/docs/BACKEND_API_REFERENCE.md`):
+Overview, Usage (personal dashboard), Teams, Playground (live SSE), Circuits, Models,
+Keys, Ledger (+ admin user drill-down `/ledger/user/:userId`), Cache & budgets,
+Embeddings, Approvals (HITL), MCP, A2A agents, Observability, Login (password + SSO),
+Redeem, Notifications, Invites, Users. Product name resolves at runtime from `/v3/api-docs` `info.title`
 (`CacheRelay AI Gateway & Resilient Reverse Proxy`); the static
 `<title>CacheRelay</title>` in `index.html` is the offline fallback.
 
@@ -52,10 +52,10 @@ Never commit tokens, keys, or credentials.
   `X-CacheRelay-Refresh: 1` CSRF marker (dev also needs the backend to
   allow-list it for CORS — flagged, prod same-origin is unaffected). The
   master secret has no UI path by design (terminal/curl-only). Route tiers:
-  public (Playground, Embeddings, MCP, Login, Redeem), session
+  public (Playground, Embeddings, MCP, A2A, Login, Redeem), session
   (`RequireAuth`: Overview, Usage, Teams, Observability), admin
-  (`RequireAdmin` stealth 404: Circuits, Keys, Ledger, drill-down, Cache,
-  Approvals). The MCP catalog is paste-key first like the Run screens, so
+  (`RequireAdmin` stealth 404: Circuits, Models, Keys, Ledger, drill-down, Cache,
+  Approvals, Notifications, Invites, Users). The MCP catalog is paste-key first like the Run screens, so
   guests may open it; pasted sends ignore the session so a logged-in paste
   never 401s. Guests hitting `/` land on `/login?next=<original>` and return
   after signing in; authed visits to `/login`/`/redeem` bounce home. Sidebar,
@@ -226,6 +226,38 @@ EmptyTrio.tsx`: status line + learning cue + optional link/button
   strict import-meta env. Dependencies track the audited pins
   (react-router 8 and TypeScript 7 stay separate migrations).
 
+## Backend-gap closure (spec `findings/29-frontend-spec.md` vs tree)
+
+- Models: admin catalog search (`provider/q/limit`, nullable pricing/
+  windows), quality ratings (`QualityEditor`: unrated state, tier +
+  refs, clear), provider Type + Timeout columns.
+- Identity: self-service default-key set + own-key revoke (64-hex
+  guarded); admin Users (disable/re-enable/delete with cascade
+  warning), Invites (link-only or emailed, single-exposure receipt),
+  Notifications (scope-required list, create, delete) + webhook probe
+  (`{ received }` receipt).
+- Budgets/cache/circuits: spend-vs-cap balances, full-replace cap
+  edits, deletes, hold lookup (`HOLD`-live), tier telemetry
+  (nullable dead-tier metrics), purge counts, single-circuit reads,
+  full-snapshot resets, MCP per-server breakers.
+- Ledger: server filters (owner/provider/model/window/sort),
+  twelve-field entries with provider + token columns, watermark
+  freshness.
+- Approvals: spec field names (`tokenId`, server/key/expiry),
+  decrypted-args inspection, rationale input, server receipts.
+- Playground/embeddings: sampling passthrough (temperature/top_p/
+  seed, dimensions/encoding/user), token usage per run, stream
+  provenance (provider/tried/receipt/replay) into run detail,
+  per-status errors (409/413/422/502/504), backend enum pins
+  (`shared/api/enums.ts`).
+- MCP/A2A: `tools/call` invoke with code-mapped faults; A2A agent
+  cards + four-method invoke; `/a2a` public route.
+- UX batch (2026-09-30): visible Inspect on circuits; shared `Select`
+  listbox for notifications channel/severity, embeddings encoding, A2A
+  method; key-modal catalog model picker (free-text globs preserved);
+  invites restack with unclipped admin toggle; Users UUID validation +
+  404 copy.
+
 ## Quality gates
 
 | Command                       | Gate                                                         |
@@ -234,7 +266,7 @@ EmptyTrio.tsx`: status line + learning cue + optional link/button
 | `npm.cmd run format:check`    | Prettier 3.9.9 exact, check only                             |
 | `npm.cmd run typecheck`       | `tsc -b` (solution build; bare `--noEmit` is vacuous here)   |
 | `npm.cmd run test`            | Vitest 5 unit run (jsdom)                                    |
-| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently 97.0/96.1/96.0/97.5) |
+| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently 98.0/95.6/97.9/98.7) |
 | `npm.cmd run test:e2e`        | Playwright 1.63 smoke, chromium, Vite dev reuse              |
 | `npm.cmd run build-storybook` | Storybook 10.6.0 static build                                |
 
@@ -291,7 +323,7 @@ reporter for CI step summaries.
 `cleanup()` after each test, and closes the server at the end.
 `src/test/utils.tsx` renders UI with a fresh query client (no retries),
 memory router, and seeded memory-only credentials.
-67 suites / 764 tests: pure-unit (formatters, SSE parser, rate-limit parser/selector/store,
+72 suites / 861 tests: pure-unit (formatters, SSE parser, rate-limit parser/selector/store,
 Prometheus histogram parser/quantiles, ECharts registration, app boot,
 error mapping, URL allow-list, `?next=` validation, chord map, toast store)
 plus MSW integration per screen (happy/error/empty/adversarial).
