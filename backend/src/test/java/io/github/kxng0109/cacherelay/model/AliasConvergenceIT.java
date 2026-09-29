@@ -77,7 +77,18 @@ class AliasConvergenceIT extends SharedContainersBase {
 				stamped);
 		podA.execute("SELECT pg_notify('model_alias_changed', 'pod-a-model')");
 
-		assertThat(pollForAlias("pod-a-model", Duration.ofSeconds(10)))
+		// The listener has no readiness latch: a notify sent before its
+		// LISTEN is active is lost (PG notifies active listeners only), so
+		// retry the notify across poll windows instead of trusting one shot.
+		boolean converged = false;
+		for (int attempt = 0; attempt < 3 && !converged; attempt++) {
+			if (attempt > 0) {
+				podA.execute("SELECT pg_notify('model_alias_changed', 'pod-a-model')");
+			}
+			converged = pollForAlias("pod-a-model", Duration.ofSeconds(10));
+		}
+
+		assertThat(converged)
 				.as("pod B converges on pod A's alias")
 				.isTrue();
 		assertThat(podBAliases.getAliases()).containsKey("pod-a-model");
