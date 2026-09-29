@@ -36,6 +36,7 @@ import type {
   RateLimitSnapshot,
   SessionIdentity,
   TeamMembership,
+  UserPage,
 } from './types.js'
 import * as z from 'zod/v4'
 import { useAuthStore } from '../auth/store.js'
@@ -745,6 +746,14 @@ const notificationRowSchema = z.object({
   createdAt: z.string(),
 })
 
+const userSummarySchema = z.object({
+  userId: z.string(),
+  username: z.string(),
+  admin: z.boolean(),
+  disabled: z.boolean(),
+  createdAt: z.string(),
+})
+
 const a2aCardSchema = z.object({
   protocolVersion: z.string(),
   name: z.string(),
@@ -776,6 +785,7 @@ const modelCatalogEntrySchema = z.object({
   maxOutputTokens: z.number().nullable(),
   qualityTier: z.string().nullable(),
   benchmarkRefs: z.string().nullable(),
+  embeddingDimensions: z.number().nullable(),
 })
 
 /**
@@ -2369,6 +2379,51 @@ export class GatewayClient {
       opts,
     )
     return rowsOrEmpty(orgTeamRowSchema, body, 'org-teams')
+  }
+
+  /**
+   * Lists user accounts for operator pickers and administration.
+   *
+   * @remarks Backend truth (`AdminUserController.listUsers`): `GET
+   * /v1/admin/users` answers a `PageResponse<UserSummary>` (default
+   * size 20, newest first). Rows carry identity and status only —
+   * never hashes. Drifted envelopes degrade to an empty page.
+   *
+   * @param query - Page index and size.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The user rows plus page metadata.
+   */
+  async listUsers(
+    query: { page?: number; size?: number } = {},
+    opts?: RequestOptions,
+  ): Promise<UserPage> {
+    const params = new URLSearchParams()
+    if (query.page !== undefined) params.set('page', String(Math.max(0, Math.floor(query.page))))
+    if (query.size !== undefined)
+      params.set('size', String(Math.min(100, Math.max(1, Math.floor(query.size)))))
+    const qs = params.toString()
+    const body: unknown = await this.request<unknown>(
+      qs.length === 0 ? '/v1/admin/users' : `/v1/admin/users?${qs}`,
+      { headers: this.headers() },
+      opts,
+    )
+    if (typeof body !== 'object' || body === null || !('content' in body)) {
+      noteDrift('users')
+      return { users: [], page: 0, size: 20, totalElements: 0, totalPages: 0, hasNext: false }
+    }
+    const envelope = body as Record<string, unknown>
+    const users = rowsOrEmpty(userSummarySchema, envelope.content, 'users')
+    const num = (v: unknown, fallback: number): number =>
+      typeof v === 'number' && Number.isFinite(v) ? v : fallback
+    const bool = (v: unknown): boolean => v === true
+    return {
+      users,
+      page: num(envelope.page, 0),
+      size: num(envelope.size, 20),
+      totalElements: num(envelope.totalElements, users.length),
+      totalPages: num(envelope.totalPages, 0),
+      hasNext: bool(envelope.hasNext),
+    }
   }
 
   /**

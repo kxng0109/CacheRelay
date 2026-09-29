@@ -171,6 +171,57 @@ describe('EmbeddingsPage', () => {
     expect(body).toMatchObject({ encoding_format: 'base64' })
   })
 
+  it('fills dimensions from the catalog default on demand', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/me/keys', () =>
+        HttpResponse.json([
+          { keyId: 'a'.repeat(64), name: 'dev', allowedModels: [], enabled: true },
+        ]),
+      ),
+      http.get('*/v1/models', () =>
+        HttpResponse.json({ data: [{ id: 'text-embedding-3-small' }] }),
+      ),
+      http.get('*/v1/admin/model-catalog', () =>
+        HttpResponse.json({
+          models: [
+            {
+              modelId: 'text-embedding-3-small',
+              provider: 'openai',
+              mode: 'embeddings',
+              inputCostPerToken: 0.00000002,
+              outputCostPerToken: 0,
+              cacheReadInputTokenCost: null,
+              cacheCreationInputTokenCost: null,
+              maxInputTokens: 8191,
+              maxOutputTokens: null,
+              qualityTier: null,
+              benchmarkRefs: null,
+              embeddingDimensions: 1536,
+            },
+          ],
+        }),
+      ),
+    )
+    renderApp(<EmbeddingsPage />, { adminSession: true })
+    await pickModel(user)
+    expect(await screen.findByText(/catalog default: 1536 dims/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /fill 1536/i }))
+    expect(screen.getByLabelText(/dimensions/i)).toHaveValue('1536')
+  })
+
+  it('hides the dims hint from guests without admin catalog access', async () => {
+    const user = userEvent.setup()
+    server.use(catalog())
+    renderApp(<EmbeddingsPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
+    await waitFor(() => {
+      expect(screen.getByLabelText(/dimensions/i)).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/catalog default/i)).not.toBeInTheDocument()
+  })
+
   it('omits malformed dimensions instead of sending NaN', async () => {
     const user = userEvent.setup()
     let body: unknown = null

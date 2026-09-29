@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
 import { server } from '../../test/setup.js'
-import { renderApp } from '../../test/utils.js'
+import { renderApp, selectOption } from '../../test/utils.js'
 import { KeysPage } from './page.js'
 
 const KEYS = [
@@ -25,6 +25,18 @@ describe('KeysPage', () => {
   it('mounts the board without a session (router guards access)', () => {
     renderApp(<KeysPage />)
     expect(screen.getByText(/loading keys/i)).toBeInTheDocument()
+  })
+
+  it('holds the count line until the inventory resolves', async () => {
+    server.use(
+      http.get('*/v1/admin/keys', async () => {
+        await new Promise((r) => setTimeout(r, 500))
+        return HttpResponse.json([])
+      }),
+    )
+    renderApp(<KeysPage />, { adminSession: true })
+    expect(await screen.findByText(/loading key inventory/i)).toBeInTheDocument()
+    expect(screen.queryByText(/keys ·/)).not.toBeInTheDocument()
   })
 
   it('lists keys with limits', async () => {
@@ -265,6 +277,7 @@ describe('KeysPage', () => {
               maxOutputTokens: null,
               qualityTier: null,
               benchmarkRefs: null,
+              embeddingDimensions: 1536,
             },
             {
               modelId: 'claude-x',
@@ -278,6 +291,7 @@ describe('KeysPage', () => {
               maxOutputTokens: null,
               qualityTier: null,
               benchmarkRefs: null,
+              embeddingDimensions: null,
             },
           ],
         }),
@@ -291,6 +305,41 @@ describe('KeysPage', () => {
     await user.type(screen.getByLabelText(/models/i), 'custom-*')
     await user.click(await screen.findByRole('button', { name: /add model gpt-4o-mini/i }))
     expect(screen.getByLabelText(/models/i)).toHaveValue('custom-*, gpt-4o-mini')
+  })
+
+  it('picks the owner account from the user inventory', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/keys', () => HttpResponse.json([])),
+      http.get('*/v1/admin/model-catalog', () => HttpResponse.json({ models: [] })),
+      http.get('*/v1/admin/users', () =>
+        HttpResponse.json({
+          content: [
+            {
+              userId: '123e4567-e89b-12d3-a456-426614174000',
+              username: 'alice',
+              admin: false,
+              disabled: false,
+              createdAt: '2026-09-01T00:00:00Z',
+            },
+          ],
+          page: 0,
+          size: 20,
+          totalElements: 1,
+          totalPages: 1,
+          hasNext: false,
+        }),
+      ),
+    )
+    renderApp(<KeysPage />, { adminSession: true })
+    const dialogTriggers = await screen.findAllByRole('button', { name: /^new key$/i })
+    const dialogTrigger = dialogTriggers[0]
+    if (dialogTrigger === undefined) throw new Error('New key trigger not found')
+    await user.click(dialogTrigger)
+    await selectOption(user, /owner account/i, 'alice (123e4567…)')
+    expect(screen.getByLabelText(/owner account uuid/i)).toHaveValue(
+      '123e4567-e89b-12d3-a456-426614174000',
+    )
   })
 
   it('deletes a key and refreshes the list', async () => {

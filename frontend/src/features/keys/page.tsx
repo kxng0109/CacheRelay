@@ -9,6 +9,7 @@ import type { ApiKeyCreated } from '../../shared/api/types.js'
 import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
 import { Modal } from '../../shared/components/Modal.js'
+import { Select } from '../../shared/components/Select.js'
 import { TableScroll } from '../../shared/components/TableScroll.js'
 import { formatCount, formatShortDate } from '../../shared/utils/format.js'
 
@@ -82,6 +83,45 @@ function KeyModelPicker({
           + {id}
         </button>
       ))}
+    </div>
+  )
+}
+
+/**
+ * Account picker for the owner field. Lists inventory usernames and
+ * writes the chosen UUID into the form; manual UUID entry keeps
+ * working when the inventory is unreachable or the account is new.
+ *
+ * @param props - Selection handler.
+ * @returns The account dropdown, or nothing while loading or on failure.
+ */
+function UserPicker({ onPick }: { onPick: (userId: string) => void }): React.JSX.Element | null {
+  const users = useQuery({
+    queryKey: ['key-owner-suggestions'],
+    queryFn: ({ signal }) => new GatewayClient().listUsers({ size: 50 }, { signal }),
+    retry: false,
+    staleTime: 60_000,
+  })
+  const [picked, setPicked] = useState('')
+  if (users.isPending || users.isError) return null
+  const options = users.data.users.map((u) => ({
+    value: u.userId,
+    label: `${u.username} (${u.userId.slice(0, 8)}…)${u.disabled ? ' · disabled' : ''}`,
+  }))
+  if (options.length === 0) return null
+  return (
+    <div className="mt-2">
+      <Select
+        id="key-owner-pick"
+        label="Owner account"
+        value={picked}
+        options={options}
+        onChange={(v) => {
+          setPicked(v)
+          onPick(v)
+        }}
+        placeholder="Pick from inventory…"
+      />
     </div>
   )
 }
@@ -235,7 +275,9 @@ function KeysBoard(): React.JSX.Element {
             One key per team or service. Limits and models scope what each key can spend.
           </p>
           <p className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft">
-            {rows.length} keys · {enabledCount} enabled · plaintext shows once at creation
+            {keys.isPending
+              ? 'Loading key inventory…'
+              : `${String(rows.length)} keys · ${String(enabledCount)} enabled · plaintext shows once at creation`}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -351,6 +393,11 @@ function KeysBoard(): React.JSX.Element {
                     {errors.ownerUserId.message}
                   </p>
                 )}
+                <UserPicker
+                  onPick={(v) => {
+                    setValue('ownerUserId', v, { shouldValidate: true, shouldDirty: true })
+                  }}
+                />
                 {error !== null && /owner/i.test(error) ? (
                   <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
                     {error}

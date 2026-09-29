@@ -1,6 +1,47 @@
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { GatewayClient } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
+import { Select } from '../../shared/components/Select.js'
+
+/**
+ * Account picker from the user inventory. Writes the chosen UUID into
+ * the board; manual UUID entry below keeps working when the inventory
+ * is unreachable or the account is not listed.
+ *
+ * @param props - Selection handler.
+ * @returns The account dropdown, or nothing while loading or on failure.
+ */
+function AccountPicker({ onPick }: { onPick: (userId: string) => void }): React.JSX.Element | null {
+  const users = useQuery({
+    queryKey: ['users-inventory'],
+    queryFn: ({ signal }) => new GatewayClient().listUsers({ size: 50 }, { signal }),
+    retry: false,
+    staleTime: 60_000,
+  })
+  const [picked, setPicked] = useState('')
+  if (users.isPending || users.isError) return null
+  const options = users.data.users.map((u) => ({
+    value: u.userId,
+    label: `${u.username} (${u.userId.slice(0, 8)}…)${u.disabled ? ' · disabled' : ''}`,
+  }))
+  if (options.length === 0) return null
+  return (
+    <div className="mb-3">
+      <Select
+        id="users-pick"
+        label="Account"
+        value={picked}
+        options={options}
+        onChange={(v) => {
+          setPicked(v)
+          onPick(v)
+        }}
+        placeholder="Pick from inventory…"
+      />
+    </div>
+  )
+}
 
 /**
  * Account operations by id: disable/enable plus delete.
@@ -64,9 +105,14 @@ function UsersBoard(): React.JSX.Element {
   return (
     <div className="space-y-4">
       <p className="text-sm text-ink-soft dark:text-parchment-soft">
-        No user inventory endpoint exists: operate by account UUID from the invite flow. Unknown ids
+        Pick an account from the inventory, or operate by UUID from the invite flow. Unknown ids
         answer 404 — check the UUID before retrying.
       </p>
+      <AccountPicker
+        onPick={(v) => {
+          setId(v)
+        }}
+      />
       <div>
         <label htmlFor="users-id" className="mb-1 block text-[13px] font-medium">
           Account id (UUID)

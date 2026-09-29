@@ -1,4 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { useShallow } from 'zustand/react/shallow'
@@ -39,6 +40,51 @@ interface UsageRecord {
   status: 'ok' | 'fail'
   error: string | null
   input: string
+}
+
+/**
+ * Catalog default-dims hint for the selected embedding model. Admin
+ * sessions only (the catalog is admin-gated); guests keep the manual
+ * input. The backend curates vendor-default widths; unknown models
+ * and chat-only models render nothing, never a guessed number. Fill
+ * is an explicit operator action — the sender never invents dims.
+ *
+ * @param props - Selected model id plus the fill handler.
+ * @returns The hint line, or nothing while loading, on failure, or
+ * when the catalog carries no width for the model.
+ */
+function DimsHint({
+  model,
+  onFill,
+}: {
+  model: string
+  onFill: (dims: number) => void
+}): React.JSX.Element | null {
+  const lookup = useQuery({
+    queryKey: ['catalog-dims', model],
+    queryFn: ({ signal }) =>
+      new GatewayClient().searchModelCatalog({ q: model, limit: 10 }, { signal }),
+    enabled: model.length > 0,
+    retry: false,
+    staleTime: 60_000,
+  })
+  if (lookup.isPending || lookup.isError) return null
+  const dims = lookup.data.models.find((m) => m.modelId === model)?.embeddingDimensions ?? null
+  if (dims === null) return null
+  return (
+    <p className="mt-1 text-[13px] text-ink-soft dark:text-parchment-soft">
+      Catalog default: {dims} dims.{' '}
+      <button
+        type="button"
+        onClick={() => {
+          onFill(dims)
+        }}
+        className="underline"
+      >
+        Fill {dims}
+      </button>
+    </p>
+  )
 }
 
 /**
@@ -370,6 +416,14 @@ export function EmbeddingsPage(): React.JSX.Element {
                   placeholder="e.g. 512"
                   className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
                 />
+                {session?.admin === true ? (
+                  <DimsHint
+                    model={modelValue}
+                    onFill={(d) => {
+                      setValue('dimensions', String(d), { shouldDirty: true })
+                    }}
+                  />
+                ) : null}
               </div>
               <div>
                 <Select

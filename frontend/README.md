@@ -256,7 +256,13 @@ EmptyTrio.tsx`: status line + learning cue + optional link/button
   listbox for notifications channel/severity, embeddings encoding, A2A
   method; key-modal catalog model picker (free-text globs preserved);
   invites restack with unclipped admin toggle; Users UUID validation +
-  404 copy.
+  404 copy. Screenshot follow-ups: Keys count line held until loaded;
+  MCP chip reads `idle` until a probe completes.
+- Backend inventory round (2026-09-30): `GET /v1/admin/users` page +
+  `UserSummary` client; user pickers in key modal (owner) and Users
+  board (account) with manual UUID fallback; catalog
+  `embeddingDimensions` + embeddings default-dims hint with explicit
+  Fill (guests keep manual input).
 
 ## Quality gates
 
@@ -266,7 +272,7 @@ EmptyTrio.tsx`: status line + learning cue + optional link/button
 | `npm.cmd run format:check`    | Prettier 3.9.9 exact, check only                             |
 | `npm.cmd run typecheck`       | `tsc -b` (solution build; bare `--noEmit` is vacuous here)   |
 | `npm.cmd run test`            | Vitest 5 unit run (jsdom)                                    |
-| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently 98.0/95.6/97.9/98.7) |
+| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently 97.8/95.4/97.9/98.6) |
 | `npm.cmd run test:e2e`        | Playwright 1.63 smoke, chromium, Vite dev reuse              |
 | `npm.cmd run build-storybook` | Storybook 10.6.0 static build                                |
 
@@ -323,7 +329,7 @@ reporter for CI step summaries.
 `cleanup()` after each test, and closes the server at the end.
 `src/test/utils.tsx` renders UI with a fresh query client (no retries),
 memory router, and seeded memory-only credentials.
-72 suites / 861 tests: pure-unit (formatters, SSE parser, rate-limit parser/selector/store,
+72 suites / 869 tests: pure-unit (formatters, SSE parser, rate-limit parser/selector/store,
 Prometheus histogram parser/quantiles, ECharts registration, app boot,
 error mapping, URL allow-list, `?next=` validation, chord map, toast store)
 plus MSW integration per screen (happy/error/empty/adversarial).
@@ -351,6 +357,10 @@ browser (local escape hatch when the Playwright CDN is unreachable; CI
 always uses the version-pinned bundled Chromium).
 `e2e/smoke.spec.ts` walks the guest landing (login redirect), public
 screens, the stealth admin gate, and the palette.
+`e2e/manual-shots.spec.ts` is the kept manual screenshot pass (login +
+all 17 palette routes, shots to gitignored `frontend/.tmp-interact/`):
+skipped in every gate run unless `MANUAL_SHOTS=1`, credentials via
+`SCREENSHOT_USERNAME`/`SCREENSHOT_PASSWORD` env only, never hardcoded.
 First run needs browsers:
 `npx playwright install chromium` (`--with-deps` on CI).
 

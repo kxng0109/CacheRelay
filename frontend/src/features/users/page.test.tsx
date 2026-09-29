@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { server } from '../../test/setup.js'
-import { renderApp } from '../../test/utils.js'
+import { renderApp, selectOption } from '../../test/utils.js'
 import { UsersPage } from './page.js'
 
 const ID = '123e4567-e89b-12d3-a456-426614174000'
@@ -46,9 +46,10 @@ describe('UsersPage', () => {
     expect(deletes).toBe(1)
   })
 
-  it('states there is no inventory endpoint', async () => {
+  it('states the picker-first flow with honest 404 copy', async () => {
     renderApp(<UsersPage />, { adminSession: true })
-    expect(await screen.findByText(/no user inventory endpoint/i)).toBeInTheDocument()
+    expect(await screen.findByText(/pick an account from the inventory/i)).toBeInTheDocument()
+    expect(screen.getByText(/unknown ids answer 404/i)).toBeInTheDocument()
   })
 
   it('rejects non-UUID account ids before calling the gateway', async () => {
@@ -65,6 +66,39 @@ describe('UsersPage', () => {
     expect(await screen.findByText(/must be a valid uuid/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /disable account/i })).toBeDisabled()
     expect(calls).toBe(0)
+  })
+
+  it('picks the account from the user inventory', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/users', () =>
+        HttpResponse.json({
+          content: [
+            {
+              userId: ID,
+              username: 'alice',
+              admin: false,
+              disabled: false,
+              createdAt: '2026-09-01T00:00:00Z',
+            },
+          ],
+          page: 0,
+          size: 20,
+          totalElements: 1,
+          totalPages: 1,
+          hasNext: false,
+        }),
+      ),
+      http.put('*/v1/admin/users/:id/disabled', () => new HttpResponse(null, { status: 204 })),
+    )
+    renderApp(<UsersPage />, { adminSession: true })
+    await screen.findByRole('combobox', { name: /account/i })
+    await selectOption(user, /account/i, 'alice (123e4567…)')
+    expect(screen.getByLabelText(/account id/i)).toHaveValue(ID)
+    await user.click(screen.getByRole('button', { name: /disable account/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(/account disabled/i)
+    })
   })
 
   it('re-enables an account and reports failures honestly', async () => {

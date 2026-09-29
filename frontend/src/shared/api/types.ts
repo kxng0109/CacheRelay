@@ -485,9 +485,9 @@ export interface OrgTeam {
 }
 
 /**
- * One admin model-catalog entry with pricing, windows, and quality.
+ * One admin model-catalog entry with pricing, windows, quality, and dims.
  * Mirrors the backend `ModelCatalogEntryResponse` record field for field;
- * four cost/window/quality fields are nullable.
+ * five cost/window/quality/dims fields are nullable.
  */
 export interface ModelCatalogEntry {
   modelId: string
@@ -501,6 +501,32 @@ export interface ModelCatalogEntry {
   maxOutputTokens: number | null
   qualityTier: string | null
   benchmarkRefs: string | null
+  embeddingDimensions: number | null
+}
+
+/**
+ * One user account summary. Mirrors the backend `UserSummaryResponse`
+ * record: identity and status only, never hashes.
+ */
+export interface UserSummary {
+  userId: string
+  username: string
+  admin: boolean
+  disabled: boolean
+  createdAt: string
+}
+
+/**
+ * One page of user summaries plus page metadata. Mirrors the backend
+ * `PageResponse<UserSummary>` envelope; `users` renames `content`.
+ */
+export interface UserPage {
+  users: UserSummary[]
+  page: number
+  size: number
+  totalElements: number
+  totalPages: number
+  hasNext: boolean
 }
 
 /**

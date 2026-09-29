@@ -39,6 +39,12 @@ describe('McpPage', () => {
     expect(screen.getByText(/paste a gateway key/i)).toBeInTheDocument()
   })
 
+  it('reads idle until a credential starts the first probe', () => {
+    renderApp(<McpPage />)
+    expect(screen.getByText(/catalog:idle/i)).toBeInTheDocument()
+    expect(screen.queryByText(/catalog:live/i)).not.toBeInTheDocument()
+  })
+
   it('declares suspension honestly on 403 without inventing tools', async () => {
     server.use(http.post('*/v1/mcp', () => new HttpResponse('x', { status: 403 })))
     renderApp(<McpPage />, { gatewayKey: 'gw-test' })

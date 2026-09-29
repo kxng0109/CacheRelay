@@ -147,6 +147,7 @@ describe('wire drift', () => {
                   maxOutputTokens: 16384,
                   qualityTier: 'FRONTIER',
                   benchmarkRefs: null,
+                  embeddingDimensions: null,
                 },
                 { modelId: 42 },
               ],
@@ -166,6 +167,69 @@ describe('wire drift', () => {
     expect(seen[0]).toContain('limit=200')
     stubJson({ models: {} })
     await expect(new GatewayClient().searchModelCatalog()).resolves.toEqual({ models: [] })
+  })
+
+  it('lists user summaries as a page with identity-only rows', async () => {
+    stubJson({
+      content: [
+        {
+          userId: '123e4567-e89b-12d3-a456-426614174000',
+          username: 'alice',
+          admin: false,
+          disabled: false,
+          createdAt: '2026-09-01T00:00:00Z',
+        },
+        { username: 'nameless' },
+      ],
+      page: 0,
+      size: 20,
+      totalElements: 1,
+      totalPages: 1,
+      hasNext: false,
+    })
+    await expect(new GatewayClient().listUsers()).resolves.toMatchObject({
+      users: [{ username: 'alice' }],
+      totalElements: 1,
+    })
+    stubJson({ content: {} })
+    await expect(new GatewayClient().listUsers()).resolves.toMatchObject({ users: [] })
+  })
+
+  it('parses nullable embedding dimensions on catalog entries', async () => {
+    stubJson({
+      models: [
+        {
+          modelId: 'text-embedding-3-small',
+          provider: 'openai',
+          mode: 'embeddings',
+          inputCostPerToken: 0.00000002,
+          outputCostPerToken: 0,
+          cacheReadInputTokenCost: null,
+          cacheCreationInputTokenCost: null,
+          maxInputTokens: 8191,
+          maxOutputTokens: null,
+          qualityTier: null,
+          benchmarkRefs: null,
+          embeddingDimensions: 1536,
+        },
+        {
+          modelId: 'gpt-4o',
+          provider: 'openai',
+          mode: 'chat',
+          inputCostPerToken: 0.000005,
+          outputCostPerToken: 0.000015,
+          cacheReadInputTokenCost: null,
+          cacheCreationInputTokenCost: null,
+          maxInputTokens: 128000,
+          maxOutputTokens: 16384,
+          qualityTier: 'FRONTIER',
+          benchmarkRefs: null,
+          embeddingDimensions: null,
+        },
+      ],
+    })
+    const out = await new GatewayClient().searchModelCatalog({})
+    expect(out.models.map((m) => m.embeddingDimensions)).toEqual([1536, null])
   })
 
   it('sets and revokes the self-service default key with hash validation', async () => {

@@ -133,6 +133,12 @@ export function McpPage(): React.JSX.Element {
 
   const tools = catalog.data !== undefined && 'tools' in catalog.data ? catalog.data.tools : []
   const suspended = catalog.data !== undefined && 'suspended' in catalog.data
+  // Idle until a probe completes: no credential means the query never
+  // runs, and a pending probe has returned nothing yet. `live` is
+  // reserved for a completed catalog read.
+  let catalogState = 'idle'
+  if (suspended) catalogState = 'suspended'
+  else if (catalog.data !== undefined) catalogState = 'live'
   const query = filter.trim().toLowerCase()
   const visible = tools.filter(
     (t) =>
@@ -156,7 +162,7 @@ export function McpPage(): React.JSX.Element {
               : 'border-ink/15 dark:border-parchment/15'
           }`}
         >
-          catalog:{suspended ? 'suspended' : 'live'}
+          catalog:{catalogState}
         </span>
         <span className="flex-1" />
         <button
