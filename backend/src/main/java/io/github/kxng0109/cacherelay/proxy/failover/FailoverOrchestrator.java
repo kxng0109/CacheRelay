@@ -413,7 +413,17 @@ attempt.response().whenComplete((response, error) -> {
 	private void cancelLosers(List<ProviderAttempt> attempts, ProviderAttempt winner) {
 		for (ProviderAttempt attempt : attempts) {
 			if (attempt != winner) {
-				attempt.response().cancel(true);
+				try {
+					attempt.response().cancel(true);
+				} catch (RuntimeException abandonFailed) {
+					// Best-effort by contract: the abort races the exchange
+					// teardown, which can surface CompletionException instead
+					// of completing silently. The winner is already decided;
+					// a throwing cancel must never break serving it (proven:
+					// synchronous escape into the winner callback path).
+					log.debug("Race loser cancel failed; exchange already settled: {}",
+							abandonFailed.toString());
+				}
 			}
 		}
 	}
