@@ -5,21 +5,70 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DisplayName("MerkleAuditLedger Tests")
 class MerkleAuditLedgerTest {
 
-	private final MerkleAuditLedger ledger = new MerkleAuditLedger();
+	private static final byte[] TEST_KEY =
+			HexFormat.of().parseHex("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+
+	private final MerkleAuditLedger ledger = new MerkleAuditLedger(TEST_KEY.clone());
 
 	@Test
-	@DisplayName("recordTransaction produces compliant non-repudiation receipt with valid 64-hex hashes")
+	@DisplayName("constructor rejects missing and short keys")
+	void rejectsBadKeys() {
+		assertThatThrownBy(() -> new MerkleAuditLedger(null))
+				.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> new MerkleAuditLedger(new byte[31]))
+				.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> new MerkleAuditLedger(new byte[0]))
+				.isInstanceOf(IllegalArgumentException.class);
+	}
+
+	@Test
+	@DisplayName("signatures verify against the configured key on any instance holding it")
+	void signaturesVerifyAcrossInstances() throws Exception {
+		byte[] prompt = "{\"prompt\": \"Hello CacheRelay\"}".getBytes(StandardCharsets.UTF_8);
+		String responseHash = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+
+		MerkleAuditLedger.AuditReceipt receipt = ledger.recordTransaction(
+				"tenant-123",
+				"key-hash-abc",
+				prompt,
+				responseHash
+		);
+
+		Mac mac = Mac.getInstance("HmacSHA256");
+		mac.init(new SecretKeySpec(TEST_KEY, "HmacSHA256"));
+		String expected = HexFormat.of().formatHex(mac.doFinal(
+				(receipt.leafHash() + ":" + receipt.chainHash()).getBytes(StandardCharsets.UTF_8)));
+
+		assertThat(receipt.signature()).isEqualTo(expected);
+
+		Mac foreign = Mac.getInstance("HmacSHA256");
+		foreign.init(new SecretKeySpec(
+				HexFormat.of().parseHex("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+				"HmacSHA256"));
+		String foreignSig = HexFormat.of().formatHex(foreign.doFinal(
+				(receipt.leafHash() + ":" + receipt.chainHash()).getBytes(StandardCharsets.UTF_8)));
+
+		assertThat(foreignSig).isNotEqualTo(receipt.signature());
+	}
+
+	@Test
+	@DisplayName("recordTransaction produces authenticated receipt with valid 64-hex hashes")
 	void recordsTransactionAndProducesReceipt() {
 		byte[] prompt = "{\"prompt\": \"Hello CacheRelay\"}".getBytes(StandardCharsets.UTF_8);
 		String responseHash = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
