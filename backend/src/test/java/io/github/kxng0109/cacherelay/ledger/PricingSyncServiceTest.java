@@ -95,7 +95,9 @@ class PricingSyncServiceTest {
 		                                  .build();
 		service = new PricingSyncService(
 				httpClient, new ObjectMapper(), repository, priceCatalog,
-				server.url("/prices.json").toString(), 30L, 5, 5L
+				// Backoff floor (1s): retry tests assert attempt counts and outcomes,
+				// never durations — production defaults (5s base) are untouched.
+				server.url("/prices.json").toString(), 30L, 5, 1L
 		);
 	}
 
@@ -258,7 +260,12 @@ class PricingSyncServiceTest {
 	@Test
 	@DisplayName("a failed fetch is logged, not thrown")
 	void failedFetchIsNonFatal() {
-		server.enqueue(new MockResponse().setResponseCode(503).setBody("boom"));
+		// One 503 per attempt: an empty MockWebServer queue blocks until the
+		// 30s fetch timeout, which tests scheduling patience instead of the
+		// non-fatal contract. Attempt counts and outcomes are unchanged.
+		for (int i = 0; i < 5; i++) {
+			server.enqueue(new MockResponse().setResponseCode(503).setBody("boom"));
+		}
 
 		assertDoesNotThrow(service::refresh);
 		verify(repository, never()).upsert(

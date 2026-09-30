@@ -269,6 +269,21 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
+                    <!-- Two forks halve the I/O-idle tail (PricingSyncServiceTest alone
+                         owns ~46% of class-seconds in backoff waits) on 4-core runners.
+                         Kept at 2, not higher: each fork duplicates the ~13 Spring
+                         contexts plus per-fork Testcontainers, and the suite shares
+                         singleton containers. Measured locally before enabling. -->
+                    <forkCount>2</forkCount>
+                    <reuseForks>true</reuseForks>
+                    <!-- The adversarial ReDoS timing gate runs in its own CI job on a
+                         fresh runner (see timing-gate in .github/workflows/ci.yml):
+                         its 250 ms wall-clock budgets measure scheduling noise on
+                         loaded shared runners. Excluded here by configuration (a -Dtest
+                         negation would also pull *IT classes into surefire). -->
+                    <excludes>
+                        <exclude>**/GuardrailTimingGateTest.java</exclude>
+                    </excludes>
                     <!-- Test-only secrets for Spring context tests. Production injects
                          GATEWAY_MCP_HITL_SECRET and GATEWAY_ADMIN_MASTERKEY via
                          environment/secret manager; these deterministic placeholders
@@ -441,11 +456,12 @@
                  report and SBOM packaging. This profile only removes iteration
                  overhead: SBOM generation and coverage *rendering* are skipped,
                  while the JaCoCo agent and coverage *check* stay intact so
-                 local full runs still enforce the gates. forkCount, JUnit
-                 parallelism, and the Spring context cache size are deliberately
-                 unchanged: extra forks duplicate every per-class container
-                 startup, Testcontainers-parallel is unsupported upstream, and
-                 the pinned cache size guards the fork shutdown hook. -->
+                 local full runs still enforce the gates. JUnit parallelism and the
+                 Spring context cache size stay deliberately
+                 unchanged: Testcontainers-parallel is unsupported upstream, and
+                 the pinned cache size guards the fork shutdown hook. Surefire
+                 forkCount lives only in the base configuration (2, measured
+                 locally before enabling); this profile adds no override. -->
             <id>local</id>
             <activation>
                 <activeByDefault>false</activeByDefault>
