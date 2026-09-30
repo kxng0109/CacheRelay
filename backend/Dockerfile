@@ -54,9 +54,13 @@ LABEL maintainer="CacheRelay Team" \
       description="Enterprise AI Gateway and Resilient Multi-Provider Reverse Proxy" \
       org.opencontainers.image.source="https://github.com/kxng0109/CacheRelay"
 
-# Install curl for health checking and update certificates
+# Install curl for health checking and update certificates. OpenSSL and libssl are
+# installed by name (not merely as transitive deps) so a rebuild always carries
+# the latest noble-updates patch: apt-get install upgrades named packages while
+# leaving pre-installed base layers untouched (CVE-2026-84782 stayed at
+# 3.0.13-0ubuntu3.15 until named explicitly).
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl ca-certificates && \
+    apt-get install -y --no-install-recommends curl ca-certificates openssl libssl3t64 && \
     rm -rf /var/lib/apt/lists/*
 
 # Create unprivileged system user and group
