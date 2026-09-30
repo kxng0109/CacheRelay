@@ -61,7 +61,7 @@ class ProxyControllerGuardrailStreamingTest {
 	private final SseFlushStrategy flushStrategy = mock(SseFlushStrategy.class);
 	private final SseLineGuardAutoConfig.SseLineGuardFactory lineGuardFactory = mock(SseLineGuardAutoConfig.SseLineGuardFactory.class);
 
-	private final MerkleAuditLedger auditLedger = new MerkleAuditLedger();
+	private final MerkleAuditLedger auditLedger = new MerkleAuditLedger(new byte[32]);
 	private final SystemPromptProtectionEngine systemPromptProtectionEngine = new SystemPromptProtectionEngine();
 	private final GuardrailProperties guardrailProperties = new GuardrailProperties();
 	private final ZeroDataRetentionEnforcer zdrEnforcer = new ZeroDataRetentionEnforcer();

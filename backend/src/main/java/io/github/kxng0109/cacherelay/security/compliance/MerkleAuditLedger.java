@@ -1,7 +1,5 @@
 package io.github.kxng0109.cacherelay.security.compliance;
 
-import org.springframework.stereotype.Component;
-
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
@@ -13,37 +11,55 @@ import java.util.HexFormat;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * High-performance, forward-secure cryptographic audit ledger and binary Merkle chain.
+ * Hash-chained audit ledger with per-receipt HMAC authenticity.
  *
- * <p>Produces non-repudiation cryptographic receipts (\(X\text{-}CacheRelay\text{-}Audit\text{-}Receipt\))
- * by linking request metadata, prompt hash, response hash, and forward-secure hash state. Uses atomic references for
- * lock-free concurrency, ensuring zero carrier thread pinning.</p>
+ * <p>Each receipt binds timestamp, tenant, key hash, prompt hash, and response
+ * hash into a leaf, advances a forward hash chain
+ * ({@code Chain_i = SHA-256(Chain_{i-1} || Leaf_i)}), and authenticates the
+ * pair with HMAC-SHA256 under the configured key. Anyone holding the key can
+ * recompute both digests and verify a receipt standalone.</p>
+ *
+ * <p>The chain is in-memory and restarts from a fresh random genesis on every
+ * boot (an epoch): receipts self-verify within and across epochs, but
+ * cross-epoch linkage is not preserved. This is tamper-evidence with a
+ * configured trust anchor, not third-party non-repudiation.</p>
  */
-@Component
 public class MerkleAuditLedger {
 
 	private static final String HMAC_ALGO = "HmacSHA256";
+
+	private static final int MIN_KEY_BYTES = 32;
+
 	private static final byte[] GENESIS_CHAIN_STATE = new byte[32];
 
 	static {
 		new SecureRandom().nextBytes(GENESIS_CHAIN_STATE);
 	}
 
-	private final byte[] hmacKeyBytes = new byte[32];
+	private final byte[] hmacKeyBytes;
 	private final AtomicReference<byte[]> cumulativeChainState = new AtomicReference<>(GENESIS_CHAIN_STATE.clone());
 
-	public MerkleAuditLedger() {
-		new SecureRandom().nextBytes(hmacKeyBytes);
+	/**
+	 * Creates the ledger with an operator-supplied HMAC key.
+	 *
+	 * @param hmacKey HMAC key bytes, 32 or more; defensively copied, never {@code null}
+	 * @throws IllegalArgumentException for missing or short keys
+	 */
+	public MerkleAuditLedger(byte[] hmacKey) {
+		if (hmacKey == null || hmacKey.length < MIN_KEY_BYTES) {
+			throw new IllegalArgumentException("Audit HMAC key must hold 32 or more bytes");
+		}
+		this.hmacKeyBytes = hmacKey.clone();
 	}
 
 	/**
-	 * Records a proxy transaction and generates a forward-secure cryptographic receipt.
+	 * Records a proxy transaction and generates an HMAC-authenticated receipt.
 	 *
 	 * @param tenantId     tenant or owner ID
 	 * @param keyHash      hashed virtual key identifier
 	 * @param promptBytes  raw bytes of the prompt payload
 	 * @param responseHash SHA-256 hash of the generated response
-	 * @return non-repudiation cryptographic audit receipt
+	 * @return audit receipt verifiable with the configured HMAC key
 	 */
 	public AuditReceipt recordTransaction(
 			String tenantId,
