@@ -137,6 +137,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   afterwards, never leaking across reused threads) and mutating admin endpoints
   additionally require it via `@PreAuthorize`, with `@EnableMethodSecurity`
   enabled. Full `verify` green (3,266 tests, JaCoCo 97.57% line / 95.31% branch).
+- **Audit receipts verifiable across restarts:** `MerkleAuditLedger` no longer mints
+  a per-boot HMAC key (which made every receipt unverifiable after a restart).
+  The key is injected (`GATEWAY_AUDIT_HMAC_KEY`, 64+ hex chars, fail-fast on
+  malformed values) and the bean only exists when configured — without it the
+  proxy emits no receipts instead of unverifiable ones. Receipts remain
+  hash-chained within a boot epoch and self-verify under the key. README
+  wording corrected alongside (CAS ring, overflow journal, per-request FOCUS
+  scope, actual `V1`–`V25` migration range).
 
 ### Removed
 
