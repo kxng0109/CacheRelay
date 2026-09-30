@@ -49,4 +49,14 @@ public class SsoOrg {
 		this.slug = slug;
 		this.displayName = displayName;
 	}
+
+	/**
+	 * Refreshes the display name, keeping the slug stable.
+	 *
+	 * @param displayName new human name, never {@code null}
+	 */
+	public void rename(String displayName) {
+		this.displayName = displayName;
+		this.updatedAt = Instant.now();
+	}
 }

@@ -1,6 +1,7 @@
 package io.github.kxng0109.cacherelay.auth;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -33,6 +34,14 @@ public interface InviteTokenRepository extends JpaRepository<InviteToken, UUID> 
 	@Query("UPDATE InviteToken i SET i.consumedAt = :now, i.consumedBy = :consumedBy "
 			+ "WHERE i.id = :id AND i.consumedAt IS NULL")
 	int consume(UUID id, UUID consumedBy, Instant now);
+
+	/**
+	 * Lists unconsumed invites placed into one team.
+	 *
+	 * @param teamId placed team id
+	 * @return pending invites carrying the placement
+	 */
+	List<InviteToken> findByTeamIdAndConsumedAtIsNull(UUID teamId);
 
 	/**
 	 * Deletes expired, never-consumed invites (janitor).

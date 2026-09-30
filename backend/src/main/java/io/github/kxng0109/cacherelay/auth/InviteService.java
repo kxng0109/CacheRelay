@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.interceptor.TransactionAspectSupport;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Single-use invitations with conditional email delivery. Every invite yields a copyable
@@ -51,6 +52,7 @@ public class InviteService {
 	private final PasswordEncoder passwordEncoder;
 	private final AuthAuditService audit;
 	private final GraphEmailSender mail;
+	private final TeamManagementService teamService;
 	private final SecureRandom random = new SecureRandom();
 
 	/**
@@ -62,16 +64,18 @@ public class InviteService {
 	 * @param passwordEncoder BCrypt encoder for redeemed accounts
 	 * @param audit           audit log
 	 * @param mail            Graph email channel (skips when unconfigured)
+	 * @param teamService     local team placement
 	 */
 	public InviteService(InviteTokenRepository invites, UserAccountRepository users,
 			AuthProperties properties, PasswordEncoder passwordEncoder, AuthAuditService audit,
-			GraphEmailSender mail) {
+			GraphEmailSender mail, TeamManagementService teamService) {
 		this.invites = invites;
 		this.users = users;
 		this.properties = properties;
 		this.passwordEncoder = passwordEncoder;
 		this.audit = audit;
 		this.mail = mail;
+		this.teamService = teamService;
 	}
 
 	/**
@@ -80,22 +84,29 @@ public class InviteService {
 	 * @param createdBy inviting account id, or {@code null} for master-key bootstrap
 	 * @param email     invited address for delivery, or {@code null} for link-only
 	 * @param admin     whether redemption creates an admin account
+	 * @param teamId    placed team for the redeemed account, or {@code null} for
+	 *                  unplaced invites; must reference a locally managed team
 	 * @param baseUrl   request-derived public base URL, used only when
 	 *                  {@code gateway.auth.invite-base-url} is blank
 	 * @param requestId correlation id, or {@code null}
 	 * @return link plus whether it was emailed
+	 * @throws ResponseStatusException 404 for unknown teams, 409 for IdP-managed teams
 	 */
 	@Transactional
-	public CreatedInvite create(UUID createdBy, String email, boolean admin, String baseUrl,
-			String requestId) {
+	public CreatedInvite create(UUID createdBy, String email, boolean admin, UUID teamId,
+			String baseUrl, String requestId) {
 		String token = randomToken();
 		String emailHash = email != null ? audit.pseudonym(email) : null;
+		if (teamId != null) {
+			teamService.requirePlaceableTeam(teamId);
+		}
 		invites.save(new InviteToken(
 				RefreshService.sha256Hex(token),
 				emailHash,
 				admin,
 				createdBy,
-				Instant.now().plus(properties.inviteTtl())));
+				Instant.now().plus(properties.inviteTtl()),
+				teamId));
 		String link = linkBase(baseUrl) + "/redeem?token=" + token;
 		boolean emailed = false;
 		if (email != null) {
@@ -136,6 +147,14 @@ public class InviteService {
 		if (users.findByUsernameIgnoreCase(username).isPresent()) {
 			return new RedeemResult.Gone();
 		}
+		SsoTeam placement = null;
+		if (invite.getTeamId() != null) {
+			try {
+				placement = teamService.requirePlaceableTeam(invite.getTeamId());
+			} catch (ResponseStatusException gone) {
+				return new RedeemResult.Gone();
+			}
+		}
 		boolean bootstrapped = users.count() == 0;
 		UserAccount account = new UserAccount(
 				username,
@@ -149,6 +168,9 @@ public class InviteService {
 				TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
 			}
 			return new RedeemResult.Gone();
+		}
+		if (placement != null) {
+			teamService.assignMember(placement.getId(), account.getId(), TeamRole.MEMBER);
 		}
 		String action = bootstrapped
 				? AuthAuditService.ACTION_BOOTSTRAP_CONSUMED

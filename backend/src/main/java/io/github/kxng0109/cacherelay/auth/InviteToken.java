@@ -46,6 +46,9 @@ public class InviteToken {
 	@Column(name = "consumed_by")
 	private UUID consumedBy;
 
+	@Column(name = "team_id")
+	private UUID teamId;
+
 	/**
 	 * No-argument constructor required by the JPA specification.
 	 */
@@ -53,7 +56,7 @@ public class InviteToken {
 	}
 
 	/**
-	 * Creates an invite with a fresh identifier.
+	 * Creates an invite with a fresh identifier and no team placement.
 	 *
 	 * @param tokenHash SHA-256 hex of the opaque presented token
 	 * @param emailHash keyed hash of the invited address, or {@code null}
@@ -63,11 +66,27 @@ public class InviteToken {
 	 */
 	public InviteToken(String tokenHash, String emailHash, boolean admin, UUID createdBy,
 			Instant expiresAt) {
+		this(tokenHash, emailHash, admin, createdBy, expiresAt, null);
+	}
+
+	/**
+	 * Creates an invite with a fresh identifier and optional team placement.
+	 *
+	 * @param tokenHash SHA-256 hex of the opaque presented token
+	 * @param emailHash keyed hash of the invited address, or {@code null}
+	 * @param admin     whether redeeming creates an admin account
+	 * @param createdBy inviting account, or {@code null} for bootstrap invites
+	 * @param expiresAt invite expiry
+	 * @param teamId    placed team, or {@code null} for unplaced invites
+	 */
+	public InviteToken(String tokenHash, String emailHash, boolean admin, UUID createdBy,
+			Instant expiresAt, UUID teamId) {
 		this.id = UUID.randomUUID();
 		this.tokenHash = tokenHash;
 		this.emailHash = emailHash;
 		this.admin = admin;
 		this.createdBy = createdBy;
 		this.expiresAt = expiresAt;
+		this.teamId = teamId;
 	}
 }

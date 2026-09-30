@@ -1,13 +1,18 @@
 package io.github.kxng0109.cacherelay.auth.dto;
 
+import java.util.UUID;
+
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Email;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Invite creation (master key or admin session only).
  *
- * @param email invited address for delivery; {@code null} for link-only invites
- * @param admin whether redemption creates an admin account
+ * @param email  invited address for delivery; {@code null} for link-only invites
+ * @param admin  whether redemption creates an admin account
+ * @param teamId placed team for the redeemed account, or {@code null} for unplaced
+ *               invites; must reference a locally managed team when present
  */
 @Schema(name = "InviteRequest", description = "Create a single-use invite")
 public record InviteRequest(
@@ -16,6 +21,9 @@ public record InviteRequest(
 		String email,
 
 		@Schema(description = "Whether redemption creates an admin account", example = "false")
-		boolean admin
+		boolean admin,
+
+		@Schema(description = "Placed team for the redeemed account, null for unplaced invites")
+		@Nullable UUID teamId
 ) {
 }
