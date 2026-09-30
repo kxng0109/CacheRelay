@@ -266,6 +266,17 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "1"
 
+      - name: Log Trivy table for the failing image (never gates)
+        # The SARIF gate above prints no finding table, so a red scan names
+        # nothing in the log. This twin scan renders the same image, severities
+        # and scanners to stdout for diagnosis and always succeeds.
+        if: always()
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: cacherelay:ci
+          severity: HIGH,CRITICAL
+          exit-code: "0"
+
       - name: Upload Trivy SARIF
         if: always()
         uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
