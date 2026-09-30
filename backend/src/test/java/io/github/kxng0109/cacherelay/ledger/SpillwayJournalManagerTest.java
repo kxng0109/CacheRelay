@@ -305,6 +305,58 @@ class SpillwayJournalManagerTest {
 		}
 	}
 
+	@Test
+	@DisplayName("replay from a missing parent directory returns zero without failing")
+	void replayMissingParentDirectoryReturnsZero() throws IOException {
+		SpillwayJournalManager missingParentMgr = new SpillwayJournalManager(
+				tempDir.resolve("no-such-dir/journal.log").toString(),
+				new ObjectMapper(),
+				meterRegistry
+		);
+
+		List<TokenUsageEvent> replayed = new ArrayList<>();
+
+		assertThat(missingParentMgr.replayPendingRecords(replayed::add))
+				.as("nothing staged, nothing replayed")
+				.isZero();
+		assertThat(replayed).isEmpty();
+	}
+
+	@Test
+	@DisplayName("blank providers are metered under unknown, never as blank tags")
+	void blankProvidersMeteredAsUnknown() throws IOException {
+		Path isolated = tempDir.resolve("blank-meter.log");
+		SimpleMeterRegistry isolatedRegistry = new SimpleMeterRegistry();
+		SpillwayJournalManager mgr = new SpillwayJournalManager(
+				isolated.toString(),
+				new ObjectMapper(),
+				isolatedRegistry
+		);
+		TokenUsageEvent blank = new TokenUsageEvent(
+				UUID.randomUUID(), "t", "", "m",
+				10, 5, 15, 20, 100, Instant.now()
+		);
+		mgr.append(blank, "outage");
+
+		List<TokenUsageEvent> replayed = new ArrayList<>();
+		assertThat(mgr.replayPendingRecords(replayed::add)).isEqualTo(1);
+		assertThat(isolatedRegistry.get("cacherelay.ledger.spillway.replayed")
+				.tag("provider", "unknown").counter().count()).isEqualTo(1.0);
+
+		TokenUsageEvent blankAgain = new TokenUsageEvent(
+				UUID.randomUUID(), "t", "   ", "m",
+				10, 5, 15, 20, 100, Instant.now()
+		);
+		mgr.append(blankAgain, "outage");
+		Path preStaged = Path.of(isolated + ".dead-letter." + System.nanoTime());
+		Files.move(isolated, preStaged);
+		assertThat(mgr.replayPendingRecords(e -> {
+			throw new RuntimeException("consumer down");
+		})).isZero();
+		assertThat(isolatedRegistry.get("cacherelay.ledger.dead_letter.skip")
+				.tag("provider", "unknown").counter().count()).isEqualTo(1.0);
+	}
+
 	private static TokenUsageEvent createEvent(String tenant) {
 		return new TokenUsageEvent(
 				UUID.randomUUID(), tenant, "openai", "gpt-5.6-luna",

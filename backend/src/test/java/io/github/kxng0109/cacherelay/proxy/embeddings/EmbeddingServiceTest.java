@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -233,6 +234,58 @@ class EmbeddingServiceTest {
 		assertThatThrownBy(() -> service.processEmbedding(hugeRequest, "tenant-1"))
 				.isInstanceOf(ResponseStatusException.class)
 				.hasMessageContaining("exceeds maximum allowed limit of 2048 items");
+	}
+
+	@Test
+	@DisplayName("null and mixed-shape inputs fail closed with 400")
+	@SuppressWarnings("DataFlowIssue")
+	void nullAndMixedInputsRejected() {
+		EmbeddingRequest nullInput = new EmbeddingRequest(null, "model", null, null, null);
+		assertThatThrownBy(() -> service.processEmbedding(nullInput, "tenant-1"))
+				.isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("Parameter 'input' cannot be empty");
+
+		EmbeddingRequest mixedInput =
+				new EmbeddingRequest(new ArrayList<>(List.of("hello", 42)), "model", null, null, null);
+		assertThatThrownBy(() -> service.processEmbedding(mixedInput, "tenant-1"))
+				.isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("must be a string or an array of strings");
+	}
+
+	@Test
+	@DisplayName("anonymous requests attribute usage to unknown without failing")
+	@SuppressWarnings("DataFlowIssue")
+	void anonymousOwnerAttributesUnknown() throws Exception {
+		ProviderConfig provider = new ProviderConfig(
+				"openai-main", ProviderType.OPENAI, URI.create("https://api.openai.com/v1"),
+				new SensitiveString("key"), Duration.ofSeconds(5), Duration.ofSeconds(30)
+		);
+		gatewayProperties.setProviders(Map.of("openai-main", provider));
+		ModelAlias alias = new ModelAlias(
+				List.of(new ProviderRef("openai-main", "text-embedding-3-small")),
+				FailoverStrategy.SEQUENTIAL
+		);
+		gatewayProperties.setAliases(Map.of("text-embedding-3-small", alias));
+
+		EmbeddingAdapter adapter = mock(EmbeddingAdapter.class);
+		when(adapterResolver.resolve(ProviderType.OPENAI)).thenReturn(adapter);
+		EmbeddingRequest request = new EmbeddingRequest(List.of("hello"), "text-embedding-3-small", null, null, null);
+		EmbeddingResponse mockResponse = EmbeddingResponse.of(
+				"text-embedding-3-small",
+				List.of(EmbeddingData.of(0, new float[]{0.1f})),
+				10
+		);
+		when(batchOrchestrator.execute(eq(request), eq(adapter), eq(provider), any(URI.class)))
+				.thenReturn(mockResponse);
+		when(costCalculator.calculate(ProviderType.OPENAI, "text-embedding-3-small", 10, 0))
+				.thenReturn(200L);
+
+		EmbeddingResponse response = service.processEmbedding(request, null);
+
+		assertThat(response).isEqualTo(mockResponse);
+		ArgumentCaptor<TokenUsageEvent> captor = ArgumentCaptor.forClass(TokenUsageEvent.class);
+		verify(eventPublisher).publishEvent(captor.capture());
+		assertThat(captor.getValue().ownerId()).isEqualTo("unknown");
 	}
 
 	@Test

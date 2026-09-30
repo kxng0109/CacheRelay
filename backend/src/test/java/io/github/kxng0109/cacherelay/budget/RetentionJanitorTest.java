@@ -7,6 +7,7 @@ import java.sql.SQLException;
 import java.time.YearMonth;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.function.Consumer;
 
 import javax.sql.DataSource;
 
@@ -15,11 +16,16 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNoException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -135,8 +141,8 @@ class RetentionJanitorTest {
 	void lostLockSkipsTick() throws Exception {
 		DataSource dataSource = mock(DataSource.class);
 		Connection connection = mock(Connection.class);
-		java.sql.PreparedStatement lockStatement = mock(java.sql.PreparedStatement.class);
-		java.sql.ResultSet lockRows = mock(java.sql.ResultSet.class);
+		PreparedStatement lockStatement = mock(PreparedStatement.class);
+		ResultSet lockRows = mock(ResultSet.class);
 		when(dataSource.getConnection()).thenReturn(connection);
 		when(connection.prepareStatement(anyString())).thenReturn(lockStatement);
 		when(lockStatement.executeQuery()).thenReturn(lockRows);
@@ -198,5 +204,131 @@ class RetentionJanitorTest {
 
 		assertThat(registry.get("cacherelay.job.last_tick_seconds")
 				.tag("job", "retention-janitor").gauge().value()).isPositive();
+	}
+
+	@Test
+	@DisplayName("wired archive template runs the roll inside REQUIRES_NEW")
+	void archiveUsesTransactionTemplateWhenWired() throws Exception {
+		Harness harness = harness();
+		TransactionTemplate template = mock(TransactionTemplate.class);
+		doAnswer(invocation -> {
+			Consumer<TransactionStatus> work = invocation.getArgument(0);
+			work.accept(mock(TransactionStatus.class));
+			return null;
+		}).when(template).executeWithoutResult(any());
+		harness.janitor().setArchiveTemplate(template);
+		when(harness.jdbc().update(anyString(), anyString())).thenReturn(0, 0);
+		when(harness.jdbc().queryForObject(anyString(), eq(Integer.class), anyString())).thenReturn(0);
+
+		harness.janitor().archiveOldAlerts();
+
+		verify(template).executeWithoutResult(any());
+	}
+
+	@Test
+	@DisplayName("null archive template falls back to auto-commit steps")
+	void nullArchiveTemplateFallsBackToAutoCommit() throws Exception {
+		Harness harness = harness();
+		harness.janitor().setArchiveTemplate(null);
+		when(harness.jdbc().update(anyString(), anyString())).thenReturn(0, 0);
+		when(harness.jdbc().queryForObject(anyString(), eq(Integer.class), anyString())).thenReturn(0);
+
+		assertThatNoException().isThrownBy(() -> harness.janitor().archiveOldAlerts());
+	}
+
+	@Test
+	@DisplayName("commit failure rolls back and propagates")
+	void retainPropagatesCommitFailureAfterRollback() throws Exception {
+		JdbcTemplate jdbc = mock(JdbcTemplate.class);
+		DataSource dataSource = mock(DataSource.class);
+		Connection connection = mock(Connection.class);
+		PreparedStatement lockStatement = mock(PreparedStatement.class);
+		ResultSet lockRows = mock(ResultSet.class);
+		when(dataSource.getConnection()).thenReturn(connection);
+		when(connection.prepareStatement(anyString())).thenReturn(lockStatement);
+		when(lockStatement.executeQuery()).thenReturn(lockRows);
+		when(lockRows.next()).thenReturn(true);
+		when(lockRows.getBoolean(1)).thenReturn(true);
+		when(jdbc.queryForList(anyString(), eq(String.class))).thenReturn(List.of());
+		when(jdbc.update(anyString(), anyString())).thenReturn(0);
+		when(jdbc.queryForObject(anyString(), eq(Integer.class), anyString())).thenReturn(0);
+		doAnswer(invocation -> {
+			throw new RuntimeException("commit down");
+		}).when(connection).commit();
+		RetentionJanitor janitor = new RetentionJanitor(jdbc, dataSource, MaintenanceProperties.DEFAULTS);
+
+		assertThatThrownBy(janitor::retain)
+				.isInstanceOf(RuntimeException.class)
+				.hasMessageContaining("commit down");
+		verify(connection).rollback();
+	}
+
+	@Test
+	@DisplayName("rollback failure is absorbed, original failure still propagates")
+	void rollbackFailureAbsorbedAndOriginalPropagates() throws Exception {
+		JdbcTemplate jdbc = mock(JdbcTemplate.class);
+		DataSource dataSource = mock(DataSource.class);
+		Connection connection = mock(Connection.class);
+		PreparedStatement lockStatement = mock(PreparedStatement.class);
+		ResultSet lockRows = mock(ResultSet.class);
+		when(dataSource.getConnection()).thenReturn(connection);
+		when(connection.prepareStatement(anyString())).thenReturn(lockStatement);
+		when(lockStatement.executeQuery()).thenReturn(lockRows);
+		when(lockRows.next()).thenReturn(true);
+		when(lockRows.getBoolean(1)).thenReturn(true);
+		when(jdbc.queryForList(anyString(), eq(String.class))).thenReturn(List.of());
+		when(jdbc.update(anyString(), anyString())).thenReturn(0);
+		when(jdbc.queryForObject(anyString(), eq(Integer.class), anyString())).thenReturn(0);
+		doAnswer(invocation -> {
+			throw new RuntimeException("commit down");
+		}).when(connection).commit();
+		doAnswer(invocation -> {
+			throw new SQLException("rollback down");
+		}).when(connection).rollback();
+		RetentionJanitor janitor = new RetentionJanitor(jdbc, dataSource, MaintenanceProperties.DEFAULTS);
+
+		assertThatThrownBy(janitor::retain)
+				.isInstanceOf(RuntimeException.class)
+				.hasMessageContaining("commit down");
+	}
+
+	@Test
+	@DisplayName("partition extension failure is absorbed")
+	void ensureReplayPartitionsFailureAbsorbed() throws Exception {
+		Harness harness = harness();
+		doAnswer(invocation -> {
+			throw new RuntimeException("db down");
+		}).when(harness.jdbc()).execute(anyString());
+
+		assertThatNoException().isThrownBy(() -> harness.janitor().ensureReplayPartitions());
+	}
+
+	@Test
+	@DisplayName("partial archive counts with zero remaining complete cleanly")
+	void archiveRollPartialCountsAndZeroRemaining() throws Exception {
+		Harness harness = harness();
+		when(harness.jdbc().update(anyString(), anyString())).thenReturn(1, 0);
+		when(harness.jdbc().queryForObject(anyString(), eq(Integer.class), anyString())).thenReturn(0);
+
+		assertThatNoException().isThrownBy(() -> harness.janitor().archiveOldAlerts());
+	}
+
+	@Test
+	@DisplayName("leftover hot rows fail the roll closed without escaping")
+	void archiveRollLeftoverThrowsAbsorbed() throws Exception {
+		Harness harness = harness();
+		when(harness.jdbc().update(anyString(), anyString())).thenReturn(0, 0);
+		when(harness.jdbc().queryForObject(anyString(), eq(Integer.class), anyString())).thenReturn(5);
+
+		assertThatNoException().isThrownBy(() -> harness.janitor().archiveOldAlerts());
+	}
+
+	@Test
+	@DisplayName("non-empty archive purge completes without failing")
+	void purgeOldArchiveLogsWhenRowsPurged() throws Exception {
+		Harness harness = harness();
+		when(harness.jdbc().update(anyString(), anyString())).thenReturn(1);
+
+		assertThatNoException().isThrownBy(() -> harness.janitor().purgeOldArchive());
 	}
 }

@@ -624,6 +624,76 @@ class A2aProxyControllerTest {
 		assertThat(upstream.getRequestCount()).isZero();
 	}
 
+	@Test
+	@DisplayName("A2A-B08: same-major minor drift against the pin answers -32009")
+	void minorVersionDriftRejected() throws Exception {
+		A2aGatewayProperties driftProps = new A2aGatewayProperties();
+		Map<String, A2aAgentConfig> agents = new LinkedHashMap<>();
+		agents.put("drift-agent", new A2aAgentConfig(
+				"drift-agent",
+				upstream.url("/a2a").uri(),
+				new SensitiveString("agent-secret"),
+				"0.4",
+				null,
+				null));
+		driftProps.setAgents(agents);
+		A2aProxyController driftController = new A2aProxyController(
+				driftProps,
+				new A2aAgentRegistry(driftProps),
+				new A2aRbacPolicyEngine(),
+				new A2aAgentCircuitBreakerManager(driftProps),
+				keyManagementService,
+				rateLimitEngine,
+				objectMapper,
+				HttpClient.newBuilder()
+						.connectTimeout(Duration.ofSeconds(2))
+						.followRedirects(HttpClient.Redirect.NEVER)
+						.build());
+
+		ResponseEntity<StreamingResponseBody> response = driftController.relay(
+				"drift-agent", SEND_BODY, "0.3", versionedRequest("0.3"));
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(errorCode(response)).isEqualTo(-32009);
+		assertThat(upstream.getRequestCount()).isZero();
+	}
+
+	@Test
+	@DisplayName("A2A-B08: unparsable agent pin degrades to lenient instead of failing closed")
+	void garbageAgentPinIsLenient() throws Exception {
+		A2aGatewayProperties laxProps = new A2aGatewayProperties();
+		Map<String, A2aAgentConfig> agents = new LinkedHashMap<>();
+		agents.put("lax-agent", new A2aAgentConfig(
+				"lax-agent",
+				upstream.url("/a2a").uri(),
+				new SensitiveString("agent-secret"),
+				"not-a-version",
+				null,
+				null));
+		laxProps.setAgents(agents);
+		A2aProxyController laxController = new A2aProxyController(
+				laxProps,
+				new A2aAgentRegistry(laxProps),
+				new A2aRbacPolicyEngine(),
+				new A2aAgentCircuitBreakerManager(laxProps),
+				keyManagementService,
+				rateLimitEngine,
+				objectMapper,
+				HttpClient.newBuilder()
+						.connectTimeout(Duration.ofSeconds(2))
+						.followRedirects(HttpClient.Redirect.NEVER)
+						.build());
+		upstream.enqueue(new MockResponse().setResponseCode(200)
+				.setHeader("Content-Type", "application/json")
+				.setBody("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}"));
+
+		ResponseEntity<StreamingResponseBody> response = laxController.relay(
+				"lax-agent", SEND_BODY, "0.3", versionedRequest("0.3"));
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(upstream.getRequestCount()).isEqualTo(1);
+	}
+
 	private A2aProxyController pinnedController() {
 		A2aGatewayProperties pinnedProps = new A2aGatewayProperties();
 		Map<String, A2aAgentConfig> agents = new LinkedHashMap<>();
@@ -904,6 +974,39 @@ class A2aProxyControllerTest {
 
 		ResponseEntity<String> response =
 				evilController.agentCard("evil-agent", request("Bearer gw-a2a-test", -1L));
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(upstream.getRequestCount()).isZero();
+	}
+
+	@Test
+	@DisplayName("A2A-B06: opaque card references fail the same-origin check without fetching")
+	void opaqueCardPathRejected() throws Exception {
+		A2aGatewayProperties opaqueProps = new A2aGatewayProperties();
+		Map<String, A2aAgentConfig> agents = new LinkedHashMap<>();
+		agents.put("opaque-agent", new A2aAgentConfig(
+				"opaque-agent",
+				upstream.url("/a2a").uri(),
+				new SensitiveString("agent-secret"),
+				null,
+				"mailto:evil@example.com",
+				null));
+		opaqueProps.setAgents(agents);
+		A2aProxyController opaqueController = new A2aProxyController(
+				opaqueProps,
+				new A2aAgentRegistry(opaqueProps),
+				new A2aRbacPolicyEngine(),
+				new A2aAgentCircuitBreakerManager(opaqueProps),
+				keyManagementService,
+				rateLimitEngine,
+				objectMapper,
+				HttpClient.newBuilder()
+						.connectTimeout(Duration.ofSeconds(2))
+						.followRedirects(HttpClient.Redirect.NEVER)
+						.build());
+
+		ResponseEntity<String> response =
+				opaqueController.agentCard("opaque-agent", request("Bearer gw-a2a-test", -1L));
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
 		assertThat(upstream.getRequestCount()).isZero();

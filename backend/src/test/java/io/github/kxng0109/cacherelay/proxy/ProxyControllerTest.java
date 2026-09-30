@@ -2133,6 +2133,97 @@ class ProxyControllerTest {
 	}
 
 	@Test
+	@DisplayName("PRX-B24: non-object dialect usage shapes bill zero instead of failing")
+	void nonObjectDialectUsageBillsZero() throws Exception {
+		gatewayProperties.setAliases(Map.of(
+				"gpt-5.6-luna", new ModelAlias(
+						List.of(new ProviderRef("openai", null)), FailoverStrategy.SEQUENTIAL),
+				"claude-sonnet-5", new ModelAlias(
+						List.of(new ProviderRef("anthropic", null)), FailoverStrategy.SEQUENTIAL),
+				"gemini-2.0-flash", new ModelAlias(
+						List.of(new ProviderRef("gemini", null)), FailoverStrategy.SEQUENTIAL)
+		));
+		gatewayProperties.setProviders(Map.of(
+				"openai", new ProviderConfig(
+						"openai", ProviderType.OPENAI, URI.create("https://api.openai.com"),
+						new SensitiveString("sk-test"), Duration.ofSeconds(3), Duration.ofSeconds(30)
+				),
+				"anthropic", new ProviderConfig(
+						"anthropic", ProviderType.ANTHROPIC, URI.create("https://api.anthropic.com"),
+						new SensitiveString("sk-ant"), Duration.ofSeconds(3), Duration.ofSeconds(30)
+				),
+				"gemini", new ProviderConfig(
+						"gemini", ProviderType.GEMINI, URI.create("https://generativelanguage.googleapis.com"),
+						new SensitiveString("sk-gem"), Duration.ofSeconds(3), Duration.ofSeconds(30)
+				)
+		));
+		String choices = "\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+				+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}]";
+		String[][] cases = {
+				{"anthropic", "claude-sonnet-5",
+						"{\"id\":\"m\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}],\"usage\":\"nope\"," + choices + "}"},
+				{"gemini", "gemini-2.0-flash",
+						"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hi\"}]} }],"
+								+ "\"usageMetadata\":\"nope\"," + choices + "}"},
+		};
+		for (String[] kase : cases) {
+			ProviderResponse response = providerResponse(kase[0], 200, jsonHeaders(), Stream.of(kase[2]));
+			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+					.thenReturn(CompletableFuture.completedFuture(response));
+
+			ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(
+					"{\"model\":\"" + kase[1] + "\",\"messages\":[]}", request());
+			body(entity);
+
+			ArgumentCaptor<TokenUsageEvent> captor = ArgumentCaptor.forClass(TokenUsageEvent.class);
+			verify(eventPublisher, atLeastOnce()).publishEvent(captor.capture());
+			assertEquals(0, captor.getValue().promptTokens());
+			assertEquals(0, captor.getValue().completionTokens());
+		}
+	}
+
+	@Test
+	@DisplayName("PRX-B24: partial and absent Ollama counts map independently")
+	void partialOllamaCountsMapIndependently() throws Exception {
+		gatewayProperties.setAliases(Map.of(
+				"gpt-5.6-luna", new ModelAlias(
+						List.of(new ProviderRef("openai", null)), FailoverStrategy.SEQUENTIAL),
+				"llama3.2", new ModelAlias(
+						List.of(new ProviderRef("ollama", null)), FailoverStrategy.SEQUENTIAL)
+		));
+		gatewayProperties.setProviders(Map.of(
+				"openai", new ProviderConfig(
+						"openai", ProviderType.OPENAI, URI.create("https://api.openai.com"),
+						new SensitiveString("sk-test"), Duration.ofSeconds(3), Duration.ofSeconds(30)
+				),
+				"ollama", new ProviderConfig(
+						"ollama", ProviderType.OLLAMA, URI.create("http://localhost:11434"),
+						new SensitiveString(""), Duration.ofSeconds(3), Duration.ofSeconds(30)
+				)
+		));
+		String choices = "\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+				+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}]";
+		String[][] cases = {
+				{"{\"id\":\"o1\"," + choices + ",\"eval_count\":9}", "0", "0"},
+				{"{\"id\":\"o2\"," + choices + "}", "0", "0"},
+		};
+		for (String[] kase : cases) {
+			ProviderResponse response = providerResponse("ollama", 200, jsonHeaders(), Stream.of(kase[0]));
+			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+					.thenReturn(CompletableFuture.completedFuture(response));
+
+			ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(
+					"{\"model\":\"llama3.2\",\"messages\":[]}", request());
+			body(entity);
+
+			ArgumentCaptor<TokenUsageEvent> captor = ArgumentCaptor.forClass(TokenUsageEvent.class);
+			verify(eventPublisher, atLeastOnce()).publishEvent(captor.capture());
+			assertEquals(Integer.parseInt(kase[1]), captor.getValue().promptTokens());
+			assertEquals(Integer.parseInt(kase[2]), captor.getValue().completionTokens());
+		}
+	}
+
+	@Test
 	@DisplayName("non-JSON 200 bodies settle the prompt-known portion and relay raw")
 	void nonJsonBodySettlesPromptKnown() throws Exception {
 		BudgetEnforcer mockEnforcer = mock(BudgetEnforcer.class);

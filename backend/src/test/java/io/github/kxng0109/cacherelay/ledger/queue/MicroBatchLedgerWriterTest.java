@@ -539,4 +539,64 @@ class MicroBatchLedgerWriterTest {
 		assertThat(exposition).contains("provider=\"ollama\"");
 		assertThat(exposition).contains("model=\"local-llama\"");
 	}
+
+	@Test
+	@DisplayName("staging conflict with partial failure journals only the failed rows")
+	void shouldJournalPartialStagingFailures() {
+		LedgerStagingRepository staging = mock(LedgerStagingRepository.class);
+		writer.setStagingRepository(staging);
+		UUID okId = UUID.randomUUID();
+		UUID failId = UUID.randomUUID();
+		TokenUsageEvent ok = new TokenUsageEvent(
+				okId, "tenant-1", "openai", "gpt-4o", 10, 5, 15, 100, 100, Instant.now());
+		TokenUsageEvent failing = new TokenUsageEvent(
+				failId, "tenant-1", "openai", "gpt-4o", 10, 5, 15, 100, 100, Instant.now());
+		queue.offer(ok);
+		queue.offer(failing);
+		when(repository.findByRequestIdIn(anyCollection())).thenReturn(List.of());
+		doThrow(new RuntimeException("DB down")).when(repository).saveAll(anyList());
+		doThrow(new DataIntegrityViolationException("duplicate")).when(staging).saveAll(anyList());
+		doAnswer(inv -> {
+			LedgerStagingEntry row = inv.getArgument(0);
+			if (failId.equals(row.getRequestId())) {
+				throw new RuntimeException("row down");
+			}
+			return row;
+		}).when(staging).saveAndFlush(any(LedgerStagingEntry.class));
+
+		int flushed = writer.flushCycle();
+
+		assertThat(flushed).isZero();
+		ArgumentCaptor<List<TokenUsageEvent>> journalCaptor = ArgumentCaptor.forClass(List.class);
+		verify(spillwayJournal).appendBatch(journalCaptor.capture(), anyString());
+		assertThat(journalCaptor.getValue()).extracting(TokenUsageEvent::requestId)
+				.containsExactly(failId);
+	}
+
+	@Test
+	@DisplayName("existence check with null rows filters safely without failing")
+	void shouldIgnoreNullRowsInExistenceCheck() {
+		UUID storedId = UUID.randomUUID();
+		TokenUsageEvent stored = new TokenUsageEvent(
+				storedId, "tenant-1", "openai", "gpt-4o", 10, 5, 15, 100, 100, Instant.now());
+		TokenUsageEvent fresh = createEvent("tenant-2");
+		queue.offer(stored);
+		queue.offer(fresh);
+		UsageLedgerEntry storedRow = mock(UsageLedgerEntry.class);
+		when(storedRow.getRequestId()).thenReturn(storedId);
+		UsageLedgerEntry nullIdRow = mock(UsageLedgerEntry.class);
+		when(nullIdRow.getRequestId()).thenReturn(null);
+		List<UsageLedgerEntry> storedList = new ArrayList<>();
+		storedList.add(null);
+		storedList.add(nullIdRow);
+		storedList.add(storedRow);
+		when(repository.findByRequestIdIn(anyCollection())).thenReturn(storedList);
+
+		int flushed = writer.flushCycle();
+
+		assertThat(flushed).isEqualTo(1);
+		ArgumentCaptor<List<UsageLedgerEntry>> savedCaptor = ArgumentCaptor.forClass(List.class);
+		verify(repository).saveAll(savedCaptor.capture());
+		assertThat(savedCaptor.getValue()).hasSize(1);
+	}
 }
