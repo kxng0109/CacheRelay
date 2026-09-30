@@ -39,7 +39,7 @@ public class AdminInviteController {
 	/**
 	 * Creates an invite.
 	 *
-	 * @param body    invited address (optional) and privilege
+	 * @param body    invited address (optional), privilege, and optional team placement
 	 * @param request current request (inviter attribution and fallback link base)
 	 * @return copyable link plus whether it was emailed
 	 */
@@ -53,7 +53,9 @@ public class AdminInviteController {
 	)
 	@ApiResponses(value = {
 			@ApiResponse(responseCode = "201", description = "Invite created"),
-			@ApiResponse(responseCode = "404", description = "Hidden: caller is not an admin")
+			@ApiResponse(responseCode = "400", description = "Malformed request"),
+			@ApiResponse(responseCode = "404", description = "Hidden: caller is not an admin, or placed team unknown"),
+			@ApiResponse(responseCode = "409", description = "Placed team is IdP-managed and read-only")
 	})
 	@PostMapping
 	public ResponseEntity<InviteResponse> create(@Valid @RequestBody InviteRequest body,
@@ -63,7 +65,7 @@ public class AdminInviteController {
 		String baseUrl = request.getScheme() + "://" + request.getServerName()
 				+ (isDefaultPort(request) ? "" : ":" + request.getServerPort());
 		InviteService.CreatedInvite created = invites.create(createdBy, body.email(), body.admin(),
-				baseUrl, request.getHeader("X-Request-ID"));
+				body.teamId(), baseUrl, request.getHeader("X-Request-ID"));
 		return ResponseEntity.status(HttpStatus.CREATED)
 				.body(new InviteResponse(created.link(), created.emailed()));
 	}
