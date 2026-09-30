@@ -5,6 +5,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.core.annotation.Order;
 import org.springframework.security.config.ObjectPostProcessor;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -86,6 +87,11 @@ import io.github.kxng0109.cacherelay.web.SpaFallbackController;
  *       writing commits the headers on the dispatch thread before any async handoff.</li>
  *   <li>Default-deny is fail-closed: an unmatched route is refused, never passed
  *       through.</li>
+ *   <li>Method security is enabled as the second enforcement layer:
+ *       {@code AdminAuthFilter} publishes {@code ROLE_ADMIN} for the downstream
+ *       dispatch of authenticated admin requests, and mutating admin endpoints
+ *       additionally require it via {@code @PreAuthorize("hasRole('ADMIN')")},
+ *       so a filter misconfiguration alone cannot open a write path.</li>
  * </ul>
  *
  * <p>Human authentication (login UI, SSO) attaches later without touching this chain: local accounts arrive as an
@@ -96,6 +102,7 @@ import io.github.kxng0109.cacherelay.web.SpaFallbackController;
  */
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity
 public class SecurityConfig {
 
 	/**

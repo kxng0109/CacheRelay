@@ -11,6 +11,10 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.filter.OncePerRequestFilter;
 import tools.jackson.databind.ObjectMapper;
@@ -19,6 +23,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -33,6 +38,13 @@ import java.util.UUID;
  * <p>Every other rejection answers 404, indistinguishable from a missing route, so probing
  * cannot confirm the control plane exists. Successful admin-JWT authentication exposes the
  * account id as {@link #ATTRIBUTE_ADMIN_ID} for downstream attribution.</p>
+ *
+ * <p>Every success additionally publishes a {@code ROLE_ADMIN} authentication into the
+ * {@code SecurityContextHolder} for the downstream dispatch only, restoring whatever
+ * was there before (usually the anonymous token) afterwards: container threads are
+ * reused, so the grant must never leak across requests. Method security
+ * ({@code @PreAuthorize("hasRole('ADMIN')")}) is the second enforcement layer on
+ * mutating admin endpoints; this filter remains the first.</p>
  */
 @Slf4j
 @RequiredArgsConstructor
@@ -87,9 +99,11 @@ public class AdminAuthFilter extends OncePerRequestFilter {
 		}
 
 		if (MessageDigest.isEqual(sha256(masterKey), sha256(token))) {
+			Authentication prior = publishAdminAuthentication("master-key");
 			try {
 				filterChain.doFilter(request, response);
 			} finally {
+				restoreAdminAuthentication(prior);
 				auditMutation(request, response, null);
 			}
 			return;
@@ -97,9 +111,11 @@ public class AdminAuthFilter extends OncePerRequestFilter {
 
 		if (acceptAdminJwt(request, token)) {
 			String adminId = String.valueOf(request.getAttribute(ATTRIBUTE_ADMIN_ID));
+			Authentication prior = publishAdminAuthentication(adminId);
 			try {
 				filterChain.doFilter(request, response);
 			} finally {
+				restoreAdminAuthentication(prior);
 				auditMutation(request, response, adminId);
 			}
 			return;
@@ -107,6 +123,35 @@ public class AdminAuthFilter extends OncePerRequestFilter {
 
 		log.warn("Invalid admin authentication attempt on {}", request.getRequestURI());
 		writeStealth(response, request.getRequestURI());
+	}
+
+	/**
+	 * Publishes the admin grant for the downstream dispatch, returning whatever
+	 * authentication was present so the caller can restore it afterwards.
+	 *
+	 * @param principal admin identity for attribution ("master-key" or account id)
+	 * @return the previously present authentication, possibly {@code null}
+	 */
+	private static Authentication publishAdminAuthentication(String principal) {
+		Authentication prior = SecurityContextHolder.getContext().getAuthentication();
+		SecurityContextHolder.getContext().setAuthentication(
+				new UsernamePasswordAuthenticationToken(principal, null,
+						List.of(new SimpleGrantedAuthority("ROLE_ADMIN"))));
+		return prior;
+	}
+
+	/**
+	 * Restores the authentication present before this request's grant, so reused
+	 * container threads never leak admin authority across requests.
+	 *
+	 * @param prior authentication to restore, or {@code null} to clear
+	 */
+	private static void restoreAdminAuthentication(Authentication prior) {
+		if (prior == null) {
+			SecurityContextHolder.clearContext();
+		} else {
+			SecurityContextHolder.getContext().setAuthentication(prior);
+		}
 	}
 
 	/**
