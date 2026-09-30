@@ -109,6 +109,25 @@ class AdminModelCatalogControllerTest {
 	}
 
 	@Test
+	@DisplayName("B2: embedding models carry curated dims, chat models carry null")
+	void annotatesEmbeddingDimensions() {
+		when(catalog.search(null, null, 50)).thenReturn(List.of(
+				new ModelPricingEntry("text-embedding-3-small", "openai", "embedding",
+						new BigDecimal("0.00000013"), new BigDecimal("0"),
+						null, null, 8191L, 0L),
+				new ModelPricingEntry("gpt-5.6-luna", "openai", "chat",
+						new BigDecimal("0.0000025"), new BigDecimal("0.00001"),
+						null, null, null, null)));
+
+		ResponseEntity<ModelCatalogResponse> response = controller.searchCatalog(null, null, 50);
+
+		assertThat(response.getBody()).isNotNull();
+		assertThat(response.getBody().models()).hasSize(2);
+		assertThat(response.getBody().models().getFirst().embeddingDimensions()).isEqualTo(1536);
+		assertThat(response.getBody().models().get(1).embeddingDimensions()).isNull();
+	}
+
+	@Test
 	@DisplayName("accepts the limit boundaries")
 	void acceptsLimitBoundaries() {
 		when(catalog.search(null, null, 1)).thenReturn(List.of());

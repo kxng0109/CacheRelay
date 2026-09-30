@@ -2,10 +2,12 @@ package io.github.kxng0109.cacherelay.admin;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalInt;
 
 import io.github.kxng0109.cacherelay.admin.dto.ModelCatalogEntryResponse;
 import io.github.kxng0109.cacherelay.admin.dto.ModelCatalogResponse;
 import io.github.kxng0109.cacherelay.config.OpenApiConfig;
+import io.github.kxng0109.cacherelay.ledger.ModelEmbeddingDimensions;
 import io.github.kxng0109.cacherelay.ledger.ModelPriceCatalog;
 import io.github.kxng0109.cacherelay.ledger.ModelPricingEntry;
 import io.github.kxng0109.cacherelay.ledger.ModelQualityCatalog;
@@ -142,6 +144,7 @@ public class AdminModelCatalogController {
 				benchmarkRefs = quality.get().benchmarkRefs();
 			}
 		}
+		OptionalInt embeddingDimensions = ModelEmbeddingDimensions.dimensionsOf(entry.modelId());
 		return new ModelCatalogEntryResponse(
 				entry.modelId(),
 				entry.provider(),
@@ -153,6 +156,7 @@ public class AdminModelCatalogController {
 				entry.maxInputTokens(),
 				entry.maxOutputTokens(),
 				qualityTier,
-				benchmarkRefs);
+				benchmarkRefs,
+				embeddingDimensions.isPresent() ? embeddingDimensions.getAsInt() : null);
 	}
 }

@@ -22,6 +22,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
  * @param maxOutputTokens             completion bound, may be {@code null} when unknown
  * @param qualityTier                 curated quality tier name, may be {@code null} when unrated
  * @param benchmarkRefs               benchmark references backing the tier, may be {@code null}
+ * @param embeddingDimensions         default embedding vector width, may be {@code null} when unknown
+ *                                    or for chat-only models
  */
 @Schema(name = "ModelCatalogEntry", description = "One model suggestion from the pricing catalog")
 public record ModelCatalogEntryResponse(
@@ -58,6 +60,10 @@ public record ModelCatalogEntryResponse(
 		@Nullable String qualityTier,
 
 		@Schema(description = "Benchmark references backing the tier, null when unrecorded")
-		@Nullable String benchmarkRefs
+		@Nullable String benchmarkRefs,
+
+		@Schema(description = "Default embedding vector width, null when unknown or for chat-only models",
+				example = "1536")
+		@Nullable Integer embeddingDimensions
 ) {
 }
