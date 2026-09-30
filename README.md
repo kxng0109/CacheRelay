@@ -711,6 +711,16 @@ immediately if the old shipped default was ever used; generate fresh with `opens
   revokes every attached key first.
 - **`PUT /v1/admin/users/{id}/disabled`**, **`DELETE /v1/admin/users/{id}`**: Account lifecycle
   (`204`; `404` unknown). Deletion cascades terminal revocation before removing the row.
+- **`GET /v1/admin/users`**: Lists accounts as a page envelope (`UserSummaryResponse` rows:
+  identity and status only, never hashes).
+- **Local team management (no SSO required):** `GET`/`POST /v1/admin/orgs`,
+  `PATCH`/`DELETE /v1/admin/orgs/{id}` (slugs normalize to lowercase `a-z0-9-` and never
+  move; deletes refuse non-empty orgs with `409`); `POST /v1/admin/orgs/{id}/teams`,
+  `PATCH`/`DELETE /v1/admin/teams/{id}` (IdP-mapped teams are read-only `409`; deletes
+  refuse referenced teams); `PUT`/`DELETE /v1/admin/teams/{id}/members/{userId}`
+  (`MEMBER`/`LEAD`, idempotent; revocations flip to inactive, preserving history).
+  New reads (`GET /v1/admin/teams?org=`, `GET /v1/me/teams`, pickers, scoped views)
+  populate automatically.
 - **`/v1/me/keys`**: Session-authenticated self-service - list owned key metadata (never secrets),
   select the act-as-self default, and terminally revoke owned keys. Foreign keys read as absent.
 - **`GET /v1/admin/models`**: Lists every effective model alias with a `source` flag (`file` = configuration-bound
@@ -727,7 +737,8 @@ immediately if the old shipped default was ever used; generate fresh with `opens
   `LIVE_VERIFIED` / `UNVERIFIED`)— the provider dropdown source for admin UIs.
 - **`GET /v1/admin/model-catalog`**: Searches the pricing catalog snapshot for model suggestions
   (`provider` filter, case-insensitive `q` substring, `limit` 1-200) with context windows, per-token
-  prices, and curated quality tiers (`qualityTier` / `benchmarkRefs`, null when unrated) - the model
+  prices, curated quality tiers (`qualityTier` / `benchmarkRefs`, null when unrated), and curated
+  embedding widths (`embeddingDimensions`, null when unknown or chat-only) - the model
   picker source when composing alias chain steps.
 - **`GET /v1/admin/model-quality/{modelId}`**, **`PUT /v1/admin/model-quality/{modelId}`**,
   **`DELETE /v1/admin/model-quality/{modelId}`**: read, curate (`tier` FRONTIER/STANDARD/BUDGET plus
@@ -751,7 +762,7 @@ immediately if the old shipped default was ever used; generate fresh with `opens
   recomputed from merged sums); settled days persist as lazy daily buckets; concurrent identical views
   coalesce; scans run under a statement timeout and per-user views are rate-limited. Freshness rides on
   `X-Dashboard-Generated-At` / `X-Dashboard-Watermark` headers. Team scope arrives with SSO teams
-  (Phase 2). Tune via `gateway.dashboard.*` (`GATEWAY_DASHBOARD_*`).
+  or locally managed teams. Tune via `gateway.dashboard.*` (`GATEWAY_DASHBOARD_*`).
 - **`POST /v1/admin/budgets`**: Creates a hard spend budget (`KEY` = key sha256 hex, `TEAM` = owner slug, `ORG` =
   global scope) with rolling-60s and UTC-calendar-month caps in micro-dollars (`0` = no cap). Duplicate
   level/subject is `409`; bad levels/subjects/negative caps are `400`.
@@ -778,6 +789,8 @@ Humans log in with local username+password or any configured SSO provider; API k
   logs it in. The first-ever redemption bootstraps the initial admin.
 - **`POST /v1/admin/invites`**: Creates an invite (master key or admin session). Always returns a copyable
   redemption link; emails it too when an address is given and the mail channel is configured.
+  Accepts an optional `teamId` placing the redeemed account into a locally managed team
+  (unknown or IdP-managed teams fail the redemption closed without consuming the invite).
   Links use `gateway.auth.invite-base-url` (`GATEWAY_AUTH_INVITE_BASE_URL`) when set — point it at the
   public frontend origin (Vite dev `http://localhost:5173`, prod frontend URL); blank (default) derives
   the base from the request host, which is only correct for single-origin stacks. Malformed values fail

@@ -125,6 +125,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ModelCatalogEntryResponse` (null when unknown or for chat-only models) so the
   console can hint dims without sourcing them from LiteLLM. Locked by 10 behavior
   tests. Full `verify` green.
+- **Local team management (no SSO required):** admin org CRUD (`GET/POST
+  /v1/admin/orgs`, `PATCH/DELETE /v1/admin/orgs/{id}`), locally managed team
+  CRUD (`POST /v1/admin/orgs/{id}/teams`, `PATCH/DELETE /v1/admin/teams/{id}`),
+  and membership assignment (`PUT/DELETE /v1/admin/teams/{id}/members/{userId}`)
+  with `MEMBER`/`LEAD` roles. IdP-mapped teams stay read-only (409) so login
+  sync can never silently undo manual work; revocations flip to inactive,
+  preserving history for SSO reactivation. Invites optionally carry `teamId`
+  (V25 `auth_invite.team_id`) for atomic placement at redemption. Defense in
+  depth: `AdminAuthFilter` publishes `ROLE_ADMIN` for the dispatch (restored
+  afterwards, never leaking across reused threads) and mutating admin endpoints
+  additionally require it via `@PreAuthorize`, with `@EnableMethodSecurity`
+  enabled. Full `verify` green (3,266 tests, JaCoCo 97.57% line / 95.31% branch).
 
 ### Removed
 
