@@ -264,6 +264,10 @@ jobs:
           format: sarif
           output: trivy-results.sarif
           severity: HIGH,CRITICAL
+          # Without this the action unsets TRIVY_SEVERITY for SARIF output
+          # (entrypoint.sh "Handle SARIF"), so exit-code 1 fires on ANY
+          # severity including the unactionable MEDIUM/LOW base-layer noise.
+          limit-severities-for-sarif: true
           exit-code: "1"
 
       - name: Log Trivy table for the failing image (never gates)
