@@ -3,6 +3,8 @@ package io.github.kxng0109.cacherelay.admin;
 import java.util.UUID;
 
 import io.github.kxng0109.cacherelay.admin.dto.SetDisabledRequest;
+import io.github.kxng0109.cacherelay.admin.dto.PageResponse;
+import io.github.kxng0109.cacherelay.admin.dto.UserSummaryResponse;
 import io.github.kxng0109.cacherelay.auth.UserAccount;
 import io.github.kxng0109.cacherelay.auth.UserAccountRepository;
 import io.github.kxng0109.cacherelay.config.OpenApiConfig;
@@ -17,9 +19,14 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -110,6 +117,47 @@ public class AdminUserController {
 		keys.clearDefaultKey(account.getId());
 		users.deleteById(account.getId());
 		return ResponseEntity.noContent().build();
+	}
+
+	/**
+	 * Lists user accounts for operator pickers and administration. Hashes
+	 * never leave the server: the summary carries identity and status only.
+	 * Authentication and stealth-404 ride the admin chain like every other
+	 * {@code /v1/admin/**} read.
+	 *
+	 * @param pageable pagination and sorting parameters
+	 * @return page of account summaries
+	 */
+	@Operation(
+			summary = "List user accounts",
+			description = "Returns a page of account summaries (identity and status only, never hashes).",
+			security = {
+					@SecurityRequirement(name = OpenApiConfig.SCHEME_ADMIN_KEY_HEADER),
+					@SecurityRequirement(name = OpenApiConfig.SCHEME_ADMIN_BEARER)
+			}
+	)
+	@ApiResponses(value = {
+			@ApiResponse(responseCode = "200", description = "Page of account summaries"),
+			@ApiResponse(responseCode = "401", description = "Unauthorized: Master Admin key missing or incorrect")
+	})
+	@GetMapping
+	public ResponseEntity<PageResponse<UserSummaryResponse>> listUsers(
+			@PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC)
+			Pageable pageable) {
+		Page<UserAccount> page = users.findAll(pageable);
+		return ResponseEntity.ok(new PageResponse<>(
+				page.map(account -> new UserSummaryResponse(
+						account.getId(),
+						account.getUsername(),
+						account.isAdmin(),
+						account.isDisabled(),
+						account.getCreatedAt()
+				)).toList(),
+				page.getNumber(),
+				page.getSize(),
+				page.getTotalElements(),
+				page.getTotalPages(),
+				page.hasNext()));
 	}
 
 	private UserAccount requireAccount(String id) {

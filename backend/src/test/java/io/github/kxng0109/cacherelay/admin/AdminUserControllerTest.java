@@ -8,16 +8,23 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.server.ResponseStatusException;
 
+import io.github.kxng0109.cacherelay.admin.dto.PageResponse;
 import io.github.kxng0109.cacherelay.admin.dto.SetDisabledRequest;
+import io.github.kxng0109.cacherelay.admin.dto.UserSummaryResponse;
 import io.github.kxng0109.cacherelay.auth.UserAccount;
 import io.github.kxng0109.cacherelay.auth.UserAccountRepository;
 import io.github.kxng0109.cacherelay.security.ratelimit.KeyManagementService;
@@ -122,5 +129,39 @@ class AdminUserControllerTest {
 		assertThat(VALIDATOR.validate(new SetDisabledRequest(null))).isNotEmpty();
 		assertThat(VALIDATOR.validate(new SetDisabledRequest(Boolean.TRUE))).isEmpty();
 		assertThat(VALIDATOR.validate(new SetDisabledRequest(Boolean.FALSE))).isEmpty();
+	}
+
+	@Test
+	@DisplayName("B1: user listing maps accounts without exposing hashes")
+	void listUsersMapsAccounts() {
+		UserAccount account = mock(UserAccount.class);
+		when(account.getId()).thenReturn(userId);
+		when(account.getUsername()).thenReturn("alice");
+		when(account.isAdmin()).thenReturn(false);
+		when(account.isDisabled()).thenReturn(false);
+		when(account.getCreatedAt()).thenReturn(Instant.parse("2026-09-01T00:00:00Z"));
+		when(users.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(account)));
+
+		ResponseEntity<PageResponse<UserSummaryResponse>> response =
+				controller.listUsers(PageRequest.of(0, 20));
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody().content()).hasSize(1);
+		assertThat(response.getBody().content().getFirst().username()).isEqualTo("alice");
+		assertThat(response.getBody().content().getFirst().userId()).isEqualTo(userId);
+		assertThat(response.getBody().totalElements()).isEqualTo(1);
+	}
+
+	@Test
+	@DisplayName("B1: empty user table lists empty without failing")
+	void listUsersEmptyTable() {
+		when(users.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(List.of()));
+
+		ResponseEntity<PageResponse<UserSummaryResponse>> response =
+				controller.listUsers(PageRequest.of(0, 20));
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody().content()).isEmpty();
+		assertThat(response.getBody().totalElements()).isZero();
 	}
 }
