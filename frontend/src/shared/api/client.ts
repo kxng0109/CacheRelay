@@ -23,10 +23,12 @@ import type {
   McpSuspended,
   McpTool,
   McpToolAnnotations,
+  MemberResponse,
   ModelAliasRecord,
   ModelCatalogEntry,
   ModelQuality,
   NotificationPreference,
+  OrgResponse,
   OrgTeam,
   OwnedKey,
   ProviderStatus,
@@ -867,6 +869,25 @@ const orgTeamRowSchema = z.object({
   idpGroupId: z.string(),
   activeMembers: z.number(),
 })
+
+const orgResponseSchema = z.object({
+  id: z.string(),
+  slug: z.string(),
+  displayName: z.string(),
+})
+
+const memberResponseSchema = z.object({
+  userId: z.string(),
+  teamId: z.string(),
+  role: z.string(),
+  status: z.string(),
+})
+
+/**
+ * Account UUID shape for team membership and invite placement.
+ * Trimmed before testing; lowercase/uppercase hex both accepted.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 const identitySchema = z.object({
   userId: z.string(),
@@ -2382,6 +2403,238 @@ export class GatewayClient {
   }
 
   /**
+   * Lists local orgs (unpaged; fine under hundreds of rows).
+   *
+   * @remarks Backend truth: `GET /v1/admin/orgs` answers 200
+   * `OrgResponse[]`. Drifted rows drop with a notice, never throw.
+   *
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns Org rows.
+   */
+  async listOrgs(opts?: RequestOptions): Promise<OrgResponse[]> {
+    const body: unknown = await this.request<unknown>(
+      '/v1/admin/orgs',
+      { headers: this.headers() },
+      opts,
+    )
+    return rowsOrEmpty(orgResponseSchema, body, 'orgs')
+  }
+
+  /**
+   * Creates a local org. Slugs normalize server-side (trim + lowercase).
+   *
+   * @param body - Slug plus display name.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The created org.
+   * @throws Error synchronously when the slug or name is malformed (never sent).
+   */
+  async createOrg(
+    body: { slug: string; displayName: string },
+    opts?: RequestOptions,
+  ): Promise<OrgResponse> {
+    const slug = body.slug.trim()
+    if (slug.length === 0) throw new Error('Org slug is required.')
+    if (slug.length > 64) throw new Error('Org slug must be 64 characters or fewer.')
+    if (!/^[a-z0-9-]+$/i.test(slug))
+      throw new Error('Org slug must use letters, digits, and hyphens only.')
+    const displayName = body.displayName.trim()
+    if (displayName.length === 0) throw new Error('Org display name is required.')
+    if (displayName.length > 128)
+      throw new Error('Org display name must be 128 characters or fewer.')
+    const raw: unknown = await this.request<unknown>(
+      '/v1/admin/orgs',
+      {
+        method: 'POST',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ slug, displayName }),
+      },
+      opts,
+    )
+    return valueOrThrow(orgResponseSchema, raw, 'orgs-create', 'Org creation')
+  }
+
+  /**
+   * Renames a local org. The slug is immutable — only the display name
+   * travels.
+   *
+   * @param id - Org id.
+   * @param body - New display name.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The updated org.
+   * @throws Error synchronously when the id or name is malformed (never sent).
+   */
+  async renameOrg(
+    id: string,
+    body: { displayName: string },
+    opts?: RequestOptions,
+  ): Promise<OrgResponse> {
+    if (id.trim().length === 0) throw new Error('Org id is required.')
+    const displayName = body.displayName.trim()
+    if (displayName.length === 0) throw new Error('Org display name is required.')
+    if (displayName.length > 128)
+      throw new Error('Org display name must be 128 characters or fewer.')
+    const raw: unknown = await this.request<unknown>(
+      `/v1/admin/orgs/${encodeURIComponent(id.trim())}`,
+      {
+        method: 'PATCH',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ displayName }),
+      },
+      opts,
+    )
+    return valueOrThrow(orgResponseSchema, raw, 'orgs-rename', 'Org rename')
+  }
+
+  /**
+   * Deletes a local org. Requires an empty org: teams remaining answer
+   * 409 with the problem body surfaced through `ApiError`.
+   *
+   * @param id - Org id.
+   * @param opts - Optional request options (abort signal, headers listener).
+   */
+  deleteOrg(id: string, opts?: RequestOptions): Promise<void> {
+    if (id.trim().length === 0) throw new Error('Org id is required.')
+    return this.requestEmpty(
+      `/v1/admin/orgs/${encodeURIComponent(id.trim())}`,
+      { method: 'DELETE', headers: this.headers() },
+      opts,
+    )
+  }
+
+  /**
+   * Creates a local team inside an org. New teams start with zero
+   * active members.
+   *
+   * @param orgId - Owning org id.
+   * @param body - Team name.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The created team.
+   * @throws Error synchronously when the name is malformed (never sent).
+   */
+  async createTeam(orgId: string, body: { name: string }, opts?: RequestOptions): Promise<OrgTeam> {
+    if (orgId.trim().length === 0) throw new Error('Org id is required.')
+    const name = body.name.trim()
+    if (name.length === 0) throw new Error('Team name is required.')
+    if (name.length > 128) throw new Error('Team name must be 128 characters or fewer.')
+    const raw: unknown = await this.request<unknown>(
+      `/v1/admin/orgs/${encodeURIComponent(orgId.trim())}/teams`,
+      {
+        method: 'POST',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ name }),
+      },
+      opts,
+    )
+    return valueOrThrow(orgTeamRowSchema, raw, 'teams-create', 'Team creation')
+  }
+
+  /**
+   * Renames a local team. IdP-mapped teams reject the write with 409
+   * (sync owns them) — the problem body surfaces through `ApiError`.
+   *
+   * @param teamId - Team id.
+   * @param body - New display name.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The updated team.
+   * @throws Error synchronously when the name is malformed (never sent).
+   */
+  async renameTeam(
+    teamId: string,
+    body: { displayName: string },
+    opts?: RequestOptions,
+  ): Promise<OrgTeam> {
+    if (teamId.trim().length === 0) throw new Error('Team id is required.')
+    const displayName = body.displayName.trim()
+    if (displayName.length === 0) throw new Error('Team display name is required.')
+    if (displayName.length > 128)
+      throw new Error('Team display name must be 128 characters or fewer.')
+    const raw: unknown = await this.request<unknown>(
+      `/v1/admin/teams/${encodeURIComponent(teamId.trim())}`,
+      {
+        method: 'PATCH',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ displayName }),
+      },
+      opts,
+    )
+    return valueOrThrow(orgTeamRowSchema, raw, 'teams-rename', 'Team rename')
+  }
+
+  /**
+   * Deletes a local team. Requires no active members and no pending
+   * invites; mapped, holding, referenced, or Unassigned teams answer
+   * 409 with the problem body surfaced through `ApiError`.
+   *
+   * @param teamId - Team id.
+   * @param opts - Optional request options (abort signal, headers listener).
+   */
+  deleteTeam(teamId: string, opts?: RequestOptions): Promise<void> {
+    if (teamId.trim().length === 0) throw new Error('Team id is required.')
+    return this.requestEmpty(
+      `/v1/admin/teams/${encodeURIComponent(teamId.trim())}`,
+      { method: 'DELETE', headers: this.headers() },
+      opts,
+    )
+  }
+
+  /**
+   * Assigns an account to a team. Idempotent — safe to retry.
+   *
+   * @param teamId - Team id.
+   * @param userId - Account UUID.
+   * @param body - Role (`MEMBER` or `LEAD`).
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The membership row.
+   * @throws Error synchronously when ids or role are malformed (never sent).
+   */
+  async assignMember(
+    teamId: string,
+    userId: string,
+    body: { role: string },
+    opts?: RequestOptions,
+  ): Promise<MemberResponse> {
+    if (teamId.trim().length === 0) throw new Error('Team id is required.')
+    if (!UUID_RE.test(userId.trim())) throw new Error('Member account must be a valid UUID.')
+    if (body.role !== 'MEMBER' && body.role !== 'LEAD')
+      throw new Error('Member role must be MEMBER|LEAD.')
+    const raw: unknown = await this.request<unknown>(
+      `/v1/admin/teams/${encodeURIComponent(teamId.trim())}/members/${encodeURIComponent(userId.trim())}`,
+      {
+        method: 'PUT',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ role: body.role }),
+      },
+      opts,
+    )
+    return valueOrThrow(memberResponseSchema, raw, 'team-members-assign', 'Member assignment')
+  }
+
+  /**
+   * Revokes an account from a team. Answers the same row with
+   * `INACTIVE` status; idempotent — safe to retry.
+   *
+   * @param teamId - Team id.
+   * @param userId - Account UUID.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The revoked membership row.
+   * @throws Error synchronously when ids are malformed (never sent).
+   */
+  async revokeMember(
+    teamId: string,
+    userId: string,
+    opts?: RequestOptions,
+  ): Promise<MemberResponse> {
+    if (teamId.trim().length === 0) throw new Error('Team id is required.')
+    if (!UUID_RE.test(userId.trim())) throw new Error('Member account must be a valid UUID.')
+    const raw: unknown = await this.request<unknown>(
+      `/v1/admin/teams/${encodeURIComponent(teamId.trim())}/members/${encodeURIComponent(userId.trim())}`,
+      { method: 'DELETE', headers: this.headers() },
+      opts,
+    )
+    return valueOrThrow(memberResponseSchema, raw, 'team-members-revoke', 'Member revocation')
+  }
+
+  /**
    * Lists user accounts for operator pickers and administration.
    *
    * @remarks Backend truth (`AdminUserController.listUsers`): `GET
@@ -2464,28 +2717,40 @@ export class GatewayClient {
 
   /**
    * Mints an invite. The link is always returned, even when mailed.
+   * An optional team placement lands the account ACTIVE on redeem;
+   * dangling placements redeem as 404 without consuming.
    *
    * @remarks Backend truth (`AdminInviteController`): `POST
    * /v1/admin/invites` answers 201 `{ link, emailed }`; an invalid
    * email answers 400; auth denial is stealth 404, never 401.
    *
-   * @param body - Optional email (null = link-only) and admin flag.
+   * @param body - Optional email (null = link-only), admin flag, and
+   * optional team placement (UUID, null = unplaced).
    * @param opts - Optional request options (abort signal, headers listener).
    * @returns The redeem link plus whether mail was sent.
+   * @throws Error synchronously when the email or team id is malformed (never sent).
    */
   async createInvite(
-    body: { email?: string | null; admin?: boolean },
+    body: { email?: string | null; admin?: boolean; teamId?: string | null },
     opts?: RequestOptions,
   ): Promise<InviteReceipt> {
     if (body.email !== undefined && body.email !== null && !/^\S+@\S+\.\S+$/.test(body.email)) {
       throw new Error('Invite email must be valid.')
+    }
+    let teamId: string | null = null
+    if (body.teamId !== undefined && body.teamId !== null) {
+      const trimmed = body.teamId.trim()
+      if (trimmed.length > 0) {
+        if (!UUID_RE.test(trimmed)) throw new Error('Invite team must be a valid UUID.')
+        teamId = trimmed
+      }
     }
     const raw: unknown = await this.request<unknown>(
       '/v1/admin/invites',
       {
         method: 'POST',
         headers: this.headers({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ email: body.email ?? null, admin: body.admin ?? false }),
+        body: JSON.stringify({ email: body.email ?? null, admin: body.admin ?? false, teamId }),
       },
       opts,
     )

@@ -102,9 +102,11 @@ Never commit tokens, keys, or credentials.
   off client-side (retry ≤2, 1s/2s/8s-cap). Stealth 404s render a single
   "admin unavailable" screen that never distinguishes no-access from
   no-route and never retry-loops.
-- Teams are boundary proof, member lists only (no team-usage route exists
-  yet): `/v1/me/teams` (ACTIVE only, `[]` is normal) plus the admin org
-  picker (`GET /v1/admin/teams?org=`, 404 names unknown orgs). Sudden
+- Teams are boundary proof: `/v1/me/teams` (ACTIVE only, `[]` is normal) plus the admin org
+  picker (`GET /v1/admin/teams?org=`, 404 names unknown orgs) plus local management (Orgs
+  section: create/rename/delete with empty-org 409 rule, per-org team creation; inventory
+  rows: rename/delete, idempotent assign/revoke with MEMBER|LEAD roles, sync-owned rows
+  read-only, Unassigned delete disabled). Sudden
   cross-key 401s name IdP disablement ("contact your admin") instead of
   "re-login and retry".
 - Every collection screen shares one empty trio (`shared/components/
@@ -233,7 +235,8 @@ EmptyTrio.tsx`: status line + learning cue + optional link/button
   refs, clear), provider Type + Timeout columns.
 - Identity: self-service default-key set + own-key revoke (64-hex
   guarded); admin Users (disable/re-enable/delete with cascade
-  warning), Invites (link-only or emailed, single-exposure receipt),
+  warning), Invites (link-only or emailed, single-exposure receipt,
+  optional team placement landing ACTIVE on redeem),
   Notifications (scope-required list, create, delete) + webhook probe
   (`{ received }` receipt).
 - Budgets/cache/circuits: spend-vs-cap balances, full-replace cap
@@ -263,6 +266,12 @@ EmptyTrio.tsx`: status line + learning cue + optional link/button
   board (account) with manual UUID fallback; catalog
   `embeddingDimensions` + embeddings default-dims hint with explicit
   Fill (guests keep manual input).
+- Local team management (2026-09-30): org CRUD (`POST/GET/PATCH/DELETE
+/v1/admin/orgs`, slug immutable, empty-org 409) + team CRUD
+  (`POST /v1/admin/orgs/{id}/teams`, `PATCH/DELETE
+/v1/admin/teams/{id}`, sync-owned 409, Unassigned guarded) +
+  idempotent member assign/revoke (`MEMBER|LEAD`, UUID-validated) +
+  invite `teamId` placement (blank = unplaced, ACTIVE on redeem).
 
 ## Quality gates
 
@@ -272,7 +281,7 @@ EmptyTrio.tsx`: status line + learning cue + optional link/button
 | `npm.cmd run format:check`    | Prettier 3.9.9 exact, check only                             |
 | `npm.cmd run typecheck`       | `tsc -b` (solution build; bare `--noEmit` is vacuous here)   |
 | `npm.cmd run test`            | Vitest 5 unit run (jsdom)                                    |
-| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently 97.8/95.4/97.9/98.6) |
+| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently 97.6/95.4/98.0/98.3) |
 | `npm.cmd run test:e2e`        | Playwright 1.63 smoke, chromium, Vite dev reuse              |
 | `npm.cmd run build-storybook` | Storybook 10.6.0 static build                                |
 
@@ -329,7 +338,7 @@ reporter for CI step summaries.
 `cleanup()` after each test, and closes the server at the end.
 `src/test/utils.tsx` renders UI with a fresh query client (no retries),
 memory router, and seeded memory-only credentials.
-72 suites / 869 tests: pure-unit (formatters, SSE parser, rate-limit parser/selector/store,
+72 suites / 886 tests: pure-unit (formatters, SSE parser, rate-limit parser/selector/store,
 Prometheus histogram parser/quantiles, ECharts registration, app boot,
 error mapping, URL allow-list, `?next=` validation, chord map, toast store)
 plus MSW integration per screen (happy/error/empty/adversarial).

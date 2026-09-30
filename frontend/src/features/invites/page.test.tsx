@@ -72,4 +72,44 @@ describe('InvitesPage', () => {
     await user.click(screen.getByRole('button', { name: /mint invite/i }))
     expect(await screen.findByRole('alert')).toHaveTextContent(/conflict/i)
   })
+
+  it('mints an invite with team placement', async () => {
+    const user = userEvent.setup()
+    let body: unknown = null
+    server.use(
+      http.post('*/v1/admin/invites', async ({ request }) => {
+        body = await request.json()
+        return HttpResponse.json(
+          { link: 'http://x/redeem?token=placed', emailed: false },
+          { status: 201 },
+        )
+      }),
+    )
+    renderApp(<InvitesPage />, { adminSession: true })
+    await user.type(
+      screen.getByLabelText(/team placement/i),
+      '123e4567-e89b-12d3-a456-426614174000',
+    )
+    await user.click(screen.getByRole('button', { name: /mint invite/i }))
+    await waitFor(() => {
+      expect(screen.getByText('http://x/redeem?token=placed')).toBeInTheDocument()
+    })
+    expect(body).toMatchObject({ teamId: '123e4567-e89b-12d3-a456-426614174000' })
+  })
+
+  it('rejects a non-UUID team placement before sending', async () => {
+    const user = userEvent.setup()
+    let posts = 0
+    server.use(
+      http.post('*/v1/admin/invites', () => {
+        posts += 1
+        return HttpResponse.json({ link: 'x', emailed: false }, { status: 201 })
+      }),
+    )
+    renderApp(<InvitesPage />, { adminSession: true })
+    await user.type(screen.getByLabelText(/team placement/i), 'not-a-uuid')
+    await user.click(screen.getByRole('button', { name: /mint invite/i }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/valid uuid/i)
+    expect(posts).toBe(0)
+  })
 })

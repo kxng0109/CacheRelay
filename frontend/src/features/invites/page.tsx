@@ -3,6 +3,13 @@ import { GatewayClient } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 
 /**
+ * Account UUID shape for optional invite team placement (blank =
+ * unplaced). Mirrors the gateway client validation so malformed ids
+ * never cause a round trip.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
  * Invite minting: link-only or emailed, behind the admin guard.
  *
  * @remarks Backend truth (`AdminInviteController`): `POST
@@ -15,6 +22,7 @@ import { toErrorMessage } from '../../shared/api/client.js'
 function InvitesBoard(): React.JSX.Element {
   const [email, setEmail] = useState('')
   const [admin, setAdmin] = useState(false)
+  const [teamId, setTeamId] = useState('')
   const [link, setLink] = useState<string | null>(null)
   const [emailed, setEmailed] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
@@ -30,10 +38,19 @@ function InvitesBoard(): React.JSX.Element {
       setError('Invite email must be valid.')
       return
     }
+    const team = teamId.trim()
+    if (team.length > 0 && !UUID_RE.test(team)) {
+      setError('Invite team must be a valid UUID.')
+      return
+    }
     setBusy(true)
     const client = new GatewayClient()
     void client
-      .createInvite({ email: trimmed.length === 0 ? null : trimmed, admin })
+      .createInvite({
+        email: trimmed.length === 0 ? null : trimmed,
+        admin,
+        teamId: team.length === 0 ? null : team,
+      })
       .then((out) => {
         setLink(out.link)
         setEmailed(out.emailed)
@@ -65,6 +82,26 @@ function InvitesBoard(): React.JSX.Element {
             placeholder="ops@example.com"
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
           />
+        </div>
+        <div>
+          <label htmlFor="invite-team" className="mb-1 block text-[13px] font-medium">
+            Team placement (optional — UUID, blank leaves the account unplaced)
+          </label>
+          <input
+            id="invite-team"
+            type="text"
+            value={teamId}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(e) => {
+              setTeamId(e.target.value)
+            }}
+            placeholder="123e4567-e89b-12d3-a456-426614174000"
+            className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
+          />
+          <p className="mt-1 text-[13px] text-ink-soft dark:text-parchment-soft">
+            Placement lands ACTIVE on redeem; dangling placements redeem as 404 without consuming.
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <label

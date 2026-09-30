@@ -485,6 +485,36 @@ export interface OrgTeam {
 }
 
 /**
+ * Local team management uses the same shape: `TeamResponse` is the
+ * backend name, `OrgTeam` the frontend alias. Kept as one interface so
+ * the two can never drift apart.
+ */
+export type TeamResponse = OrgTeam
+
+/**
+ * One local org. Mirrors the backend `OrgResponse` record
+ * (`id`, `slug`, `displayName`); slugs normalize server-side
+ * (trim + lowercase, a-z0-9-, up to 64 chars).
+ */
+export interface OrgResponse {
+  id: string
+  slug: string
+  displayName: string
+}
+
+/**
+ * One team membership. Mirrors the backend `MemberResponse` record.
+ * Assign is idempotent (safe to retry); revoke answers the same row
+ * with `INACTIVE` status, also idempotent.
+ */
+export interface MemberResponse {
+  userId: string
+  teamId: string
+  role: string
+  status: string
+}
+
+/**
  * One admin model-catalog entry with pricing, windows, quality, and dims.
  * Mirrors the backend `ModelCatalogEntryResponse` record field for field;
  * five cost/window/quality/dims fields are nullable.

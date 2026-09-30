@@ -1874,3 +1874,188 @@ describe('GatewayClient transport', () => {
     expect((err as Error).message).toBe('MCP catalog error.')
   })
 })
+
+describe('orgs and teams', () => {
+  it('lists orgs drift-safe and manages the local lifecycle', async () => {
+    const seen: string[] = []
+    const bodies: unknown[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: unknown, init?: { method?: string; body?: string }) => {
+        seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
+        if (init?.body !== undefined) bodies.push(JSON.parse(init.body))
+        const method = init?.method ?? 'GET'
+        const urlStr = String(url)
+        if (method === 'GET' && urlStr.endsWith('/v1/admin/orgs')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify([{ id: 'o1', slug: 'acme', displayName: 'Acme' }, { id: 7 }]),
+              { headers: { 'content-type': 'application/json' } },
+            ),
+          )
+        }
+        if (method === 'POST' && urlStr.endsWith('/v1/admin/orgs')) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ id: 'o2', slug: 'globex', displayName: 'Globex' }), {
+              status: 201,
+              headers: { 'content-type': 'application/json' },
+            }),
+          )
+        }
+        if (method === 'PATCH' && urlStr.includes('/v1/admin/orgs/')) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ id: 'o1', slug: 'acme', displayName: 'Acme Inc' }), {
+              headers: { 'content-type': 'application/json' },
+            }),
+          )
+        }
+        if (method === 'POST' && urlStr.includes('/teams')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                teamId: 't9',
+                orgSlug: 'acme',
+                name: 'Ops',
+                idpGroupId: 'local:acme',
+                activeMembers: 0,
+              }),
+              { status: 201, headers: { 'content-type': 'application/json' } },
+            ),
+          )
+        }
+        if (method === 'PATCH' && urlStr.includes('/v1/admin/teams/')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                teamId: 't9',
+                orgSlug: 'acme',
+                name: 'Operations',
+                idpGroupId: 'local:acme',
+                activeMembers: 0,
+              }),
+              { headers: { 'content-type': 'application/json' } },
+            ),
+          )
+        }
+        if (method === 'PUT' && urlStr.includes('/members/')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                userId: '123e4567-e89b-12d3-a456-426614174000',
+                teamId: 't9',
+                role: 'LEAD',
+                status: 'ACTIVE',
+              }),
+              { headers: { 'content-type': 'application/json' } },
+            ),
+          )
+        }
+        if (method === 'DELETE' && urlStr.includes('/members/')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                userId: '123e4567-e89b-12d3-a456-426614174000',
+                teamId: 't9',
+                role: 'LEAD',
+                status: 'INACTIVE',
+              }),
+              { headers: { 'content-type': 'application/json' } },
+            ),
+          )
+        }
+        return Promise.resolve(new Response(null, { status: 204 }))
+      }),
+    )
+    const client = new GatewayClient()
+    const orgs = await client.listOrgs()
+    expect(orgs.map((o) => o.slug)).toEqual(['acme'])
+    const created = await client.createOrg({ slug: ' Globex ', displayName: ' Globex ' })
+    expect(created.slug).toBe('globex')
+    expect(bodies[0]).toMatchObject({ slug: 'Globex', displayName: 'Globex' })
+    const renamed = await client.renameOrg('o1', { displayName: 'Acme Inc' })
+    expect(renamed.displayName).toBe('Acme Inc')
+    await client.deleteOrg('o1')
+    expect(seen).toContain('DELETE /v1/admin/orgs/o1')
+    const team = await client.createTeam('o1', { name: 'Ops' })
+    expect(team.activeMembers).toBe(0)
+    const teamRenamed = await client.renameTeam('t9', { displayName: 'Operations' })
+    expect(teamRenamed.name).toBe('Operations')
+    expect(bodies).toContainEqual({ displayName: 'Operations' })
+    await client.deleteTeam('t9')
+    const assigned = await client.assignMember('t9', '123e4567-e89b-12d3-a456-426614174000', {
+      role: 'LEAD',
+    })
+    expect(assigned.status).toBe('ACTIVE')
+    const revoked = await client.revokeMember('t9', '123e4567-e89b-12d3-a456-426614174000')
+    expect(revoked.status).toBe('INACTIVE')
+    await expect(client.createOrg({ slug: '', displayName: 'x' })).rejects.toThrow(/slug/i)
+    await expect(client.createOrg({ slug: 'a'.repeat(65), displayName: 'x' })).rejects.toThrow(/64/)
+    await expect(client.assignMember('t9', 'not-a-uuid', { role: 'MEMBER' })).rejects.toThrow(
+      /uuid/i,
+    )
+    await expect(
+      client.assignMember('t9', '123e4567-e89b-12d3-a456-426614174000', {
+        role: 'OWNER',
+      }),
+    ).rejects.toThrow(/MEMBER\|LEAD/i)
+  })
+
+  it('rejects malformed org, team, and member inputs before sending', async () => {
+    const client = new GatewayClient()
+    await expect(client.createOrg({ slug: 'ok', displayName: '' })).rejects.toThrow(/required/i)
+    await expect(client.createOrg({ slug: 'ok', displayName: 'x'.repeat(129) })).rejects.toThrow(
+      /128/,
+    )
+    await expect(client.createOrg({ slug: 'bad slug!', displayName: 'x' })).rejects.toThrow(
+      /letters, digits/,
+    )
+    await expect(client.renameOrg('  ', { displayName: 'x' })).rejects.toThrow(/org id/i)
+    await expect(client.renameOrg('o1', { displayName: '' })).rejects.toThrow(/required/i)
+    await expect(client.renameOrg('o1', { displayName: 'x'.repeat(129) })).rejects.toThrow(/128/)
+    expect(() => client.deleteOrg('  ')).toThrow(/org id/i)
+    await expect(client.createTeam('  ', { name: 'x' })).rejects.toThrow(/org id/i)
+    await expect(client.createTeam('o1', { name: '' })).rejects.toThrow(/required/i)
+    await expect(client.createTeam('o1', { name: 'x'.repeat(129) })).rejects.toThrow(/128/)
+    await expect(client.renameTeam('  ', { displayName: 'x' })).rejects.toThrow(/team id/i)
+    await expect(client.renameTeam('t1', { displayName: '' })).rejects.toThrow(/required/i)
+    await expect(client.renameTeam('t1', { displayName: 'x'.repeat(129) })).rejects.toThrow(/128/)
+    expect(() => client.deleteTeam('  ')).toThrow(/team id/i)
+    await expect(
+      client.assignMember('  ', '123e4567-e89b-12d3-a456-426614174000', {
+        role: 'MEMBER',
+      }),
+    ).rejects.toThrow(/team id/i)
+    await expect(client.revokeMember('t1', 'not-a-uuid')).rejects.toThrow(/uuid/i)
+    await expect(client.revokeMember('  ', '123e4567-e89b-12d3-a456-426614174000')).rejects.toThrow(
+      /team id/i,
+    )
+    await expect(client.createInvite({ email: 'bad' })).rejects.toThrow(/valid/i)
+    stubJson({ link: 'http://x/redeem?token=blank', emailed: false })
+    await expect(new GatewayClient().createInvite({ teamId: '   ' })).resolves.toMatchObject({
+      emailed: false,
+    })
+  })
+
+  it('sends optional invite team placement and validates it', async () => {
+    let body: unknown = null
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: unknown, init?: { body?: string }) => {
+        if (init?.body !== undefined) body = JSON.parse(init.body)
+        return Promise.resolve(
+          new Response(JSON.stringify({ link: 'http://x/redeem?token=t', emailed: false }), {
+            status: 201,
+            headers: { 'content-type': 'application/json' },
+          }),
+        )
+      }),
+    )
+    await new GatewayClient().createInvite({
+      teamId: '123e4567-e89b-12d3-a456-426614174000',
+    })
+    expect(body).toMatchObject({ teamId: '123e4567-e89b-12d3-a456-426614174000' })
+    await new GatewayClient().createInvite({})
+    expect(body).toMatchObject({ teamId: null })
+    await expect(new GatewayClient().createInvite({ teamId: 'nope' })).rejects.toThrow(/uuid/i)
+  })
+})
