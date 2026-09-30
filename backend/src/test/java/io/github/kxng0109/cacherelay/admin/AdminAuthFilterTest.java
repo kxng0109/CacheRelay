@@ -6,6 +6,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import tools.jackson.databind.ObjectMapper;
 
@@ -13,6 +16,7 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import io.github.kxng0109.cacherelay.auth.AuthAuditService;
 import io.github.kxng0109.cacherelay.auth.JwtService;
@@ -429,6 +433,92 @@ class AdminAuthFilterTest {
 				eq("/v1/admin/keys"),
 				eq(AuthAuditService.OUTCOME_SUCCESS),
 				any(), any());
+	}
+
+	@Test
+	@DisplayName("master-key success publishes ROLE_ADMIN for the dispatch only")
+	void masterKeyPublishesAdminRole() throws ServletException, IOException {
+		SecurityContextHolder.clearContext();
+		AdminAuthFilter filter = new AdminAuthFilter("master-secret-12345", objectMapper);
+		AtomicReference<Authentication> seen = new AtomicReference<>();
+		FilterChain capturing = mock(FilterChain.class);
+		doAnswer(inv -> {
+			seen.set(SecurityContextHolder.getContext().getAuthentication());
+			return null;
+		}).when(capturing).doFilter(any(), any());
+
+		MockHttpServletRequest request = new MockHttpServletRequest("GET", "/v1/admin/keys");
+		request.addHeader("X-Admin-Key", "master-secret-12345");
+		filter.doFilter(request, new MockHttpServletResponse(), capturing);
+
+		assertThat(seen.get()).isNotNull();
+		assertThat(seen.get().getAuthorities()).extracting(GrantedAuthority::getAuthority)
+				.contains("ROLE_ADMIN");
+		assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+	}
+
+	@Test
+	@DisplayName("admin-JWT success attributes the account as principal")
+	void adminJwtPublishesAccountPrincipal() throws ServletException, IOException {
+		SecurityContextHolder.clearContext();
+		JwtService jwtService = mock(JwtService.class);
+		UserAccountRepository users = mock(UserAccountRepository.class);
+		AdminAuthFilter filter = new AdminAuthFilter("master-secret-12345", objectMapper,
+				jwtService, users, null);
+		UUID adminId = UUID.randomUUID();
+		UserAccount account = new UserAccount("root", "hash", null, true);
+		setId(account, adminId);
+		when(users.findById(adminId)).thenReturn(Optional.of(account));
+		jwtFor(adminId, true, jwtService, "admin-jwt");
+		AtomicReference<Authentication> seen = new AtomicReference<>();
+		FilterChain capturing = mock(FilterChain.class);
+		doAnswer(inv -> {
+			seen.set(SecurityContextHolder.getContext().getAuthentication());
+			return null;
+		}).when(capturing).doFilter(any(), any());
+
+		MockHttpServletRequest request = new MockHttpServletRequest("GET", "/v1/admin/keys");
+		request.addHeader("Authorization", "Bearer admin-jwt");
+		filter.doFilter(request, new MockHttpServletResponse(), capturing);
+
+		assertThat(seen.get().getPrincipal()).isEqualTo(adminId.toString());
+		assertThat(seen.get().getAuthorities()).extracting(GrantedAuthority::getAuthority)
+				.contains("ROLE_ADMIN");
+		assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+	}
+
+	@Test
+	@DisplayName("rejections publish nothing into the security context")
+	void rejectionsLeaveContextEmpty() throws ServletException, IOException {
+		SecurityContextHolder.clearContext();
+		AdminAuthFilter filter = new AdminAuthFilter("master-secret-12345", objectMapper);
+
+		MockHttpServletRequest request = new MockHttpServletRequest("GET", "/v1/admin/keys");
+		MockHttpServletResponse response = new MockHttpServletResponse();
+		filter.doFilter(request, response, filterChain);
+
+		assertThat(response.getStatus()).isEqualTo(404);
+		assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+		verifyNoInteractions(filterChain);
+	}
+
+	@Test
+	@DisplayName("a prior authentication is restored, never cleared")
+	void priorAuthenticationRestored() throws ServletException, IOException {
+		Authentication prior = mock(Authentication.class);
+		SecurityContextHolder.getContext().setAuthentication(prior);
+		try {
+			AdminAuthFilter filter = new AdminAuthFilter("master-secret-12345", objectMapper);
+
+			MockHttpServletRequest request = new MockHttpServletRequest("GET", "/v1/admin/keys");
+			request.addHeader("X-Admin-Key", "master-secret-12345");
+			filter.doFilter(request, new MockHttpServletResponse(), filterChain);
+
+			verify(filterChain).doFilter(any(), any());
+			assertThat(SecurityContextHolder.getContext().getAuthentication()).isSameAs(prior);
+		} finally {
+			SecurityContextHolder.clearContext();
+		}
 	}
 
 	private void jwtFor(UUID id, boolean admin, JwtService jwtService, String token) {

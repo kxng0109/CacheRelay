@@ -1,5 +1,6 @@
 package io.github.kxng0109.cacherelay.auth;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -22,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Proves the SSO team domain end to end against the shared Postgres: the full
- * Flyway chain (V1–V20) migrates once per JVM, orgs/teams/memberships
+ * Flyway chain (V1–V25) migrates once per JVM, orgs/teams/memberships
  * round-trip, bindings stay unique per org, and membership finders resolve
  * both directions.
  */
@@ -34,6 +35,8 @@ class SsoTeamDomainIT extends SharedContainersBase {
 	private SsoTeamRepository teams;
 
 	private SsoMembershipRepository memberships;
+
+	private InviteTokenRepository invites;
 
 	private EntityManager entityManager;
 
@@ -51,12 +54,14 @@ class SsoTeamDomainIT extends SharedContainersBase {
 		orgs = factory.getRepository(SsoOrgRepository.class);
 		teams = factory.getRepository(SsoTeamRepository.class);
 		memberships = factory.getRepository(SsoMembershipRepository.class);
+		invites = factory.getRepository(InviteTokenRepository.class);
 		clean();
 	}
 
 	private void clean() {
 		transact(() -> {
 			new SimpleJpaRepository<>(SsoMembership.class, entityManager).deleteAll();
+			new SimpleJpaRepository<>(InviteToken.class, entityManager).deleteAll();
 			new SimpleJpaRepository<>(SsoTeam.class, entityManager).deleteAll();
 			new SimpleJpaRepository<>(SsoOrg.class, entityManager).deleteAll();
 		});
@@ -140,5 +145,56 @@ class SsoTeamDomainIT extends SharedContainersBase {
 		SsoMembership moved = memberships.findByUserIdAndTeamId(userId, team.getId()).orElseThrow();
 		assertThat(moved.getRole()).isEqualTo(TeamRole.LEAD);
 		assertThat(moved.getStatus()).isEqualTo(MembershipStatus.INACTIVE);
+	}
+
+	@Test
+	@DisplayName("local, mapped, and holding bindings coexist in one org")
+	void localAndMappedBindingsCoexist() {
+		SsoOrg org = new SsoOrg("acme", "Acme");
+		transact(() -> {
+			orgs.save(org);
+			teams.save(new SsoTeam(org.getId(), "https://login.example.com/tid", "group-1", "Eng"));
+			teams.save(new SsoTeam(org.getId(), "", "local:ops", "Ops"));
+			teams.save(new SsoTeam(org.getId(), "", SsoTeam.UNASSIGNED_GROUP_ID, "Unassigned"));
+		});
+
+		assertThat(teams.findByOrgId(org.getId())).hasSize(3);
+		assertThat(teams.findByOrgIdAndIdpIssuerAndIdpGroupId(org.getId(), "", "local:ops"))
+				.isPresent();
+	}
+
+	@Test
+	@DisplayName("duplicate local bindings violate the unique constraint")
+	void duplicateLocalBindingRejected() {
+		SsoOrg org = new SsoOrg("acme", "Acme");
+		transact(() -> {
+			orgs.save(org);
+			teams.save(new SsoTeam(org.getId(), "", "local:eng", "Eng"));
+		});
+
+		assertThatThrownBy(() -> transact(() ->
+				teams.save(new SsoTeam(org.getId(), "", "local:eng", "Eng again"))))
+				.isInstanceOf(RuntimeException.class);
+	}
+
+	@Test
+	@DisplayName("invite team placement round-trips, unplaced stays null")
+	void invitePlacementRoundTrip() {
+		SsoOrg org = new SsoOrg("acme", "Acme");
+		SsoTeam team = new SsoTeam(org.getId(), "", "local:eng", "Eng");
+		transact(() -> {
+			orgs.save(org);
+			teams.save(team);
+			invites.save(new InviteToken("hash-placed", null, false, null,
+					Instant.now().plusSeconds(3600), team.getId()));
+			invites.save(new InviteToken("hash-plain", null, false, null,
+					Instant.now().plusSeconds(3600)));
+		});
+
+		assertThat(invites.findByTokenHash("hash-placed")).isPresent();
+		assertThat(invites.findByTokenHash("hash-placed").orElseThrow().getTeamId())
+				.isEqualTo(team.getId());
+		assertThat(invites.findByTokenHash("hash-plain").orElseThrow().getTeamId()).isNull();
+		assertThat(invites.findByTeamIdAndConsumedAtIsNull(team.getId())).hasSize(1);
 	}
 }

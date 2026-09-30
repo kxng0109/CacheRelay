@@ -11,12 +11,17 @@ import io.github.kxng0109.cacherelay.notify.GraphEmailSender;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.web.server.ResponseStatusException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -41,7 +46,7 @@ class InviteServiceTest {
 		audit = mock(AuthAuditService.class);
 		mail = mock(GraphEmailSender.class);
 		service = new InviteService(invites, users, AuthProperties.defaults(), passwords, audit,
-				mail);
+				mail, mock(TeamManagementService.class));
 		when(audit.pseudonym(any())).thenReturn("hash");
 		when(passwords.encode(any())).thenReturn("bcrypt");
 	}
@@ -50,7 +55,7 @@ class InviteServiceTest {
 	@DisplayName("create returns a copyable link without email when no address is given")
 	void createLinkOnly() {
 		InviteService.CreatedInvite created =
-				service.create(null, null, true, "http://localhost:8080", null);
+				service.create(null, null, true, null, "http://localhost:8080", null);
 
 		assertThat(created.link()).startsWith("http://localhost:8080/redeem?token=");
 		assertThat(created.emailed()).isFalse();
@@ -63,13 +68,13 @@ class InviteServiceTest {
 		when(mail.sendDirect(any(), any(), any())).thenReturn(ChannelResult.SENT);
 
 		InviteService.CreatedInvite sent =
-				service.create(UUID.randomUUID(), "op@example.com", false, "http://h", null);
+				service.create(UUID.randomUUID(), "op@example.com", false, null, "http://h", null);
 
 		assertThat(sent.emailed()).isTrue();
 
 		when(mail.sendDirect(any(), any(), any())).thenReturn(ChannelResult.SKIPPED);
 		InviteService.CreatedInvite skipped =
-				service.create(UUID.randomUUID(), "op@example.com", false, "http://h", null);
+				service.create(UUID.randomUUID(), "op@example.com", false, null, "http://h", null);
 
 		assertThat(skipped.emailed()).isFalse();
 		assertThat(skipped.link()).contains("/redeem?token=");
@@ -79,10 +84,10 @@ class InviteServiceTest {
 	@DisplayName("create prefers the configured invite base over the request base")
 	void createPrefersConfiguredBase() {
 		service = new InviteService(invites, users, withInviteBase("https://app.example.com/"),
-				passwords, audit, mail);
+				passwords, audit, mail, mock(TeamManagementService.class));
 
 		InviteService.CreatedInvite created =
-				service.create(null, null, true, "http://backend:8080", null);
+				service.create(null, null, true, null, "http://backend:8080", null);
 
 		assertThat(created.link()).startsWith("https://app.example.com/redeem?token=");
 		assertThat(created.emailed()).isFalse();
@@ -92,15 +97,15 @@ class InviteServiceTest {
 	@DisplayName("create trims trailing slashes but keeps a configured sub-path")
 	void createNormalizesConfiguredBase() {
 		service = new InviteService(invites, users, withInviteBase("https://app.example.com///"),
-				passwords, audit, mail);
+				passwords, audit, mail, mock(TeamManagementService.class));
 
-		assertThat(service.create(null, null, true, "http://backend:8080", null).link())
+		assertThat(service.create(null, null, true, null, "http://backend:8080", null).link())
 				.startsWith("https://app.example.com/redeem?token=");
 
 		service = new InviteService(invites, users, withInviteBase("https://app.example.com/cr/"),
-				passwords, audit, mail);
+				passwords, audit, mail, mock(TeamManagementService.class));
 
-		assertThat(service.create(null, null, true, "http://backend:8080", null).link())
+		assertThat(service.create(null, null, true, null, "http://backend:8080", null).link())
 				.startsWith("https://app.example.com/cr/redeem?token=");
 	}
 
@@ -177,6 +182,86 @@ class InviteServiceTest {
 
 		assertThat(service.redeem("token", "fresh", "password-12345", null, null))
 				.isInstanceOf(InviteService.RedeemResult.Gone.class);
+	}
+
+	@Test
+	@DisplayName("create persists team placement after validation")
+	void createPersistsPlacement() {
+		UUID teamId = UUID.randomUUID();
+		SsoTeam team = new SsoTeam(UUID.randomUUID(), "", "local:eng", "Eng");
+		TeamManagementService placement = mock(TeamManagementService.class);
+		when(placement.requirePlaceableTeam(eq(teamId))).thenReturn(team);
+		InviteService placed = new InviteService(invites, users, AuthProperties.defaults(),
+				passwords, audit, mail, placement);
+
+		placed.create(null, null, false, teamId, "http://h", null);
+
+		ArgumentCaptor<InviteToken> saved = ArgumentCaptor.forClass(InviteToken.class);
+		verify(invites).save(saved.capture());
+		assertThat(saved.getValue().getTeamId()).isEqualTo(teamId);
+	}
+
+	@Test
+	@DisplayName("create rejects unplaceable teams without persisting")
+	void createRejectsUnplaceable() {
+		UUID teamId = UUID.randomUUID();
+		TeamManagementService placement = mock(TeamManagementService.class);
+		when(placement.requirePlaceableTeam(eq(teamId)))
+				.thenThrow(new ResponseStatusException(HttpStatus.NOT_FOUND, "team not found"));
+		InviteService placed = new InviteService(invites, users, AuthProperties.defaults(),
+				passwords, audit, mail, placement);
+
+		assertThatThrownBy(() -> placed.create(null, null, false, teamId, "http://h", null))
+				.isInstanceOf(ResponseStatusException.class);
+		verify(invites, never()).save(any(InviteToken.class));
+	}
+
+	@Test
+	@DisplayName("redemption places the account into the invite team")
+	void redeemPlacesMembership() {
+		UUID teamId = UUID.randomUUID();
+		SsoTeam team = new SsoTeam(UUID.randomUUID(), "", "local:eng", "Eng");
+		set(team, "id", teamId);
+		InviteToken placed = new InviteToken(RefreshService.sha256Hex("token"), null, false,
+				null, Instant.now().plusSeconds(3600), teamId);
+		TeamManagementService placement = mock(TeamManagementService.class);
+		when(placement.requirePlaceableTeam(eq(teamId))).thenReturn(team);
+		SsoMembership seated = new SsoMembership(UUID.randomUUID(), teamId, TeamRole.MEMBER,
+				MembershipStatus.ACTIVE);
+		when(placement.assignMember(eq(teamId), any(UUID.class), eq(TeamRole.MEMBER)))
+				.thenReturn(seated);
+		InviteService service = new InviteService(invites, users, AuthProperties.defaults(),
+				passwords, audit, mail, placement);
+		when(invites.findByTokenHash(any())).thenReturn(Optional.of(placed));
+		when(users.findByUsernameIgnoreCase(any())).thenReturn(Optional.empty());
+		when(users.count()).thenReturn(2L);
+		when(invites.consume(any(), any(), any())).thenReturn(1);
+
+		InviteService.RedeemResult result =
+				service.redeem("token", "fresh", "password-12345", null, null);
+
+		assertThat(result).isInstanceOf(InviteService.RedeemResult.Redeemed.class);
+		UUID accountId = ((InviteService.RedeemResult.Redeemed) result).account().getId();
+		verify(placement).assignMember(eq(teamId), eq(accountId), eq(TeamRole.MEMBER));
+	}
+
+	@Test
+	@DisplayName("dangling placement resolves to gone without accounts")
+	void redeemDanglingPlacementGone() {
+		UUID teamId = UUID.randomUUID();
+		InviteToken placed = new InviteToken(RefreshService.sha256Hex("token"), null, false,
+				null, Instant.now().plusSeconds(3600), teamId);
+		TeamManagementService placement = mock(TeamManagementService.class);
+		when(placement.requirePlaceableTeam(eq(teamId)))
+				.thenThrow(new ResponseStatusException(HttpStatus.NOT_FOUND, "team not found"));
+		InviteService service = new InviteService(invites, users, AuthProperties.defaults(),
+				passwords, audit, mail, placement);
+		when(invites.findByTokenHash(any())).thenReturn(Optional.of(placed));
+		when(users.findByUsernameIgnoreCase(any())).thenReturn(Optional.empty());
+
+		assertThat(service.redeem("token", "fresh", "password-12345", null, null))
+				.isInstanceOf(InviteService.RedeemResult.Gone.class);
+		verify(users, never()).saveAndFlush(any(UserAccount.class));
 	}
 
 	private InviteToken invite(boolean admin) {

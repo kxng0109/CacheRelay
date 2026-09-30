@@ -4,6 +4,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import io.github.kxng0109.cacherelay.admin.dto.AssignMemberRequest;
+import io.github.kxng0109.cacherelay.admin.dto.MemberResponse;
+import io.github.kxng0109.cacherelay.admin.dto.RenameRequest;
 import io.github.kxng0109.cacherelay.admin.dto.TeamResponse;
 import io.github.kxng0109.cacherelay.auth.MembershipStatus;
 import io.github.kxng0109.cacherelay.auth.SsoMembership;
@@ -12,6 +15,7 @@ import io.github.kxng0109.cacherelay.auth.SsoOrg;
 import io.github.kxng0109.cacherelay.auth.SsoOrgRepository;
 import io.github.kxng0109.cacherelay.auth.SsoTeam;
 import io.github.kxng0109.cacherelay.auth.SsoTeamRepository;
+import io.github.kxng0109.cacherelay.auth.TeamManagementService;
 import io.github.kxng0109.cacherelay.auth.TeamRole;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -21,7 +25,9 @@ import org.springframework.web.server.ResponseStatusException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -35,7 +41,9 @@ class AdminTeamControllerTest {
 	private final SsoOrgRepository orgs = mock(SsoOrgRepository.class);
 	private final SsoTeamRepository teams = mock(SsoTeamRepository.class);
 	private final SsoMembershipRepository memberships = mock(SsoMembershipRepository.class);
-	private final AdminTeamController controller = new AdminTeamController(orgs, teams, memberships);
+	private final TeamManagementService teamService = mock(TeamManagementService.class);
+	private final AdminTeamController controller =
+			new AdminTeamController(orgs, teams, memberships, teamService);
 
 	@Test
 	@DisplayName("lists org teams with active-member counts")
@@ -84,5 +92,80 @@ class AdminTeamControllerTest {
 				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
 				.isEqualTo(HttpStatus.BAD_REQUEST);
 		verifyNoInteractions(orgs, teams, memberships);
+	}
+
+	@Test
+	@DisplayName("renames teams with live counts")
+	void renamesTeam() {
+		SsoOrg org = new SsoOrg("acme", "Acme");
+		SsoTeam team = new SsoTeam(org.getId(), "", "local:eng", "Engineering");
+		when(teamService.renameTeam(eq(team.getId()), eq("Engineering"))).thenReturn(team);
+		when(orgs.findById(eq(org.getId()))).thenReturn(Optional.of(org));
+		when(memberships.findByTeamIdAndStatus(eq(team.getId()), eq(MembershipStatus.ACTIVE)))
+				.thenReturn(List.of());
+
+		ResponseEntity<TeamResponse> response =
+				controller.renameTeam(team.getId().toString(), new RenameRequest("Engineering"));
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getBody().name()).isEqualTo("Engineering");
+		assertThat(response.getBody().orgSlug()).isEqualTo("acme");
+	}
+
+	@Test
+	@DisplayName("deletes teams with 204")
+	void deletesTeam() {
+		UUID id = UUID.randomUUID();
+
+		ResponseEntity<Void> response = controller.deleteTeam(id.toString());
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+		verify(teamService).deleteTeam(eq(id));
+	}
+
+	@Test
+	@DisplayName("assigns and revokes members with mapped responses")
+	void assignsAndRevokesMember() {
+		UUID teamId = UUID.randomUUID();
+		UUID userId = UUID.randomUUID();
+		SsoMembership active = new SsoMembership(userId, teamId, TeamRole.LEAD,
+				MembershipStatus.ACTIVE);
+		SsoMembership quiet = new SsoMembership(userId, teamId, TeamRole.LEAD,
+				MembershipStatus.INACTIVE);
+		when(teamService.assignMember(eq(teamId), eq(userId), eq(TeamRole.LEAD)))
+				.thenReturn(active);
+		when(teamService.revokeMember(eq(teamId), eq(userId))).thenReturn(quiet);
+
+		ResponseEntity<MemberResponse> assigned = controller.assignMember(teamId.toString(),
+				userId.toString(), new AssignMemberRequest(TeamRole.LEAD));
+		ResponseEntity<MemberResponse> revoked =
+				controller.revokeMember(teamId.toString(), userId.toString());
+
+		assertThat(assigned.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(assigned.getBody().status()).isEqualTo(MembershipStatus.ACTIVE);
+		assertThat(revoked.getBody().status()).isEqualTo(MembershipStatus.INACTIVE);
+	}
+
+	@Test
+	@DisplayName("malformed team and account ids answer 400 without touching the service")
+	void malformedIdsAnswer400() {
+		assertThatThrownBy(() -> controller.renameTeam("nope", new RenameRequest("X")))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThatThrownBy(() -> controller.deleteTeam("nope"))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThatThrownBy(() -> controller.assignMember(UUID.randomUUID().toString(), "nope",
+				new AssignMemberRequest(TeamRole.MEMBER)))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThatThrownBy(() -> controller.revokeMember("nope", "also-nope"))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+		verifyNoInteractions(teamService);
 	}
 }

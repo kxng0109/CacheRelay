@@ -32,7 +32,7 @@ class AdminInviteControllerTest {
 	void setUp() {
 		invites = mock(InviteService.class);
 		controller = new AdminInviteController(invites);
-		when(invites.create(any(), any(), anyBoolean(), any(), any())).thenReturn(
+		when(invites.create(any(), any(), anyBoolean(), any(), any(), any())).thenReturn(
 				new InviteService.CreatedInvite("http://h/redeem?token=t", false));
 	}
 
@@ -43,10 +43,10 @@ class AdminInviteControllerTest {
 		MockHttpServletRequest request = post("http", "example.com", 80);
 		request.setAttribute(AdminAuthFilter.ATTRIBUTE_ADMIN_ID, adminId);
 
-		var response = controller.create(new InviteRequest(null, true), request);
+		var response = controller.create(new InviteRequest(null, true, null), request);
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-		verify(invites).create(eq(adminId), isNull(), eq(true), eq("http://example.com"),
+		verify(invites).create(eq(adminId), isNull(), eq(true), isNull(), eq("http://example.com"),
 				isNull());
 	}
 
@@ -55,9 +55,9 @@ class AdminInviteControllerTest {
 	void masterKeyHttpsDefault() {
 		MockHttpServletRequest request = post("https", "example.com", 443);
 
-		controller.create(new InviteRequest("op@example.com", false), request);
+		controller.create(new InviteRequest("op@example.com", false, null), request);
 
-		verify(invites).create(isNull(), eq("op@example.com"), eq(false),
+		verify(invites).create(isNull(), eq("op@example.com"), eq(false), isNull(),
 				eq("https://example.com"), isNull());
 	}
 
@@ -66,9 +66,9 @@ class AdminInviteControllerTest {
 	void customPortKept() {
 		MockHttpServletRequest request = post("http", "example.com", 8080);
 
-		controller.create(new InviteRequest(null, false), request);
+		controller.create(new InviteRequest(null, false, null), request);
 
-		verify(invites).create(isNull(), isNull(), eq(false),
+		verify(invites).create(isNull(), isNull(), eq(false), isNull(),
 				eq("http://example.com:8080"), isNull());
 	}
 
