@@ -116,6 +116,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of lapsing to gaps; dead streams still lapse. Outcomes counted
   (`budget.hold.renew.total{result=renewed|missing|failed}`); renewal never throws.
   Residual follow-up (not in this change): truing counters from `usage_ledger` reconciliation.
+- **Admin user inventory (B1):** new read `GET /v1/admin/users` returns a `PageResponse`
+  envelope (`UserSummaryResponse` rows) under the same admin auth as the other
+  inventory reads; unknown/unauthorized callers read the identical deny shape.
+  Locked by 9 behavior tests. Full `verify` green.
+- **Curated embedding dimensions (B2):** `ModelEmbeddingDimensions` curates default
+  vector widths per embedding model, surfaced as `embeddingDimensions` on
+  `ModelCatalogEntryResponse` (null when unknown or for chat-only models) so the
+  console can hint dims without sourcing them from LiteLLM. Locked by 10 behavior
+  tests. Full `verify` green.
 
 ### Removed
 
@@ -225,6 +234,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   memo with per-read freshness stamp; dead tiers degrade to absent metrics,
   never an error. Same admin auth as `/stats`; no new route surface beyond the
   read.
+- **Image CVE gate accuracy (CVE-2026-84782 + SARIF severity):** the runtime stage
+  now names `openssl libssl3t64` in its `apt-get install` line so rebuilds always
+  carry the latest noble-updates patch (3.0.13-0ubuntu3.16; pre-installed base
+  layers are otherwise never upgraded), and the Trivy SARIF gate sets
+  `limit-severities-for-sarif: true` — without it the action unsets
+  `TRIVY_SEVERITY` for SARIF output and `exit-code: 1` fired on unactionable
+  MEDIUM/LOW base-layer noise despite the HIGH/CRITICAL-only step name. A
+  never-gating table twin renders findings to the log so the next red names its
+  driver. Backend pipeline green end to end (3,225 tests, JaCoCo 97.58% line /
+  95.41% branch).
 
 ## [1.8.0] - 2026-09-22
 
