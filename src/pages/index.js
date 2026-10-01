@@ -36,6 +36,7 @@ export default function Home() {
 						</div>
 					))}
 				</div>
+				<p className="cr-tick">docs · 9 pages · version next</p>
 				<pre className="cr-pre"><code>{`curl -N http://localhost:8080/v1/chat/completions \\
   -H "Authorization: Bearer $GW_KEY" \\
   -H "Content-Type: application/json" \\

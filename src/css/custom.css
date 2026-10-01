@@ -84,7 +84,39 @@ pre code {
 	border-color: var(--ifm-color-primary);
 }
 
-/* Landing page: centered hero, balanced stat grid, contained code. */
+/* Rail groups: mono eyebrow categories, filled-pill active item. */
+.menu__list-item-collapsible > .menu__link {
+	font-family: var(--ifm-font-family-monospace);
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--cr-muted);
+}
+
+.menu__link--active:not(.menu__link--sublist) {
+	background: var(--cr-ink);
+	color: var(--cr-paper);
+	border-radius: 999px;
+}
+
+/* Breadcrumb caret carries the accent, like the console trail. */
+.breadcrumbs__link {
+	font-family: var(--ifm-font-family-monospace);
+	font-size: 12px;
+}
+
+.breadcrumbs__item:not(:last-child)::after {
+	color: var(--ifm-color-primary);
+}
+
+/* Landing status line: muted mono tick under the stats. */
+.cr-tick {
+	font-family: var(--ifm-font-family-monospace);
+	font-size: 12px;
+	color: var(--cr-muted);
+	margin: 1rem auto 0;
+}
 .cr-hero {
 	max-width: 960px;
 	width: 100%;
@@ -113,6 +145,8 @@ pre code {
 	border: 1px solid var(--cr-hair);
 	border-radius: 16px;
 	padding: 1rem 1.25rem;
+	display: flex;
+	flex-direction: column;
 }
 
 .cr-stat b {
@@ -120,11 +154,14 @@ pre code {
 	font-family: var(--ifm-font-family-monospace);
 	font-size: 22px;
 	font-weight: 400;
+	order: 0;
 }
 
 .cr-stat span {
-	font-size: 12px;
-	opacity: 0.75;
+	font-size: 13px;
+	color: var(--cr-muted);
+	margin-bottom: 4px;
+	order: -1;
 }
 
 .cr-pre {
