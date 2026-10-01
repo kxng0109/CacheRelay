@@ -1,10 +1,20 @@
 {
-	"name": "cacherelay-commitlint",
+	"name": "cacherelay-docs",
 	"version": "1.4.0",
 	"private": true,
-	"description": "Conventional-commit linting for CacheRelay (non-Node Maven project).",
+	"description": "CacheRelay docs site (Docusaurus, GitHub Pages project hosting) plus conventional-commit linting.",
 	"scripts": {
-		"commitlint": "commitlint --last --verbose"
+		"build": "docusaurus build",
+		"commitlint": "commitlint --last --verbose",
+		"docs:start": "docusaurus start",
+		"docs:serve": "docusaurus serve",
+		"docs:version": "docusaurus docs:version"
+	},
+	"dependencies": {
+		"@docusaurus/core": "3.10.2",
+		"@docusaurus/preset-classic": "3.10.2",
+		"react": "18.3.1",
+		"react-dom": "18.3.1"
 	},
 	"devDependencies": {
 		"@commitlint/cli": "21.2.2"

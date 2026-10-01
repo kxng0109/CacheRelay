@@ -1,0 +1,5 @@
+/* CacheRelay docs overrides (minimal; default Infima theme otherwise). */
+
+.hero--primary {
+	--ifm-hero-background-color: #1a1a2e;
+}
