@@ -383,7 +383,7 @@ class E12CoverageSupportTest {
 		assertThat(res2.getStatusCode().value()).isEqualTo(400);
 
 		// CompletionException with generic RuntimeException
-		when(orchestrator.execute(any(), any(), anyBoolean())).thenReturn(CompletableFuture.failedFuture(
+		when(orchestrator.execute(any(), any(), any(), anyBoolean())).thenReturn(CompletableFuture.failedFuture(
 				new CompletionException(new IllegalStateException("simulated unexpected boom"))
 		));
 		assertThatThrownBy(() -> controller.proxyChatCompletions("{\"model\": \"test-model\"}", req))
@@ -394,7 +394,7 @@ class E12CoverageSupportTest {
 		HttpResponse<java.util.stream.Stream<String>> errHttpResp = mock(HttpResponse.class);
 		when(errHttpResp.statusCode()).thenReturn(500);
 		when(errHttpResp.body()).thenReturn(java.util.stream.Stream.of("error line 1", "error line 2"));
-		when(orchestrator.execute(any(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(
+		when(orchestrator.execute(any(), any(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(
 				new ProviderResponse("openai-p", errHttpResp, List.of("openai-p"))
 		));
 
@@ -417,7 +417,7 @@ class E12CoverageSupportTest {
 					throw new LineTooLongException(100, 200, "openai-p");
 				}));
 		when(longErrResp.body()).thenReturn(longLines);
-		when(orchestrator.execute(any(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(
+		when(orchestrator.execute(any(), any(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(
 				new ProviderResponse("openai-p", longErrResp, List.of("openai-p"))
 		));
 
@@ -435,7 +435,7 @@ class E12CoverageSupportTest {
 				"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}",
 				"data: [DONE]"
 		));
-		when(orchestrator.execute(any(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(
+		when(orchestrator.execute(any(), any(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(
 				new ProviderResponse("openai-p", okHttpResp, List.of("openai-p"))
 		));
 
@@ -453,7 +453,7 @@ class E12CoverageSupportTest {
 			throw new LineTooLongException(100, 200, "openai-p");
 		});
 		when(oomHttpResp.body()).thenReturn(throwingStream);
-		when(orchestrator.execute(any(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(
+		when(orchestrator.execute(any(), any(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(
 				new ProviderResponse("openai-p", oomHttpResp, List.of("openai-p"))
 		));
 

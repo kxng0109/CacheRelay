@@ -517,9 +517,9 @@ public class ProxyController {
 		// fetch that turns out to be JSON still relays through relayJson — with the SSE ceiling.
 		boolean streaming = chatRequest == null || !Boolean.FALSE.equals(chatRequest.stream());
 		try {
-			providerResponse = failoverOrchestrator.execute(alias, trimmed, streaming).join();
+			providerResponse = failoverOrchestrator.execute(alias, trimmed, routingContext, streaming).join();
 		} catch (CompletionException ex) {
-			recordDecision(alias, model, routingContext, null);
+			recordDecision(model, alias, model, routingContext, null);
 			Throwable cause = ex.getCause();
 			if (cause instanceof UpstreamUnavailableException upstream) {
 				throw upstream;
@@ -530,7 +530,7 @@ public class ProxyController {
 					cause, false, false
 			);
 		}
-		recordDecision(alias, model, routingContext, providerResponse);
+		recordDecision(model, alias, model, routingContext, providerResponse);
 
 		int status = providerResponse.response().statusCode();
 		if (status != HttpStatus.OK.value()) {
@@ -1367,12 +1367,14 @@ public class ProxyController {
 	 * and never throws: a logging fault must not change serving. Skipped when the writer is unwired (unit-test
 	 * controllers) and rates stay unknown when the pricing catalog is unwired rather than fabricated.
 	 *
+	 * @param aliasKey         requested alias key (the catalog name, not the served model)
 	 * @param alias            the routing plan that was walked
 	 * @param model            the requested model name
 	 * @param routingContext   validated routing preferences
 	 * @param providerResponse the winning response with tried legs, or {@code null} when all legs failed
 	 */
 	private void recordDecision(
+			String aliasKey,
 			ModelAlias alias,
 			String model,
 			RoutingDecisionContext routingContext,
@@ -1412,7 +1414,7 @@ public class ProxyController {
 					}
 				}
 			}
-			writer.record(model, model, routingContext.minQualityTier(), routingContext.tradeoffMode(),
+			writer.record(aliasKey, model, routingContext.minQualityTier(), routingContext.tradeoffMode(),
 					chain, tried, winner, inputRate, outputRate);
 		} catch (RuntimeException ex) {
 			log.debug("Dropping routing decision observation: {}", ex.getMessage());

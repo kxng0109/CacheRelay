@@ -5,8 +5,10 @@ import io.github.kxng0109.cacherelay.security.guardrail.common.GuardrailProperti
 import io.github.kxng0109.cacherelay.security.guardrail.injection.PromptInjectionScanner;
 import io.github.kxng0109.cacherelay.security.guardrail.pii.PiiAnonymizer;
 import io.github.kxng0109.cacherelay.security.guardrail.secret.IngressSecretScanner;
+import io.github.kxng0109.cacherelay.security.guardrail.vendor.GuardrailVendorClient;
 import io.github.kxng0109.cacherelay.security.ratelimit.KeyManagementService;
 import io.github.kxng0109.cacherelay.security.ratelimit.RateLimitEngine;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
@@ -97,6 +99,7 @@ public class SecurityFilterConfig {
 	 * @param piiAnonymizer    PII anonymizer
 	 * @param properties       guardrail configuration properties
 	 * @param objectMapper     Jackson mapper
+	 * @param vendorClients    third-party screening clients (empty when unconfigured)
 	 * @return the filter registration
 	 */
 	@Bean
@@ -105,10 +108,13 @@ public class SecurityFilterConfig {
 			PromptInjectionScanner injectionScanner,
 			PiiAnonymizer piiAnonymizer,
 			GuardrailProperties properties,
-			ObjectMapper objectMapper
+			ObjectMapper objectMapper,
+			ObjectProvider<GuardrailVendorClient> vendorClients
 	) {
+		GuardrailVendorClient vendorClient = vendorClients.getIfAvailable();
 		FilterRegistrationBean<IngressSecurityFilter> registration = new FilterRegistrationBean<>(
-				new IngressSecurityFilter(secretScanner, injectionScanner, piiAnonymizer, properties, objectMapper));
+				new IngressSecurityFilter(secretScanner, injectionScanner, piiAnonymizer,
+						properties, objectMapper, vendorClient));
 		registration.setOrder(IngressSecurityFilter.ORDER);
 		registration.addUrlPatterns(
 				IngressSecurityFilter.TARGET_PATH_CHAT,

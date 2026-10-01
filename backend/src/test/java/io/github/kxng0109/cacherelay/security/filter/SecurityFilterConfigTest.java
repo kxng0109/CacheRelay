@@ -5,10 +5,12 @@ import io.github.kxng0109.cacherelay.security.guardrail.common.GuardrailProperti
 import io.github.kxng0109.cacherelay.security.guardrail.injection.PromptInjectionScanner;
 import io.github.kxng0109.cacherelay.security.guardrail.pii.PiiAnonymizer;
 import io.github.kxng0109.cacherelay.security.guardrail.secret.IngressSecretScanner;
+import io.github.kxng0109.cacherelay.security.guardrail.vendor.GuardrailVendorClient;
 import io.github.kxng0109.cacherelay.security.ratelimit.KeyManagementService;
 import io.github.kxng0109.cacherelay.security.ratelimit.RateLimitEngine;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import tools.jackson.databind.ObjectMapper;
 
@@ -68,7 +70,8 @@ class SecurityFilterConfigTest {
 		ObjectMapper objectMapper = new ObjectMapper();
 
 		FilterRegistrationBean<IngressSecurityFilter> reg = config.ingressSecurityFilterRegistration(
-				secretScanner, injectionScanner, piiAnonymizer, properties, objectMapper
+				secretScanner, injectionScanner, piiAnonymizer, properties, objectMapper,
+				mock(ObjectProvider.class)
 		);
 
 		assertThat(reg.getOrder()).isEqualTo(2);

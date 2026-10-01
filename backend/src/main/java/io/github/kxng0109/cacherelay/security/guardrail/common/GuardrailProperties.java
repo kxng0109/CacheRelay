@@ -17,6 +17,7 @@ public class GuardrailProperties {
 	private boolean systemPromptExfiltrationDefenseEnabled = true;
 	private boolean dataResidencyEnabled = true;
 	private String defaultResidencyPolicy = "STRICT_SOVEREIGN";
+	private boolean vendorScreeningEnabled = false;
 
 	public GuardrailMode getMode() {
 		return mode;
@@ -80,6 +81,26 @@ public class GuardrailProperties {
 
 	public void setDataResidencyEnabled(boolean dataResidencyEnabled) {
 		this.dataResidencyEnabled = dataResidencyEnabled;
+	}
+
+	/**
+	 * Whether third-party vendor screening runs after the local engines.
+	 * Default off: enabling it sends payloads outside the boundary, so it
+	 * requires an explicit operator decision plus vendor residency scoping.
+	 *
+	 * @return whether vendor screening is enabled
+	 */
+	public boolean isVendorScreeningEnabled() {
+		return vendorScreeningEnabled;
+	}
+
+	/**
+	 * Sets third-party vendor screening.
+	 *
+	 * @param vendorScreeningEnabled whether vendor screening runs
+	 */
+	public void setVendorScreeningEnabled(boolean vendorScreeningEnabled) {
+		this.vendorScreeningEnabled = vendorScreeningEnabled;
 	}
 
 	public String getDefaultResidencyPolicy() {

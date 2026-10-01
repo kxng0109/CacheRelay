@@ -145,6 +145,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hash-chained within a boot epoch and self-verify under the key. README
   wording corrected alongside (CAS ring, overflow journal, per-request FOCUS
   scope, actual `V1`–`V25` migration range).
+- **Vendor screening SPI + economy routing:** opt-in third-party safety screening
+  (`GuardrailVendorClient` + AWS Bedrock adapter, default off, fail-closed to
+  local engines, spend-metered) and tier-floored cheapest-first chain ordering
+  for `eco` requests (residency first, unpriced/unrated legs never win, RACE
+  untouched). Full `verify` green (3,290 tests, JaCoCo 97.54% line / 95.33% branch).
 
 ### Removed
 

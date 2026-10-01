@@ -209,7 +209,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -244,7 +244,7 @@ class ProxyControllerTest {
 				controller.proxyChatCompletions(PATH_BODY, keyed);
 
 		assertEquals(403, entity.getStatusCode().value());
-		verify(orchestrator, never()).execute(any(), anyString(), anyBoolean());
+		verify(orchestrator, never()).execute(any(), anyString(), any(), anyBoolean());
 	}
 
 	@Test
@@ -265,7 +265,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 		MockHttpServletRequest keyed = request();
 		keyed.setAttribute("cacherelay.virtualKey", scoped);
@@ -293,7 +293,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"choices\":[{\"delta\":{\"content\":\"leak\"}}]}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -313,7 +313,7 @@ class ProxyControllerTest {
 				"openai", 200, ndjsonHeaders,
 				Stream.of("data: {\"content\":\"hello\"}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -331,7 +331,7 @@ class ProxyControllerTest {
 				"openai", 200, emptyHeaders,
 				Stream.of("data: {\"content\":\"hello\"}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -362,7 +362,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"content\":\"fresh\"}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity =
@@ -370,7 +370,7 @@ class ProxyControllerTest {
 
 		assertEquals(200, entity.getStatusCode().value());
 		assertTrue(body(entity).contains("fresh"));
-		verify(orchestrator).execute(any(), anyString(), anyBoolean());
+		verify(orchestrator).execute(any(), anyString(), any(), anyBoolean());
 	}
 
 	@Test
@@ -383,7 +383,7 @@ class ProxyControllerTest {
 						"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}",
 						"data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -399,7 +399,7 @@ class ProxyControllerTest {
 				+ "\"model\":\"gpt-5.6-luna\",\"choices\":\"nope\","
 				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
 		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -416,7 +416,7 @@ class ProxyControllerTest {
 				+ "\"content\":123},\"finish_reason\":\"stop\"}],"
 				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
 		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -433,7 +433,7 @@ class ProxyControllerTest {
 				+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
 				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
 		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(
@@ -454,7 +454,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"content\":\"hello\"}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -474,7 +474,7 @@ class ProxyControllerTest {
 				Stream.of("data: {\"content\":\"hello\"}", "data: [DONE]"),
 				List.of("anthropic", "openai")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -496,7 +496,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -518,7 +518,7 @@ class ProxyControllerTest {
 						"data: [DONE]"
 				)
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -555,7 +555,7 @@ class ProxyControllerTest {
 						"data: [DONE]"
 				)
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = guardrailController.proxyChatCompletions(PATH_BODY, request());
@@ -597,7 +597,7 @@ class ProxyControllerTest {
 						"data: [DONE]"
 				)
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = guardrailController.proxyChatCompletions(systemBody, request());
@@ -612,7 +612,7 @@ class ProxyControllerTest {
 	@Test
 	@DisplayName("an orchestrator exception with null cause is wrapped as upstream unavailable")
 	void orchestratorNullCauseWrapped() {
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.failedFuture(new CompletionException(null)));
 		assertThrows(
 				UpstreamUnavailableException.class, () ->
@@ -623,7 +623,7 @@ class ProxyControllerTest {
 	@Test
 	@DisplayName("an orchestrator exception with UpstreamUnavailableException is rethrown directly")
 	void orchestratorUpstreamUnavailableRethrown() {
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.failedFuture(
 						new CompletionException(new UpstreamUnavailableException("direct", null, false, false))
 				));
@@ -637,7 +637,7 @@ class ProxyControllerTest {
 	@Test
 	@DisplayName("an orchestrator exception with non-null non-upstream cause is wrapped")
 	void orchestratorGenericCauseWrapped() {
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.failedFuture(
 						new CompletionException(new RuntimeException("general network error"))
 				));
@@ -656,7 +656,7 @@ class ProxyControllerTest {
 
 		assertEquals(400, response.getStatusCode().value());
 		assertTrue(body(response).contains("empty request body"));
-		verify(orchestrator, never()).execute(any(), anyString(), anyBoolean());
+		verify(orchestrator, never()).execute(any(), anyString(), any(), anyBoolean());
 
 		ResponseEntity<StreamingResponseBody> nullResponse = controller.proxyChatCompletions(null, request());
 		assertEquals(400, nullResponse.getStatusCode().value());
@@ -673,7 +673,7 @@ class ProxyControllerTest {
 
 		assertEquals(400, response.getStatusCode().value());
 		assertTrue(body(response).contains("invalid Idempotency-Key"));
-		verify(orchestrator, never()).execute(any(), anyString(), anyBoolean());
+		verify(orchestrator, never()).execute(any(), anyString(), any(), anyBoolean());
 	}
 
 	@Test
@@ -695,7 +695,7 @@ class ProxyControllerTest {
 						"data: [DONE]"
 				)
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(firstUpstream))
 				.thenReturn(CompletableFuture.completedFuture(secondUpstream));
 		when(costCalculator.calculate(ProviderType.OPENAI, "gpt-5.6-luna", 10, 5)).thenReturn(4200L);
@@ -726,7 +726,7 @@ class ProxyControllerTest {
 						"data: [DONE]"
 				)
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(firstUpstream));
 		when(costCalculator.calculate(ProviderType.OPENAI, "gpt-5.6-luna", 10, 5)).thenReturn(4200L);
 
@@ -760,7 +760,7 @@ class ProxyControllerTest {
 			assertEquals("TEAM", response.getHeaders().getFirst("X-Budget-Level"));
 			assertEquals("MINUTE", response.getHeaders().getFirst("X-Budget-Window"));
 			assertTrue(body(response).contains("budget exhausted"));
-			verify(orchestrator, never()).execute(any(), anyString(), anyBoolean());
+			verify(orchestrator, never()).execute(any(), anyString(), any(), anyBoolean());
 		} finally {
 			controller.setBudgetEnforcer(null);
 		}
@@ -781,7 +781,7 @@ class ProxyControllerTest {
 
 			assertEquals(503, response.getStatusCode().value());
 			assertTrue(body(response).contains("Budget service unavailable"));
-			verify(orchestrator, never()).execute(any(), anyString(), anyBoolean());
+			verify(orchestrator, never()).execute(any(), anyString(), any(), anyBoolean());
 		} finally {
 			controller.setBudgetEnforcer(null);
 		}
@@ -812,7 +812,7 @@ class ProxyControllerTest {
 		);
 
 		assertEquals(404, response.getStatusCode().value());
-		verify(orchestrator, never()).execute(any(), anyString(), anyBoolean());
+		verify(orchestrator, never()).execute(any(), anyString(), any(), anyBoolean());
 	}
 
 	@Test
@@ -822,13 +822,13 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"a\":1}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		controller.proxyChatCompletions(PATH_BODY, request());
 
 		ArgumentCaptor<ModelAlias> aliasCaptor = ArgumentCaptor.forClass(ModelAlias.class);
-		verify(orchestrator).execute(aliasCaptor.capture(), anyString(), anyBoolean());
+		verify(orchestrator).execute(aliasCaptor.capture(), anyString(), any(), anyBoolean());
 		assertEquals(gatewayProperties.getAliases().get("gpt-5.6-luna"), aliasCaptor.getValue());
 	}
 
@@ -839,7 +839,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"content\":\"hello\"}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> responseEntity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -859,7 +859,7 @@ class ProxyControllerTest {
 				"openai", 429, jsonHeaders(),
 				Stream.of("{\"error\":{\"message\":\"rate limited\"}}")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> responseEntity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -871,7 +871,7 @@ class ProxyControllerTest {
 	@Test
 	@DisplayName("an upstream failure is rethrown for the exception handler")
 	void rethrowsUpstreamFailure() {
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.failedFuture(
 						new UpstreamUnavailableException("all failed", null, false, false, 401)));
 
@@ -884,7 +884,7 @@ class ProxyControllerTest {
 	@Test
 	@DisplayName("an unexpected failure is wrapped as an upstream failure")
 	void wrapsUnexpectedFailure() {
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.failedFuture(new IllegalStateException("boom")));
 
 		UpstreamUnavailableException failure = assertThrows(
@@ -898,7 +898,7 @@ class ProxyControllerTest {
 	@Test
 	@DisplayName("a completion exception without a cause is still mapped")
 	void completionExceptionWithoutCause() {
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.failedFuture(new CompletionException(null)));
 
 		UpstreamUnavailableException failure = assertThrows(
@@ -916,7 +916,7 @@ class ProxyControllerTest {
 				"ghost", 200, sseHeaders(),
 				Stream.of("data: {\"content\":\"hi\"}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> responseEntity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -932,7 +932,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"content\":\"hello\"}", "data: {\"content\":\" world\"}")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		String streamed = body(controller.proxyChatCompletions(PATH_BODY, request()));
@@ -948,7 +948,7 @@ class ProxyControllerTest {
 		ResponseEntity<StreamingResponseBody> response = controller.proxyChatCompletions(null, request());
 
 		assertEquals(400, response.getStatusCode().value());
-		verify(orchestrator, never()).execute(any(), anyString(), anyBoolean());
+		verify(orchestrator, never()).execute(any(), anyString(), any(), anyBoolean());
 	}
 
 	@Test
@@ -974,7 +974,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"content\":\"hello\"}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> responseEntity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -995,7 +995,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"content\":\"hello\"}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> responseEntity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -1016,7 +1016,7 @@ class ProxyControllerTest {
 				"openai", 429, jsonHeaders(),
 				Stream.of("{\"error\":{\"message\":\"rate limited\"}}")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> responseEntity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -1045,7 +1045,7 @@ class ProxyControllerTest {
 						"data: [DONE]"
 				)
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, piiRequest);
@@ -1068,7 +1068,7 @@ class ProxyControllerTest {
 						"data: [DONE]"
 				)
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 		when(costCalculator.calculate(ProviderType.OPENAI, "gpt-5.6-luna", 10, 5)).thenReturn(4200L);
 
@@ -1103,7 +1103,7 @@ class ProxyControllerTest {
 						"data: {\"type\":\"message_stop\"}"
 				)
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 		when(costCalculator.calculate(ProviderType.ANTHROPIC, "claude-sonnet-5", 1000, 500, 600, 400, 200))
 				.thenReturn(6250L);
@@ -1140,7 +1140,7 @@ class ProxyControllerTest {
 						"data: [DONE]"
 				)
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 		when(costCalculator.calculate(ProviderType.DEEPSEEK, "deepseek-r1", 2000, 800, 500, 1500, 0))
 				.thenReturn(3500L);
@@ -1173,7 +1173,7 @@ class ProxyControllerTest {
 						"data: [DONE]"
 				)
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 		when(costCalculator.calculate(ProviderType.DEEPSEEK, "deepseek-r1", 100, 50))
 				.thenReturn(500L);
@@ -1208,7 +1208,7 @@ class ProxyControllerTest {
 						"data: {\"type\":\"message_stop\"}"
 				)
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 		when(costCalculator.calculate(ProviderType.ANTHROPIC, "claude-sonnet-5", 500, 200, 500, 0, 100))
 				.thenReturn(2100L);
@@ -1237,7 +1237,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"content\":\"hello\"}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		controller.proxyChatCompletions(PATH_BODY, request());
@@ -1262,14 +1262,14 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 		String body = "{\"model\":\"gpt-5.6-luna\",\"messages\":[],\"stream\":false}";
 
 		ResponseEntity<StreamingResponseBody> responseEntity = controller.proxyChatCompletions(body, request());
 
 		assertEquals(200, responseEntity.getStatusCode().value());
-		verify(orchestrator).execute(any(), anyString(), anyBoolean());
+		verify(orchestrator).execute(any(), anyString(), any(), anyBoolean());
 	}
 
 	@Test
@@ -1279,7 +1279,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"content\":\"hello\"}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 		String body = "{\"model\":\"gpt-5.6-luna\",\"messages\":42,\"stream_options\":42}";
 
@@ -1300,7 +1300,7 @@ class ProxyControllerTest {
 						"data: [DONE]"
 				)
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 		when(costCalculator.calculate(ProviderType.OPENAI, "gpt-5.6-luna", 2, 3)).thenReturn(88L);
 
@@ -1322,7 +1322,7 @@ class ProxyControllerTest {
 						"data: [DONE]"
 				)
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 		when(costCalculator.calculate(ProviderType.OPENAI, "gpt-5.6-luna", 10, 5)).thenReturn(4200L);
 
@@ -1342,7 +1342,7 @@ class ProxyControllerTest {
 						"data: [DONE]"
 				)
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 		when(costCalculator.calculate(any(), anyString(), anyLong(), anyLong())).thenReturn(0L);
 
@@ -1361,7 +1361,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"content\":\"hello\"}", "data: {\"content\":\" world\"}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 		SseFlushStrategy.FlushHandle handle = mock(SseFlushStrategy.FlushHandle.class);
 		when(flushStrategy.register(any())).thenReturn(handle);
@@ -1384,7 +1384,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"content\":\"hello\"}", "data: {\"content\":\" world\"}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 		SseFlushStrategy.FlushHandle handle = mock(SseFlushStrategy.FlushHandle.class);
 		when(flushStrategy.register(any())).thenReturn(handle);
@@ -1406,7 +1406,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"content\":\"hello\"}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 		when(flushStrategy.register(any())).thenThrow(new SseConnectionLimitException("limit"));
 
@@ -1426,7 +1426,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"content\":\"oversized\"}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		DefaultSseLineGuard rejectingGuard = mock(DefaultSseLineGuard.class);
@@ -1451,7 +1451,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"content\":\"dropped\"}", "data: {\"content\":\"kept\"}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		DefaultSseLineGuard dropGuard = mock(DefaultSseLineGuard.class);
@@ -1479,7 +1479,7 @@ class ProxyControllerTest {
 			throw new LineTooLongException(100, 200, "openai");
 		});
 		ProviderResponse response = providerResponse("openai", 200, sseHeaders(), throwingStream);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> responseEntity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -1497,7 +1497,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"content\":\"plain\"}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> responseEntity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -1547,7 +1547,7 @@ class ProxyControllerTest {
 				"data: {\"type\":\"message_stop\"}"
 		);
 		ProviderResponse providerResp = providerResponse("anthropic-p", 200, sseHeaders(), sseLines);
-		when(orchestrator.execute(any(), anyString(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(providerResp));
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(providerResp));
 
 		ResponseEntity<StreamingResponseBody> response = controller.proxyChatCompletions(
 				"{\"model\":\"claude-alias\",\"messages\":[],\"stream_options\":{\"include_usage\":true}}",
@@ -1569,7 +1569,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> responseEntity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -1625,7 +1625,7 @@ class ProxyControllerTest {
 		assertTrue(streamed.contains("data: [DONE]"));
 
 		// Upstream orchestrator should not have been called!
-		verify(orchestrator, never()).execute(any(), anyString(), anyBoolean());
+		verify(orchestrator, never()).execute(any(), anyString(), any(), anyBoolean());
 	}
 
 	@Test
@@ -1660,7 +1660,7 @@ class ProxyControllerTest {
 						"data: [DONE]"
 				)
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(response));
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> res = cachedController.proxyChatCompletions(
 				"{\"model\":\"gpt-5.6-luna\",\"messages\":[{\"role\":\"user\",\"content\":\"Question\"}]}",
@@ -1771,7 +1771,7 @@ class ProxyControllerTest {
 						"data: [DONE]"
 				)
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(response));
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> res = cachedController.proxyChatCompletions(
 				"{\"model\":\"gpt-5.6-luna\",\"messages\":[{\"role\":\"user\",\"content\":\"Question\"}]}",
@@ -1794,7 +1794,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"choices\":[{\"delta\":{\"content\":\"no cache service\"}}]}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(noCacheResponse));
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(noCacheResponse));
 
 		ResponseEntity<StreamingResponseBody> noCacheRes = plainController.proxyChatCompletions(PATH_BODY, request());
 		ByteArrayOutputStream out2 = new ByteArrayOutputStream();
@@ -1807,7 +1807,7 @@ class ProxyControllerTest {
 				resolver, costCalculator, eventPublisher, flushStrategy, lineGuardFactory,
 				cacheService, null
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(noCacheResponse));
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(noCacheResponse));
 		ResponseEntity<StreamingResponseBody> halfCachedRes = halfCachedController.proxyChatCompletions(
 				PATH_BODY,
 				request()
@@ -1877,7 +1877,7 @@ class ProxyControllerTest {
 						"data: [DONE]"
 				)
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(response));
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> res = cachedController.proxyChatCompletions(
 				"{\"model\":\"gpt-5.6-luna\",\"messages\":[{\"role\":\"user\",\"content\":\"Test\"}]}",
@@ -1901,7 +1901,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}", "data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(response));
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> res = controller.proxyChatCompletions(PATH_BODY, request());
 		assertNotNull(res.getBody());
@@ -1945,6 +1945,7 @@ class ProxyControllerTest {
 		when(orchestrator.execute(
 				any(),
 				anyString(),
+				any(),
 				anyBoolean()
 		)).thenReturn(CompletableFuture.completedFuture(cachedStreamResponse));
 
@@ -1986,7 +1987,7 @@ class ProxyControllerTest {
 						"data: [DONE]"
 				)
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(response));
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(response));
 
 		// Body with valid model but malformed messages array type (e.g. integer instead of array) -> parseChatRequest returns null
 		ResponseEntity<StreamingResponseBody> res = cachedController.proxyChatCompletions(
@@ -2017,7 +2018,7 @@ class ProxyControllerTest {
 				)
 		);
 		when(cacheService.evaluateCache(any(), any(), any(), any())).thenReturn(CacheLookupResult.miss(1L));
-		when(orchestrator.execute(any(), anyString(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(response2));
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(response2));
 		ResponseEntity<StreamingResponseBody> throwingRes = throwingController.proxyChatCompletions(
 				PATH_BODY,
 				request()
@@ -2047,7 +2048,7 @@ class ProxyControllerTest {
 				+ "\"content\":[{\"type\":\"text\",\"text\":\"hi\"}],\"model\":\"claude-sonnet-5\","
 				+ "\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}";
 		ProviderResponse response = providerResponse("anthropic", 200, jsonHeaders(), Stream.of(upstream));
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(
@@ -2083,7 +2084,7 @@ class ProxyControllerTest {
 				+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
 				+ "\"usageMetadata\":{\"promptTokenCount\":7,\"candidatesTokenCount\":3}}";
 		ProviderResponse response = providerResponse("gemini", 200, jsonHeaders(), Stream.of(upstream));
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(
@@ -2119,7 +2120,7 @@ class ProxyControllerTest {
 				+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
 				+ "\"prompt_eval_count\":11,\"eval_count\":4}";
 		ProviderResponse response = providerResponse("ollama", 200, jsonHeaders(), Stream.of(upstream));
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(
@@ -2168,7 +2169,7 @@ class ProxyControllerTest {
 		};
 		for (String[] kase : cases) {
 			ProviderResponse response = providerResponse(kase[0], 200, jsonHeaders(), Stream.of(kase[2]));
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(response));
 
 			ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(
@@ -2209,7 +2210,7 @@ class ProxyControllerTest {
 		};
 		for (String[] kase : cases) {
 			ProviderResponse response = providerResponse("ollama", 200, jsonHeaders(), Stream.of(kase[0]));
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(response));
 
 			ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(
@@ -2238,7 +2239,7 @@ class ProxyControllerTest {
 					.thenReturn(true);
 			ProviderResponse response = providerResponse("openai", 200, jsonHeaders(),
 					Stream.of("this is not json"));
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(response));
 			MockHttpServletRequest req = request();
 			req.setAttribute("cacherelay.keyHash", "ab".repeat(32));
@@ -2264,7 +2265,7 @@ class ProxyControllerTest {
 				+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
 				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
 		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -2290,7 +2291,7 @@ class ProxyControllerTest {
 				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
 		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(),
 				Stream.of(upstream), List.of("anthropic (circuit open)", "openai"));
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -2320,7 +2321,7 @@ class ProxyControllerTest {
 					+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
 			ProviderResponse response = providerResponse("openai", 200, jsonHeaders(),
 					Stream.of(upstream), List.of("openai"));
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(response));
 			MockHttpServletRequest req = request();
 			req.setAttribute("cacherelay.keyHash", "ab".repeat(32));
@@ -2360,7 +2361,7 @@ class ProxyControllerTest {
 			lines.add("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-5.6-luna\",\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}");
 			lines.add("data: [DONE]");
 			ProviderResponse response = providerResponse("openai", 200, sseHeaders(), lines.stream());
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(response));
 			MockHttpServletRequest req = request();
 			req.setAttribute("cacherelay.keyHash", "ab".repeat(32));
@@ -2399,7 +2400,7 @@ class ProxyControllerTest {
 							"data: [DONE]"
 					)
 			);
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(response));
 			MockHttpServletRequest req = request();
 			req.setAttribute("cacherelay.keyHash", "ab".repeat(32));
@@ -2436,7 +2437,7 @@ class ProxyControllerTest {
 					+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
 			ProviderResponse response = providerResponse("openai", 200, jsonHeaders(),
 					Stream.of(upstream), List.of("openai"));
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(response));
 			MockHttpServletRequest req = new MockHttpServletRequest();
 			req.setAttribute("cacherelay.keyHash", "ab".repeat(32));
@@ -2457,7 +2458,7 @@ class ProxyControllerTest {
 	@DisplayName("non-streaming empty JSON object falls back to generated id and empty choice")
 	void jsonRelayAppliesFallbacks() throws Exception {
 		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of("{}"));
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -2474,7 +2475,7 @@ class ProxyControllerTest {
 	@DisplayName("non-streaming non-JSON body is relayed raw without failing")
 	void jsonRelayRelaysNonJsonRaw() throws Exception {
 		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of("not-json{{{"));
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -2488,7 +2489,7 @@ class ProxyControllerTest {
 	void jsonRelayHandlesTextAndMissingFields() throws Exception {
 		String upstream = "{\"choices\":[{\"text\":\"yo\"}]}";
 		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -2518,7 +2519,7 @@ class ProxyControllerTest {
 		String upstream = "{\"choices\":[{\"message\":{\"content\":\"hi\"}}],"
 				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
 		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity =
@@ -2551,7 +2552,7 @@ class ProxyControllerTest {
 		);
 		String upstream = "{\"choices\":[{\"message\":{\"content\":\"hi\"}}]}";
 		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity =
@@ -2599,7 +2600,7 @@ class ProxyControllerTest {
 			throw new LineTooLongException(16384, 30000, "openai");
 		});
 		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), poisoned);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 		controller.setBudgetEnforcer(null);
 
@@ -2640,7 +2641,7 @@ class ProxyControllerTest {
 		lines.add("data: {\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5000},\"choices\":[]}");
 		lines.add("data: [DONE]");
 		ProviderResponse response = providerResponse("openai", 200, sseHeaders(), lines.stream());
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity =
@@ -2662,7 +2663,7 @@ class ProxyControllerTest {
 				"openai", 200, sseHeaders(),
 				Stream.of("data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 		controller.setBudgetEnforcer(null);
 		MockHttpServletRequest req = request();
@@ -2671,7 +2672,7 @@ class ProxyControllerTest {
 		ResponseEntity<StreamingResponseBody> responseEntity = controller.proxyChatCompletions(PATH_BODY, req);
 
 		assertEquals(200, responseEntity.getStatusCode().value());
-		verify(orchestrator).execute(any(), anyString(), anyBoolean());
+		verify(orchestrator).execute(any(), anyString(), any(), anyBoolean());
 	}
 
 	@Test
@@ -2687,7 +2688,7 @@ class ProxyControllerTest {
 
 			assertEquals(503, response.getStatusCode().value());
 			verify(mockEnforcer, never()).checkBudget(any(), any(), any(), anyString(), anyInt(), any(), any());
-			verify(orchestrator, never()).execute(any(), anyString(), anyBoolean());
+			verify(orchestrator, never()).execute(any(), anyString(), any(), anyBoolean());
 		} finally {
 			controller.setBudgetEnforcer(null);
 		}
@@ -2716,7 +2717,7 @@ class ProxyControllerTest {
 							"data: [DONE]"
 					)
 			);
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(firstUpstream));
 			when(costCalculator.calculate(ProviderType.OPENAI, "gpt-5.6-luna", 10, 5)).thenReturn(4200L);
 			MockHttpServletRequest req = request();
@@ -2761,7 +2762,7 @@ class ProxyControllerTest {
 					"openai", 200, sseHeaders(),
 					Stream.of("data: {\"choices\":[{\"delta\":{\"content\":\"leak\"}}]}", "data: [DONE]")
 			);
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(response));
 			MockHttpServletRequest req = request();
 			req.setAttribute("cacherelay.keyHash", "ab".repeat(32));
@@ -2789,7 +2790,7 @@ class ProxyControllerTest {
 					"openai", 200, sseHeaders(),
 					Stream.of("data: [DONE]")
 			);
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(response));
 			MockHttpServletRequest req = request();
 			req.setAttribute("cacherelay.keyHash", "ab".repeat(32));
@@ -2879,7 +2880,7 @@ class ProxyControllerTest {
 							"data: [DONE]"
 					)
 			);
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(firstUpstream));
 			when(costCalculator.calculate(ProviderType.OPENAI, "gpt-5.6-luna", 10, 5)).thenReturn(4200L);
 			MockHttpServletRequest req = request();
@@ -2916,7 +2917,7 @@ class ProxyControllerTest {
 							"data: [DONE]"
 					)
 			);
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(firstUpstream));
 			when(costCalculator.calculate(ProviderType.OPENAI, "gpt-5.6-luna", 10, 5)).thenReturn(4200L);
 			MockHttpServletRequest req = request();
@@ -2955,7 +2956,7 @@ class ProxyControllerTest {
 							"data: [DONE]"
 					)
 			);
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(firstUpstream));
 			when(costCalculator.calculate(ProviderType.OPENAI, "gpt-5.6-luna", 10, 5)).thenReturn(4200L);
 			MockHttpServletRequest req = request();
@@ -2998,7 +2999,7 @@ class ProxyControllerTest {
 					"openai", 200, sseHeaders(),
 					Stream.of("data: {\"choices\":[{\"delta\":{\"content\":\"leak\"}}]}", "data: [DONE]")
 			);
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(response));
 			MockHttpServletRequest req = request();
 			req.setAttribute("cacherelay.keyHash", "ab".repeat(32));
@@ -3026,7 +3027,7 @@ class ProxyControllerTest {
 					"openai", 200, sseHeaders(),
 					Stream.of("data: [DONE]")
 			);
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(response));
 			MockHttpServletRequest req = request();
 			req.setAttribute("cacherelay.keyHash", "   ");
@@ -3060,7 +3061,7 @@ class ProxyControllerTest {
 
 			assertEquals(422, response.getStatusCode().value());
 			assertTrue(body(response).contains("already used with a different request"));
-			verify(orchestrator, never()).execute(any(), anyString(), anyBoolean());
+			verify(orchestrator, never()).execute(any(), anyString(), any(), anyBoolean());
 		} finally {
 			controller.setReplayService(null);
 		}
@@ -3083,7 +3084,7 @@ class ProxyControllerTest {
 			assertEquals(409, response.getStatusCode().value());
 			assertEquals("1", response.getHeaders().getFirst("Retry-After"));
 			assertTrue(body(response).contains("identical request in flight"));
-			verify(orchestrator, never()).execute(any(), anyString(), anyBoolean());
+			verify(orchestrator, never()).execute(any(), anyString(), any(), anyBoolean());
 		} finally {
 			controller.setReplayService(null);
 		}
@@ -3106,7 +3107,7 @@ class ProxyControllerTest {
 
 			assertEquals(409, response.getStatusCode().value());
 			assertTrue(body(response).contains("identical request in flight"));
-			verify(orchestrator, never()).execute(any(), anyString(), anyBoolean());
+			verify(orchestrator, never()).execute(any(), anyString(), any(), anyBoolean());
 		} finally {
 			controller.setReplayService(null);
 		}
@@ -3132,7 +3133,7 @@ class ProxyControllerTest {
 			assertEquals(200, response.getStatusCode().value());
 			assertEquals("true", response.getHeaders().getFirst("Idempotent-Replayed"));
 			assertTrue(written.contains("chatcmpl-x"));
-			verify(orchestrator, never()).execute(any(), anyString(), anyBoolean());
+			verify(orchestrator, never()).execute(any(), anyString(), any(), anyBoolean());
 		} finally {
 			controller.setReplayService(null);
 		}
@@ -3155,7 +3156,7 @@ class ProxyControllerTest {
 							"data: [DONE]"
 					)
 			);
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(firstUpstream));
 			MockHttpServletRequest req = request();
 			req.addHeader("Idempotency-Key", "rk-store");
@@ -3185,7 +3186,7 @@ class ProxyControllerTest {
 					+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
 					+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
 			ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(response));
 			MockHttpServletRequest req = request();
 			req.addHeader("Idempotency-Key", "rk-json");
@@ -3220,7 +3221,7 @@ class ProxyControllerTest {
 			assertTrue(response.getHeaders().getContentType().toString().contains("text/event-stream"));
 			assertTrue(written.contains("data: {\"content\":\"hi\"}"));
 			assertTrue(written.contains("data: [DONE]"));
-			verify(orchestrator, never()).execute(any(), anyString(), anyBoolean());
+			verify(orchestrator, never()).execute(any(), anyString(), any(), anyBoolean());
 		} finally {
 			controller.setReplayService(null);
 		}
@@ -3246,7 +3247,7 @@ class ProxyControllerTest {
 							"data: [DONE]"
 					)
 			);
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(firstUpstream));
 			MockHttpServletRequest req = request();
 			req.setAttribute("cacherelay.keyHash", "ab".repeat(32));
@@ -3295,7 +3296,7 @@ class ProxyControllerTest {
 					"openai", 200, sseHeaders(),
 					Stream.of("data: {\"choices\":[{\"delta\":{\"content\":\"leak\"}}]}", "data: [DONE]")
 			);
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(response));
 			MockHttpServletRequest req = request();
 			req.setAttribute("cacherelay.keyHash", "ab".repeat(32));
@@ -3338,7 +3339,7 @@ class ProxyControllerTest {
 							"data: [DONE]"
 					)
 			);
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(firstUpstream));
 			when(costCalculator.calculate(ProviderType.OPENAI, "gpt-5.6-luna", 10, 5)).thenReturn(4200L);
 			MockHttpServletRequest req = request();
@@ -3386,7 +3387,7 @@ class ProxyControllerTest {
 					"openai", 200, sseHeaders(),
 					Stream.of("data: {\"choices\":[{\"delta\":{\"content\":\"leak\"}}]}", "data: [DONE]")
 			);
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(response));
 			MockHttpServletRequest req = request();
 			req.setAttribute("cacherelay.keyHash", "ab".repeat(32));
@@ -3432,7 +3433,7 @@ class ProxyControllerTest {
 					"openai", 200, sseHeaders(),
 					Stream.of("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}", "data: [DONE]")
 			);
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(response));
 			MockHttpServletRequest req = request();
 			req.setAttribute("cacherelay.keyHash", "ab".repeat(32));
@@ -3464,7 +3465,7 @@ class ProxyControllerTest {
 					"openai", 200, sseHeaders(),
 					Stream.of("data: [DONE]")
 			);
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(response));
 
 			ResponseEntity<StreamingResponseBody> responseEntity =
@@ -3523,7 +3524,7 @@ class ProxyControllerTest {
 				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
 		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(),
 				Stream.of(upstream), List.of());
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -3542,7 +3543,7 @@ class ProxyControllerTest {
 				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
 		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(),
 				Stream.of(upstream), null);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -3562,7 +3563,7 @@ class ProxyControllerTest {
 					+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
 					+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
 			ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(response));
 
 			ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -3584,7 +3585,7 @@ class ProxyControllerTest {
 						"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7}}",
 						"data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -3602,7 +3603,7 @@ class ProxyControllerTest {
 				+ "\"model\":\"gpt-5.6-luna\",\"choices\":[],"
 				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
 		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -3620,7 +3621,7 @@ class ProxyControllerTest {
 				+ "\"finish_reason\":\"stop\"}],"
 				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
 		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -3653,7 +3654,7 @@ class ProxyControllerTest {
 				+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
 				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
 		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = cachedController.proxyChatCompletions(
@@ -3673,7 +3674,7 @@ class ProxyControllerTest {
 		try {
 			ProviderResponse response = providerResponse("groq", 200, sseHeaders(),
 					Stream.of("data: [DONE]"), List.of("groq"));
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(response));
 
 			ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -3705,7 +3706,7 @@ class ProxyControllerTest {
 		try {
 			ProviderResponse response = providerResponse("openai", 200, sseHeaders(),
 					Stream.of("data: [DONE]"), List.of("openai"));
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(response));
 
 			ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -3756,7 +3757,7 @@ class ProxyControllerTest {
 		ByteArrayOutputStream out = new ByteArrayOutputStream();
 		res.getBody().writeTo(out);
 		assertTrue(out.toString(StandardCharsets.UTF_8).contains("Cached greeting!"));
-		verify(orchestrator, never()).execute(any(), anyString(), anyBoolean());
+		verify(orchestrator, never()).execute(any(), anyString(), any(), anyBoolean());
 	}
 
 	@Test
@@ -3785,7 +3786,7 @@ class ProxyControllerTest {
 				+ "\"content\":\"fresh\"},\"finish_reason\":\"stop\"}],"
 				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
 		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = cachedController.proxyChatCompletions(PATH_BODY, request());
@@ -3807,7 +3808,7 @@ class ProxyControllerTest {
 		try {
 			ProviderResponse response = providerResponse("groq", 200, sseHeaders(),
 					Stream.of("data: [DONE]"), List.of("groq"));
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(response));
 
 			ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -3831,7 +3832,7 @@ class ProxyControllerTest {
 				+ "\"model\":\"gpt-5.6-luna\","
 				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
 		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -3849,7 +3850,7 @@ class ProxyControllerTest {
 				+ "\"content\":42},\"finish_reason\":\"stop\"}],"
 				+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
 		ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, request());
@@ -3886,7 +3887,7 @@ class ProxyControllerTest {
 						"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7}}",
 						"data: [DONE]")
 		);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 
 		ResponseEntity<StreamingResponseBody> entity = cachedController.proxyChatCompletions(
@@ -3913,7 +3914,7 @@ class ProxyControllerTest {
 					+ "\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
 					+ "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}";
 			ProviderResponse response = providerResponse("openai", 200, jsonHeaders(), Stream.of(upstream));
-			when(orchestrator.execute(any(), anyString(), anyBoolean()))
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 					.thenReturn(CompletableFuture.completedFuture(response));
 			MockHttpServletRequest req = request();
 			req.addHeader("Idempotency-Key", "rk-store-fail-1");
@@ -3941,17 +3942,19 @@ class ProxyControllerTest {
 		controller.setModelPriceCatalog(prices);
 		ProviderResponse response = providerResponse("openai", 200, sseHeaders(),
 				Stream.of("data: [DONE]"), List.of("openai", "groq (circuit open)"));
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(response));
 		MockHttpServletRequest req = request();
 		req.addHeader("X-CacheRelay-Min-Quality-Tier", "STANDARD");
 
-		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, req);
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(
+				"{\"model\":\"gpt-5.6-luna\",\"messages\":[]}", req);
 
 		assertEquals(200, entity.getStatusCode().value());
 		ArgumentCaptor<RoutingDecisionEntity> saved = ArgumentCaptor.forClass(RoutingDecisionEntity.class);
 		verify(decisions).save(saved.capture());
 		assertEquals("gpt-5.6-luna", saved.getValue().getAlias());
+		assertEquals("gpt-5.6-luna", saved.getValue().getModel());
 		assertEquals("STANDARD", saved.getValue().getMinQualityTier());
 		assertEquals("quality", saved.getValue().getTradeoffMode());
 		assertEquals("openai", saved.getValue().getWinner());
@@ -3960,12 +3963,40 @@ class ProxyControllerTest {
 	}
 
 	@Test
+	@DisplayName("CS-01: alias column carries the requested alias, never the served model")
+	void routingDecisionAliasSurvivesModelOverride() throws Exception {
+		gatewayProperties.setAliases(Map.of(
+				"gpt-5.6-luna", new ModelAlias(
+						List.of(new ProviderRef("openai", "gpt-4o-mini")), FailoverStrategy.SEQUENTIAL)));
+		RoutingDecisionRepository decisions = mock(RoutingDecisionRepository.class);
+		when(decisions.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		controller.setDecisionLogWriter(new DecisionLogWriter(decisions, objectMapper, 1000));
+		try {
+			ProviderResponse response = providerResponse("openai", 200, sseHeaders(),
+					Stream.of("data: [DONE]"), List.of("openai"));
+			when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
+					.thenReturn(CompletableFuture.completedFuture(response));
+
+			ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(
+					"{\"model\":\"gpt-5.6-luna\",\"messages\":[]}", request());
+
+			assertEquals(200, entity.getStatusCode().value());
+			ArgumentCaptor<RoutingDecisionEntity> saved = ArgumentCaptor.forClass(RoutingDecisionEntity.class);
+			verify(decisions).save(saved.capture());
+			assertEquals("gpt-5.6-luna", saved.getValue().getAlias());
+			assertEquals("gpt-5.6-luna", saved.getValue().getModel());
+		} finally {
+			controller.setDecisionLogWriter(null);
+		}
+	}
+
+	@Test
 	@DisplayName("records the routing decision without a winner when all legs fail")
 	void recordsRoutingDecisionOnFailure() {
 		RoutingDecisionRepository decisions = mock(RoutingDecisionRepository.class);
 		when(decisions.save(any())).thenAnswer(inv -> inv.getArgument(0));
 		controller.setDecisionLogWriter(new DecisionLogWriter(decisions, objectMapper, 1000));
-		when(orchestrator.execute(any(), anyString(), anyBoolean())).thenReturn(CompletableFuture.failedFuture(
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean())).thenReturn(CompletableFuture.failedFuture(
 				new UpstreamUnavailableException("down", null, false, false, 503)));
 
 		assertThrows(UpstreamUnavailableException.class,
@@ -3978,6 +4009,28 @@ class ProxyControllerTest {
 	}
 
 	@Test
+	@DisplayName("COST: eco requests reach the orchestrator with routing context")
+	void ecoForwardsRoutingContext() throws Exception {
+		gatewayProperties.setAliases(Map.of(
+				"gpt-5.6-luna", new ModelAlias(
+						List.of(new ProviderRef("openai", null)), FailoverStrategy.SEQUENTIAL)));
+		ProviderResponse response = providerResponse("openai", 200, sseHeaders(),
+				Stream.of("data: [DONE]"), List.of("openai"));
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
+				.thenReturn(CompletableFuture.completedFuture(response));
+		MockHttpServletRequest req = request();
+		req.addHeader("X-CacheRelay-Tradeoff-Mode", "eco");
+
+		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(
+				"{\"model\":\"gpt-5.6-luna\",\"messages\":[]}", req);
+
+		assertEquals(200, entity.getStatusCode().value());
+		ArgumentCaptor<RoutingDecisionContext> ctx = ArgumentCaptor.forClass(RoutingDecisionContext.class);
+		verify(orchestrator).execute(any(), anyString(), ctx.capture(), anyBoolean());
+		assertEquals("eco", ctx.getValue().tradeoffMode());
+	}
+
+	@Test
 	@DisplayName("unknown routing headers are rejected with 400 before any upstream call")
 	void rejectsUnknownRoutingHeaders() {
 		MockHttpServletRequest req = request();
@@ -3986,6 +4039,6 @@ class ProxyControllerTest {
 		ResponseEntity<StreamingResponseBody> entity = controller.proxyChatCompletions(PATH_BODY, req);
 
 		assertEquals(400, entity.getStatusCode().value());
-		verify(orchestrator, never()).execute(any(), anyString(), anyBoolean());
+		verify(orchestrator, never()).execute(any(), anyString(), any(), anyBoolean());
 	}
 }

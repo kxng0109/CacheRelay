@@ -1,6 +1,10 @@
 package io.github.kxng0109.cacherelay.proxy.failover;
 
 import io.github.kxng0109.cacherelay.contracts.*;
+import io.github.kxng0109.cacherelay.ledger.ModelPriceCatalog;
+import io.github.kxng0109.cacherelay.ledger.ModelQualityCatalog;
+import io.github.kxng0109.cacherelay.ledger.ModelQualityTier;
+import io.github.kxng0109.cacherelay.proxy.RoutingDecisionContext;
 import io.github.kxng0109.cacherelay.security.compliance.GeoSovereigntyRouter;
 import io.github.kxng0109.cacherelay.security.compliance.Jurisdiction;
 import io.github.kxng0109.cacherelay.security.compliance.ResidencyPolicy;
@@ -90,6 +94,10 @@ public class FailoverOrchestrator {
 
 	private final Map<String, Instant> validatedAt = new ConcurrentHashMap<>();
 
+	private final @Nullable ModelPriceCatalog priceCatalog;
+
+	private final @Nullable ModelQualityCatalog qualityCatalog;
+
 	/**
 	 * Convenience constructor for existing tests and contexts without compliance components.
 	 */
@@ -112,7 +120,6 @@ public class FailoverOrchestrator {
 	 * @param sovereigntyRouter      geo-sovereignty router
 	 * @param guardrailProperties    guardrail configuration properties
 	 */
-	@Autowired
 	public FailoverOrchestrator(
 			ProviderClientAdapter clientAdapter,
 			UpstreamUrlValidator urlValidator,
@@ -122,7 +129,35 @@ public class FailoverOrchestrator {
 			@Nullable GuardrailProperties guardrailProperties
 	) {
 		this(clientAdapter, urlValidator, gatewayProperties, circuitBreakerFactory,
-				sovereigntyRouter, guardrailProperties, Clock.systemUTC());
+				sovereigntyRouter, guardrailProperties, null, null, Clock.systemUTC());
+	}
+
+	/**
+	 * Full constructor with cost routing catalogs.
+	 *
+	 * @param clientAdapter          the provider client adapter
+	 * @param urlValidator           validates provider URLs before first use
+	 * @param gatewayProperties      the configured providers and aliases
+	 * @param circuitBreakerFactory  the shared, Redis backed breaker store
+	 * @param sovereigntyRouter      geo-sovereignty router
+	 * @param guardrailProperties    guardrail configuration properties
+	 * @param priceCatalog           price catalog for economy ordering, or {@code null}
+	 * @param qualityCatalog         quality catalog for tier floors, or {@code null}
+	 */
+	@Autowired
+	public FailoverOrchestrator(
+			ProviderClientAdapter clientAdapter,
+			UpstreamUrlValidator urlValidator,
+			GatewayProperties gatewayProperties,
+			CircuitBreakerFactory circuitBreakerFactory,
+			@Nullable GeoSovereigntyRouter sovereigntyRouter,
+			@Nullable GuardrailProperties guardrailProperties,
+			@Nullable ModelPriceCatalog priceCatalog,
+			@Nullable ModelQualityCatalog qualityCatalog
+	) {
+		this(clientAdapter, urlValidator, gatewayProperties, circuitBreakerFactory,
+				sovereigntyRouter, guardrailProperties, priceCatalog, qualityCatalog,
+				Clock.systemUTC());
 	}
 
 	/**
@@ -143,6 +178,8 @@ public class FailoverOrchestrator {
 			CircuitBreakerFactory circuitBreakerFactory,
 			@Nullable GeoSovereigntyRouter sovereigntyRouter,
 			@Nullable GuardrailProperties guardrailProperties,
+			@Nullable ModelPriceCatalog priceCatalog,
+			@Nullable ModelQualityCatalog qualityCatalog,
 			Clock clock
 	) {
 		this.clientAdapter = clientAdapter;
@@ -151,6 +188,8 @@ public class FailoverOrchestrator {
 		this.circuitBreakerFactory = circuitBreakerFactory;
 		this.sovereigntyRouter = sovereigntyRouter;
 		this.guardrailProperties = guardrailProperties;
+		this.priceCatalog = priceCatalog;
+		this.qualityCatalog = qualityCatalog;
 		this.clock = clock;
 	}
 
@@ -189,6 +228,34 @@ public class FailoverOrchestrator {
 			@Nullable Jurisdiction originJurisdiction,
 			boolean streaming
 	) {
+		return execute(alias, requestBody, null, residencyPolicy, originJurisdiction, streaming);
+	}
+
+	/**
+	 * Executes the request against the chain described by the alias, enforcing data residency if active,
+	 * then economy ordering for {@code eco} requests on SEQUENTIAL aliases.
+	 *
+	 * <p>Pipeline order is fixed: key-allowlist narrowing (caller-side) → residency
+	 * filtering (compliance constraint) → quality-floor filtering → cost ordering
+	 * → walk. Economy ordering never crosses the tier floor, never selects
+	 * unpriced legs on price, and never applies to RACE.</p>
+	 *
+	 * @param alias              the routing plan for the requested model
+	 * @param requestBody        the client request body, OpenAI shaped
+	 * @param routing            economy preferences, or {@code null} for quality-first
+	 * @param residencyPolicy    tenant residency policy override
+	 * @param originJurisdiction tenant origin jurisdiction
+	 * @param streaming          {@code true} for SSE line framing, {@code false} for a single JSON document
+	 * @return a future completing with the winning provider response
+	 */
+	public CompletableFuture<ProviderResponse> execute(
+			ModelAlias alias,
+			String requestBody,
+			@Nullable RoutingDecisionContext routing,
+			@Nullable ResidencyPolicy residencyPolicy,
+			@Nullable Jurisdiction originJurisdiction,
+			boolean streaming
+	) {
 		List<ProviderRef> chain = alias.chain();
 		if (sovereigntyRouter != null && guardrailProperties != null && guardrailProperties.isDataResidencyEnabled()) {
 			ResidencyPolicy policy = residencyPolicy != null ? residencyPolicy
@@ -201,6 +268,25 @@ public class FailoverOrchestrator {
 					origin,
 					alias.toString()
 			);
+		}
+		if (routing != null && "eco".equals(routing.tradeoffMode())
+				&& alias.strategy() == FailoverStrategy.SEQUENTIAL) {
+			ModelQualityTier floor = null;
+			if (routing.minQualityTier() != null) {
+				try {
+					floor = ModelQualityTier.valueOf(routing.minQualityTier());
+				} catch (IllegalArgumentException unknown) {
+					floor = null;
+				}
+			}
+			CostAwareChainOrder.OrderedChain ordered = CostAwareChainOrder.order(
+					chain, floor, true, gatewayProperties.getProviders(),
+					priceCatalog, qualityCatalog, alias.toString());
+			chain = ordered.chain();
+			if (chain.isEmpty()) {
+				throw new UpstreamUnavailableException(
+						"no compliant provider for economy routing", null, true, false, 503);
+			}
 		}
 
 		if (alias.strategy() == FailoverStrategy.RACE) {
@@ -227,12 +313,27 @@ public class FailoverOrchestrator {
 	 *
 	 * @param alias       the routing plan for the requested model
 	 * @param requestBody the client request body, OpenAI shaped
+	 * @param routing     economy preferences, or {@code null} for quality-first
+	 * @param streaming   {@code true} for SSE line framing, {@code false} for a single JSON document
+	 * @return a future completing with the winning provider response, or completing exceptionally with
+	 * {@link UpstreamUnavailableException}
+	 */
+	public CompletableFuture<ProviderResponse> execute(ModelAlias alias, String requestBody,
+			@Nullable RoutingDecisionContext routing, boolean streaming) {
+		return execute(alias, requestBody, routing, null, null, streaming);
+	}
+
+	/**
+	 * Executes the request against the chain described by the alias.
+	 *
+	 * @param alias       the routing plan for the requested model
+	 * @param requestBody the client request body, OpenAI shaped
 	 * @param streaming   {@code true} for SSE line framing, {@code false} for a single JSON document
 	 * @return a future completing with the winning provider response, or completing exceptionally with
 	 * {@link UpstreamUnavailableException}
 	 */
 	public CompletableFuture<ProviderResponse> execute(ModelAlias alias, String requestBody, boolean streaming) {
-		return execute(alias, requestBody, null, null, streaming);
+		return execute(alias, requestBody, null, null, null, streaming);
 	}
 
 	// ---------------------------------------------------------------------

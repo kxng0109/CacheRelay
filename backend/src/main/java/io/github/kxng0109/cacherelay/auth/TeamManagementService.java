@@ -261,7 +261,7 @@ public class TeamManagementService {
 
 	private static String slugify(String name) {
 		String slug = name.toLowerCase().replaceAll("[^a-z0-9-]", "-");
-		if (slug.isBlank()) {
+		if (slug.isBlank() || slug.chars().allMatch(c -> c == '-')) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "malformed team name");
 		}
 		return slug;

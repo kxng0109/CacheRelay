@@ -49,6 +49,43 @@ class TeamManagementServiceTest {
 	}
 
 	@Test
+	@DisplayName("rejects null slugs and malformed names")
+	void rejectsNullSlugAndBadNames() {
+		when(orgs.findBySlug("ok")).thenReturn(Optional.empty());
+
+		assertThatThrownBy(() -> service.createOrg(null, "Acme"))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThatThrownBy(() -> service.createOrg("ok", null))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThatThrownBy(() -> service.createOrg("ok", "x".repeat(129)))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThatThrownBy(() -> service.renameOrg(UUID.randomUUID(), "  "))
+				.isInstanceOf(ResponseStatusException.class);
+		verify(orgs, never()).save(any(SsoOrg.class));
+	}
+
+	@Test
+	@DisplayName("renames orgs and guards unknown orgs")
+	void renamesOrgGuardsUnknown() {
+		SsoOrg org = new SsoOrg("acme", "Acme");
+		when(orgs.findById(org.getId())).thenReturn(Optional.of(org));
+		when(orgs.save(any(SsoOrg.class))).thenAnswer(inv -> inv.getArgument(0));
+
+		assertThat(service.renameOrg(org.getId(), "Acme Inc").getDisplayName())
+				.isEqualTo("Acme Inc");
+		assertThatThrownBy(() -> service.renameOrg(UUID.randomUUID(), "Acme Inc"))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.NOT_FOUND);
+	}
+
+	@Test
 	@DisplayName("rejects malformed slugs and duplicate slugs")
 	void rejectsBadAndDuplicateSlugs() {
 		when(orgs.findBySlug("acme")).thenReturn(Optional.of(new SsoOrg("acme", "Acme")));
@@ -128,6 +165,57 @@ class TeamManagementServiceTest {
 		assertThat(team.getIdpIssuer()).isEmpty();
 		assertThat(team.getIdpGroupId()).isEqualTo("local:eng");
 		assertThat(team.getName()).isEqualTo("Eng");
+	}
+
+	@Test
+	@DisplayName("rejects unknown orgs and malformed team names")
+	void rejectsBadTeamInputs() {
+		SsoOrg org = new SsoOrg("acme", "Acme");
+		when(orgs.findById(org.getId())).thenReturn(Optional.of(org));
+
+		assertThatThrownBy(() -> service.createTeam(UUID.randomUUID(), "Eng"))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.NOT_FOUND);
+		assertThatThrownBy(() -> service.createTeam(org.getId(), null))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThatThrownBy(() -> service.createTeam(org.getId(), "   "))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThatThrownBy(() -> service.createTeam(org.getId(), "!!!"))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThatThrownBy(() -> service.createTeam(org.getId(), "x".repeat(129)))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
+	@DisplayName("unknown team ids fail closed on every write")
+	void unknownTeamFailsClosed() {
+		UUID ghost = UUID.randomUUID();
+
+		assertThatThrownBy(() -> service.renameTeam(ghost, "X"))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.NOT_FOUND);
+		assertThatThrownBy(() -> service.deleteTeam(ghost))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.NOT_FOUND);
+		assertThatThrownBy(() -> service.assignMember(ghost, UUID.randomUUID(), TeamRole.MEMBER))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.NOT_FOUND);
+		assertThatThrownBy(() -> service.revokeMember(ghost, UUID.randomUUID()))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.NOT_FOUND);
 	}
 
 	@Test

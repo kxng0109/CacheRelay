@@ -231,6 +231,15 @@ class BudgetDetectorTest {
 	}
 
 	@Test
+	@DisplayName("forecast horizons derive from the tick, never the wall clock")
+	void horizonsDeriveFromTick() {
+		assertThat(BudgetDetector.secondsToMonthEnd(Instant.parse("2026-09-15T00:00:00Z")))
+				.isEqualTo(16L * 86400L);
+		assertThat(BudgetDetector.secondsToMonthEnd(Instant.parse("2026-09-30T23:59:00Z")))
+				.isEqualTo(60L);
+	}
+
+	@Test
 	@DisplayName("anomaly fires on a sustained spike above the floor, silent in warmup")
 	void anomalyFiresOnSustainedSpike() {
 		String cfg = "budget:{b:global}:cfg:KEY:hex3";

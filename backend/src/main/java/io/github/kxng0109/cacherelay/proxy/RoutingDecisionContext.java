@@ -14,7 +14,10 @@ import jakarta.servlet.http.HttpServletRequest;
  *
  * <p>Phase 1 carries preferences for observation only: values are validated
  * fail-fast and logged by the decision writer, never enforced. Effective
- * policy stays quality-first regardless of what is requested.</p>
+ * policy stays quality-first regardless of what is requested. Phase 2
+ * enforces economy mode inside the orchestrator: {@code eco} requests on
+ * SEQUENTIAL aliases reorder the compliant chain cheapest-first under the
+ * requested tier floor; quality mode and RACE pass through untouched.</p>
  *
  * @param minQualityTier requested quality floor tier name, may be {@code null}
  * @param tradeoffMode   requested tradeoff mode as received ({@code quality} or {@code eco})

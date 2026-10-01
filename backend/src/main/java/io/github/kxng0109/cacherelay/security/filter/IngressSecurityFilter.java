@@ -10,6 +10,9 @@ import io.github.kxng0109.cacherelay.security.guardrail.pii.PiiAnonymizer;
 import io.github.kxng0109.cacherelay.security.guardrail.secret.IngressSecretScanner;
 import io.github.kxng0109.cacherelay.security.guardrail.secret.SecretLeakageException;
 import io.github.kxng0109.cacherelay.security.guardrail.secret.SecretScanResult;
+import io.github.kxng0109.cacherelay.security.guardrail.vendor.GuardrailVendorClient;
+import io.github.kxng0109.cacherelay.security.guardrail.vendor.VendorScreeningException;
+import io.github.kxng0109.cacherelay.security.guardrail.vendor.VendorVerdict;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -50,6 +53,7 @@ public class IngressSecurityFilter extends OncePerRequestFilter {
 	private final PiiAnonymizer piiAnonymizer;
 	private final GuardrailProperties properties;
 	private final ObjectMapper objectMapper;
+	private final @Nullable GuardrailVendorClient vendorClient;
 
 	private volatile @Nullable MeterRegistry meterRegistry;
 
@@ -60,11 +64,33 @@ public class IngressSecurityFilter extends OncePerRequestFilter {
 			GuardrailProperties properties,
 			ObjectMapper objectMapper
 	) {
+		this(secretScanner, injectionScanner, piiAnonymizer, properties, objectMapper, null);
+	}
+
+	/**
+	 * Creates the filter with an optional vendor screening client.
+	 *
+	 * @param secretScanner    ingress secret scanner
+	 * @param injectionScanner prompt injection scanner
+	 * @param piiAnonymizer    PII anonymizer
+	 * @param properties       guardrail configuration properties
+	 * @param objectMapper     Jackson mapper
+	 * @param vendorClient     third-party screening client, or {@code null} when unconfigured
+	 */
+	public IngressSecurityFilter(
+			IngressSecretScanner secretScanner,
+			PromptInjectionScanner injectionScanner,
+			PiiAnonymizer piiAnonymizer,
+			GuardrailProperties properties,
+			ObjectMapper objectMapper,
+			@Nullable GuardrailVendorClient vendorClient
+	) {
 		this.secretScanner = secretScanner;
 		this.injectionScanner = injectionScanner;
 		this.piiAnonymizer = piiAnonymizer;
 		this.properties = properties != null ? properties : new GuardrailProperties();
 		this.objectMapper = objectMapper;
+		this.vendorClient = vendorClient;
 	}
 
 	/**
@@ -181,6 +207,9 @@ public class IngressSecurityFilter extends OncePerRequestFilter {
 				request.setAttribute(PII_VAULT_ATTRIBUTE, vault);
 				byte[] anonymizedBytes = anonymized.getBytes(StandardCharsets.UTF_8);
 				HttpServletRequest anonymizedRequest = new AnonymizedBodyHttpServletRequest(request, anonymizedBytes);
+				if (screenVendor(request, anonymizedRequest, anonymized, response)) {
+					return;
+				}
 				filterChain.doFilter(anonymizedRequest, response);
 				return;
 			} else {
@@ -188,7 +217,67 @@ public class IngressSecurityFilter extends OncePerRequestFilter {
 			}
 		}
 
+		if (screenVendor(request, request, textPayload, response)) {
+			return;
+		}
+
 		filterChain.doFilter(request, response);
+	}
+
+	/**
+	 * Runs third-party screening as the final ingress stage, after the local
+	 * engines. Disabled by default: the bean only exists when a vendor is
+	 * configured and the flag is explicitly enabled, so payloads never leave
+	 * the boundary by accident. Any vendor failure fails closed; flagged
+	 * payloads block in ENFORCE and annotate in AUDIT_ONLY like every stage.
+	 *
+	 * @param request  current request (receives the verdict attribute in AUDIT_ONLY)
+	 * @param forward  request forwarded downstream (possibly anonymized)
+	 * @param text     payload sent to the vendor
+	 * @param response servlet response (committed on deny)
+	 * @return whether the request was denied (no downstream dispatch)
+	 */
+	private boolean screenVendor(
+			HttpServletRequest request,
+			HttpServletRequest forward,
+			String text,
+			HttpServletResponse response
+	) throws IOException {
+		GuardrailVendorClient client = this.vendorClient;
+		if (client == null || !properties.isVendorScreeningEnabled()) {
+			return false;
+		}
+		VendorVerdict verdict;
+		try {
+			verdict = client.screen(text);
+		} catch (RuntimeException failed) {
+			failClosed(response, "vendor", failed);
+			return true;
+		}
+		if (verdict == null) {
+			failClosed(response, "vendor", new IllegalStateException("null vendor verdict"));
+			return true;
+		}
+		MeterRegistry registry = this.meterRegistry;
+		if (registry != null) {
+			registry.counter("guardrail_vendor_screenings_total", "vendor", client.vendorId(),
+					"outcome", verdict.flagged() ? "flagged" : "clean").increment();
+		}
+		if (verdict.flagged()) {
+			if (properties.getMode() == GuardrailMode.ENFORCE) {
+				log.warn("Vendor screening blocked: vendor={}, reason={}",
+						verdict.vendor(), verdict.reason());
+				writeProblemDetail(
+						response,
+						new VendorScreeningException(verdict).toProblemDetail(forward.getRequestURI())
+				);
+				return true;
+			}
+			log.warn("Vendor screening flagged (AUDIT_ONLY): vendor={}, reason={}",
+					verdict.vendor(), verdict.reason());
+			request.setAttribute("cacherelay.guardrail.vendorVerdict", verdict);
+		}
+		return false;
 	}
 
 	/**
@@ -196,7 +285,7 @@ public class IngressSecurityFilter extends OncePerRequestFilter {
 	 * must never wave traffic through unscanned. Counts the failure for alerting.
 	 *
 	 * @param response servlet response
-	 * @param stage    failing stage ({@code secret}, {@code injection}, or {@code pii})
+	 * @param stage    failing stage ({@code secret}, {@code injection}, {@code pii}, or {@code vendor})
 	 * @param failure  scanner failure, logged server-side only
 	 */
 	private void failClosed(HttpServletResponse response, String stage, RuntimeException failure)

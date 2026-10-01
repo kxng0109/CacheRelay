@@ -507,7 +507,7 @@ class FailoverOrchestratorTest {
 		GatewayProperties properties = properties();
 		FailoverOrchestrator orchestrator = new FailoverOrchestrator(
 				adapter(), counting, properties, new InMemoryCircuitBreakerFactory(properties),
-				null, null, clock);
+				null, null, null, null, clock);
 		serverA.enqueue(sse("data: hi\n\ndata: [DONE]"));
 		join(orchestrator.execute(alias("a", "b"), MODELS));
 		serverA.enqueue(sse("data: hi\n\ndata: [DONE]"));

@@ -11,6 +11,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.YearMonth;
 import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -261,7 +262,7 @@ public class BudgetDetector {
 		}
 		long burn5 = Math.max(0L, (hist.get(60) - hist.get(55)) / 300L);
 		long burn1h = Math.max(0L, (hist.get(60) - hist.get(0)) / 3600L);
-		long horizon = Math.max(1L, BudgetEnforcer.secondsToMonthEnd());
+		long horizon = Math.max(1L, secondsToMonthEnd(now));
 		boolean confirmed = false;
 		int threshold = 0;
 		for (int candidate : new int[]{100, 90, 50}) {
@@ -293,6 +294,24 @@ public class BudgetDetector {
 			}
 			state.put("f_forecast", Integer.toString(threshold));
 		}
+	}
+
+	/**
+	 * Seconds from a tick to its own month end. Forecast horizons derive from
+	 * the evaluated tick, never the wall clock, so scheduled series stay
+	 * deterministic no matter when the suite runs.
+	 *
+	 * @param tick evaluated instant
+	 * @return seconds to month end, at least 1
+	 */
+	static long secondsToMonthEnd(Instant tick) {
+		ZonedDateTime atTick = tick.atZone(ZoneOffset.UTC);
+		ZonedDateTime end = YearMonth.from(atTick)
+				.atEndOfMonth()
+				.plusDays(1)
+				.atStartOfDay()
+				.atZone(ZoneOffset.UTC);
+		return Math.max(1L, end.toEpochSecond() - atTick.toEpochSecond());
 	}
 
 	private void evaluateAnomaly(String level, String subject, long minuteCap, long monthNow,

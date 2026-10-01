@@ -133,7 +133,7 @@ class ProxyControllerGuardrailStreamingTest {
 					throw new UncheckedIOException(new IOException("upstream reset"));
 				}));
 		ProviderResponse providerResp = mockProviderResponse(lines);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(providerResp));
 
 		String requestJson = "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"Hi\"}]}";
@@ -153,7 +153,7 @@ class ProxyControllerGuardrailStreamingTest {
 	@DisplayName("decorates response headers with X-CacheRelay-Audit-Receipt and X-No-Storage")
 	void decoratesHeadersWithAuditReceiptAndZdr() {		Stream<String> lines = Stream.of("data: [DONE]");
 		ProviderResponse providerResp = mockProviderResponse(lines);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(providerResp));
 
 		String requestJson = "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"Hi\"}]}";
@@ -178,7 +178,7 @@ class ProxyControllerGuardrailStreamingTest {
 				"data: [DONE]"
 		);
 		ProviderResponse providerResp = mockProviderResponse(lines);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(providerResp));
 
 		String requestJson = "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"Greet user\"}]}";
@@ -213,7 +213,7 @@ class ProxyControllerGuardrailStreamingTest {
 				"data: [DONE]"
 		);
 		ProviderResponse providerResp = mockProviderResponse(lines);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(providerResp));
 
 		MockHttpServletRequest request = new MockHttpServletRequest();
@@ -244,7 +244,7 @@ class ProxyControllerGuardrailStreamingTest {
 				"data: [DONE]"
 		);
 		ProviderResponse providerResp = mockProviderResponse(lines);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(providerResp));
 
 		String requestJson = "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"Hi\"}]}";
@@ -276,7 +276,7 @@ class ProxyControllerGuardrailStreamingTest {
 				"data: [DONE]"
 		);
 		ProviderResponse providerResp = mockProviderResponse(lines);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(providerResp));
 
 		String requestJson = "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"Hi\"}]}";
@@ -361,7 +361,7 @@ class ProxyControllerGuardrailStreamingTest {
 				"data: [DONE]"
 		);
 		ProviderResponse providerResp = mockProviderResponse(lines);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(providerResp));
 
 		// Short system prompt (< 5 words) -> empty hashes branch
@@ -387,7 +387,7 @@ class ProxyControllerGuardrailStreamingTest {
 				"data: [DONE]"
 		);
 		ProviderResponse providerResp = mockProviderResponse(lines);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(providerResp));
 
 		String requestJson = "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"Hi\"}]}";
@@ -431,7 +431,7 @@ class ProxyControllerGuardrailStreamingTest {
 				"data: [DONE]"
 		);
 		ProviderResponse providerResp = mockProviderResponse(lines);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(providerResp));
 
 		// Non-textual message content (e.g. array node)
@@ -458,7 +458,7 @@ class ProxyControllerGuardrailStreamingTest {
 				"data: [DONE]"
 		);
 		ProviderResponse providerResp = mockProviderResponse(lines);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(providerResp));
 
 		// Body where parseChatRequest returns null (e.g. messages not an array)
@@ -481,7 +481,7 @@ class ProxyControllerGuardrailStreamingTest {
 				"data: [DONE]"
 		);
 		ProviderResponse providerResp = mockProviderResponse(lines);
-		when(orchestrator.execute(any(), anyString(), anyBoolean()))
+		when(orchestrator.execute(any(), anyString(), any(), anyBoolean()))
 				.thenReturn(CompletableFuture.completedFuture(providerResp));
 
 		// Messages with system role but null content, plus messages null check

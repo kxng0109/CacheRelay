@@ -494,6 +494,17 @@ gateway:
     system-prompt-exfiltration-defense-enabled: ${GATEWAY_GUARDRAILS_SYSTEM_PROMPT_DEFENSE:true}
     data-residency-enabled: ${GATEWAY_GUARDRAILS_DATA_RESIDENCY:true}
     default-residency-policy: ${GATEWAY_GUARDRAILS_DEFAULT_RESIDENCY_POLICY:STRICT_SOVEREIGN}
+    # Third-party vendor screening (default off): enabling sends payloads outside
+    # the boundary, so it requires an explicit operator decision plus vendor
+    # residency scoping. See GuardrailVendorClient / BedrockGuardrailClient.
+    vendor-screening-enabled: ${GATEWAY_GUARDRAILS_VENDOR_SCREENING:false}
+    # Vendor selector (only "bedrock" is implemented): the bean does not exist
+    # for any other value, so payloads never leave the boundary by accident.
+    vendor: ${GATEWAY_GUARDRAILS_VENDOR:}
+    vendor-endpoint: ${GATEWAY_GUARDRAILS_VENDOR_ENDPOINT:}
+    vendor-guardrail-id: ${GATEWAY_GUARDRAILS_VENDOR_GUARDRAIL_ID:}
+    vendor-guardrail-version: ${GATEWAY_GUARDRAILS_VENDOR_GUARDRAIL_VERSION:DRAFT}
+    vendor-timeout-millis: ${GATEWAY_GUARDRAILS_VENDOR_TIMEOUT_MILLIS:5000}
   mcp:
     # HITL AEAD secret — injected exclusively from the runtime environment.
     # NEVER hardcode a value here. Generate with: openssl rand -base64 32
