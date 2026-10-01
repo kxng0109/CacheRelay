@@ -1,4 +1,8 @@
 /* CacheRelay console identity: paper/night, ember accent, terminal chrome. */
+@import '@fontsource-variable/inter/wght.css';
+@import '@fontsource-variable/martian-mono/wght.css';
+@import '@fontsource-variable/fraunces/wght.css';
+
 :root {
 	--cr-paper: #f7f5f0;
 	--cr-card: #fffdf8;
@@ -74,4 +78,103 @@ pre code {
 	content: '$ ';
 	color: var(--ifm-color-primary);
 	font-family: var(--ifm-font-family-monospace);
+}
+
+.card:hover {
+	border-color: var(--ifm-color-primary);
+}
+
+/* Landing page: centered hero, balanced stat grid, contained code. */
+.cr-hero {
+	max-width: 960px;
+	width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
+	margin: 0 auto;
+	padding: 4rem 1.5rem;
+	text-align: center;
+}
+
+.cr-lede {
+	font-size: 18px;
+	max-width: 640px;
+	margin: 0 auto;
+}
+
+.cr-stats {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 12px;
+	margin: 2rem auto;
+	max-width: 640px;
+}
+
+.cr-stat {
+	border: 1px solid var(--cr-hair);
+	border-radius: 16px;
+	padding: 1rem 1.25rem;
+}
+
+.cr-stat b {
+	display: block;
+	font-family: var(--ifm-font-family-monospace);
+	font-size: 22px;
+	font-weight: 400;
+}
+
+.cr-stat span {
+	font-size: 12px;
+	opacity: 0.75;
+}
+
+.cr-pre {
+	text-align: left;
+	max-width: 100%;
+	overflow-x: auto;
+}
+
+.cr-cards {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 12px;
+	margin-top: 2rem;
+	text-align: left;
+}
+
+.cr-card {
+	border: 1px solid var(--cr-hair);
+	border-radius: 16px;
+	padding: 1.25rem;
+	text-decoration: none;
+	color: inherit;
+}
+
+.cr-card:hover {
+	border-color: var(--ifm-color-primary);
+	color: inherit;
+	text-decoration: none;
+}
+
+.cr-card strong {
+	display: block;
+	margin-bottom: 4px;
+}
+
+.cr-card span {
+	font-size: 13px;
+	opacity: 0.75;
+}
+
+@media (max-width: 600px) {
+	.cr-hero {
+		padding: 2.5rem 1rem;
+	}
+
+	.cr-hero h1 {
+		font-size: 30px;
+	}
+
+	.cr-stat b {
+		font-size: 18px;
+	}
 }

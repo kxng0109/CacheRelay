@@ -19,32 +19,32 @@ const CARDS = [
 export default function Home() {
 	return (
 		<Layout title="CacheRelay" description="Cache, then relay — operator and integration docs">
-			<main style={{ maxWidth: 960, margin: '0 auto', padding: '4rem 1.5rem' }}>
+			<main className="cr-hero">
 				<p style={{ fontFamily: 'var(--ifm-font-family-monospace)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--ifm-color-primary)' }}>
 					$ cacherelay · docs
 				</p>
 				<h1>Cache, then relay.</h1>
-				<p style={{ fontSize: 18, maxWidth: 640 }}>
+				<p className="cr-lede">
 					One OpenAI-compatible endpoint in front of every model provider. Answers from
 					cache when it can, relays with failover when it can&apos;t.
 				</p>
-				<div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, margin: '2rem 0' }}>
+				<div className="cr-stats">
 					{STATS.map((s) => (
-						<div key={s.label} style={{ border: '1px solid var(--cr-hair)', borderRadius: 16, padding: '1rem 1.25rem' }}>
-							<div style={{ fontFamily: 'var(--ifm-font-family-monospace)', fontSize: 22 }}>{s.value}</div>
-							<div style={{ fontSize: 12, opacity: 0.75 }}>{s.label}</div>
+						<div key={s.label} className="cr-stat">
+							<b>{s.value}</b>
+							<span>{s.label}</span>
 						</div>
 					))}
 				</div>
-				<pre><code>{`curl -N http://localhost:8080/v1/chat/completions \\
+				<pre className="cr-pre"><code>{`curl -N http://localhost:8080/v1/chat/completions \\
   -H "Authorization: Bearer $GW_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello"}]}'`}</code></pre>
-				<div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginTop: '2rem' }}>
+				<div className="cr-cards">
 					{CARDS.map((c) => (
-						<Link key={c.to} to={c.to} style={{ border: '1px solid var(--cr-hair)', borderRadius: 16, padding: '1.25rem', textDecoration: 'none', color: 'inherit' }}>
+						<Link key={c.to} to={c.to} className="cr-card">
 							<strong>{c.title}</strong>
-							<div style={{ fontSize: 13, opacity: 0.75 }}>{c.text}</div>
+							<span>{c.text}</span>
 						</Link>
 					))}
 				</div>
