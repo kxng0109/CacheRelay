@@ -1,5 +1,77 @@
-/* CacheRelay docs overrides (minimal; default Infima theme otherwise). */
+/* CacheRelay console identity: paper/night, ember accent, terminal chrome. */
+:root {
+	--cr-paper: #f7f5f0;
+	--cr-card: #fffdf8;
+	--cr-ink: #16130e;
+	--cr-muted: #57534a;
+	--cr-hair: #e4ddcd;
+	--cr-ember: #c7431f;
+	--cr-ok: #2e7d32;
+	--cr-warn: #8a5e14;
+	--cr-danger: #c0392b;
+	--ifm-color-primary: #c7431f;
+	--ifm-color-primary-dark: #a8381a;
+	--ifm-color-primary-darker: #932f16;
+	--ifm-background-color: #f7f5f0;
+	--ifm-font-family-base: 'Inter Variable', Inter, system-ui, sans-serif;
+	--ifm-font-family-monospace: 'Martian Mono Variable', ui-monospace, monospace;
+	--ifm-code-font-size: 13px;
+	--ifm-global-radius: 16px;
+}
 
-.hero--primary {
-	--ifm-hero-background-color: #1a1a2e;
+[data-theme='dark'] {
+	--cr-paper: #0e0d0b;
+	--cr-card: transparent;
+	--cr-ink: #f5f1e8;
+	--cr-muted: #a8a094;
+	--cr-hair: rgba(245, 241, 232, 0.15);
+	--cr-ok: #81c784;
+	--cr-warn: #d9a441;
+	--cr-danger: #e08073;
+	--ifm-color-primary: #e8805f;
+	--ifm-background-color: #0e0d0b;
+}
+
+.navbar {
+	border-bottom: 1px solid var(--cr-hair);
+	box-shadow: none;
+	font-family: var(--ifm-font-family-monospace);
+	font-size: 12px;
+}
+
+.navbar__title {
+	font-family: 'Fraunces Variable', Georgia, serif;
+}
+
+.footer {
+	border-top: 1px solid var(--cr-hair);
+	font-family: var(--ifm-font-family-monospace);
+	font-size: 11px;
+}
+
+code,
+pre,
+table {
+	font-variant-numeric: tabular-nums;
+}
+
+table th {
+	font-family: var(--ifm-font-family-monospace);
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+}
+
+h1 {
+	font-family: 'Fraunces Variable', Georgia, serif;
+}
+
+pre code {
+	border-radius: 12px;
+}
+
+.markdown h2::before {
+	content: '$ ';
+	color: var(--ifm-color-primary);
+	font-family: var(--ifm-font-family-monospace);
 }
