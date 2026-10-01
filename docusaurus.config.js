@@ -38,6 +38,12 @@ const config = {
 	themeConfig: {
 		navbar: {
 			title: 'CacheRelay',
+			logo: {
+				alt: 'CacheRelay home',
+				src: 'img/logo.svg',
+				width: 32,
+				height: 32,
+			},
 			items: [
 				{
 					type: 'docSidebar',
