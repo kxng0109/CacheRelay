@@ -5,8 +5,8 @@ import { useForm, useWatch } from 'react-hook-form'
 import { useShallow } from 'zustand/react/shallow'
 import * as z from 'zod/v4'
 import { GatewayClient } from '../../shared/api/client.js'
-import { isStreamingEnabled } from '../../shared/api/client.js'
-import { toErrorMessage } from '../../shared/api/client.js'
+import { VERDICT_HEADER, isStreamingEnabled } from '../../shared/api/client.js'
+import { parseVerdictHeader, toErrorMessage } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
 import { KeySourcePicker, type KeySource } from '../../shared/components/KeySourcePicker.js'
@@ -85,6 +85,11 @@ export function PlaygroundPage(): React.JSX.Element {
    * panel shows a real number even though the backend reports no usage.
    */
   const [staticLatencyMs, setStaticLatencyMs] = useState<number | null>(null)
+  /**
+   * Vendor-screening verdict for the static call. Null when clean,
+   * disabled, or errored (error runs carry attribution in the alert).
+   */
+  const [staticVerdict, setStaticVerdict] = useState<string | null>(null)
   /**
    * Final stream facts from the viewer. Null while streaming or before the
    * first run; the detail panel shows em dashes until it lands.
@@ -174,6 +179,7 @@ export function PlaygroundPage(): React.JSX.Element {
     setStaticText(null)
     setStaticError(null)
     setStaticLatencyMs(null)
+    setStaticVerdict(null)
     setStreamSummary(null)
     if (!streaming) {
       const started = performance.now()
@@ -193,7 +199,12 @@ export function PlaygroundPage(): React.JSX.Element {
               ? { seed: Number.parseInt(d.seed ?? '', 10) }
               : {}),
           },
-          accountMode ? { actAsKey: ownedKeyId } : { ignoreSession: true },
+          {
+            ...(accountMode ? { actAsKey: ownedKeyId } : { ignoreSession: true }),
+            onHeaders: (headers) => {
+              setStaticVerdict(parseVerdictHeader(headers.get(VERDICT_HEADER)))
+            },
+          },
         )
         .then((out) => {
           const first = out.choices[0]
@@ -535,6 +546,7 @@ export function PlaygroundPage(): React.JSX.Element {
                                 tried: streamSummary.tried,
                                 receipt: streamSummary.receipt,
                                 replayed: streamSummary.replayed,
+                                verdict: streamSummary.verdict,
                                 ...(streamSummary.error === undefined
                                   ? {}
                                   : { error: streamSummary.error }),
@@ -552,6 +564,9 @@ export function PlaygroundPage(): React.JSX.Element {
                                 : 'running',
                           ...(staticLatencyMs === null ? {} : { latencyMs: staticLatencyMs }),
                           ...(staticError === null ? {} : { error: staticError }),
+                          ...(staticError !== null || staticVerdict === null
+                            ? {}
+                            : { verdict: staticVerdict }),
                         }
                   }
                 />

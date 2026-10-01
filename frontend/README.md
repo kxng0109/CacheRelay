@@ -251,7 +251,13 @@ EmptyTrio.tsx`: status line + learning cue + optional link/button
 - Playground/embeddings: sampling passthrough (temperature/top_p/
   seed, dimensions/encoding/user), token usage per run, stream
   provenance (provider/tried/receipt/replay) into run detail,
-  per-status errors (409/413/422/502/504), backend enum pins
+  per-status errors (409/413/422/502/504), vendor-screening 422
+  refusals (RFC 9457 title/detail + screened-by-vendor(reason)
+  attribution keyed on the verdict header first, streams included),
+  audit-only screening badges (`X-CacheRelay-Vendor-Verdict` on run
+  metadata, absent when clean), eco-empty 503s mapped by
+  `NO_COMPLIANT_ECONOMY_PROVIDER` code to tier-change guidance
+  (codeless 503s keep the outage text), backend enum pins
   (`shared/api/enums.ts`).
 - MCP/A2A: `tools/call` invoke with code-mapped faults; A2A agent
   cards + four-method invoke; `/a2a` public route.
@@ -281,7 +287,7 @@ EmptyTrio.tsx`: status line + learning cue + optional link/button
 | `npm.cmd run format:check`    | Prettier 3.9.9 exact, check only                             |
 | `npm.cmd run typecheck`       | `tsc -b` (solution build; bare `--noEmit` is vacuous here)   |
 | `npm.cmd run test`            | Vitest 5 unit run (jsdom)                                    |
-| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently 97.6/95.4/98.0/98.3) |
+| `npm.cmd run test:coverage`   | Vitest v8 coverage, 95% gate (currently 97.5/95.4/97.9/98.3) |
 | `npm.cmd run test:e2e`        | Playwright 1.63 smoke, chromium, Vite dev reuse              |
 | `npm.cmd run build-storybook` | Storybook 10.6.0 static build                                |
 
@@ -338,7 +344,7 @@ reporter for CI step summaries.
 `cleanup()` after each test, and closes the server at the end.
 `src/test/utils.tsx` renders UI with a fresh query client (no retries),
 memory router, and seeded memory-only credentials.
-72 suites / 886 tests: pure-unit (formatters, SSE parser, rate-limit parser/selector/store,
+72 suites / 904 tests: pure-unit (formatters, SSE parser, rate-limit parser/selector/store,
 Prometheus histogram parser/quantiles, ECharts registration, app boot,
 error mapping, URL allow-list, `?next=` validation, chord map, toast store)
 plus MSW integration per screen (happy/error/empty/adversarial).

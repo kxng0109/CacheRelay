@@ -368,6 +368,65 @@ describe('EmbeddingsPage', () => {
     })
   })
 
+  it('names vendor screening refusals with attribution', async () => {
+    const user = userEvent.setup()
+    server.use(
+      catalog(),
+      http.post(
+        '*/v1/embeddings',
+        () =>
+          new HttpResponse(
+            JSON.stringify({
+              type: 'https://cacherelay.io/errors/vendor-screening-rejection',
+              title: 'Unprocessable Content - Vendor Screening Rejection',
+              status: 422,
+              detail: 'Third-party screening flagged the payload; request denied.',
+              instance: '/v1/embeddings',
+              vendor: 'bedrock',
+              reason: 'toxicity-detector',
+            }),
+            {
+              status: 422,
+              headers: { 'Content-Type': 'application/problem+json' },
+            },
+          ),
+      ),
+    )
+    renderApp(<EmbeddingsPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
+    await user.type(screen.getByLabelText(/input text/i), 'hello')
+    await user.click(screen.getByRole('button', { name: /create embeddings/i }))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/Third-party screening flagged the payload/)
+    expect(alert).toHaveTextContent(/bedrock/)
+    expect(alert).toHaveTextContent(/toxicity-detector/)
+  })
+
+  it('badges audit-only screening verdicts on embedding runs', async () => {
+    const user = userEvent.setup()
+    server.use(
+      catalog(),
+      http.post('*/v1/embeddings', () =>
+        HttpResponse.json(
+          { data: [{ embedding: [0.1], index: 0 }], model: 'm' },
+          { headers: { 'X-CacheRelay-Vendor-Verdict': 'bedrock:contentPolicy:VIOLENCE' } },
+        ),
+      ),
+    )
+    renderApp(<EmbeddingsPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
+    await user.type(screen.getByLabelText(/input text/i), 'hello')
+    await user.click(screen.getByRole('button', { name: /create embeddings/i }))
+    const table = await screen.findByRole('table')
+    await user.click(
+      within(table).getByRole('button', { name: /inspect run text-embedding-3-small/i }),
+    )
+    const inspector = await screen.findByRole('dialog', { name: /run inspector/i })
+    expect(within(inspector).getByText(/screened · bedrock/i)).toBeInTheDocument()
+  })
+
   it('reports zero dimensions for empty vector lists', async () => {
     const user = userEvent.setup()
     server.use(

@@ -5,12 +5,14 @@ import { useForm, useWatch } from 'react-hook-form'
 import { useShallow } from 'zustand/react/shallow'
 import * as z from 'zod/v4'
 import { GatewayClient } from '../../shared/api/client.js'
+import { VERDICT_HEADER, parseVerdictHeader } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { ModelSelect } from '../../shared/models/ModelSelect.js'
 import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
 import { KeySourcePicker, type KeySource } from '../../shared/components/KeySourcePicker.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
+import { VerdictBadge } from '../../shared/components/VerdictBadge.js'
 import { Select } from '../../shared/components/Select.js'
 import { TableScroll } from '../../shared/components/TableScroll.js'
 import { formatShortDate } from '../../shared/utils/format.js'
@@ -39,6 +41,7 @@ interface UsageRecord {
   tokens: number | null
   status: 'ok' | 'fail'
   error: string | null
+  verdict: string | null
   input: string
 }
 
@@ -157,10 +160,17 @@ export function EmbeddingsPage(): React.JSX.Element {
     }
     if (!accountMode) setGatewayKey(pastedKey)
     setError(null)
+    let verdict: string | null = null
     try {
       const client = accountMode ? new GatewayClient() : new GatewayClient({ token: pastedKey })
       const dims = d.dimensions === undefined ? '' : d.dimensions.trim()
       const dimNum = dims === '' ? null : Number.parseInt(dims, 10)
+      const headersOpts = {
+        ...(accountMode ? { actAsKey: ownedKeyId } : { ignoreSession: true }),
+        onHeaders: (headers: Headers) => {
+          verdict = parseVerdictHeader(headers.get(VERDICT_HEADER))
+        },
+      }
       const out = await client.embeddings(
         {
           model: d.model,
@@ -173,7 +183,7 @@ export function EmbeddingsPage(): React.JSX.Element {
             : { encoding_format: d.encodingFormat }),
           ...((d.user ?? '').trim().length === 0 ? {} : { user: (d.user ?? '').trim() }),
         },
-        accountMode ? { actAsKey: ownedKeyId } : { ignoreSession: true },
+        headersOpts,
       )
       const first = out.data[0]
       setLastModel(d.model)
@@ -189,6 +199,7 @@ export function EmbeddingsPage(): React.JSX.Element {
             tokens: out.usage?.total_tokens ?? null,
             status: 'ok' as const,
             error: null,
+            verdict,
             input: d.input,
           },
           ...prev,
@@ -210,6 +221,7 @@ export function EmbeddingsPage(): React.JSX.Element {
             tokens: null,
             status: 'fail' as const,
             error: message,
+            verdict: null,
             input: d.input,
           },
           ...prev,
@@ -601,6 +613,14 @@ export function EmbeddingsPage(): React.JSX.Element {
                 <div className="flex justify-between gap-3">
                   <dt className="text-ink-soft dark:text-parchment-soft">Error</dt>
                   <dd className="text-danger dark:text-danger-soft">{inspected.error}</dd>
+                </div>
+              )}
+              {inspected.verdict === null ? null : (
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-ink-soft dark:text-parchment-soft">Screening</dt>
+                  <dd>
+                    <VerdictBadge verdict={inspected.verdict} />
+                  </dd>
                 </div>
               )}
             </dl>

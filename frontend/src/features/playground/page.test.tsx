@@ -235,6 +235,68 @@ describe('PlaygroundPage', () => {
     })
   })
 
+  it('names vendor screening refusals with attribution', async () => {
+    vi.stubEnv('VITE_FEATURE_STREAMING', 'false')
+    const user = userEvent.setup()
+    server.use(
+      catalog(),
+      http.post(
+        '*/v1/chat/completions',
+        () =>
+          new HttpResponse(
+            JSON.stringify({
+              type: 'https://cacherelay.io/errors/vendor-screening-rejection',
+              title: 'Unprocessable Content - Vendor Screening Rejection',
+              status: 422,
+              detail: 'Third-party screening flagged the payload; request denied.',
+              instance: '/v1/chat/completions',
+              vendor: 'bedrock',
+              reason: 'toxicity-detector',
+            }),
+            {
+              status: 422,
+              headers: { 'Content-Type': 'application/problem+json' },
+            },
+          ),
+      ),
+    )
+    renderApp(<PlaygroundPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
+    await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
+    await user.click(screen.getByRole('button', { name: /send completion/i }))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/Third-party screening flagged the payload/)
+    expect(alert).toHaveTextContent(/bedrock/)
+    expect(alert).toHaveTextContent(/toxicity-detector/)
+  })
+
+  it('badges audit-only screening verdicts on static runs', async () => {
+    vi.stubEnv('VITE_FEATURE_STREAMING', 'false')
+    const user = userEvent.setup()
+    server.use(
+      catalog(),
+      http.post('*/v1/chat/completions', () =>
+        HttpResponse.json(
+          {
+            choices: [{ message: { role: 'assistant', content: 'static hi' } }],
+            model: 'gpt-4o-mini',
+          },
+          { headers: { 'X-CacheRelay-Vendor-Verdict': 'bedrock:contentPolicy:VIOLENCE' } },
+        ),
+      ),
+    )
+    renderApp(<PlaygroundPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await pickModel(user)
+    await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
+    await user.click(screen.getByRole('button', { name: /send completion/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('log')).toHaveTextContent('static hi')
+    })
+    expect(await screen.findByText(/screened · bedrock/i)).toBeInTheDocument()
+  })
+
   it('names an empty non-streaming completion honestly', async () => {
     vi.stubEnv('VITE_FEATURE_STREAMING', 'false')
     const user = userEvent.setup()

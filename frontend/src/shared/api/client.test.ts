@@ -7,12 +7,14 @@ import {
   mcpErrorMessage,
   parseGatewayErrorCode,
   parseRateLimit,
+  parseVerdictHeader,
   resolveApiBase,
   resolveManagementBase,
   safeErrorMessage,
   selectPrimaryDimension,
   setDriftReporter,
   setHeadersReporter,
+  splitVerdict,
   toErrorMessage,
 } from './client.js'
 import { useAuthStore } from '../auth/store.js'
@@ -853,6 +855,120 @@ describe('safeErrorMessage', () => {
     expect(safeErrorMessage(422, '')).toContain('Unprocessable')
     expect(safeErrorMessage(502, '')).toContain('provider')
     expect(safeErrorMessage(504, '')).toContain('timed out')
+  })
+
+  it('passes vendor screening refusals through with attribution', () => {
+    const body = JSON.stringify({
+      type: 'https://cacherelay.io/errors/vendor-screening-rejection',
+      title: 'Unprocessable Content - Vendor Screening Rejection',
+      status: 422,
+      detail: 'Third-party screening flagged the payload; request denied.',
+      instance: '/v1/chat/completions',
+      vendor: 'bedrock',
+      reason: 'toxicity-detector',
+    })
+    const message = safeErrorMessage(422, body)
+    expect(message).toContain('Unprocessable Content - Vendor Screening Rejection')
+    expect(message).toContain('Third-party screening flagged the payload; request denied.')
+    expect(message).toContain('bedrock')
+    expect(message).toContain('toxicity-detector')
+  })
+
+  it('leaves non-screening 422 bodies on existing paths', () => {
+    const body = JSON.stringify({
+      type: 'https://example.com/problems/other',
+      title: 'Bad',
+      status: 422,
+      detail: 'Field xyz is malformed.',
+      instance: '/v1/chat/completions',
+    })
+    expect(safeErrorMessage(422, body)).toBe('Field xyz is malformed.')
+  })
+
+  it('never renders vendor attribution on 500 guardrail failures', () => {
+    const body = JSON.stringify({ error: { message: 'Guardrail evaluation failure' } })
+    const message = safeErrorMessage(500, body)
+    expect(message).toBe('Guardrail evaluation failure')
+    expect(message).not.toContain('Screened by')
+  })
+
+  it('renders the reshaped 500 guardrail failure without attribution', () => {
+    const body = JSON.stringify({
+      title: 'Guardrail evaluation failure',
+      detail: 'Guardrail evaluation failed; request denied.',
+    })
+    const message = safeErrorMessage(500, body)
+    expect(message).toBe('Guardrail evaluation failed; request denied.')
+    expect(message).not.toContain('Screened by')
+  })
+
+  it('keys screening on the verdict header when the body carries no type', () => {
+    const body = JSON.stringify({
+      title: 'Unprocessable Content - Vendor Screening Rejection',
+      status: 422,
+      detail: 'Third-party screening flagged the payload; request denied.',
+      instance: '/v1/chat/completions',
+    })
+    const message = safeErrorMessage(422, body, 'bedrock:contentPolicy:VIOLENCE')
+    expect(message).toContain('Third-party screening flagged the payload; request denied.')
+    expect(message).toContain('bedrock')
+    expect(message).toContain('contentPolicy:VIOLENCE')
+  })
+
+  it('composes attribution from the header when the body omits it', () => {
+    const body = JSON.stringify({
+      type: 'https://cacherelay.io/errors/vendor-screening-rejection',
+      title: 'Unprocessable Content - Vendor Screening Rejection',
+      status: 422,
+      detail: 'Third-party screening flagged the payload; request denied.',
+      instance: '/v1/chat/completions',
+    })
+    const message = safeErrorMessage(422, body, 'bedrock:contentPolicy:VIOLENCE')
+    expect(message).toContain('Screened by bedrock (contentPolicy:VIOLENCE).')
+  })
+
+  it('omits attribution for malformed verdict headers', () => {
+    const body = JSON.stringify({
+      title: 'Unprocessable Content - Vendor Screening Rejection',
+      status: 422,
+      detail: 'Third-party screening flagged the payload; request denied.',
+      instance: '/v1/chat/completions',
+    })
+    const message = safeErrorMessage(422, body, 'not-a-verdict')
+    expect(message).toContain('Third-party screening flagged the payload; request denied.')
+    expect(message).not.toContain('Screened by')
+  })
+
+  it('maps eco-empty 503 by code, not by message text', () => {
+    const eco = JSON.stringify({
+      error: { code: 'NO_COMPLIANT_ECONOMY_PROVIDER', message: 'upstream service unavailable' },
+    })
+    const message = safeErrorMessage(503, eco)
+    expect(message).toMatch(/quality tier|economy routing/i)
+    expect(message).not.toContain('temporarily unavailable')
+    const generic = JSON.stringify({ error: { message: 'upstream service unavailable' } })
+    expect(safeErrorMessage(503, generic)).toContain('temporarily unavailable')
+  })
+})
+
+describe('parseVerdictHeader', () => {
+  it('reads opaque vendor reason tokens', () => {
+    expect(parseVerdictHeader('bedrock:contentPolicy:VIOLENCE')).toBe(
+      'bedrock:contentPolicy:VIOLENCE',
+    )
+    expect(parseVerdictHeader(null)).toBeNull()
+    expect(parseVerdictHeader('  ')).toBeNull()
+    expect(parseVerdictHeader(`x:${'y'.repeat(200)}`)).toBeNull()
+  })
+
+  it('splits vendor and reason on the first colon', () => {
+    expect(splitVerdict('bedrock:contentPolicy:VIOLENCE')).toEqual({
+      vendor: 'bedrock',
+      reason: 'contentPolicy:VIOLENCE',
+    })
+    expect(splitVerdict(null)).toBeNull()
+    expect(splitVerdict('no-colon')).toBeNull()
+    expect(splitVerdict(':empty-vendor')).toBeNull()
   })
 })
 

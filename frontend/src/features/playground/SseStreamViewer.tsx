@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { parseRateLimit, resolveApiBase } from '../../shared/api/client.js'
+import {
+  VERDICT_HEADER,
+  parseRateLimit,
+  parseVerdictHeader,
+  resolveApiBase,
+} from '../../shared/api/client.js'
 import { createIdempotencyKey, openSseStream } from '../../shared/sse/client.js'
 import { useRateLimitStore } from '../../shared/ratelimit/store.js'
+import { VerdictBadge } from '../../shared/components/VerdictBadge.js'
 import type { ChatMessage } from '../../shared/api/types.js'
 
 /**
@@ -27,6 +33,8 @@ export interface StreamSummary {
   receipt: string | null
   /** True when the gateway replayed an idempotent response. */
   replayed: boolean
+  /** Vendor-screening verdict token, null when clean or disabled. */
+  verdict: string | null
   /** Wall clock milliseconds from mount to settle. */
   durationMs: number
   /**
@@ -153,6 +161,7 @@ export function SseStreamViewer({
   const [tried, setTried] = useState<string | null>(null)
   const [receipt, setReceipt] = useState<string | null>(null)
   const [replayed, setReplayed] = useState(false)
+  const [verdict, setVerdict] = useState<string | null>(null)
   const bufferRef = useRef('')
   const rafRef = useRef(0)
   const ctrlRef = useRef<AbortController | null>(null)
@@ -265,6 +274,7 @@ export function SseStreamViewer({
     let streamTried: string | null = null
     let streamReceipt: string | null = null
     let streamReplayed = false
+    let streamVerdict: string | null = null
 
     const flush = (): void => {
       const current = bufferRef.current
@@ -299,6 +309,7 @@ export function SseStreamViewer({
           tried: streamTried,
           receipt: streamReceipt,
           replayed: streamReplayed,
+          verdict: streamVerdict,
           durationMs: performance.now() - startRef.current,
           phase: 'stopped',
         })
@@ -332,10 +343,12 @@ export function SseStreamViewer({
         streamTried = headers.get('X-CacheRelay-Tried')
         streamReceipt = headers.get('X-CacheRelay-Audit-Receipt')
         streamReplayed = headers.get('Idempotent-Replayed') === 'true'
+        streamVerdict = parseVerdictHeader(headers.get(VERDICT_HEADER))
         setProvider(streamProvider)
         setTried(streamTried)
         setReceipt(streamReceipt)
         setReplayed(streamReplayed)
+        setVerdict(streamVerdict)
       },
       ...(maxRetries === undefined ? {} : { maxRetries }),
       ...(heartbeatMs === undefined ? {} : { heartbeatMs }),
@@ -375,6 +388,7 @@ export function SseStreamViewer({
             tried: streamTried,
             receipt: streamReceipt,
             replayed: streamReplayed,
+            verdict: streamVerdict,
             durationMs: performance.now() - startRef.current,
             phase: 'incomplete',
             error: e.message,
@@ -402,6 +416,7 @@ export function SseStreamViewer({
             tried: streamTried,
             receipt: streamReceipt,
             replayed: streamReplayed,
+            verdict: streamVerdict,
             durationMs: performance.now() - startRef.current,
             phase: 'done',
             ...(truncatedRef.current
@@ -428,6 +443,7 @@ export function SseStreamViewer({
             tried: streamTried,
             receipt: streamReceipt,
             replayed: streamReplayed,
+            verdict: streamVerdict,
             durationMs: performance.now() - startRef.current,
             phase: 'error',
             error: e.message,
@@ -472,6 +488,7 @@ export function SseStreamViewer({
             ? 'provenance: live'
             : null}
         </p>
+        <VerdictBadge verdict={verdict} />
         <span className="flex-1" />
         <button
           type="button"

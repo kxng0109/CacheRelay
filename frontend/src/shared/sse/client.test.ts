@@ -461,8 +461,96 @@ describe('openSseStream', () => {
       },
     })
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(message).toContain('HTTP 400')
+    expect(message).toContain('Invalid request')
     expect(Date.now() - started).toBeLessThan(900)
+  })
+
+  it('keeps the status-only generic for bodyless handshake refusals', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(null, { status: 422 })))
+    vi.stubGlobal('fetch', fetchMock)
+    let message = ''
+    await openSseStream({
+      url: 'http://x/stream',
+      headers: {},
+      signal: new AbortController().signal,
+      maxRetries: 5,
+      onMessage: () => {
+        throw new Error('must not receive messages')
+      },
+      onError: (e) => {
+        message = e.message
+      },
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(message).toContain('HTTP 422')
+  })
+
+  it('surfaces vendor screening refusals on handshake with attribution', async () => {
+    const body = JSON.stringify({
+      type: 'https://cacherelay.io/errors/vendor-screening-rejection',
+      title: 'Unprocessable Content - Vendor Screening Rejection',
+      status: 422,
+      detail: 'Third-party screening flagged the payload; request denied.',
+      instance: '/v1/chat/completions',
+      vendor: 'bedrock',
+      reason: 'toxicity-detector',
+    })
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(body, {
+          status: 422,
+          headers: { 'content-type': 'application/problem+json' },
+        }),
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    let message = ''
+    await openSseStream({
+      url: 'http://x/stream',
+      headers: {},
+      signal: new AbortController().signal,
+      maxRetries: 5,
+      onMessage: () => {
+        throw new Error('must not receive messages')
+      },
+      onError: (e) => {
+        message = e.message
+      },
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(message).toContain('Third-party screening flagged the payload; request denied.')
+    expect(message).toContain('bedrock')
+    expect(message).toContain('toxicity-detector')
+  })
+
+  it('keys stream refusals on the verdict header when the body is untyped', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ detail: 'Denied.' }), {
+          status: 422,
+          headers: {
+            'content-type': 'application/problem+json',
+            'X-CacheRelay-Vendor-Verdict': 'bedrock:contentPolicy:VIOLENCE',
+          },
+        }),
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    let message = ''
+    await openSseStream({
+      url: 'http://x/stream',
+      headers: {},
+      signal: new AbortController().signal,
+      maxRetries: 5,
+      onMessage: () => {
+        throw new Error('must not receive messages')
+      },
+      onError: (e) => {
+        message = e.message
+      },
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(message).toContain('Screened by bedrock (contentPolicy:VIOLENCE).')
   })
 
   it('retries 429 and network failures', async () => {

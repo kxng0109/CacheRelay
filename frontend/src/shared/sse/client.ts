@@ -11,6 +11,8 @@
  * sessions stay memory-bounded.
  */
 
+import { VERDICT_HEADER, safeErrorMessage } from '../api/client.js'
+
 export const SSE_DONE = '[DONE]'
 const SSE_CONTENT_TYPE = 'text/event-stream'
 
@@ -102,6 +104,8 @@ export function parseSseFrame(frame: string): string | null {
  * Only the transport raises it; callers distinguish deterministic denials
  * (400/401/403/404/422 — surface immediately) from transient ones
  * (408/429/5xx — worth a bounded retry) via `isRetryableHandshakeStatus`.
+ * The message carries the refusal body when the gateway sent one (for
+ * example a vendor-screening 422), otherwise the status-only generic.
  */
 export class SseHandshakeError extends Error {
   /** HTTP status that refused the stream. */
@@ -109,9 +113,10 @@ export class SseHandshakeError extends Error {
 
   /**
    * @param status - Refusing HTTP status.
+   * @param message - Refusal text, or null for the status-only generic.
    */
-  constructor(status: number) {
-    super(`SSE handshake failed: HTTP ${String(status)}`)
+  constructor(status: number, message?: string) {
+    super(message ?? `SSE handshake failed: HTTP ${String(status)}`)
     this.name = 'SseHandshakeError'
     this.status = status
   }
@@ -238,7 +243,20 @@ export async function openSseStream(req: SseRequest & SseCallbacks): Promise<voi
         signal: req.signal,
       })
       if (!res.ok) {
-        throw new SseHandshakeError(res.status)
+        // Read the refusal body (bounded: problem payloads are small, and
+        // an adversarial flood must never grow the tab): vendor-screening
+        // 422s compose their refusal + attribution through the same
+        // mapping as static calls, so streams and JSON agree. The verdict
+        // header is the preferred mapping signal; the body stays the
+        // display source. Empty or unreadable bodies keep the status-only
+        // generic.
+        const text = (await res.text().catch(() => '')).slice(0, 8_192)
+        throw new SseHandshakeError(
+          res.status,
+          text.length === 0
+            ? undefined
+            : safeErrorMessage(res.status, text, res.headers.get(VERDICT_HEADER)),
+        )
       }
       if (res.headers.get('content-type')?.startsWith(SSE_CONTENT_TYPE) !== true) {
         throw new Error('SSE handshake failed: unexpected content type')

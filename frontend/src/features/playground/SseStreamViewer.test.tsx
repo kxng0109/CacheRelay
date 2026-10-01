@@ -149,6 +149,41 @@ describe('SseStreamViewer', () => {
     })
   })
 
+  it('badges audit-only screening verdicts on streams', async () => {
+    const summaries: StreamSummary[] = []
+    server.use(
+      http.post('*/v1/chat/completions', () => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            ctrl.enqueue(new TextEncoder().encode('data: ok\n\ndata: [DONE]\n\n'))
+            ctrl.close()
+          },
+        })
+        return new HttpResponse(stream, {
+          headers: {
+            'content-type': 'text/event-stream',
+            'X-CacheRelay-Vendor-Verdict': 'bedrock:contentPolicy:VIOLENCE',
+          },
+        })
+      }),
+    )
+    renderApp(
+      <SseStreamViewer
+        token="gw-test"
+        model="m"
+        messages={MESSAGES}
+        onSummary={(s) => {
+          summaries.push(s)
+        }}
+      />,
+    )
+    await waitFor(() => {
+      expect(screen.getByText(/phase: done/i)).toBeInTheDocument()
+    })
+    expect(await screen.findByText(/screened · bedrock/i)).toBeInTheDocument()
+    expect(summaries[0]).toMatchObject({ verdict: 'bedrock:contentPolicy:VIOLENCE' })
+  })
+
   it('reads live responses without provenance as provider-live', async () => {
     const summaries: StreamSummary[] = []
     server.use(

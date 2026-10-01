@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { VerdictBadge } from '../../shared/components/VerdictBadge.js'
 
 /**
  * Facts known about one completed or running completion. Every field is
@@ -32,6 +33,8 @@ export interface RunDetail {
   receipt?: string | null
   /** True when the gateway replayed an idempotent response. */
   replayed?: boolean
+  /** Vendor-screening verdict token, null when clean or disabled. */
+  verdict?: string | null
   /** Failure message, error runs only. */
   error?: string | null
 }
@@ -77,6 +80,9 @@ export function RunDetailPanel({ detail }: { detail: RunDetail }): React.JSX.Ele
         ? {}
         : { receipt: detail.receipt }),
       ...(detail.replayed ? { replayed: true as const } : {}),
+      ...(detail.verdict === null || detail.verdict === undefined
+        ? {}
+        : { verdict: detail.verdict }),
       ...(detail.error === null || detail.error === undefined ? {} : { error: detail.error }),
     },
     null,
@@ -191,6 +197,14 @@ export function RunDetailPanel({ detail }: { detail: RunDetail }): React.JSX.Ele
           <div className="flex justify-between gap-3">
             <dt className="text-ink-soft dark:text-parchment-soft">replayed</dt>
             <dd>true</dd>
+          </div>
+        )}
+        {detail.verdict === null || detail.verdict === undefined ? null : (
+          <div className="flex items-center justify-between gap-3">
+            <dt className="text-ink-soft dark:text-parchment-soft">screening</dt>
+            <dd>
+              <VerdictBadge verdict={detail.verdict} />
+            </dd>
           </div>
         )}
       </dl>

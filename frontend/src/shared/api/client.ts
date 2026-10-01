@@ -269,18 +269,112 @@ export function parseGatewayErrorCode(body: string): string | null {
 }
 
 /**
+ * Vendor-screening verdict header. Present on ENFORCE 422 denials and on
+ * AUDIT_ONLY 200s as `<vendor>:<reason>`; absent when clean or disabled.
+ * Values are CR/LF-stripped server-side — treat as opaque tokens.
+ */
+export const VERDICT_HEADER = 'X-CacheRelay-Vendor-Verdict'
+
+/**
+ * Reads an opaque vendor verdict token from a header value.
+ *
+ * @param value - Raw header value, or null when absent.
+ * @returns The trimmed token, or null when absent, blank, or oversized.
+ */
+export function parseVerdictHeader(value: string | null): string | null {
+  if (value === null) return null
+  const token = value.trim()
+  if (token.length === 0 || token.length > 128) return null
+  return token
+}
+
+/**
+ * Splits a verdict token into vendor and reason on the first colon.
+ *
+ * @param token - Opaque `<vendor>:<reason>` token, or null.
+ * @returns Vendor plus reason, or null when unsplittable or oversized.
+ */
+export function splitVerdict(token: string | null): { vendor: string; reason: string } | null {
+  if (token === null) return null
+  const cut = token.indexOf(':')
+  if (cut <= 0) return null
+  const vendor = token.slice(0, cut)
+  const reason = token.slice(cut + 1)
+  if (vendor.length === 0 || reason.length === 0) return null
+  if (vendor.length > 64 || reason.length > 64) return null
+  return { vendor, reason }
+}
+
+/**
+ * Composes a vendor-screening refusal from an RFC 9457 problem body.
+ *
+ * @remarks
+ * Backend truth (spec: vendor screening, opt-in): ENFORCE denials answer
+ * 422 with constant `type` (`…/vendor-screening-rejection`), human
+ * `title` + `detail`, and `vendor`/`reason` attribution — pass through,
+ * do not compose. Mapping prefers the verdict header; display prefers
+ * the body. Attribution is display-only (never logic) and drops when
+ * absent or oversized. Anything else returns null so every other 422 —
+ * and every 500, including vendor *failure* bodies without the screening
+ * signal — keeps its existing path.
+ *
+ * @param status - HTTP status code.
+ * @param record - Decoded JSON body.
+ * @param headerVerdict - Parsed verdict-header split, or null when absent.
+ * @returns The composed refusal, or null when not a screening denial.
+ */
+function screeningRefusal(
+  status: number,
+  record: Record<string, unknown>,
+  headerVerdict: { vendor: string; reason: string } | null,
+): string | null {
+  if (status !== 422) return null
+  const type = record.type
+  const typed = typeof type === 'string' && type.endsWith('/vendor-screening-rejection')
+  if (!typed && headerVerdict === null) return null
+  const title = record.title
+  const detail = record.detail
+  const hasTitle = typeof title === 'string' && title.length > 0
+  const hasDetail = typeof detail === 'string' && detail.length > 0
+  if (!hasTitle && !hasDetail) return null
+  const text = hasTitle && hasDetail ? `${title}: ${detail}` : hasTitle ? title : detail
+  const vendor = record.vendor
+  const reason = record.reason
+  const bodyAttributed =
+    typeof vendor === 'string' &&
+    vendor.length > 0 &&
+    vendor.length <= 64 &&
+    typeof reason === 'string' &&
+    reason.length > 0 &&
+    reason.length <= 64
+  if (bodyAttributed) return `${String(text)} Screened by ${vendor} (${reason}).`
+  if (headerVerdict !== null)
+    return `${String(text)} Screened by ${headerVerdict.vendor} (${headerVerdict.reason}).`
+  return String(text)
+}
+
+/**
  * Reads a generic gateway error message without leaking internals.
  *
  * @param status - HTTP status code.
  * @param body - Raw response text (may be empty or non-JSON).
+ * @param verdict - Raw `X-CacheRelay-Vendor-Verdict` header value, or null
+ * when absent. Preferred mapping signal for screening 422s; the body
+ * stays the display source.
  * @returns A user-safe message describing what happened and what to do next.
  */
-export function safeErrorMessage(status: number, body: string): string {
+export function safeErrorMessage(status: number, body: string, verdict?: string | null): string {
   if (body.length > 0) {
     try {
       const parsed: unknown = JSON.parse(body)
       if (typeof parsed === 'object' && parsed !== null) {
         const record = parsed as Record<string, unknown>
+        const screening = screeningRefusal(
+          status,
+          record,
+          splitVerdict(parseVerdictHeader(verdict ?? null)),
+        )
+        if (screening !== null) return screening
         const detail = record.detail
         if (typeof detail === 'string' && detail.length > 0) {
           if (status === 403)
@@ -289,7 +383,11 @@ export function safeErrorMessage(status: number, body: string): string {
         }
         const err = record.error
         if (typeof err === 'object' && err !== null) {
-          const message = (err as Record<string, unknown>).message
+          const errorRecord = err as Record<string, unknown>
+          if (status === 503 && errorRecord.code === 'NO_COMPLIANT_ECONOMY_PROVIDER') {
+            return 'No compliant provider for economy routing. Lower the minimum quality tier or switch to quality, then retry.'
+          }
+          const message = errorRecord.message
           if (typeof message === 'string' && message.length > 0) {
             if (status === 429) return 'Rate limit reached. Wait for the reset window, then retry.'
             if (status === 503) return 'Gateway is temporarily unavailable. Retry shortly.'
@@ -441,7 +539,7 @@ async function sendGatewayRequest(
       await refreshSession()
     }
     throw new ApiError({
-      message: safeErrorMessage(res.status, text),
+      message: safeErrorMessage(res.status, text, res.headers.get(VERDICT_HEADER)),
       status: res.status,
       requestId: res.headers.get('X-Request-Id'),
       rateLimit: parseRateLimit(res.headers, code),
