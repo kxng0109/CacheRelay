@@ -86,6 +86,7 @@ public class DevCorsConfig {
 				"X-CacheRelay-Provider",
 				"X-CacheRelay-Tried",
 				"X-CacheRelay-Audit-Receipt",
+				"X-CacheRelay-Vendor-Verdict",
 				"X-No-Storage",
 				"Idempotent-Replayed"));
 		UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

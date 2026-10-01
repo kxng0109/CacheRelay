@@ -49,6 +49,35 @@ class GatewayExceptionHandlerTest {
 	}
 
 	@Test
+	@DisplayName("generic 503 keeps the legacy codeless shape")
+	void generic503HasNoCode() {
+		ResponseEntity<Map<String, Object>> response =
+				handler.handleUpstreamUnavailable(
+						new UpstreamUnavailableException("nothing reachable", null, true, false));
+
+		assertEquals(503, response.getStatusCode().value());
+		@SuppressWarnings("unchecked")
+		Map<String, Object> error = (Map<String, Object>) response.getBody().get("error");
+		assertEquals("upstream service unavailable", error.get("message"));
+		assertEquals(false, error.containsKey("code"));
+	}
+
+	@Test
+	@DisplayName("eco-empty 503 carries NO_COMPLIANT_ECONOMY_PROVIDER")
+	void ecoEmpty503CarriesCode() {
+		ResponseEntity<Map<String, Object>> response =
+				handler.handleUpstreamUnavailable(
+						new UpstreamUnavailableException("no compliant provider for economy routing",
+								null, true, false, 503, "NO_COMPLIANT_ECONOMY_PROVIDER"));
+
+		assertEquals(503, response.getStatusCode().value());
+		assertEquals("upstream service unavailable", errorMessage(response));
+		@SuppressWarnings("unchecked")
+		Map<String, Object> error = (Map<String, Object>) response.getBody().get("error");
+		assertEquals("NO_COMPLIANT_ECONOMY_PROVIDER", error.get("code"));
+	}
+
+	@Test
 	@DisplayName("timeout maps to 504 Gateway Timeout")
 	void mapsTimeoutTo504() {
 		ResponseEntity<Map<String, Object>> response =

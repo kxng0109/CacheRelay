@@ -2,6 +2,7 @@ package io.github.kxng0109.cacherelay.proxy.failover;
 
 import io.github.kxng0109.cacherelay.security.compliance.DataResidencyBreachException;
 import lombok.extern.slf4j.Slf4j;
+import org.jspecify.annotations.Nullable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -26,7 +27,9 @@ import java.util.Map;
  * </ul>
  *
  * <p>Responses carry only generic messages so internal details never reach
- * the client.</p>
+ * the client. Economy routing with no compliant leg additionally carries
+ * {@code error.code NO_COMPLIANT_ECONOMY_PROVIDER}; every other 503 keeps
+ * the legacy codeless shape.</p>
  */
 @Slf4j
 @RestControllerAdvice
@@ -67,7 +70,7 @@ public class GatewayExceptionHandler {
 		);
 		return ResponseEntity.status(status)
 				.contentType(MediaType.APPLICATION_JSON)
-				.body(errorBody(messageFor(status)));
+				.body(errorBody(messageFor(status), exception.getErrorCode()));
 	}
 
 	private HttpStatus resolveStatus(UpstreamUnavailableException exception) {
@@ -98,8 +101,11 @@ public class GatewayExceptionHandler {
 		return "the upstream provider rejected the request";
 	}
 
-	private Map<String, Object> errorBody(String message) {
+	private Map<String, Object> errorBody(String message, @Nullable String code) {
 		Map<String, Object> error = new LinkedHashMap<>();
+		if (code != null && !code.isBlank()) {
+			error.put("code", code);
+		}
 		error.put("message", message);
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("error", error);

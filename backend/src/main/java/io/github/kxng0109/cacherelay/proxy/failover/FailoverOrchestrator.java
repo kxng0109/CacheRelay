@@ -285,7 +285,8 @@ public class FailoverOrchestrator {
 			chain = ordered.chain();
 			if (chain.isEmpty()) {
 				throw new UpstreamUnavailableException(
-						"no compliant provider for economy routing", null, true, false, 503);
+						"no compliant provider for economy routing", null, true, false, 503,
+						"NO_COMPLIANT_ECONOMY_PROVIDER");
 			}
 		}
 

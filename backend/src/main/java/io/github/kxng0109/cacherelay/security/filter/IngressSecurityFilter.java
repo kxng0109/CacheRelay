@@ -47,6 +47,14 @@ public class IngressSecurityFilter extends OncePerRequestFilter {
 	public static final String TARGET_PATH_CHAT = "/v1/chat/completions";
 	public static final String TARGET_PATH_EMBEDDINGS = "/v1/embeddings";
 	public static final String PII_VAULT_ATTRIBUTE = "cacherelay.piiVault";
+	/**
+	 * Response header carrying a flagged vendor verdict ({@code vendor:reason}).
+	 * Set on ENFORCE denies alongside the 422 body and on AUDIT_ONLY
+	 * pass-throughs so consoles can surface screening without parsing bodies.
+	 * Absent on clean verdicts and when screening is disabled. The value
+	 * carries only the vendor id and policy name, never the payload.
+	 */
+	public static final String VENDOR_VERDICT_HEADER = "X-CacheRelay-Vendor-Verdict";
 
 	private final IngressSecretScanner secretScanner;
 	private final PromptInjectionScanner injectionScanner;
@@ -267,6 +275,7 @@ public class IngressSecurityFilter extends OncePerRequestFilter {
 			if (properties.getMode() == GuardrailMode.ENFORCE) {
 				log.warn("Vendor screening blocked: vendor={}, reason={}",
 						verdict.vendor(), verdict.reason());
+				response.setHeader(VENDOR_VERDICT_HEADER, verdictHeaderValue(verdict));
 				writeProblemDetail(
 						response,
 						new VendorScreeningException(verdict).toProblemDetail(forward.getRequestURI())
@@ -275,9 +284,22 @@ public class IngressSecurityFilter extends OncePerRequestFilter {
 			}
 			log.warn("Vendor screening flagged (AUDIT_ONLY): vendor={}, reason={}",
 					verdict.vendor(), verdict.reason());
+			response.setHeader(VENDOR_VERDICT_HEADER, verdictHeaderValue(verdict));
 			request.setAttribute("cacherelay.guardrail.vendorVerdict", verdict);
 		}
 		return false;
+	}
+
+	/**
+	 * Renders a flagged verdict as a response-safe header value.
+	 *
+	 * @param verdict flagging verdict, never {@code null}
+	 * @return {@code vendor:reason} stripped of CR/LF to block response splitting
+	 */
+	static String verdictHeaderValue(VendorVerdict verdict) {
+		String vendor = verdict.vendor() == null ? "unknown" : verdict.vendor();
+		String reason = verdict.reason() == null ? "flagged" : verdict.reason();
+		return (vendor + ":" + reason).replace("\r", "").replace("\n", "");
 	}
 
 	/**

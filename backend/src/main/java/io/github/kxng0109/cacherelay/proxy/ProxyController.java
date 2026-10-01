@@ -260,7 +260,8 @@ public class ProxyController {
 							@Header(name = "X-CacheRelay-Similarity-Score", description = "Cosine similarity score for L2 semantic hits", schema = @Schema(type = "string", example = "0.9650")),
 							@Header(name = "Age", description = "Age of the cached response in seconds", schema = @Schema(type = "string", example = "42")),
 							@Header(name = "X-RateLimit-Remaining-RPM", description = "Remaining requests allowed in the current minute window", schema = @Schema(type = "integer", example = "118")),
-							@Header(name = "X-RateLimit-Remaining-TPM", description = "Remaining token budget in the current minute window", schema = @Schema(type = "integer", example = "485000"))
+							@Header(name = "X-RateLimit-Remaining-TPM", description = "Remaining token budget in the current minute window", schema = @Schema(type = "integer", example = "485000")),
+							@Header(name = "X-CacheRelay-Vendor-Verdict", description = "Flagged vendor verdict (vendor:reason) on AUDIT_ONLY pass-throughs; absent on clean verdicts", schema = @Schema(type = "string", example = "bedrock:contentPolicy:VIOLENCE"))
 					},
 					content = @Content(
 							mediaType = MediaType.TEXT_EVENT_STREAM_VALUE,
@@ -316,8 +317,16 @@ public class ProxyController {
 			),
 			@ApiResponse(
 					responseCode = "503",
-					description = "Redis, database, or all upstream provider circuits are unavailable/tripped",
-					content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE, examples = @ExampleObject(value = "{\"error\":{\"message\":\"service temporarily unavailable\",\"type\":\"upstream_error\"}}"))
+					description = "Upstream service unavailable (all circuits open, nothing configured, or blocked target). Economy routing with no compliant leg adds error.code NO_COMPLIANT_ECONOMY_PROVIDER; every other 503 keeps the codeless shape",
+					content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE, examples = @ExampleObject(value = "{\"error\":{\"message\":\"upstream service unavailable\"}}"))
+			),
+			@ApiResponse(
+					responseCode = "422",
+					description = "Opt-in vendor screening flagged the payload in ENFORCE mode; AUDIT_ONLY instead returns 200 with X-CacheRelay-Vendor-Verdict",
+					headers = {
+							@Header(name = "X-CacheRelay-Vendor-Verdict", description = "Flagged vendor verdict (vendor:reason)", schema = @Schema(type = "string", example = "bedrock:contentPolicy:VIOLENCE"))
+					},
+					content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE, examples = @ExampleObject(value = "{\"type\":\"https://cacherelay.io/errors/vendor-screening-rejection\",\"title\":\"Unprocessable Content - Vendor Screening Rejection\",\"status\":422,\"detail\":\"Third-party screening flagged the payload; request denied.\",\"vendor\":\"bedrock\",\"reason\":\"contentPolicy:VIOLENCE\"}"))
 			),
 			@ApiResponse(
 					responseCode = "504",

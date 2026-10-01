@@ -67,6 +67,8 @@ class VendorScreeningStageTest {
 
 		assertThat(response.getStatus()).isEqualTo(422);
 		assertThat(response.getContentAsString()).contains("Third-party screening flagged");
+		assertThat(response.getHeader("X-CacheRelay-Vendor-Verdict"))
+				.isEqualTo("bedrock:contentPolicy:VIOLENCE");
 	}
 
 	@Test
@@ -84,6 +86,8 @@ class VendorScreeningStageTest {
 		filter.doFilter(raw, response, chain);
 
 		assertThat(chain.getRequest()).isNotNull();
+		assertThat(response.getHeader("X-CacheRelay-Vendor-Verdict"))
+				.isEqualTo("bedrock:topicPolicy:DENY");
 	}
 
 	@Test
@@ -136,6 +140,24 @@ class VendorScreeningStageTest {
 		assertThat(registry.get("guardrail_vendor_screenings_total")
 				.tag("vendor", "bedrock").tag("outcome", "clean").counter().count())
 				.isEqualTo(1.0);
+		assertThat(response.getHeader("X-CacheRelay-Vendor-Verdict")).isNull();
+	}
+
+	@Test
+	@DisplayName("verdict header values strip response-splitting characters")
+	void headerValueStripsCrlf() throws Exception {
+		GuardrailVendorClient vendor = mock(GuardrailVendorClient.class);
+		when(vendor.screen(anyString())).thenReturn(
+				new VendorVerdict(true, "bedrock", "evil\r\nX-Injected: 1", Duration.ofMillis(3)));
+		when(vendor.vendorId()).thenReturn("bedrock");
+		IngressSecurityFilter filter = filter(vendor, mode(GuardrailMode.ENFORCE, true));
+
+		MockHttpServletResponse response = new MockHttpServletResponse();
+		filter.doFilter(request(article()), response, new MockFilterChain());
+
+		assertThat(response.getStatus()).isEqualTo(422);
+		assertThat(response.getHeader("X-CacheRelay-Vendor-Verdict"))
+				.isEqualTo("bedrock:evilX-Injected: 1");
 	}
 
 	@Test
