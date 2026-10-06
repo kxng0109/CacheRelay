@@ -33,6 +33,11 @@ import tools.jackson.databind.ObjectMapper;
  *       injection defense, and PII anonymization.</li>
  * </ol>
  *
+ * <p>Span tagging needs no filter: controllers tag the current server span at
+ * controller time (inside the observation scope) via
+ * {@code ProxySpanAttributes.tagCurrentSpan}. A post-chain filter runs outside
+ * that scope and must not tag.</p>
+ *
  * <p>These filters are plain {@code OncePerRequestFilter} classes (not
  * {@code @Component}s), so these registrations are their only registration.</p>
  */

@@ -7,9 +7,11 @@ import io.github.kxng0109.cacherelay.config.OpenApiConfig;
 import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
 import io.github.kxng0109.cacherelay.proxy.IdempotencyKeys;
 import io.github.kxng0109.cacherelay.proxy.ProviderAccess;
+import io.github.kxng0109.cacherelay.proxy.ProxySpanAttributes;
 import io.github.kxng0109.cacherelay.proxy.embeddings.dto.EmbeddingRequest;
 import io.github.kxng0109.cacherelay.proxy.embeddings.dto.EmbeddingResponse;
 import io.github.kxng0109.cacherelay.security.filter.KeyAuthFilter;
+import io.micrometer.tracing.Tracer;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.ExampleObject;
@@ -21,6 +23,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.Nullable;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -42,6 +45,20 @@ import org.springframework.web.server.ResponseStatusException;
 public class EmbeddingController {
 
 	private final EmbeddingService embeddingService;
+
+	private volatile @Nullable Tracer tracer;
+
+	/**
+	 * Wires the observation tracer when present. Optional: unit-constructed
+	 * controllers keep working with span tagging silently skipped. Tagging runs
+	 * at controller time (inside the server observation scope).
+	 *
+	 * @param tracer the tracer, if available
+	 */
+	@Autowired(required = false)
+	public void setTracer(Tracer tracer) {
+		this.tracer = tracer;
+	}
 
 	/**
 	 * Handles embedding generation requests across configured providers with automatic batching and normalization.
@@ -131,14 +148,20 @@ public class EmbeddingController {
 		if (apiKey != null && !apiKey.allowedProviders().isEmpty()) {
 			String resolvedProvider = embeddingService.resolveProviderName(request.model());
 			if (!ProviderAccess.isProviderAllowed(apiKey.allowedProviders(), resolvedProvider)) {
+				ProxySpanAttributes.markRouting(httpServletRequest, request.model(), request.model());
+				ProxySpanAttributes.markError(httpServletRequest, "provider_not_allowed");
+				ProxySpanAttributes.tagCurrentSpan(tracer, httpServletRequest);
 				throw new ResponseStatusException(HttpStatus.FORBIDDEN,
 						"Provider '" + resolvedProvider + "' not allowed for this key");
 			}
 		}
+		ProxySpanAttributes.markRouting(httpServletRequest, request.model(), request.model());
 		final String idempotencyKey;
 		try {
 			idempotencyKey = IdempotencyKeys.validateOrNull(httpServletRequest.getHeader(IdempotencyKeys.HEADER));
 		} catch (IllegalArgumentException malformed) {
+			ProxySpanAttributes.markError(httpServletRequest, "invalid_idempotency_key");
+			ProxySpanAttributes.tagCurrentSpan(tracer, httpServletRequest);
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid Idempotency-Key");
 		}
 		EmbeddingResponse response = embeddingService.processEmbedding(request, ownerId, idempotencyKey,
@@ -147,6 +170,10 @@ public class EmbeddingController {
 		// lookups, no I/O); kept as the single source of the provider name rather than
 		// widening the service response contract for one header.
 		String providerName = embeddingService.resolveProviderName(request.model());
+		// Single attempt, no failover: tried count is 1 by construction; embeddings
+		// use a check-only budget gate, so no hold exists to record.
+		ProxySpanAttributes.markMiss(httpServletRequest, providerName, 1, -1L);
+		ProxySpanAttributes.tagCurrentSpan(tracer, httpServletRequest);
 		return ResponseEntity.ok()
 				.header("X-CacheRelay-Provider", providerName)
 				.header("X-CacheRelay-Tried", providerName)
@@ -160,7 +187,10 @@ public class EmbeddingController {
 	 * @return 429 with {@code Retry-After}, the {@code X-Budget-*} family and the shared error body
 	 */
 	@ExceptionHandler(EmbeddingBudgetDeniedException.class)
-	public ResponseEntity<Map<String, Map<String, String>>> handleBudgetDenied(EmbeddingBudgetDeniedException ex) {
+	public ResponseEntity<Map<String, Map<String, String>>> handleBudgetDenied(EmbeddingBudgetDeniedException ex,
+			HttpServletRequest httpServletRequest) {
+		ProxySpanAttributes.markError(httpServletRequest, "budget_denied");
+		ProxySpanAttributes.tagCurrentSpan(tracer, httpServletRequest);
 		BudgetDecision.Denied denied = ex.getDenied();
 		long retryAfter = Math.max(1L, denied.retryAfterSeconds());
 		HttpHeaders denyHeaders = new HttpHeaders();

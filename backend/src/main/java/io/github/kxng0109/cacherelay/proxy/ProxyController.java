@@ -24,6 +24,7 @@ import io.github.kxng0109.cacherelay.ledger.TokenUsageEvent;
 import io.github.kxng0109.cacherelay.proxy.failover.FailoverOrchestrator;
 import io.github.kxng0109.cacherelay.proxy.failover.ProviderResponse;
 import io.github.kxng0109.cacherelay.proxy.failover.UpstreamUnavailableException;
+import io.micrometer.tracing.Tracer;
 import io.github.kxng0109.cacherelay.proxy.protocol.*;
 import io.github.kxng0109.cacherelay.proxy.sse.LineTooLongException;
 import io.github.kxng0109.cacherelay.proxy.sse.SseConnectionLimitException;
@@ -134,6 +135,7 @@ public class ProxyController {
 
 	private volatile @Nullable ModelPriceCatalog modelPriceCatalog;
 
+	private volatile @Nullable Tracer tracer;
 	/**
 	 * Full enterprise constructor injecting all components including cache, security, and compliance subsystems.
 	 */
@@ -381,6 +383,8 @@ public class ProxyController {
 	) {
 		String trimmed = rawBody == null ? "" : rawBody.trim();
 		if (trimmed.isEmpty()) {
+			ProxySpanAttributes.markError(request, "empty_body");
+			ProxySpanAttributes.tagCurrentSpan(tracer, request);
 			return errorResponse(HttpStatus.BAD_REQUEST, "empty request body");
 		}
 
@@ -389,18 +393,28 @@ public class ProxyController {
 		JsonNode bodyTree = parseBodyTree(trimmed);
 		String model = extractModel(bodyTree);
 		if (model == null || model.isBlank()) {
+			ProxySpanAttributes.markError(request, "model_required");
+			ProxySpanAttributes.tagCurrentSpan(tracer, request);
 			return errorResponse(HttpStatus.BAD_REQUEST, "model is required");
 		}
 
 		ModelAlias alias = gatewayProperties.getAliases().get(model);
 		if (alias == null) {
+			ProxySpanAttributes.markRouting(request, null, model);
+			ProxySpanAttributes.markError(request, "unknown_model");
+			ProxySpanAttributes.tagCurrentSpan(tracer, request);
 			return errorResponse(HttpStatus.NOT_FOUND, "unknown model: " + model);
 		}
+		// Request-level routing facts for span tagging: the requested key is the
+		// alias; the served model is the request model until routing overrides it.
+		ProxySpanAttributes.markRouting(request, model, model);
 
 		final String idempotencyKey;
 		try {
 			idempotencyKey = IdempotencyKeys.validateOrNull(request.getHeader(IdempotencyKeys.HEADER));
 		} catch (IllegalArgumentException malformed) {
+			ProxySpanAttributes.markError(request, "invalid_idempotency_key");
+			ProxySpanAttributes.tagCurrentSpan(tracer, request);
 			return errorResponse(HttpStatus.BAD_REQUEST, "invalid Idempotency-Key");
 		}
 
@@ -410,6 +424,8 @@ public class ProxyController {
 			routingContext = RoutingDecisionContext.fromRequest(request);
 		} catch (ResponseStatusException badHeaders) {
 			String reason = badHeaders.getReason();
+			ProxySpanAttributes.markError(request, "invalid_routing_headers");
+			ProxySpanAttributes.tagCurrentSpan(tracer, request);
 			return errorResponse(HttpStatus.BAD_REQUEST, reason == null ? "invalid routing headers" : reason);
 		}
 
@@ -419,6 +435,8 @@ public class ProxyController {
 		if (apiKey != null && !apiKey.allowedProviders().isEmpty()) {
 			Optional<ModelAlias> filtered = ProviderAccess.filterAlias(alias, apiKey.allowedProviders());
 			if (filtered.isEmpty()) {
+				ProxySpanAttributes.markError(request, "provider_not_allowed");
+				ProxySpanAttributes.tagCurrentSpan(tracer, request);
 				return errorResponse(HttpStatus.FORBIDDEN, "No allowed providers for this key");
 			}
 			alias = filtered.get();
@@ -440,10 +458,14 @@ public class ProxyController {
 			ReplayService.Lookup lookup =
 					replay.lookup(idempotencyKey, bodyHashHex, ownerId, replayKeyHashHex);
 			if (lookup instanceof ReplayService.FingerprintMismatch) {
+				ProxySpanAttributes.markError(request, "idempotency_key_reuse");
+				ProxySpanAttributes.tagCurrentSpan(tracer, request);
 				return errorResponse(HttpStatus.UNPROCESSABLE_ENTITY,
 						"idempotency key already used with a different request");
 			}
 			if (lookup instanceof ReplayService.InFlight) {
+				ProxySpanAttributes.markError(request, "identical_request_in_flight");
+				ProxySpanAttributes.tagCurrentSpan(tracer, request);
 				HttpHeaders conflictHeaders = new HttpHeaders();
 				conflictHeaders.setContentType(MediaType.APPLICATION_JSON);
 				conflictHeaders.set(HttpHeaders.RETRY_AFTER, "1");
@@ -453,6 +475,9 @@ public class ProxyController {
 										.getBytes(StandardCharsets.UTF_8)));
 			}
 			if (lookup instanceof ReplayService.Hit hit) {
+				// Idempotent re-delivery: no upstream spend, tagged like a cache hit.
+				ProxySpanAttributes.markCacheHit(request, "replay", Double.NaN);
+				ProxySpanAttributes.tagCurrentSpan(tracer, request);
 				return serveReplay(hit);
 			}
 			if (replay.beginFill(idempotencyKey, ownerId, replayKeyHashHex)) {
@@ -462,6 +487,8 @@ public class ProxyController {
 						BudgetEnforcer.dedupeClaimId(ownerId, keyHashHex, bodyHashHex, idempotencyKey),
 						ownerId, replayKeyHashHex);
 			} else {
+				ProxySpanAttributes.markError(request, "identical_request_in_flight");
+				ProxySpanAttributes.tagCurrentSpan(tracer, request);
 				HttpHeaders conflictHeaders = new HttpHeaders();
 				conflictHeaders.setContentType(MediaType.APPLICATION_JSON);
 				conflictHeaders.set(HttpHeaders.RETRY_AFTER, "1");
@@ -477,6 +504,11 @@ public class ProxyController {
 			CacheLookupResult cacheResult = cacheService.evaluateCache(chatRequest, request, ownerId, apiKey);
 			if (cacheResult.isHit() && cacheResult.entry() != null) {
 				CacheEntry entry = cacheResult.entry();
+				ProxySpanAttributes.markCacheHit(request,
+						cacheResult.status() == CacheStatus.HIT_L0 ? "l0-memory" : (
+								cacheResult.status() == CacheStatus.HIT_L1 ? "l1-exact" : "l2-semantic"),
+						cacheResult.similarityScore());
+				ProxySpanAttributes.tagCurrentSpan(tracer, request);
 				boolean clientWantsUsage = chatRequest != null && chatRequest.requestsUsage();
 				HttpHeaders headers = new HttpHeaders();
 				headers.setContentType(MediaType.TEXT_EVENT_STREAM);
@@ -516,6 +548,8 @@ public class ProxyController {
 				alias, model, ownerId, trimmed, chatRequest, requestId,
 				(String) request.getAttribute(KeyAuthFilter.KEY_HASH_ATTRIBUTE), idempotencyKey, bodyHashHex);
 		if (admission.denied() != null) {
+			ProxySpanAttributes.markError(request, "budget_denied");
+			ProxySpanAttributes.tagCurrentSpan(tracer, request);
 			return admission.denied();
 		}
 		@Nullable SettlementContext settlementContext = admission.context();
@@ -531,9 +565,13 @@ public class ProxyController {
 			recordDecision(model, alias, model, routingContext, null);
 			Throwable cause = ex.getCause();
 			if (cause instanceof UpstreamUnavailableException upstream) {
+				ProxySpanAttributes.markError(request, "upstream_unavailable");
+				ProxySpanAttributes.tagCurrentSpan(tracer, request);
 				throw upstream;
 			}
 			log.warn("Upstream request failed unexpectedly: {}", cause == null ? "unknown cause" : cause.getMessage());
+			ProxySpanAttributes.markError(request, "upstream_failure");
+			ProxySpanAttributes.tagCurrentSpan(tracer, request);
 			throw new UpstreamUnavailableException(
 					"upstream request failed unexpectedly",
 					cause, false, false
@@ -544,6 +582,8 @@ public class ProxyController {
 		int status = providerResponse.response().statusCode();
 		if (status != HttpStatus.OK.value()) {
 			// Upstream failed: no usable output exists, so only the processed input stands.
+			ProxySpanAttributes.markProviderError(request, providerResponse.providerName(), status);
+			ProxySpanAttributes.tagCurrentSpan(tracer, request);
 			settlePromptKnown(settlementContext, false);
 			replayReleaseQuietly(replayFlight);
 			return ResponseEntity.status(status)
@@ -552,6 +592,13 @@ public class ProxyController {
 					.header("X-CacheRelay-Tried", triedHeader(providerResponse))
 					.body(out -> relayRaw(providerResponse, out));
 		}
+
+		// Successful miss: provider winner, tried-leg count, and admission hold
+		// (pre-spend estimate; settled cost lands in the ledger at stream end).
+		ProxySpanAttributes.markMiss(request, providerResponse.providerName(),
+				providerResponse.triedProviders() == null ? -1 : providerResponse.triedProviders().size(),
+				settlementContext == null ? -1L : settlementContext.holdMicros());
+		ProxySpanAttributes.tagCurrentSpan(tracer, request);
 
 		ProviderConfig config = gatewayProperties.getProviders().get(providerResponse.providerName());
 		ProviderType providerType = config == null ? ProviderType.OPENAI : config.type();
@@ -1321,6 +1368,19 @@ public class ProxyController {
 	@Autowired(required = false)
 	public void setModelPriceCatalog(ModelPriceCatalog modelPriceCatalog) {
 		this.modelPriceCatalog = modelPriceCatalog;
+	}
+
+	/**
+	 * Wires the observation tracer when present. Optional like the other
+	 * subsystems: unit-constructed controllers keep working with span tagging
+	 * silently skipped. Tagging runs at controller time (inside the server
+	 * observation scope); post-chain filters are outside it and must not tag.
+	 *
+	 * @param tracer the tracer, if available
+	 */
+	@Autowired(required = false)
+	public void setTracer(Tracer tracer) {
+		this.tracer = tracer;
 	}
 
 	/**

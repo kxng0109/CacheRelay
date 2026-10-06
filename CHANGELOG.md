@@ -150,6 +150,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   local engines, spend-metered) and tier-floored cheapest-first chain ordering
   for `eco` requests (residency first, unpriced/unrated legs never win, RACE
   untouched). Full `verify` green (3,290 tests, JaCoCo 97.54% line / 95.33% branch).
+- **OpenTelemetry tracing (OTLP):** every ingress request gets a server span via
+  the micrometer-tracing OTel bridge (`spring-boot-starter-opentelemetry`,
+  BOM-managed), tagged at controller time with alias, model, cache
+  outcome/tier/similarity, provider, tried-leg count, budget hold micros,
+  outcome, and error reason (routing metadata only — never prompts, completions,
+  or keys). Export is fail-open (`GATEWAY_OTLP_TRACING_ENDPOINT`, default
+  `http://localhost:4318/v1/traces`; no collector means dropped spans, never
+  failed requests), sampling pinned at 1.0 for complete self-hosted traces.
+  Point the endpoint at Tempo/Jaeger/Langfuse to collect. Full `verify` green
+  (3,317 tests, JaCoCo 97.30% line / 95.20% branch).
 
 ### Removed
 

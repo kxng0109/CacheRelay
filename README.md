@@ -478,6 +478,7 @@ overwrite an existing `.env` unless you force it, and `.env` is gitignored — n
   management port published on host loopback only; metrics are never reachable from the network)
 - **Grafana Dashboard**: `http://localhost:3000` (Pre-configured `CacheRelay — Production Operations` dashboard, 51 panels across 12 rows: request path, rate limiting, ledger, JVM, pools, Redis, Postgres, client connections)
 - **Prometheus TSDB**: `http://localhost:9090` (Scraping the app plus `redis-exporter:9121` and `postgres-exporter:9187`, with 20 pre-loaded alert rules)
+- **Traces (OTLP)**: every request emits a server span tagged with alias, model, cache tier, provider, and budget hold — point `GATEWAY_OTLP_TRACING_ENDPOINT` at Tempo/Jaeger/Langfuse (default `http://localhost:4318/v1/traces`); with no collector spans drop silently and requests are unaffected
 
 The Postgres exporter role is provisioned automatically: `backend/deploy/postgres-init/01-exporter-role.sh`
 runs once at first volume init and creates the least-privilege `pg_monitor` member from your `.env`

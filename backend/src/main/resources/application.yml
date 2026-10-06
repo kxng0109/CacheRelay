@@ -600,6 +600,19 @@ management:
         hikaricp.connections.acquire: true
     tags:
       application: CacheRelay
+  # Distributed tracing (OTLP): every ingress request gets a server span via
+  # the micrometer-tracing OTel bridge (spring-boot-starter-opentelemetry).
+  # Telemetry is fail-open by design: with no collector on the endpoint below,
+  # spans are dropped silently and requests are unaffected. Point
+  # GATEWAY_OTLP_TRACING_ENDPOINT at Tempo/Jaeger/Langfuse (http OTLP) to
+  # collect. Sampling is explicit at 1.0: internal/self-hosted use favors
+  # complete traces over head sampling (Boot default is 0.1).
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+    tracing:
+      endpoint: ${GATEWAY_OTLP_TRACING_ENDPOINT:http://localhost:4318/v1/traces}
 server:
   tomcat:
     mbeanregistry:
