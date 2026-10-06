@@ -13,10 +13,12 @@ const config = {
 	deploymentBranch: 'gh-pages',
 	onBrokenLinks: 'throw',
 	markdown: {
+		mermaid: true,
 		hooks: {
 			onBrokenMarkdownLinks: 'warn',
 		},
 	},
+	themes: ['@docusaurus/theme-mermaid'],
 	i18n: {
 		defaultLocale: 'en',
 		locales: ['en'],
@@ -59,7 +61,7 @@ const config = {
 			],
 		},
 		footer: {
-			copyright: 'CacheRelay docs — MIT',
+			copyright: 'CacheRelay docs · MIT',
 		},
 	},
 };

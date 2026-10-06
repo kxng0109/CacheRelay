@@ -15,6 +15,21 @@ CacheRelay federates any number of upstream MCP servers into one governed catalo
 
 Governance per virtual key: `allowedTools`/`deniedTools` globs (deny wins, linear-time matching, capped policy sets), resource/prompt visibility globs, JSON Schema Draft 2020-12 argument validation, credential scanning on arguments, and indirect-injection screening on tool output (block by default, per-key warn-and-deliver flip). Tools in `hitl-required-tools` suspend with an AES-256-GCM resumption token until an admin approves via `GET/POST /v1/admin/mcp/approvals/{tokenId}[/approve|/reject]`. Each upstream server has its own circuit breaker with catalog auto-pruning.
 
+```mermaid
+flowchart TD
+    C["POST /v1/mcp"] --> F["Catalog fans out to servers"]
+    F --> N["Namespaced server__tool"]
+    N --> R{"Key allowed?"}
+    R -->|"deny"| D["-32603 denied"]
+    R -->|"allow"| H{"HITL tool?"}
+    H -->|"yes"| S["Suspend, await approval"]
+    H -->|"no"| X["Dispatch, screen output"]
+    X --> O["Return result"]
+```
+
+<details>
+<summary>Example MCP server configuration</summary>
+
 ```yaml
 gateway:
   mcp:
@@ -31,15 +46,20 @@ gateway:
         hitl-required-tools: ["execute_sql", "*:delete_*"]
 ```
 
+</details>
+
 ## A2A agent proxy
 
 The same governance posture fronts upstream A2A agents: virtual-key authenticated JSON-RPC relay with per-key agent allow/deny lists, per-agent circuit breaking, and bounded bodies.
 
 | Endpoint                           | Purpose                                                                                                                                  |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /.well-known/agent-card.json` | Public gateway discovery card; discloses no agent inventory.                                                                             |
-| `POST /v1/a2a/{agent}`             | JSON-RPC relay (`message/send`, `message/stream`, `tasks/get`, `tasks/cancel`). Unknown methods `-32601`; local policy denials `-32603`. |
-| `GET /v1/a2a/{agent}/card`         | Upstream agent card with URLs rewritten to the gateway; unknown and denied agents are indistinguishable (`404`).                         |
+| `GET /.well-known/agent-card.json` | Public gateway discovery card. Discloses no agent inventory.                                                                             |
+| `POST /v1/a2a/{agent}`             | JSON-RPC relay (`message/send`, `message/stream`, `tasks/get`, `tasks/cancel`). Unknown methods `-32601`. Local policy denials `-32603`. |
+| `GET /v1/a2a/{agent}/card`         | Upstream agent card with URLs rewritten to the gateway. Unknown and denied agents are indistinguishable (`404`).                         |
+
+<details>
+<summary>Example agent configuration</summary>
 
 ```yaml
 gateway:
@@ -55,3 +75,5 @@ gateway:
         base-url: "https://agents.internal/a2a"
         enabled: true
 ```
+
+</details>

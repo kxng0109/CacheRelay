@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # Getting started
 
-Run CacheRelay locally with free, open-source images — no paid service or subscription is required. Provider API keys are optional: the gateway boots without them, and a locally installed [Ollama](https://ollama.com) serves free models and embeddings.
+Run CacheRelay locally with free, open-source images. No paid service or subscription is required. Provider API keys are optional: the gateway boots without them, and a locally installed [Ollama](https://ollama.com) serves free models and embeddings.
 
 ## 1. Generate local secrets
 
@@ -18,7 +18,7 @@ scripts\init-env.cmd
 ./scripts/init-env.sh
 ```
 
-This fills every hard-required secret with locally generated random values and refuses to overwrite an existing `.env` unless forced. `.env` is gitignored — never commit it.
+This fills every hard-required secret with locally generated random values and refuses to overwrite an existing `.env` unless forced. `.env` is gitignored. Never commit it.
 
 ## 2. Start what you need
 
@@ -46,12 +46,55 @@ Provider, embedding-model, budget, and pricing-source changes require a containe
 
 Create a key (see [Keys and budgets](./05-keys-budgets.md)), then:
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+<Tabs groupId="client" queryString>
+  <TabItem value="curl" label="curl" default>
+
 ```bash
 curl -N http://localhost:8080/v1/chat/completions \
   -H "Authorization: Bearer gw-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello"}]}'
 ```
+
+  </TabItem>
+  <TabItem value="python" label="Python">
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="gw-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+r = client.chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": "Hello"}],
+)
+print(r.choices[0].message.content)
+```
+
+  </TabItem>
+  <TabItem value="js" label="JavaScript">
+
+```js
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  baseURL: "http://localhost:8080/v1",
+  apiKey: "gw-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+});
+const r = await client.chat.completions.create({
+  model: "gpt-4o-mini",
+  messages: [{ role: "user", content: "Hello" }],
+});
+console.log(r.choices[0].message.content);
+```
+
+  </TabItem>
+</Tabs>
+
+<Tabs groupId="client" queryString>
+  <TabItem value="curl" label="curl" default>
 
 ```bash
 curl http://localhost:8080/v1/embeddings \
@@ -60,14 +103,48 @@ curl http://localhost:8080/v1/embeddings \
   -d '{"model":"text-embedding-3-small","input":["First text","Second text"]}'
 ```
 
+  </TabItem>
+  <TabItem value="python" label="Python">
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="gw-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+r = client.embeddings.create(
+    model="text-embedding-3-small",
+    input=["First text", "Second text"],
+)
+print(len(r.data[0].embedding))
+```
+
+  </TabItem>
+  <TabItem value="js" label="JavaScript">
+
+```js
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  baseURL: "http://localhost:8080/v1",
+  apiKey: "gw-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+});
+const r = await client.embeddings.create({
+  model: "text-embedding-3-small",
+  input: ["First text", "Second text"],
+});
+console.log(r.data[0].embedding.length);
+```
+
+  </TabItem>
+</Tabs>
+
 ```bash
 curl http://localhost:8080/v1/models \
   -H "Authorization: Bearer gw-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 ```
 
-The models listing is key-authenticated but unmetered metadata — no budget or rate-limit charge.
+The models listing is key-authenticated but unmetered metadata. No budget or rate-limit charge.
 
 ## Next
 
-- [How a request flows](./02-request-flow.md) — the filter pipeline and status codes.
-- [Failover and circuits](./03-failover-circuits.md) — provider chains and breakers.
+- [How a request flows](./02-request-flow.md): the filter pipeline and status codes.
+- [Failover and circuits](./03-failover-circuits.md): provider chains and breakers.

@@ -6,7 +6,7 @@ sidebar_position: 9
 
 ## Configuration
 
-Everything lives in `backend/src/main/resources/application.yml` (startup-bound; `gateway.*` changes need a container recreate, ~15 s boot). Key prefixes:
+Everything lives in `backend/src/main/resources/application.yml` (startup-bound). `gateway.*` changes need a container recreate (~15 s boot). Key prefixes:
 
 | Prefix                                                                                                | Controls                                                                   |
 | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
@@ -24,12 +24,12 @@ Secrets arrive exclusively via environment (bootstrap keys, provider keys, HITL 
 
 ## Security posture (operator summary)
 
-Fail-closed Redis/rate-limit/auth paths; SSRF-validated provider URLs with no redirect following; stripped spoofable headers; generic error messages; no production CORS (same-origin SPA); per-response CSP nonces; stealth-404 admin denials; 5-minute admin tokens; no token in `localStorage`. Kubernetes manifests (`backend/deploy/k8s/`) are render-validated; bare-metal uses the provided systemd unit and ops guide.
+Fail-closed Redis/rate-limit/auth paths. SSRF-validated provider URLs with no redirect following. Stripped spoofable headers. Generic error messages. No production CORS (same-origin SPA). Per-response CSP nonces. Stealth-404 admin denials. 5-minute admin tokens. No token in `localStorage`. Kubernetes manifests (`backend/deploy/k8s/`) are render-validated. Bare-metal uses the provided systemd unit and ops guide.
 
 ## Testing gate
 
-`cd backend && ./mvnw clean verify` — 1,666 tests, JaCoCo bundle gates (instruction/branch/line/method/class ≥ 95%, complexity ≥ 90%). Targeted runs (`-Dtest=… -Djacoco.skip=true -q`, `-Plocal`) are iteration-only; only a green `verify` counts.
+`cd backend && ./mvnw clean verify`: 1,666 tests, JaCoCo bundle gates (instruction/branch/line/method/class ≥ 95%, complexity ≥ 90%). Targeted runs (`-Dtest=… -Djacoco.skip=true -q`, `-Plocal`) are iteration-only. Only a green `verify` counts.
 
 ## Docs versioning
 
-These pages are Docusaurus-ready: each carries `sidebar_position` frontmatter, and the directory versions with `docs:version` (`/docs/next` current, `/docs` latest, `/docs/1.0.0` pinned, all under the `/CacheRelay/` base). Keep one source of truth — generate or contract-check OpenAPI examples from handler code rather than hand-maintaining copies.
+These pages are Docusaurus-ready: each carries `sidebar_position` frontmatter, and the directory versions with `docs:version` (`/docs/next` current, `/docs` latest, `/docs/1.0.0` pinned, all under the `/CacheRelay/` base). Keep one source of truth: generate or contract-check OpenAPI examples from handler code rather than hand-maintaining copies.

@@ -4,7 +4,10 @@ sidebar_position: 3
 
 # Failover and circuits
 
-Providers live under `gateway.providers`; client-facing names map to ordered provider chains under `gateway.aliases`:
+Providers live under `gateway.providers`. Client-facing names map to ordered provider chains under `gateway.aliases`:
+
+<details>
+<summary>Example provider and alias configuration</summary>
 
 ```yaml
 gateway:
@@ -29,17 +32,33 @@ gateway:
       strategy: SEQUENTIAL
 ```
 
-Base URLs are prefixes — the adapter appends the chat path (default `/v1/chat/completions`, overridable per provider via `chat-completions-path`). Never include the chat path in `base-url`. Each entry is inert until its key is set and an alias chain references it. `OPENAI` covers OpenAI plus every pre-wired compatible entry (OpenRouter, Together, Groq, Mistral, xAI, DeepSeek, DeepInfra, Fireworks, Cerebras, and more); `ANTHROPIC`, `GEMINI`, `VERTEX_AI`, `DEEPSEEK`, and `OLLAMA` speak their native dialects, normalized to one OpenAI-shaped client contract (full dialect table: README _Protocol normalization_).
+</details>
+
+Base URLs are prefixes. The adapter appends the chat path (default `/v1/chat/completions`, overridable per provider via `chat-completions-path`). Never include the chat path in `base-url`. Each entry is inert until its key is set and an alias chain references it. `OPENAI` covers OpenAI plus every pre-wired compatible entry (OpenRouter, Together, Groq, Mistral, xAI, DeepSeek, DeepInfra, Fireworks, Cerebras, and more). `ANTHROPIC`, `GEMINI`, `VERTEX_AI`, `DEEPSEEK`, and `OLLAMA` speak their native dialects, normalized to one OpenAI-shaped client contract (full dialect table: README _Protocol normalization_).
 
 ## Classification rules
 
 - `200` with a streaming content type: success.
 - `429` or any `5xx`, timeouts, dropped connections: transient, fail over.
-- `401`, `403`, `400`: non-transient, returned as is — another provider cannot fix a client or key problem.
+- `401`, `403`, `400`: non-transient, returned as is. Another provider cannot fix a client or key problem.
+
+```mermaid
+flowchart TD
+    A["Attempt provider"] --> R{"Status?"}
+    R -->|"200 stream"| OK["Relay (no late failover)"]
+    R -->|"429/5xx/timeout"| N["Next provider"]
+    R -->|"401/403/400"| RET["Return as-is"]
+    N --> C{"Chain left?"}
+    C -->|"yes"| A
+    C -->|"no"| E{"What failed?"}
+    E -->|"errors"| E502["502"]
+    E -->|"unreachable"| E503["503"]
+    E -->|"timed out"| E504["504"]
+```
 
 ## Circuit breakers
 
-Each provider has a breaker shared across all gateway instances through Redis (local in-memory mirror on Redis failure). It starts closed, **opens after three consecutive failures, stays open for thirty seconds, then admits a single probe owned by one instance**. A successful probe closes it; a failed probe reopens it. Embeddings take a single attempt (no failover) and name the provider in `X-CacheRelay-Tried`.
+Each provider has a breaker shared across all gateway instances through Redis (local in-memory mirror on Redis failure). It starts closed, **opens after three consecutive failures, stays open for thirty seconds, then admits a single probe owned by one instance**. A successful probe closes it. A failed probe reopens it. Embeddings take a single attempt (no failover) and name the provider in `X-CacheRelay-Tried`.
 
 | Endpoint                                   | Purpose                                                                                            |
 | ------------------------------------------ | -------------------------------------------------------------------------------------------------- |

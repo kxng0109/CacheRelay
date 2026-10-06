@@ -23,7 +23,7 @@
 	--ifm-global-radius: 16px;
 }
 
-[data-theme='dark'] {
+html[data-theme='dark'] {
 	--cr-paper: #0e0d0b;
 	--cr-card: transparent;
 	--cr-ink: #f5f1e8;
@@ -34,6 +34,7 @@
 	--cr-danger: #e08073;
 	--ifm-color-primary: #e8805f;
 	--ifm-background-color: #0e0d0b;
+	background-color: #0e0d0b;
 }
 
 .navbar {
@@ -110,6 +111,52 @@ pre code {
 	color: var(--ifm-color-primary);
 }
 
+/* Blinking terminal caret: motion answers the prompt, dies under
+   reduced-motion. Opacity-only, never layout. */
+.cr-caret {
+	display: inline-block;
+	margin-left: 6px;
+	color: var(--ifm-color-primary);
+	animation: cr-blink 1.1s steps(2, start) infinite;
+}
+
+@keyframes cr-blink {
+	to {
+		visibility: hidden;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.cr-caret {
+		animation: none;
+	}
+}
+
+/* Mermaid diagrams inherit the console voice: mono labels, ember edges. */
+.docusaurus-mermaid-container {
+	font-family: var(--ifm-font-family-monospace);
+	overflow-x: auto;
+	max-width: 100%;
+}
+
+.docusaurus-mermaid-container svg {
+	min-width: 560px;
+}
+
+.docusaurus-mermaid-container path.flowchart-link {
+	stroke: var(--ifm-color-primary) !important;
+}
+
+.docusaurus-mermaid-container marker path {
+	fill: var(--ifm-color-primary) !important;
+}
+
+/* Selection carries the accent, both themes. */
+::selection {
+	background: var(--ifm-color-primary);
+	color: #fff;
+}
+
 /* Landing status line: muted mono tick under the stats. */
 .cr-tick {
 	font-family: var(--ifm-font-family-monospace);
@@ -168,6 +215,29 @@ pre code {
 	text-align: left;
 	max-width: 100%;
 	overflow-x: auto;
+	margin-bottom: 0;
+}
+
+/* Terminal frame: caret header bar over the first-request block. */
+.cr-term {
+	border: 1px solid var(--cr-hair);
+	border-radius: 16px;
+	overflow: hidden;
+}
+
+.cr-termbar {
+	font-family: var(--ifm-font-family-monospace);
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--ifm-color-primary);
+	border-bottom: 1px solid var(--cr-hair);
+	padding: 8px 16px;
+	text-align: left;
+}
+
+.cr-term .cr-pre {
+	border: 0;
 }
 
 .cr-cards {

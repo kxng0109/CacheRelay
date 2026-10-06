@@ -1,6 +1,7 @@
 import React from 'react';
 import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
+import RequestLab from '../components/RequestLab.js';
 
 const STATS = [
 	{ value: 'L0 / L1 / L2', label: 'cache tiers' },
@@ -21,7 +22,7 @@ export default function Home() {
 		<Layout title="CacheRelay" description="Cache, then relay — operator and integration docs">
 			<main className="cr-hero">
 				<p style={{ fontFamily: 'var(--ifm-font-family-monospace)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--ifm-color-primary)' }}>
-					$ cacherelay · docs
+					$ cacherelay · docs<span className="cr-caret" aria-hidden="true">▊</span>
 				</p>
 				<h1>Cache, then relay.</h1>
 				<p className="cr-lede">
@@ -37,10 +38,13 @@ export default function Home() {
 					))}
 				</div>
 				<p className="cr-tick">docs · 9 pages · version next</p>
-				<pre className="cr-pre"><code>{`curl -N http://localhost:8080/v1/chat/completions \\
+				<div className="cr-term">
+					<div className="cr-termbar">$ first request</div>
+					<pre className="cr-pre"><code>{`curl -N http://localhost:8080/v1/chat/completions \\
   -H "Authorization: Bearer $GW_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello"}]}'`}</code></pre>
+				</div>
 				<div className="cr-cards">
 					{CARDS.map((c) => (
 						<Link key={c.to} to={c.to} className="cr-card">
@@ -49,6 +53,7 @@ export default function Home() {
 						</Link>
 					))}
 				</div>
+				<RequestLab />
 			</main>
 		</Layout>
 	);
