@@ -96,11 +96,8 @@ public class AlertWebhookController {
 		if (!WebhookSecrets.constantTimeEquals(secret, presented)) {
 			return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
 		}
-		if (body == null || !body.isArray() || body.isEmpty()
-				|| body.size() > AdminAlertWebhookController.MAX_ALERTS_PER_BATCH) {
-			return ResponseEntity.badRequest().body(objectMapper.createObjectNode()
-					.put("error", "batch must be a non-empty array of at most "
-							+ AdminAlertWebhookController.MAX_ALERTS_PER_BATCH + " alerts"));
+		if (AlertBatch.isBad(body)) {
+			return ResponseEntity.badRequest().body(AlertBatch.errorBody(objectMapper));
 		}
 		for (JsonNode alert : body) {
 			JsonNode name = alert.path("labels").path("alertname");

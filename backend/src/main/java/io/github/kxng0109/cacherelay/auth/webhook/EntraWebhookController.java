@@ -1,6 +1,5 @@
 package io.github.kxng0109.cacherelay.auth.webhook;
 
-import java.io.IOException;
 import java.util.Optional;
 
 import io.github.kxng0109.cacherelay.auth.AuthAuditService;
@@ -109,11 +108,7 @@ public class EntraWebhookController {
 	}
 
 	private byte[] rawBody(HttpServletRequest request) {
-		try {
-			return request.getInputStream().readAllBytes();
-		} catch (IOException failed) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "unreadable body");
-		}
+		return WebhookBodies.rawBody(request);
 	}
 
 	private void invalidateResource(String resource) {

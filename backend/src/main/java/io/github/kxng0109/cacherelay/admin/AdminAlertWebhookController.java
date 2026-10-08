@@ -37,8 +37,6 @@ import tools.jackson.databind.ObjectMapper;
 @Tag(name = "Admin - Alert Webhook", description = "Alertmanager receiver (authenticated)")
 public class AdminAlertWebhookController {
 
-	static final int MAX_ALERTS_PER_BATCH = 100;
-
 	private final ObjectMapper objectMapper;
 
 	private volatile Counter received;
@@ -72,11 +70,8 @@ public class AdminAlertWebhookController {
 	)
 	@PostMapping(consumes = "application/json", produces = "application/json")
 	public ResponseEntity<JsonNode> receive(@RequestBody @Nullable JsonNode body) {
-		if (body == null || !body.isArray() || body.isEmpty()
-				|| body.size() > MAX_ALERTS_PER_BATCH) {
-			return ResponseEntity.badRequest().body(objectMapper.createObjectNode()
-					.put("error", "batch must be a non-empty array of at most "
-							+ MAX_ALERTS_PER_BATCH + " alerts"));
+		if (AlertBatch.isBad(body)) {
+			return ResponseEntity.badRequest().body(AlertBatch.errorBody(objectMapper));
 		}
 		for (JsonNode alert : body) {
 			JsonNode name = alert.path("labels").path("alertname");

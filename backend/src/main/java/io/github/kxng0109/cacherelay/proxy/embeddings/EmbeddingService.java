@@ -14,6 +14,7 @@ import io.github.kxng0109.cacherelay.proxy.embeddings.dto.EmbeddingRequest;
 import io.github.kxng0109.cacherelay.proxy.embeddings.dto.EmbeddingResponse;
 import io.github.kxng0109.cacherelay.proxy.failover.UpstreamUrlValidator;
 import io.github.kxng0109.cacherelay.security.SsrfViolationException;
+import io.github.kxng0109.cacherelay.security.ratelimit.TenantIds;
 import io.github.kxng0109.cacherelay.security.ratelimit.RateLimitUnavailableException;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.Nullable;
@@ -277,12 +278,12 @@ public class EmbeddingService {
 
 		UUID requestId = IdempotencyKeys.resolveRequestId(
 				idempotencyKey,
-				ownerId == null || ownerId.isBlank() ? "" : ownerId,
+				TenantIds.orEmpty(ownerId),
 				"/v1/embeddings",
 				bodyHashHex);
 		TokenUsageEvent event = new TokenUsageEvent(
 				requestId,
-				ownerId == null || ownerId.isBlank() ? "unknown" : ownerId,
+				TenantIds.orUnknown(ownerId),
 				providerConfig.name(),
 				target.effectiveModel(),
 				promptTokens,

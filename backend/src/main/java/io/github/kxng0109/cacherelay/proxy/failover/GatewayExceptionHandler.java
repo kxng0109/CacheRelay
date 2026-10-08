@@ -1,5 +1,6 @@
 package io.github.kxng0109.cacherelay.proxy.failover;
 
+import io.github.kxng0109.cacherelay.proxy.ErrorBodyFactory;
 import io.github.kxng0109.cacherelay.security.compliance.DataResidencyBreachException;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.Nullable;
@@ -9,7 +10,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -44,15 +44,11 @@ public class GatewayExceptionHandler {
 	@ExceptionHandler(DataResidencyBreachException.class)
 	public ResponseEntity<Map<String, Object>> handleDataResidencyBreach(DataResidencyBreachException exception) {
 		log.warn("Data sovereignty violation: {}", exception.getMessage());
-		Map<String, Object> error = new LinkedHashMap<>();
-		error.put("code", "DATA_SOVEREIGNTY_VIOLATION");
-		error.put("message",
-				"Request cannot be served within the required data residency zone.");
-		Map<String, Object> body = new LinkedHashMap<>();
-		body.put("error", error);
 		return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
 				.contentType(MediaType.APPLICATION_JSON)
-				.body(body);
+				.body(ErrorBodyFactory.mapCoded(
+						"Request cannot be served within the required data residency zone.",
+						"DATA_SOVEREIGNTY_VIOLATION"));
 	}
 
 	/**
@@ -102,13 +98,6 @@ public class GatewayExceptionHandler {
 	}
 
 	private Map<String, Object> errorBody(String message, @Nullable String code) {
-		Map<String, Object> error = new LinkedHashMap<>();
-		if (code != null && !code.isBlank()) {
-			error.put("code", code);
-		}
-		error.put("message", message);
-		Map<String, Object> body = new LinkedHashMap<>();
-		body.put("error", error);
-		return body;
+		return ErrorBodyFactory.mapCoded(message, code);
 	}
 }

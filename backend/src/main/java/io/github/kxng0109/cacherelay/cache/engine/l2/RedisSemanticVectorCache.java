@@ -2,6 +2,7 @@ package io.github.kxng0109.cacherelay.cache.engine.l2;
 
 import io.github.kxng0109.cacherelay.cache.config.CacheRelayCacheProperties;
 import io.github.kxng0109.cacherelay.cache.contracts.CacheEntry;
+import io.github.kxng0109.cacherelay.cache.contracts.CacheKeys;
 import io.github.kxng0109.cacherelay.cache.contracts.CompoundCacheKey;
 import io.github.kxng0109.cacherelay.cache.engine.CacheGuardrails;
 import io.github.kxng0109.cacherelay.proxy.embeddings.EmbeddingService;
@@ -33,8 +34,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class RedisSemanticVectorCache {
 
-	public static final String INDEX_NAME = "cacherelay:cache:idx";
-	public static final String PREFIX = "cacherelay:cache:doc:";
+	public static final String INDEX_NAME = CacheKeys.INDEX_NAME;
+	public static final String PREFIX = CacheKeys.DOC_PREFIX;
 	/**
 	 * Safe default dimension when neither the live probe nor the verified map can resolve one (OpenAI's
 	 * {@code text-embedding-3-small}).

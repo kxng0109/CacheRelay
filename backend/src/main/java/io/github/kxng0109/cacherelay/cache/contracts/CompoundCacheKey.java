@@ -26,7 +26,7 @@ public record CompoundCacheKey(
 	 * @return Redis exact match key
 	 */
 	public String toExactRedisKey() {
-		return "cacherelay:cache:exact:" + ownerId + ":" + exactHash;
+		return CacheKeys.exactKey(ownerId, exactHash);
 	}
 
 	/**
@@ -36,6 +36,6 @@ public record CompoundCacheKey(
 	 * @return Redis vector document key
 	 */
 	public String toVectorDocRedisKey(String entryId) {
-		return "cacherelay:cache:doc:" + ownerId + ":" + entryId;
+		return CacheKeys.docKey(ownerId, entryId);
 	}
 }

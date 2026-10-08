@@ -1553,15 +1553,8 @@ public class ProxyController {
 		}
 		if (decision instanceof BudgetDecision.Denied denied) {
 			long retryAfter = Math.max(1L, denied.retryAfterSeconds());
-			HttpHeaders denyHeaders = new HttpHeaders();
-			denyHeaders.setContentType(MediaType.APPLICATION_JSON);
-			denyHeaders.set(HttpHeaders.RETRY_AFTER, Long.toString(retryAfter));
-			denyHeaders.set("X-Budget-Remaining", "0");
-			denyHeaders.set("X-Budget-Reset", Long.toString(System.currentTimeMillis() / 1000L + retryAfter));
-			denyHeaders.set("X-Budget-Level", denied.level());
-			denyHeaders.set("X-Budget-Window", denied.window());
-			String denyBody = "{\"error\":{\"message\":\"budget exhausted (" + denied.level() + " "
-					+ denied.window() + ")\"}}";
+			HttpHeaders denyHeaders = ErrorBodyFactory.denyHeaders(denied, retryAfter);
+			String denyBody = "{\"error\":{\"message\":\"" + ErrorBodyFactory.denyMessage(denied) + "\"}}";
 			return new BudgetAdmission(ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).headers(denyHeaders)
 					.body(out -> out.write(denyBody.getBytes(StandardCharsets.UTF_8))), null);
 		}
@@ -1664,13 +1657,7 @@ public class ProxyController {
 	 * @return serialized error JSON
 	 */
 	static String errorBody(ObjectMapper mapper, String message) {
-		try {
-			ObjectNode error = mapper.createObjectNode();
-			error.putObject("error").put("message", message);
-			return mapper.writeValueAsString(error);
-		} catch (RuntimeException failed) {
-			return "{\"error\":{\"message\":\"request failed\"}}";
-		}
+		return ErrorBodyFactory.streamMessage(mapper, message);
 	}
 
 	private void writeSse(OutputStream out, String line) throws IOException {

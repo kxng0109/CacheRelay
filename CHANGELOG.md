@@ -160,6 +160,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failed requests), sampling pinned at 1.0 for complete self-hosted traces.
   Point the endpoint at Tempo/Jaeger/Langfuse to collect. Full `verify` green
   (3,317 tests, JaCoCo 97.30% line / 95.20% branch).
+- **DRY Phase 1 (internal refactoring, zero wire change):** collapsed 8 duplication
+  clusters into single owners — `CacheKeys` (cache prefixes + purge patterns),
+  `TenantIds.orUnknown/orEmpty` (owner fallbacks, `""` vs `"unknown"` split
+  preserved), `RbacPolicy` (MCP/A2A deny-precedence glob), `SsrfValidator`
+  normalize-then-match + shared allowlisted resolvability (CIDR waived by design
+  for exact-host dev trust), `ErrorBodyFactory` (code-first/message-first/
+  message-only envelopes + deny headers/message, key order preserved),
+  `admin.dto.KeyMapper` (22-arg response + hash validator, per-surface messages
+  preserved), `AlertBatch`/`AlertBatchLimits` + `auth.webhook.WebhookBodies`
+  (batch guard + raw-body reader). Every response body, header, status, and
+  message is byte-identical; Spring-default webhook envelopes and empty 404/401
+  bodies untouched. Full `verify` green
+  (3,317 tests, JaCoCo 97.29% line / 95.23% branch).
 
 ### Removed
 

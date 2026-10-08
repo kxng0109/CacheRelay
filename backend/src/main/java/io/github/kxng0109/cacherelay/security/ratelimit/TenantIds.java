@@ -4,6 +4,8 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * Server-side tenant identity guard (ADM-B01, ADM-B17).
  *
@@ -58,5 +60,32 @@ public final class TenantIds {
 							+ RESERVED + "): " + tenant);
 		}
 		return tenant;
+	}
+
+	/**
+	 * Falls back a nullable owner to the {@code unknown} ledger bucket.
+	 *
+	 * <p>Preserves the exact historical ternary: null or blank becomes {@code unknown}, never a mintable tenant
+	 * (it stays in {@link #RESERVED}). Budget TEAM paths must use {@link #orEmpty} instead — the two namespaces
+	 * are intentionally different.</p>
+	 *
+	 * @param ownerId nullable tenant, possibly {@code null}
+	 * @return the owner, or {@code unknown} when null or blank
+	 */
+	public static String orUnknown(@Nullable String ownerId) {
+		return (ownerId == null || ownerId.isBlank()) ? "unknown" : ownerId;
+	}
+
+	/**
+	 * Falls back a nullable owner to the absent TEAM segment.
+	 *
+	 * <p>Preserves the exact historical ternary: null or blank becomes {@code ""}, keeping the
+	 * {@code team.isEmpty()} skip in budget paths intact.</p>
+	 *
+	 * @param ownerId nullable tenant, possibly {@code null}
+	 * @return the owner, or {@code ""} when null or blank
+	 */
+	public static String orEmpty(@Nullable String ownerId) {
+		return (ownerId == null || ownerId.isBlank()) ? "" : ownerId;
 	}
 }

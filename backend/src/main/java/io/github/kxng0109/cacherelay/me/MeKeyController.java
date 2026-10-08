@@ -3,6 +3,7 @@ package io.github.kxng0109.cacherelay.me;
 import java.util.List;
 import java.util.UUID;
 
+import io.github.kxng0109.cacherelay.admin.dto.KeyMapper;
 import io.github.kxng0109.cacherelay.admin.dto.KeyResponse;
 import io.github.kxng0109.cacherelay.auth.JwtService;
 import io.github.kxng0109.cacherelay.auth.UserAccount;
@@ -78,7 +79,8 @@ public class MeKeyController {
 			@RequestHeader("Authorization") String authorization) {
 		UUID userId = requireSelf(authorization);
 		List<KeyResponse> response = keys.listKeysByUser(userId).stream()
-				.map(key -> toKeyResponse(key, userId))
+				.map(key -> KeyMapper.toKeyResponse(key,
+						users.findById(userId).map(UserAccount::getUsername).orElse(null)))
 				.toList();
 		return ResponseEntity.ok(response);
 	}
@@ -107,7 +109,7 @@ public class MeKeyController {
 			@RequestHeader("Authorization") String authorization,
 			@RequestBody DefaultKeyRequest request) {
 		UUID userId = requireSelf(authorization);
-		SHA256Hash hash = parseHash(request.keyId());
+		SHA256Hash hash = KeyMapper.parseHash(request.keyId(), "malformed key hash");
 		VirtualApiKey key = keys.findByHash(hash).orElse(null);
 		if (key == null || !userId.equals(key.ownerUserId())) {
 			throw new ResponseStatusException(HttpStatus.NOT_FOUND, "key not found");
@@ -141,7 +143,7 @@ public class MeKeyController {
 			@Parameter(description = "64-character SHA-256 hex digest of an owned key")
 			@PathVariable("hashHex") String hashHex) {
 		UUID userId = requireSelf(authorization);
-		SHA256Hash hash = parseHash(hashHex);
+		SHA256Hash hash = KeyMapper.parseHash(hashHex, "malformed key hash");
 		VirtualApiKey key = keys.findByHash(hash).orElse(null);
 		if (key == null || !userId.equals(key.ownerUserId())) {
 			throw new ResponseStatusException(HttpStatus.NOT_FOUND, "key not found");
@@ -175,39 +177,5 @@ public class MeKeyController {
 			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "invalid session");
 		}
 		return userId;
-	}
-
-	private SHA256Hash parseHash(String hex) {
-		if (hex == null || hex.length() != 64 || !hex.matches("^[a-fA-F0-9]{64}$")) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "malformed key hash");
-		}
-		return SHA256Hash.fromHex(hex);
-	}
-
-	private KeyResponse toKeyResponse(VirtualApiKey key, UUID userId) {
-		String username = users.findById(userId).map(UserAccount::getUsername).orElse(null);
-		return new KeyResponse(
-				key.keyHash() != null ? key.keyHash().hex() : "",
-				key.keyPrefix(),
-				key.ownerId(),
-				key.name(),
-				key.rpmLimit(),
-				key.tpmLimit(),
-				key.allowedModels(),
-				key.allowedProviders(),
-				key.allowedTools(),
-				key.deniedTools(),
-				key.allowedResources(),
-				key.deniedResources(),
-				key.allowedPrompts(),
-				key.deniedPrompts(),
-				key.injectionBlock(),
-				key.enabled(),
-				key.createdAt(),
-				key.allowedCacheScopes(),
-				key.allowedAgents(),
-				key.deniedAgents(),
-				key.ownerUserId(),
-				username);
 	}
 }

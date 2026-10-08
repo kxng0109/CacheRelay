@@ -119,6 +119,40 @@ public class SsrfValidator {
 	}
 
 	/**
+	 * Validates an explicitly trusted allowlisted host: scheme, userinfo, and resolvability are enforced exactly as
+	 * in {@link #validate}, but the private-range verdict is waived for the trusted name. Fails closed on
+	 * unresolvable hosts. Never logs credentials.
+	 *
+	 * @param targetUrl the URL about to be contacted, never {@code null} in practice (null fails closed)
+	 * @throws SsrfViolationException if any check fails
+	 */
+	public void validateAllowlistedSchemeAndResolvability(URI targetUrl) {
+		if (targetUrl == null) {
+			throw new SsrfViolationException("target URL must not be null");
+		}
+		String scheme = targetUrl.getScheme();
+		if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+			throw new SsrfViolationException(
+					"unsupported scheme '" + scheme + "': only http and https are permitted");
+		}
+		if (targetUrl.getUserInfo() != null) {
+			throw new SsrfViolationException(
+					"URL must not embed credentials in userinfo for host '" + targetUrl.getHost() + "'");
+		}
+		String rawHost = targetUrl.getHost();
+		if (rawHost == null) {
+			throw new SsrfViolationException("URL has no resolvable host");
+		}
+		String host = normalizeHost(rawHost);
+		try {
+			InetAddress.getAllByName(host);
+		} catch (UnknownHostException e) {
+			throw new SsrfViolationException(
+					"host '" + host + "' could not be resolved; failing closed", e);
+		}
+	}
+
+	/**
 	 * Normalizes a URL host to its canonical resolution form: IDNA ASCII conversion, lowercasing, and removal of
 	 * a single trailing dot (fully-qualified DNS form). Pure function performing no network I/O; hosts that are
 	 * not valid IDNA names (IP literals, malformed input) fall back to lowercasing so resolution still decides.
@@ -126,7 +160,7 @@ public class SsrfValidator {
 	 * @param host the raw host from the URL; must not be {@code null}
 	 * @return the canonical host to resolve
 	 */
-	static String normalizeHost(String host) {
+	public static String normalizeHost(String host) {
 		String ascii;
 		try {
 			ascii = IDN.toASCII(host);

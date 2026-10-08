@@ -1,9 +1,7 @@
 package io.github.kxng0109.cacherelay.a2a.security;
 
-import java.util.Set;
-
+import io.github.kxng0109.cacherelay.contracts.RbacPolicy;
 import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
-import io.github.kxng0109.cacherelay.mcp.security.McpToolRbacPolicyEngine;
 
 import org.springframework.stereotype.Component;
 
@@ -26,29 +24,9 @@ public class A2aRbacPolicyEngine {
 	 * @return true if authorized, false if denied
 	 */
 	public boolean isAgentAllowed(String agentName, VirtualApiKey apiKey) {
-		if (agentName == null || agentName.isBlank() || apiKey == null) {
+		if (apiKey == null) {
 			return false;
 		}
-		String target = agentName.trim();
-
-		Set<String> denied = apiKey.deniedAgents();
-		if (denied != null && !denied.isEmpty()) {
-			for (String pattern : denied) {
-				if (McpToolRbacPolicyEngine.matchesPattern(target, pattern)) {
-					return false;
-				}
-			}
-		}
-
-		Set<String> allowed = apiKey.allowedAgents();
-		if (allowed == null || allowed.isEmpty()) {
-			return true;
-		}
-		for (String pattern : allowed) {
-			if (McpToolRbacPolicyEngine.matchesPattern(target, pattern)) {
-				return true;
-			}
-		}
-		return false;
+		return RbacPolicy.isAllowed(agentName, apiKey.allowedAgents(), apiKey.deniedAgents());
 	}
 }

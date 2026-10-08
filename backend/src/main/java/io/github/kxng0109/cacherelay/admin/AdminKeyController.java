@@ -2,6 +2,7 @@ package io.github.kxng0109.cacherelay.admin;
 
 import io.github.kxng0109.cacherelay.admin.dto.CreateKeyRequest;
 import io.github.kxng0109.cacherelay.admin.dto.CreatedKeyResponse;
+import io.github.kxng0109.cacherelay.admin.dto.KeyMapper;
 import io.github.kxng0109.cacherelay.admin.dto.KeyResponse;
 import io.github.kxng0109.cacherelay.admin.dto.UpdateKeyRequest;
 import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
@@ -21,7 +22,6 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.jspecify.annotations.Nullable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -193,7 +193,7 @@ public class AdminKeyController {
 		Map<UUID, String> resolved = keyManagementService.usernamesOf(owners);
 		Map<UUID, String> usernames = resolved != null ? resolved : Map.of();
 		List<KeyResponse> response = keys.stream()
-				.map(key -> toKeyResponse(key,
+				.map(key -> KeyMapper.toKeyResponse(key,
 						key.ownerUserId() == null ? null : usernames.get(key.ownerUserId())))
 				.toList();
 		return ResponseEntity.ok(response);
@@ -223,9 +223,10 @@ public class AdminKeyController {
 			@Parameter(description = "64-character SHA-256 hex digest of the key", example = "a1b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d")
 			@PathVariable("hashHex") String hashHex
 	) {
-		SHA256Hash hash = parseHash(hashHex);
+		SHA256Hash hash = KeyMapper.parseHash(hashHex, "Invalid key hash format");
 		return keyManagementService.findByHash(hash)
-		                           .map(this::toKeyResponse)
+		                           .map(key -> KeyMapper.toKeyResponse(key,
+				                           keyManagementService.usernameOf(key.ownerUserId())))
 		                           .map(ResponseEntity::ok)
 		                           .orElseGet(() -> ResponseEntity.notFound().build());
 	}
@@ -257,7 +258,7 @@ public class AdminKeyController {
 			@PathVariable("hashHex") String hashHex,
 			@Valid @RequestBody UpdateKeyRequest request
 	) {
-		SHA256Hash hash = parseHash(hashHex);
+		SHA256Hash hash = KeyMapper.parseHash(hashHex, "Invalid key hash format");
 		Optional<VirtualApiKey> updated;
 		try {
 			// ADM-B04: owner-bearing PATCH routes through a single atomic,
@@ -308,7 +309,7 @@ public class AdminKeyController {
 		} catch (IllegalArgumentException invalid) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, invalid.getMessage());
 		}
-		return updated.map(this::toKeyResponse)
+		return updated.map(key -> KeyMapper.toKeyResponse(key, keyManagementService.usernameOf(key.ownerUserId())))
 		              .map(ResponseEntity::ok)
 		              .orElseGet(() -> ResponseEntity.notFound().build());
 	}
@@ -337,7 +338,7 @@ public class AdminKeyController {
 			@Parameter(description = "64-character SHA-256 hex digest of the key", example = "a1b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d")
 			@PathVariable("hashHex") String hashHex
 	) {
-		SHA256Hash hash = parseHash(hashHex);
+		SHA256Hash hash = KeyMapper.parseHash(hashHex, "Invalid key hash format");
 		boolean deleted = keyManagementService.deleteKey(hash);
 		if (deleted) {
 			return ResponseEntity.noContent().build();
@@ -370,54 +371,15 @@ public class AdminKeyController {
 			@Parameter(description = "64-character SHA-256 hex digest of the key", example = "a1b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d")
 			@PathVariable("hashHex") String hashHex
 	) {
-		SHA256Hash hash = parseHash(hashHex);
+		SHA256Hash hash = KeyMapper.parseHash(hashHex, "Invalid key hash format");
 		Optional<VirtualApiKey> before = keyManagementService.findByHash(hash);
 		if (before.isEmpty()) {
 			return ResponseEntity.notFound().build();
 		}
 		keyManagementService.revokeKey(hash);
 		return keyManagementService.findByHash(hash)
-				.map(this::toKeyResponse)
+				.map(key -> KeyMapper.toKeyResponse(key, keyManagementService.usernameOf(key.ownerUserId())))
 				.map(ResponseEntity::ok)
 				.orElseGet(() -> ResponseEntity.notFound().build());
-	}
-
-	private KeyResponse toKeyResponse(VirtualApiKey key) {
-		return toKeyResponse(key, keyManagementService.usernameOf(key.ownerUserId()));
-	}
-
-	private KeyResponse toKeyResponse(VirtualApiKey key, @Nullable String ownerUsername) {
-		return new KeyResponse(
-				key.keyHash() != null ? key.keyHash().hex() : "",
-				key.keyPrefix(),
-				key.ownerId(),
-				key.name(),
-				key.rpmLimit(),
-				key.tpmLimit(),
-				key.allowedModels(),
-				key.allowedProviders(),
-				key.allowedTools(),
-				key.deniedTools(),
-				key.allowedResources(),
-				key.deniedResources(),
-				key.allowedPrompts(),
-				key.deniedPrompts(),
-				key.injectionBlock(),
-				key.enabled(),
-				key.createdAt(),
-				key.allowedCacheScopes(),
-				key.allowedAgents(),
-				key.deniedAgents(),
-				key.ownerUserId(),
-				ownerUsername
-		);
-	}
-
-	private SHA256Hash parseHash(String hex) {
-		if (hex == null || hex.length() != 64 || !hex.matches("^[a-fA-F0-9]{64}$")) {
-			// ADM-B16: static message — the raw path input is never reflected.
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid key hash format");
-		}
-		return SHA256Hash.fromHex(hex);
 	}
 }

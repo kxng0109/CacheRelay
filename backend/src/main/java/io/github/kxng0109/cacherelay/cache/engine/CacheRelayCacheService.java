@@ -7,6 +7,7 @@ import io.github.kxng0109.cacherelay.cache.engine.l1.RedisExactCache;
 import io.github.kxng0109.cacherelay.cache.engine.l2.RedisSemanticVectorCache;
 import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
 import io.github.kxng0109.cacherelay.proxy.protocol.OpenAiChatRequest;
+import io.github.kxng0109.cacherelay.security.ratelimit.TenantIds;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -90,7 +91,7 @@ public class CacheRelayCacheService {
 			return CacheLookupResult.bypass();
 		}
 
-		String effectiveOwner = (ownerId == null || ownerId.isBlank()) ? "unknown" : ownerId;
+		String effectiveOwner = TenantIds.orUnknown(ownerId);
 		CacheScope scope = policyEngine.resolveScope(httpRequest, apiKey);
 		CompoundCacheKey key = keyGenerator.generateKey(
 				request,
@@ -205,7 +206,7 @@ public class CacheRelayCacheService {
 			return;
 		}
 
-		String effectiveOwner = (ownerId == null || ownerId.isBlank()) ? "unknown" : ownerId;
+		String effectiveOwner = TenantIds.orUnknown(ownerId);
 		// PERF-07: reuse the key computed during evaluation (same request, same inputs —
 		// generateKey is deterministic), avoiding a second triple-hash canonical build.
 		CompoundCacheKey key = (CompoundCacheKey) httpRequest.getAttribute(CACHE_KEY_ATTRIBUTE);

@@ -1,6 +1,5 @@
 package io.github.kxng0109.cacherelay.auth.webhook;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Map;
@@ -148,10 +147,6 @@ public class OktaWebhookController {
 	}
 
 	private byte[] rawBody(HttpServletRequest request) {
-		try {
-			return request.getInputStream().readAllBytes();
-		} catch (IOException failed) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "unreadable body");
-		}
+		return WebhookBodies.rawBody(request);
 	}
 }

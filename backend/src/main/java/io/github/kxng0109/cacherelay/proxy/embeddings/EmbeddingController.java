@@ -7,6 +7,7 @@ import io.github.kxng0109.cacherelay.config.OpenApiConfig;
 import io.github.kxng0109.cacherelay.contracts.VirtualApiKey;
 import io.github.kxng0109.cacherelay.proxy.IdempotencyKeys;
 import io.github.kxng0109.cacherelay.proxy.ProviderAccess;
+import io.github.kxng0109.cacherelay.proxy.ErrorBodyFactory;
 import io.github.kxng0109.cacherelay.proxy.ProxySpanAttributes;
 import io.github.kxng0109.cacherelay.proxy.embeddings.dto.EmbeddingRequest;
 import io.github.kxng0109.cacherelay.proxy.embeddings.dto.EmbeddingResponse;
@@ -193,15 +194,8 @@ public class EmbeddingController {
 		ProxySpanAttributes.tagCurrentSpan(tracer, httpServletRequest);
 		BudgetDecision.Denied denied = ex.getDenied();
 		long retryAfter = Math.max(1L, denied.retryAfterSeconds());
-		HttpHeaders denyHeaders = new HttpHeaders();
-		denyHeaders.setContentType(MediaType.APPLICATION_JSON);
-		denyHeaders.set(HttpHeaders.RETRY_AFTER, Long.toString(retryAfter));
-		denyHeaders.set("X-Budget-Remaining", "0");
-		denyHeaders.set("X-Budget-Reset", Long.toString(System.currentTimeMillis() / 1000L + retryAfter));
-		denyHeaders.set("X-Budget-Level", denied.level());
-		denyHeaders.set("X-Budget-Window", denied.window());
-		Map<String, String> error = Map.of(
-				"message", "budget exhausted (" + denied.level() + " " + denied.window() + ")");
+		HttpHeaders denyHeaders = ErrorBodyFactory.denyHeaders(denied, retryAfter);
+		Map<String, String> error = Map.of("message", ErrorBodyFactory.denyMessage(denied));
 		return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).headers(denyHeaders).body(Map.of("error", error));
 	}
 }

@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import io.github.kxng0109.cacherelay.proxy.IdempotencyKeys;
+import io.github.kxng0109.cacherelay.security.ratelimit.TenantIds;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -152,7 +153,7 @@ public class ReplayService {
 	}
 
 	private static String scope(@Nullable String tenant, @Nullable String keyHashHex, String idempotencyKey) {
-		String tenantSegment = tenant == null || tenant.isBlank() ? "unknown" : tenant;
+		String tenantSegment = TenantIds.orUnknown(tenant);
 		String hashSegment = keyHashHex == null || keyHashHex.isBlank() ? "unknown" : keyHashHex;
 		return tenantSegment + ":" + hashSegment + ":" + idempotencyKey;
 	}

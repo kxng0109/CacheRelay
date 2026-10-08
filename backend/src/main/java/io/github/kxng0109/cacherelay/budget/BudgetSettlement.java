@@ -9,6 +9,7 @@ import java.util.Set;
 
 import io.github.kxng0109.cacherelay.contracts.ProviderType;
 import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
+import io.github.kxng0109.cacherelay.security.ratelimit.TenantIds;
 import io.github.kxng0109.cacherelay.security.ratelimit.RateLimitUnavailableException;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -111,7 +112,7 @@ public class BudgetSettlement {
 		if (!properties.enabled() || auth.holdMicros() < 0) {
 			return true;
 		}
-		String team = ownerId == null || ownerId.isBlank() ? "" : ownerId;
+		String team = TenantIds.orEmpty(ownerId);
 		Instant now = Instant.now();
 		try {
 			return enforcer.createHold(holdId, keyHex + "|" + team, auth.holdMicros(), auth.holdMonth(),

@@ -4,6 +4,7 @@ import io.github.kxng0109.cacherelay.admin.dto.CachePurgeResponse;
 import io.github.kxng0109.cacherelay.admin.dto.CacheStatsResponse;
 import io.github.kxng0109.cacherelay.admin.dto.CacheTierStatsResponse;
 import io.github.kxng0109.cacherelay.cache.config.CacheRelayCacheProperties;
+import io.github.kxng0109.cacherelay.cache.contracts.CacheKeys;
 import io.github.kxng0109.cacherelay.cache.engine.CacheRelayCacheService;
 import io.github.kxng0109.cacherelay.cache.engine.CachePurgeNotifier;
 import io.github.kxng0109.cacherelay.cache.engine.l2.RediSearchVectorClient;
@@ -201,8 +202,8 @@ public class AdminCacheController {
 		notifyPurge(ownerId);
 
 		if (ownerId != null && !ownerId.isBlank()) {
-			long deleted = purgeKeysByPattern("cacherelay:cache:exact:" + ownerId + ":*")
-					+ purgeKeysByPattern("cacherelay:cache:doc:" + ownerId + ":*");
+			long deleted = purgeKeysByPattern(CacheKeys.exactTenantPattern(ownerId))
+					+ purgeKeysByPattern(CacheKeys.docTenantPattern(ownerId));
 			log.info("Administrative cache purge executed for tenant '{}': {} keys",
 					safeForLog(ownerId), deleted);
 			return ResponseEntity.ok(new CachePurgeResponse(
@@ -210,8 +211,8 @@ public class AdminCacheController {
 					ownerId, deleted));
 		}
 
-		long deleted = purgeKeysByPattern("cacherelay:cache:exact:*")
-				+ purgeKeysByPattern("cacherelay:cache:doc:*")
+		long deleted = purgeKeysByPattern(CacheKeys.EXACT_PREFIX + "*")
+				+ purgeKeysByPattern(CacheKeys.DOC_PREFIX + "*")
 				+ purgeKeysByPattern(ReplayService.PREFIX + "*")
 				+ purgeKeysByPattern(ReplayService.FILL_PREFIX + "*");
 		try {

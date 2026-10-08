@@ -6,6 +6,7 @@ import com.github.benmanes.caffeine.cache.Expiry;
 import io.github.kxng0109.cacherelay.contracts.ProviderType;
 import io.github.kxng0109.cacherelay.contracts.SHA256Hash;
 import io.github.kxng0109.cacherelay.ledger.CostCalculator;
+import io.github.kxng0109.cacherelay.security.ratelimit.TenantIds;
 import io.github.kxng0109.cacherelay.security.ratelimit.RateLimitUnavailableException;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -256,7 +257,7 @@ public class BudgetEnforcer {
 	 */
 	public static String dedupeClaimId(@Nullable String ownerId, @Nullable String keyHex,
 	                                   @Nullable String bodyHashHex, @Nullable String idempotencyKey) {
-		String tenant = ownerId == null || ownerId.isBlank() ? "" : ownerId;
+		String tenant = TenantIds.orEmpty(ownerId);
 		String subject = keyHex == null ? "" : keyHex;
 		String bodyHash = bodyHashHex == null ? "" : bodyHashHex;
 		String key = idempotencyKey == null ? "" : idempotencyKey;
@@ -423,7 +424,7 @@ public class BudgetEnforcer {
 
 	private DecidedBudget decide(String hex, @Nullable String ownerId, long micros,
 	                             @Nullable String idempotencyKey, @Nullable String bodyHashHex) {
-		String team = ownerId == null || ownerId.isBlank() ? "" : ownerId;
+		String team = TenantIds.orEmpty(ownerId);
 		List<String> keys = List.of(
 				cfgKey("KEY", hex),
 				team.isEmpty() ? "" : cfgKey("TEAM", team),
@@ -580,7 +581,7 @@ public class BudgetEnforcer {
 	public SettleOutcome settle(String holdId, String level, String subject, @Nullable String ownerId,
 	                            String keyHex, String origMonth, String currMonth,
 	                            long actualMicros, long abortDueEpochSec) {
-		String team = ownerId == null || ownerId.isBlank() ? "" : ownerId;
+		String team = TenantIds.orEmpty(ownerId);
 		List<String> keys = List.of(
 				settledKey(holdId),
 				gapKey(level, subject, currMonth),

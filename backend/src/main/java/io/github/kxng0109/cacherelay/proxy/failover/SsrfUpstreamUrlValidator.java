@@ -5,10 +5,7 @@ import io.github.kxng0109.cacherelay.security.SsrfViolationException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.net.InetAddress;
 import java.net.URI;
-import java.net.UnknownHostException;
-import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -41,7 +38,7 @@ public class SsrfUpstreamUrlValidator implements UpstreamUrlValidator {
 	) {
 		this.delegate = delegate;
 		this.allowPrivateHosts = allowPrivateHosts.stream()
-		                                          .map(h -> h.toLowerCase(Locale.ROOT))
+		                                          .map(SsrfValidator::normalizeHost)
 		                                          .collect(Collectors.toUnmodifiableSet());
 	}
 
@@ -51,36 +48,14 @@ public class SsrfUpstreamUrlValidator implements UpstreamUrlValidator {
 	 */
 	@Override
 	public void validate(URI targetUrl) {
-		String host = targetUrl != null ? targetUrl.getHost() : null;
-		if (host != null && allowPrivateHosts.contains(host.toLowerCase(Locale.ROOT))) {
-			validateAllowlisted(targetUrl, host);
+		String rawHost = targetUrl != null ? targetUrl.getHost() : null;
+		String host = rawHost != null ? SsrfValidator.normalizeHost(rawHost) : null;
+		if (host != null && allowPrivateHosts.contains(host)) {
+			// CIDR verdict waived: exact-host dev trust; scheme/userinfo/resolvability still enforced.
+			delegate.validateAllowlistedSchemeAndResolvability(targetUrl);
 			return;
 		}
 		delegate.validate(targetUrl);
-	}
-
-	/**
-	 * Validates an allowlisted host with the full control minus the private-range rule: scheme, userinfo, and
-	 * resolvability are still enforced, so only the private-address verdict is waived for an explicitly trusted name.
-	 */
-	private void validateAllowlisted(URI targetUrl, String host) {
-		String scheme = targetUrl.getScheme();
-		if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
-			throw new SsrfViolationException(
-					"unsupported scheme '" + scheme + "': only http and https are permitted");
-		}
-		if (targetUrl.getUserInfo() != null) {
-			throw new SsrfViolationException(
-					"URL must not embed credentials in userinfo for host '" + host + "'");
-		}
-		try {
-			// getAllByName returns at least one address or throws UnknownHostException;
-			// either way an unresolvable host fails closed below.
-			InetAddress.getAllByName(host);
-		} catch (UnknownHostException e) {
-			throw new SsrfViolationException(
-					"host '" + host + "' could not be resolved; failing closed", e);
-		}
 	}
 
 	/**
@@ -89,6 +64,6 @@ public class SsrfUpstreamUrlValidator implements UpstreamUrlValidator {
 	 */
 	@Override
 	public boolean isPrivateHostAllowed(String host) {
-		return host != null && allowPrivateHosts.contains(host.toLowerCase(Locale.ROOT));
+		return host != null && allowPrivateHosts.contains(SsrfValidator.normalizeHost(host));
 	}
 }

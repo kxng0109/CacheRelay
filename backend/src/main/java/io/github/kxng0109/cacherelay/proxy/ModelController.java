@@ -53,7 +53,7 @@ public class ModelController {
 		VirtualApiKey apiKey = resolveApiKey(request);
 		if (!keyManagementService.isUsable(apiKey)) {
 			return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-					.body(Map.of("error", Map.of("message", "Invalid API key", "code", "KEY_NOT_FOUND")));
+					.body(ErrorBodyFactory.mapMessageFirst("Invalid API key", "KEY_NOT_FOUND"));
 		}
 		long now = Instant.now().getEpochSecond();
 		List<Map<String, Object>> data = gatewayProperties.getAliases().entrySet().stream()

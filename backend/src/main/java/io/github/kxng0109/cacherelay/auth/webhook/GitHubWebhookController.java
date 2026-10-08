@@ -1,6 +1,5 @@
 package io.github.kxng0109.cacherelay.auth.webhook;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.MessageDigest;
@@ -134,11 +133,7 @@ public class GitHubWebhookController {
 	}
 
 	private byte[] rawBody(HttpServletRequest request) {
-		try {
-			return request.getInputStream().readAllBytes();
-		} catch (IOException failed) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "unreadable body");
-		}
+		return WebhookBodies.rawBody(request);
 	}
 
 	private void invalidateFor(JsonNode root) {
