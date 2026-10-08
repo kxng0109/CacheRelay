@@ -4,9 +4,16 @@ import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { server } from '../../test/setup.js'
 import { renderApp, selectOption } from '../../test/utils.js'
-import { EmbeddingsPage } from './page.js'
+import { EmbeddingsPage, embeddingDims } from './page.js'
 
 describe('EmbeddingsPage', () => {
+  it('counts vector dimensions for float and base64 payloads', () => {
+    expect(embeddingDims([0.1, 0.2, 0.3])).toBe(3)
+    expect(embeddingDims('AAAAAAAAAAA=')).toBe(2)
+    expect(embeddingDims('!!!')).toBe(0)
+    expect(embeddingDims(42)).toBe(0)
+    expect(embeddingDims(null)).toBe(0)
+  })
   /**
    * Catalog stub: every submitting test picks the model from the live
    * list, never from a hardcoded default.
@@ -575,5 +582,27 @@ describe('EmbeddingsPage', () => {
     expect(seenAuth).toBe('Bearer test-user-jwt')
     expect(seenActAs).toBe('e'.repeat(64))
     expect(document.body.textContent).not.toContain('gw-')
+  })
+
+  it('names truncated pasted keys before sending', async () => {
+    const user = userEvent.setup()
+    let calls = 0
+    server.use(
+      catalog(),
+      http.post('*/v1/embeddings', () => {
+        calls += 1
+        return HttpResponse.json({
+          data: [{ embedding: [0.1], index: 0 }],
+          model: 'text-embedding-3-small',
+        })
+      }),
+    )
+    renderApp(<EmbeddingsPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-short')
+    await pickModel(user)
+    await user.type(screen.getByLabelText(/input text/i), 'hello')
+    await user.click(screen.getByRole('button', { name: /create embeddings/i }))
+    expect(await screen.findByText(/looks truncated/i)).toBeInTheDocument()
+    expect(calls).toBe(0)
   })
 })

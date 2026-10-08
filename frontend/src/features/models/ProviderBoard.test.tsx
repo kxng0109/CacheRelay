@@ -75,4 +75,32 @@ describe('ProviderBoard', () => {
     })
     expect(section).toHaveTextContent('5s / 60s')
   })
+
+  it('names single-string embedding mode', async () => {
+    server.use(
+      http.get('*/v1/admin/models', () => HttpResponse.json({ models: [] })),
+      http.get('*/v1/admin/providers', () =>
+        HttpResponse.json([
+          {
+            name: 'solo',
+            type: 'OPENAI',
+            baseUrl: 'https://solo.example.com',
+            keyConfigured: true,
+            connectTimeoutSeconds: 5,
+            requestTimeoutSeconds: 60,
+            embeddingSingleAsString: true,
+            circuitState: 'CLOSED',
+            aliasReferences: 0,
+            validationStatus: 'UNVERIFIED',
+          },
+        ]),
+      ),
+    )
+    renderApp(<ModelsPage />, { adminSession: true })
+    const section = await screen.findByRole('region', { name: /^providers$/i })
+    await waitFor(() => {
+      expect(section).toHaveTextContent('solo')
+    })
+    expect(screen.getByTitle('Embeddings sent as single string')).toBeInTheDocument()
+  })
 })

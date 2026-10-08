@@ -136,6 +136,15 @@ describe('NotificationsPage', () => {
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
   })
 
+  it('renders admin unavailable on stealth denials', async () => {
+    const user = userEvent.setup()
+    server.use(http.get('*/v1/admin/notifications', () => new HttpResponse('x', { status: 404 })))
+    renderApp(<NotificationsPage />, { adminSession: true })
+    await user.type(screen.getByLabelText(/alert scope/i), 'budgets')
+    await user.click(screen.getByRole('button', { name: /^list$/i }))
+    expect(await screen.findByText(/admin unavailable/i)).toBeInTheDocument()
+  })
+
   it('names an empty scope honestly', async () => {
     const user = userEvent.setup()
     server.use(http.get('*/v1/admin/notifications', () => HttpResponse.json([])))

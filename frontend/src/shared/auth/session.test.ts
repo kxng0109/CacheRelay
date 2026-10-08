@@ -246,6 +246,35 @@ describe('refreshSession', () => {
       expiresInSeconds: 300,
     })
   })
+
+  it('omits the lifetime for non-positive server values', async () => {
+    server.use(
+      http.post('*/v1/auth/login', () =>
+        HttpResponse.json({ accessToken: 'jwt-1', expiresInSeconds: -1, admin: true }),
+      ),
+    )
+    const session = await login('operator', 'correct horse battery staple')
+    expect(session).not.toHaveProperty('expiresInSeconds')
+  })
+
+  it('keeps a blank username for unreadable identity bodies', async () => {
+    for (const body of [{}, { username: '' }, { username: 42 }]) {
+      server.use(
+        http.post('*/v1/auth/refresh', () =>
+          HttpResponse.json({ accessToken: 'jwt-new', expiresInSeconds: 300, admin: false }),
+        ),
+        http.get('*/v1/auth/me', () => HttpResponse.json(body)),
+      )
+      useAuthStore.getState().clear()
+      expect(await refreshSession()).toMatchObject({ username: '' })
+    }
+  })
+
+  it('clears nothing when the refresh body carries no token', async () => {
+    server.use(http.post('*/v1/auth/refresh', () => HttpResponse.json({ admin: false })))
+    expect(await refreshSession()).toBeNull()
+    expect(useAuthStore.getState().session).toBeNull()
+  })
 })
 
 describe('heartbeatDelayMs', () => {

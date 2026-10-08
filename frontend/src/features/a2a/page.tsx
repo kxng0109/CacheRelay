@@ -36,6 +36,7 @@ export function A2aPage(): React.JSX.Element {
   const [problem, setProblem] = useState<string | null>(null)
   const [invokeBusy, setInvokeBusy] = useState(false)
   const stopRef = useRef<AbortController | null>(null)
+  const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null)
   const userStoppedRef = useRef(false)
 
   const loadCard = (): void => {
@@ -72,6 +73,9 @@ export function A2aPage(): React.JSX.Element {
 
   const stopStream = (): void => {
     userStoppedRef.current = true
+    const reader = readerRef.current
+    readerRef.current = null
+    if (reader) void reader.cancel(new Error('Stopped by user.'))
     stopRef.current?.abort()
   }
 
@@ -108,6 +112,7 @@ export function A2aPage(): React.JSX.Element {
         headers: req.headers,
         body: req.body,
         signal: ctrl.signal,
+        readerSlot: readerRef,
         maxRetries: 2,
         onMessage: (data) => {
           try {

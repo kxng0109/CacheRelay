@@ -209,6 +209,24 @@ describe('LedgerPage', () => {
     expect(seen).toContain('sort=createdAt')
   })
 
+  it('renders admin unavailable on entries stealth denials', async () => {
+    server.use(
+      summary({ totalRequests: 1, totalCostUsdMicros: 12, averageDurationMs: 3 }),
+      http.get('*/v1/admin/ledger/entries', () => new HttpResponse('x', { status: 404 })),
+    )
+    renderApp(<LedgerPage />, { adminSession: true })
+    expect(await screen.findByText(/\/v1\/admin\/ledger\/entries/)).toBeInTheDocument()
+  })
+
+  it('renders admin unavailable on summary stealth denials', async () => {
+    server.use(
+      http.get('*/v1/admin/ledger/summary', () => new HttpResponse('x', { status: 404 })),
+      http.get('*/v1/admin/ledger/entries', () => HttpResponse.json(pageOf(['r1'], false))),
+    )
+    renderApp(<LedgerPage />, { adminSession: true })
+    expect(await screen.findByText(/\/v1\/admin\/ledger\/summary/)).toBeInTheDocument()
+  })
+
   it('jumps to a page number within range', async () => {
     const user = userEvent.setup()
     server.use(

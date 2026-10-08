@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ApiError,
   GatewayClient,
+  createRequestId,
   hitlSuspensionOf,
   isStreamingEnabled,
   isWellFormedGatewayKey,
@@ -13,6 +14,7 @@ import {
   parseVerdictHeader,
   resolveApiBase,
   resolveManagementBase,
+  rpcEnvelopeError,
   safeErrorMessage,
   selectPrimaryDimension,
   setDriftReporter,
@@ -2693,5 +2695,265 @@ describe('orgs and teams', () => {
     await new GatewayClient().createInvite({})
     expect(body).toMatchObject({ teamId: null })
     await expect(new GatewayClient().createInvite({ teamId: 'nope' })).rejects.toThrow(/uuid/i)
+  })
+})
+
+describe('branch coverage', () => {
+  it('nulls non-finite header numbers instead of rendering Infinity', () => {
+    const huge = '9'.repeat(400)
+    const rates = parseRateLimit(
+      new Headers({
+        'X-RateLimit-Limit-RPM': huge,
+        'X-RateLimit-Remaining-RPM': huge,
+        'X-RateLimit-Reset-RPM': huge,
+        'Retry-After': huge,
+      }),
+    )
+    expect(rates).toEqual({
+      dimension: null,
+      limit: null,
+      remaining: null,
+      reset: null,
+      retryAfter: null,
+    })
+    expect(
+      parseBudget(new Headers({ 'X-Budget-Reset': huge, 'X-Budget-Held-Micros': huge })),
+    ).toMatchObject({ reset: null, heldMicros: null })
+  })
+
+  it('nulls blank and oversized budget text fields', () => {
+    expect(parseBudget(new Headers({ 'X-Budget-Level': '' })).level).toBeNull()
+    expect(parseBudget(new Headers({ 'X-Budget-Level': 'x'.repeat(65) })).level).toBeNull()
+    expect(parseBudget(new Headers({ 'X-Budget-Level': 'KEY' })).level).toBe('KEY')
+  })
+
+  it('renders credential denials field by field', () => {
+    const base = {
+      type: 'https://cacherelay.io/errors/credential-leakage-detected',
+      title: 'Secret found',
+      detail: 'Blocked.',
+      instance: '/v1/chat/completions',
+    }
+    expect(safeErrorMessage(422, JSON.stringify({ ...base, rule_id: 'r' }))).toContain('Rule r')
+    expect(safeErrorMessage(422, JSON.stringify({ ...base, json_path: '/p' }))).toContain('at /p')
+    expect(safeErrorMessage(422, JSON.stringify({ ...base, masked_token: 'ab***' }))).toContain(
+      '(token ab***)',
+    )
+    expect(
+      safeErrorMessage(
+        422,
+        JSON.stringify({ ...base, rule_id: 'x'.repeat(65), token_fingerprint: 'deadbeef' }),
+      ),
+    ).not.toContain('deadbeef')
+  })
+
+  it('falls back to generic copy when guardrail bodies carry no title or detail', () => {
+    expect(
+      safeErrorMessage(
+        422,
+        JSON.stringify({ type: 'https://cacherelay.io/errors/credential-leakage-detected' }),
+      ),
+    ).toContain('Unprocessable')
+  })
+
+  it('renders injection denials field by field', () => {
+    const base = {
+      type: 'https://cacherelay.io/errors/prompt-injection-detected',
+      title: 'Injection found',
+      detail: 'Blocked.',
+      instance: '/v1/chat/completions',
+    }
+    expect(safeErrorMessage(422, JSON.stringify({ ...base, category: 'C' }))).toContain(
+      'Category C',
+    )
+    expect(safeErrorMessage(422, JSON.stringify({ ...base, risk_score: 5 }))).not.toContain('risk')
+    expect(safeErrorMessage(422, JSON.stringify({ ...base, risk_score: 'high' }))).not.toContain(
+      'risk',
+    )
+    expect(safeErrorMessage(422, JSON.stringify({ ...base, matched_pattern: 'xyz' }))).toContain(
+      'Matched xyz',
+    )
+    expect(safeErrorMessage(422, JSON.stringify({ ...base }))).toBe('Injection found: Blocked.')
+  })
+
+  it('renders title-only and detail-only guardrail denials', () => {
+    const onlyTitle = {
+      type: 'https://cacherelay.io/errors/prompt-injection-detected',
+      title: 'Only title',
+      category: 'C',
+    }
+    expect(safeErrorMessage(422, JSON.stringify(onlyTitle))).toContain('Only title')
+    expect(safeErrorMessage(422, JSON.stringify(onlyTitle))).toContain('Category C')
+    const onlyDetail = {
+      type: 'https://cacherelay.io/errors/prompt-injection-detected',
+      detail: 'Only detail',
+    }
+    expect(safeErrorMessage(422, JSON.stringify(onlyDetail))).toBe('Only detail')
+  })
+
+  it('mints request ids without crypto randomness', () => {
+    const original = globalThis.crypto
+    Object.defineProperty(globalThis, 'crypto', { value: {}, configurable: true })
+    try {
+      expect(createRequestId().length).toBeGreaterThan(0)
+    } finally {
+      Object.defineProperty(globalThis, 'crypto', { value: original, configurable: true })
+    }
+    expect(createRequestId().length).toBeGreaterThan(0)
+  })
+
+  it('maps self-service 404s without an oracle and rethrows the rest', async () => {
+    const hash = 'a'.repeat(64)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('x', { status: 404 }))),
+    )
+    await expect(new GatewayClient().setDefaultKey(hash)).rejects.toThrow(/key not found/i)
+    await expect(new GatewayClient().revokeOwnKey(hash)).rejects.toThrow(/key not found/i)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('x', { status: 500 }))),
+    )
+    await expect(new GatewayClient().setDefaultKey(hash)).rejects.toThrow(/HTTP 500/)
+    await expect(new GatewayClient().revokeOwnKey(hash)).rejects.toThrow(/HTTP 500/)
+  })
+
+  it('normalizes alias sources case-insensitively and passes the rest through', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              models: [
+                { name: 'a', chain: [], strategy: 'SEQUENTIAL', source: 'FILE' },
+                { name: 'b', chain: [], strategy: 'SEQUENTIAL', source: 'weird' },
+                { name: 'c', chain: [], strategy: 'SEQUENTIAL', source: 42 },
+              ],
+            }),
+            { status: 200 },
+          ),
+        ),
+      ),
+    )
+    const out = await new GatewayClient({ base: '', token: 'gw-test' }).listModelAliases()
+    expect(out.models.map((m) => m.source)).toEqual(['file', 'weird', 42])
+  })
+
+  it('acks catalog 202s with and without a headers listener', async () => {
+    let seen: Headers | null = null
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response(null, { status: 202 }))),
+    )
+    await expect(new GatewayClient({ base: '', token: 'gw-test' }).mcpTools()).resolves.toEqual({
+      tools: [],
+    })
+    await expect(
+      new GatewayClient({ base: '', token: 'gw-test' }).mcpTools({
+        onHeaders: (h) => {
+          seen = h
+        },
+      }),
+    ).resolves.toEqual({ tools: [] })
+    expect(seen).not.toBeNull()
+  })
+
+  it('names catalog 404 envelopes and keeps plain 404s as ApiError', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ jsonrpc: '2.0', id: 'x', error: { code: -32601, message: 'gone' } }),
+            { status: 404 },
+          ),
+        ),
+      ),
+    )
+    await expect(new GatewayClient({ base: '', token: 'gw-test' }).mcpTools()).rejects.toThrow(
+      /method not found/i,
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('gone', { status: 404 }))),
+    )
+    const err = await new GatewayClient({ base: '', token: 'gw-test' })
+      .mcpTools()
+      .catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(404)
+  })
+
+  it('defaults missing RPC error codes on both MCP methods', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ jsonrpc: '2.0', id: 'x', error: { message: 'boom' } }), {
+            status: 200,
+          }),
+        ),
+      ),
+    )
+    await expect(new GatewayClient({ base: '', token: 'gw-test' }).mcpTools()).rejects.toThrow(
+      /tool failed/i,
+    )
+    await expect(
+      new GatewayClient({ base: '', token: 'gw-test' }).mcpCall('a__b', {}),
+    ).rejects.toThrow(/tool failed/i)
+  })
+
+  it('keeps plain call 404s as ApiError', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('gone', { status: 404 }))),
+    )
+    const err = await new GatewayClient({ base: '', token: 'gw-test' })
+      .mcpCall('a__b', {})
+      .catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+  })
+
+  it('reads RPC envelope errors without throwing', () => {
+    expect(rpcEnvelopeError('')).toBeNull()
+    expect(rpcEnvelopeError('42')).toBeNull()
+    expect(rpcEnvelopeError('{"result":1}')).toBeNull()
+    expect(rpcEnvelopeError('{"error":{}}')).toEqual({ code: -32603, message: null })
+    expect(rpcEnvelopeError('{"error":{"code":"x","message":42}}')).toEqual({
+      code: -32603,
+      message: null,
+    })
+    expect(rpcEnvelopeError('{"error":{"code":-32601,"message":"gone"}}')).toEqual({
+      code: -32601,
+      message: 'gone',
+    })
+  })
+
+  it('detects suspension shapes field by field', () => {
+    expect(
+      hitlSuspensionOf({ resultType: 'input_required', requestState: 't' })?.tokenId,
+    ).toBeNull()
+    expect(
+      hitlSuspensionOf({
+        resultType: 'input_required',
+        requestState: 't',
+        inputRequests: { human_approval: { params: { url: 42 } } },
+      })?.approvalUrl,
+    ).toBeNull()
+    expect(
+      hitlSuspensionOf({
+        resultType: 'input_required',
+        requestState: 't',
+        inputRequests: { human_approval: { params: { url: '/a', message: '' } } },
+      })?.message,
+    ).toContain('administrator approval')
+    expect(
+      hitlSuspensionOf({
+        resultType: 'input_required',
+        requestState: 't',
+        inputRequests: { human_approval: { params: { url: '/a/nohex' } } },
+      })?.tokenId,
+    ).toBeNull()
   })
 })

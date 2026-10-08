@@ -108,6 +108,16 @@ describe('CircuitsPage', () => {
     expect(await screen.findByText(/admin unavailable/i)).toBeInTheDocument()
   })
 
+  it('renders admin unavailable on MCP stealth denials', async () => {
+    server.use(
+      http.get('*/v1/admin/circuits', () => HttpResponse.json(STATE)),
+      http.get('*/v1/admin/mcp/circuits', () => new HttpResponse('x', { status: 404 })),
+      providers(['openai']),
+    )
+    renderBoard()
+    expect(await screen.findByText(/admin unavailable/i)).toBeInTheDocument()
+  })
+
   it('renders inherited state names as unknown instead of mislabeling', async () => {
     server.use(
       http.get('*/v1/admin/circuits', () =>

@@ -305,6 +305,83 @@ describe('KeysPage', () => {
     })
   })
 
+  it('names empty transfer targets before sending', async () => {
+    const user = userEvent.setup()
+    let patches = 0
+    server.use(
+      http.get('*/v1/admin/keys', () => HttpResponse.json(KEYS)),
+      http.patch('*/v1/admin/keys/:id', () => {
+        patches += 1
+        return HttpResponse.json(KEYS[0])
+      }),
+    )
+    renderApp(<KeysPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByRole('button', { name: /inspect key ci-key/i }))
+    const inspector = await screen.findByRole('dialog', { name: /key inspector/i })
+    await user.click(within(inspector).getByRole('button', { name: /^transfer$/i }))
+    expect(await screen.findByText(/receiving account uuid/i)).toBeInTheDocument()
+    expect(patches).toBe(0)
+  })
+
+  it('sorts undated keys last without crashing', async () => {
+    server.use(
+      http.get('*/v1/admin/keys', () =>
+        HttpResponse.json([
+          { ...KEYS[0], keyId: 'k-nodate', name: 'nodate-key', createdAt: 'not-a-date' },
+          { ...KEYS[0], keyId: 'k-dated', name: 'dated-key', createdAt: '2026-09-01T00:00:00Z' },
+        ]),
+      ),
+    )
+    renderApp(<KeysPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await waitFor(() => {
+      expect(table.textContent).toContain('dated-key')
+    })
+    const text = table.textContent
+    expect(text.indexOf('dated-key')).toBeLessThan(text.indexOf('nodate-key'))
+  })
+
+  it('renders tool and agent policy pairs in the inspector', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/keys', () =>
+        HttpResponse.json([
+          {
+            ...KEYS[0],
+            allowedTools: ['pg__q'],
+            deniedTools: [],
+            allowedAgents: [],
+            deniedAgents: ['x__rm'],
+            injectionBlock: false,
+            allowedCacheScopes: ['TENANT'],
+          },
+        ]),
+      ),
+    )
+    renderApp(<KeysPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByRole('button', { name: /inspect key ci-key/i }))
+    const inspector = await screen.findByRole('dialog', { name: /key inspector/i })
+    expect(within(inspector).getByText(/pg__q \/ deny: none/i)).toBeInTheDocument()
+    expect(within(inspector).getByText(/all \/ deny: x__rm/i)).toBeInTheDocument()
+    expect(within(inspector).getByText('warn only')).toBeInTheDocument()
+    expect(within(inspector).getByText('TENANT')).toBeInTheDocument()
+  })
+
+  it('renders blocking injection and default scopes in the inspector', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/keys', () => HttpResponse.json([{ ...KEYS[0], injectionBlock: true }])),
+    )
+    renderApp(<KeysPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByRole('button', { name: /inspect key ci-key/i }))
+    const inspector = await screen.findByRole('dialog', { name: /key inspector/i })
+    expect(within(inspector).getByText('block')).toBeInTheDocument()
+    expect(within(inspector).getByText(/TENANT-only/i)).toBeInTheDocument()
+  })
+
   it('validates the form before submitting', async () => {
     const user = userEvent.setup()
     server.use(http.get('*/v1/admin/keys', () => HttpResponse.json([])))

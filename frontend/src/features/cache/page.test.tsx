@@ -300,6 +300,17 @@ describe('CachePage', () => {
     expect(screen.getByText(/tiers may lag|may lag/i)).toBeInTheDocument()
   })
 
+  it('renders admin unavailable on cache stealth denials', async () => {
+    server.use(
+      http.get('*/v1/admin/cache/stats', () => new HttpResponse('x', { status: 404 })),
+      http.get('*/v1/admin/cache/tiers', () => new HttpResponse('x', { status: 404 })),
+      http.get('*/v1/admin/budgets', () => new HttpResponse('x', { status: 404 })),
+    )
+    renderApp(<CachePage />, { adminSession: true })
+    const faces = await screen.findAllByText(/admin unavailable/i)
+    expect(faces.length).toBeGreaterThanOrEqual(3)
+  })
+
   it('reports tier probe failures honestly', async () => {
     server.use(
       http.get('*/v1/admin/cache/stats', () => HttpResponse.json(STATS)),
@@ -346,6 +357,39 @@ describe('CachePage', () => {
     await user.click(screen.getByRole('button', { name: /^delete budget$/i }))
     await user.click(screen.getByRole('button', { name: /^yes, delete$/i }))
     expect(await screen.findByText(/not found/i)).toBeInTheDocument()
+  })
+
+  it('reports non-conflict save failures without a reload loop', async () => {
+    const user = userEvent.setup()
+    const budget = {
+      id: 'b1',
+      level: 'KEY',
+      subjectId: 'abc',
+      minuteMicros: 1000,
+      monthMicros: 10000,
+      webhookUrl: null,
+      createdAt: '2026-09-01T12:00:00Z',
+      updatedAt: '2026-09-01T12:00:00Z',
+    }
+    server.use(
+      http.get('*/v1/admin/cache/stats', () => HttpResponse.json(STATS)),
+      http.get('*/v1/admin/budgets', () => HttpResponse.json([budget])),
+      http.get('*/v1/admin/budgets/KEY/abc/balance', () =>
+        HttpResponse.json({
+          level: 'KEY',
+          subject: 'abc',
+          minuteLimitMicros: 1000,
+          minuteSpentMicros: 100,
+          monthLimitMicros: 10000,
+          monthSpentMicros: 500,
+        }),
+      ),
+      http.put('*/v1/admin/budgets/:id', () => new HttpResponse('x', { status: 500 })),
+    )
+    renderApp(<CachePage />, { adminSession: true })
+    await user.click(await screen.findByRole('button', { name: /inspect budget abc/i }))
+    await user.click(screen.getByRole('button', { name: /save caps/i }))
+    expect(await screen.findByText(/request failed \(http 500\)/i)).toBeInTheDocument()
   })
 
   it('sends the webhook on save and reloads latest caps on 409', async () => {

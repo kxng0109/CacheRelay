@@ -77,4 +77,36 @@ describe('AccountPage', () => {
       expect(screen.getByText(/no owned keys/i)).toBeInTheDocument()
     })
   })
+
+  it('renders admin unavailable on stealth denials', async () => {
+    server.use(http.get('*/v1/me/keys', () => new HttpResponse('x', { status: 404 })))
+    renderApp(<AccountPage />, { nonAdminSession: true })
+    expect(await screen.findByText(/admin unavailable/i)).toBeInTheDocument()
+  })
+
+  it('names models and disabled states on owned rows', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/me/keys', () =>
+        HttpResponse.json([
+          {
+            keyId: 'b'.repeat(64),
+            name: 'quiet',
+            allowedModels: ['gpt-4o-mini'],
+            enabled: false,
+          },
+        ]),
+      ),
+      http.put('*/v1/me/keys/default', () => new HttpResponse(null, { status: 204 })),
+      http.post('*/v1/me/keys/:id/revoke', () => new HttpResponse(null, { status: 204 })),
+    )
+    renderApp(<AccountPage />, { nonAdminSession: true })
+    const table = await screen.findByRole('table')
+    expect(table).toHaveTextContent('gpt-4o-mini')
+    expect(table).toHaveTextContent('disabled')
+    await user.click(within(table).getByRole('button', { name: /use quiet as default/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/default key updated/i)).toBeInTheDocument()
+    })
+  })
 })

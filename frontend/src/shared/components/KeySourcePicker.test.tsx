@@ -1,10 +1,11 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { server } from '../../test/setup.js'
 import { renderApp, selectOption } from '../../test/utils.js'
+import { useAuthStore } from '../auth/store.js'
 import { KeySourcePicker, type KeySource } from './KeySourcePicker.js'
 
 function Harness() {
@@ -123,5 +124,18 @@ describe('KeySourcePicker', () => {
     renderApp(<Harness />, { nonAdminSession: true })
     fireEvent.change(screen.getByLabelText(/paste a key/i), { target: { value: 'x' } })
     expect(screen.getByText(/key source/i)).toBeInTheDocument()
+  })
+
+  it('hides the picker after logout even with a stale error', async () => {
+    server.use(http.get('*/v1/me/keys', () => new HttpResponse('x', { status: 500 })))
+    renderApp(<Harness />, { nonAdminSession: true })
+    await screen.findByRole('alert')
+    act(() => {
+      useAuthStore.getState().clear()
+    })
+    await waitFor(() => {
+      expect(screen.queryByText(/key source/i)).not.toBeInTheDocument()
+    })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })

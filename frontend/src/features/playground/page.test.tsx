@@ -249,6 +249,48 @@ describe('PlaygroundPage', () => {
     expect(body).toMatchObject({ temperature: 0.7, seed: 42 })
   })
 
+  it('sends top_p with static completions when set', async () => {
+    vi.stubEnv('VITE_FEATURE_STREAMING', 'false')
+    const user = userEvent.setup()
+    let body: unknown = null
+    server.use(
+      catalog(),
+      http.post('*/v1/chat/completions', async ({ request }) => {
+        body = await request.json()
+        return HttpResponse.json({
+          choices: [{ message: { role: 'assistant', content: 'static hi' } }],
+          model: 'gpt-4o-mini',
+        })
+      }),
+    )
+    renderApp(<PlaygroundPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-tttttttttttttttttttttttttttttttt')
+    await pickModel(user)
+    await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
+    await user.type(screen.getByLabelText(/top p/i), '0.9')
+    await user.click(screen.getByRole('button', { name: /send completion/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('log')).toHaveTextContent('static hi')
+    })
+    expect(body).toMatchObject({ top_p: 0.9 })
+  })
+
+  it('requires an owned key before account-mode runs', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/me/keys', () => HttpResponse.json([])),
+      catalog(),
+    )
+    renderApp(<PlaygroundPage />, { nonAdminSession: true })
+    await user.click(screen.getByLabelText(/paste a key/i))
+    await user.type(screen.getByLabelText(/api key/i), 'gw-tttttttttttttttttttttttttttttttt')
+    await pickModel(user)
+    await user.type(screen.getByLabelText(/prompt/i, { selector: 'textarea' }), 'Say hello')
+    await user.click(screen.getByLabelText(/account key/i))
+    await user.click(screen.getByRole('button', { name: /stream completion/i }))
+    expect(await screen.findByText(/select an owned key first/i)).toBeInTheDocument()
+  })
+
   it('reports non-streaming failures as alerts', async () => {
     vi.stubEnv('VITE_FEATURE_STREAMING', 'false')
     const user = userEvent.setup()

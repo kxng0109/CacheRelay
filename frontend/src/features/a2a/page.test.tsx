@@ -167,4 +167,70 @@ describe('A2aPage', () => {
     await user.click(screen.getByRole('button', { name: /send message/i }))
     expect(await screen.findByText(/retry after 7s/i)).toBeInTheDocument()
   })
+
+  it('names handshake failures with the server wait on streams', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/a2a/:agent/card', () => HttpResponse.json(CARD)),
+      http.post(
+        '*/v1/a2a/:agent',
+        () => new HttpResponse('x', { status: 429, headers: { 'Retry-After': '7' } }),
+      ),
+    )
+    renderApp(<A2aPage />, { gatewayKey: 'gw-test' })
+    await user.type(screen.getByLabelText(/agent/i), 'helper')
+    await user.click(screen.getByRole('button', { name: /load card/i }))
+    await screen.findByText('Helper')
+    await selectOption(user, /method/i, 'message/stream')
+    await user.click(screen.getByRole('button', { name: /send message/i }))
+    await waitFor(
+      () => {
+        expect(screen.getByText(/retry after 7s/i)).toBeInTheDocument()
+      },
+      { timeout: 20000 },
+    )
+  }, 25000)
+
+  it('stops a live stream without an error', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/a2a/:agent/card', () => HttpResponse.json(CARD)),
+      http.post('*/v1/a2a/:agent', () => {
+        const stream = new ReadableStream<Uint8Array>({})
+        return new HttpResponse(stream, { headers: { 'content-type': 'text/event-stream' } })
+      }),
+    )
+    renderApp(<A2aPage />, { gatewayKey: 'gw-test' })
+    await user.type(screen.getByLabelText(/agent/i), 'helper')
+    await user.click(screen.getByRole('button', { name: /load card/i }))
+    await screen.findByText('Helper')
+    await selectOption(user, /method/i, 'message/stream')
+    await user.click(screen.getByRole('button', { name: /send message/i }))
+    await screen.findByRole('button', { name: /^stop$/i })
+    await user.click(screen.getByRole('button', { name: /^stop$/i }))
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /^stop$/i })).not.toBeInTheDocument()
+    })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('sends the version pin on unary invokes', async () => {
+    const user = userEvent.setup()
+    let version: string | null = null
+    server.use(
+      http.get('*/v1/a2a/:agent/card', () => HttpResponse.json(CARD)),
+      http.post('*/v1/a2a/:agent', ({ request }) => {
+        version = request.headers.get('A2A-Version')
+        return HttpResponse.json({ jsonrpc: '2.0', id: 'a2a-1', result: { reply: 'hi' } })
+      }),
+    )
+    renderApp(<A2aPage />, { gatewayKey: 'gw-test' })
+    await user.type(screen.getByLabelText(/agent/i), 'helper')
+    await user.click(screen.getByRole('button', { name: /load card/i }))
+    await screen.findByText('Helper')
+    await user.type(screen.getByLabelText(/version pin/i), '0.3')
+    await user.click(screen.getByRole('button', { name: /send message/i }))
+    expect(await screen.findByText(/"reply"/)).toBeInTheDocument()
+    expect(version).toBe('0.3')
+  })
 })

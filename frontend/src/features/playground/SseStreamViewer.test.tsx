@@ -371,6 +371,43 @@ describe('SseStreamViewer', () => {
     expect(screen.getByRole('log').textContent.length).toBeLessThan(2_097_152 + 1000)
   })
 
+  it('reports truncation in the run summary', async () => {
+    const big = 'y'.repeat(200_000)
+    const frames =
+      Array.from({ length: 12 }, () => `data: {"choices":[{"delta":{"content":"${big}"}}]}`).join(
+        '\n\n',
+      ) + '\n\n'
+    server.use(
+      http.post('*/v1/chat/completions', () => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            ctrl.enqueue(new TextEncoder().encode(frames))
+            ctrl.close()
+          },
+        })
+        return new HttpResponse(stream, { headers: { 'content-type': 'text/event-stream' } })
+      }),
+    )
+    let summary: unknown = null
+    renderApp(
+      <SseStreamViewer
+        token="gw-test"
+        model="m"
+        messages={MESSAGES}
+        onSummary={(s) => {
+          summary = s
+        }}
+      />,
+    )
+    await waitFor(() => {
+      expect(screen.getByText(/output truncated/i)).toBeInTheDocument()
+    })
+    await waitFor(() => {
+      expect(summary).toMatchObject({ phase: 'done' })
+    })
+    expect(JSON.stringify(summary)).toContain('truncated')
+  })
+
   it('surfaces handshake failures as alerts', async () => {
     server.use(http.post('*/v1/chat/completions', () => new HttpResponse('x', { status: 503 })))
     renderApp(

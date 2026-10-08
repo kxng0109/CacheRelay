@@ -229,15 +229,14 @@ export function heartbeatDelayMs(expiresInSeconds: number | null | undefined): n
  * @remarks Each tick reschedules from the live session lifetime (10
  * minute standard, 5 minute admin): refresh lands about a minute
  * before expiry without a user-visible blip. Skips ticks with no
- * session. The caller owns cleanup (Layout effect).
+ * session. The caller owns cleanup (Layout effect): clearing the
+ * pending timeout stops renewal, so no stopped flag is needed.
  *
  * @returns Stop function clearing the pending tick.
  */
 export function startSessionHeartbeat(): () => void {
   let timer: ReturnType<typeof setTimeout> | undefined
-  let stopped = false
   const tick = (): void => {
-    if (stopped) return
     const lifetime = useAuthStore.getState().session?.expiresInSeconds
     timer = setTimeout(() => {
       if (useAuthStore.getState().session !== null) void refreshSession()
@@ -246,7 +245,6 @@ export function startSessionHeartbeat(): () => void {
   }
   tick()
   return () => {
-    stopped = true
     clearTimeout(timer)
   }
 }

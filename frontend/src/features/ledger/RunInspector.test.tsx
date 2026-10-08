@@ -173,6 +173,19 @@ describe('RunInspector', () => {
     })
   })
 
+  it('wraps stepping to the first row when the selection is gone', async () => {
+    const user = userEvent.setup()
+    server.use(summary(), entries(), receipt())
+    renderApp(<LedgerPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByRole('button', { name: /inspect receipt r9/i }))
+    await screen.findByRole('dialog')
+    await user.type(screen.getByLabelText(/filter audit log/i), 'zzz-no-match')
+    await waitFor(() => {
+      expect(screen.getByText(/left the visible page/i)).toBeInTheDocument()
+    })
+  })
+
   it('walks rows with prev and next', async () => {
     const user = userEvent.setup()
     server.use(summary(), entries(), receipt())

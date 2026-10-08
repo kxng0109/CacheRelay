@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Toasts } from '../../shared/components/Toasts.js'
+import { useAuthStore } from '../../shared/auth/store.js'
 import { useToastStore } from '../../shared/toast/store.js'
 import { server } from '../../test/setup.js'
 import { renderApp } from '../../test/utils.js'
@@ -128,6 +129,27 @@ describe('ApprovalsPage', () => {
       expect(screen.getByText(/client may resume execution/i)).toBeInTheDocument()
     })
     expect(body).toMatchObject({ reason: 'Looks safe', decidedBy: 'test-admin' })
+  })
+
+  it('omits decidedBy for anonymous sessions', async () => {
+    const user = userEvent.setup()
+    let body: unknown = null
+    server.use(
+      http.get('*/v1/admin/mcp/approvals/pending', () => HttpResponse.json(PENDING)),
+      http.post('*/v1/admin/mcp/approvals/:id/approve', async ({ request }) => {
+        body = await request.json()
+        return approvedReceipt()
+      }),
+    )
+    renderBoard()
+    useAuthStore.getState().setSession({ accessToken: 'jwt-x', admin: true, username: '' })
+    await screen.findByRole('button', { name: /^approve$/i })
+    await user.click(await screen.findByRole('button', { name: /^approve$/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/client may resume execution/i)).toBeInTheDocument()
+    })
+    expect(body).not.toMatchObject({ decidedBy: 'test-admin' })
+    expect(JSON.stringify(body)).not.toContain('decidedBy')
   })
 
   it('inspects decrypted args before deciding', async () => {

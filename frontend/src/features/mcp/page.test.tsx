@@ -118,6 +118,38 @@ describe('McpPage', () => {
     expect(screen.getByText(/9f8e7d6c5b4a32109f8e7d6c5b4a3210/)).toBeInTheDocument()
   })
 
+  it('parks suspensions without a token id quietly', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.post('*/v1/mcp', async ({ request }) => {
+        const body = (await request.json()) as { method?: string }
+        if (body.method === 'tools/call') {
+          return HttpResponse.json({
+            jsonrpc: '2.0',
+            id: 'call-1',
+            result: {
+              resultType: 'input_required',
+              requestState: 'opaque-token',
+              inputRequests: {
+                human_approval: {
+                  method: 'elicitation/create',
+                  params: { mode: 'url', url: '/v1/admin/mcp/approvals/pending' },
+                },
+              },
+            },
+          })
+        }
+        return HttpResponse.json(toolsList())
+      }),
+    )
+    renderApp(<McpPage />, { gatewayKey: 'gw-test' })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByRole('button', { name: /inspect tool postgres/i }))
+    await user.click(screen.getByRole('button', { name: /invoke tool/i }))
+    expect(await screen.findByText(/approval pending/i)).toBeInTheDocument()
+    expect(screen.queryByText(/approval token/i)).not.toBeInTheDocument()
+  })
+
   it('maps tool error codes to contract faults', async () => {
     const user = userEvent.setup()
     server.use(

@@ -7,6 +7,7 @@ import {
   isRetryableHandshakeStatus,
   openSseStream,
   parseSseFrame,
+  sseErrorMessage,
 } from './client.js'
 
 afterEach(() => {
@@ -637,6 +638,31 @@ describe('openSseStream', () => {
     expect(message).toContain('Guardrail evaluation failed')
   })
 
+  it('falls back to onError for late failures without an incomplete handler', async () => {
+    const body =
+      'data: {"choices":[{"delta":{"content":"hi"}}]}\n\nevent: error\ndata: {"code":"UPSTREAM_FAULT","message":"Upstream terminated"}\n\n'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => sseResponse(body)),
+    )
+    let fatal: Error | null = null
+    const seen: string[] = []
+    await openSseStream({
+      url: 'http://x/stream',
+      headers: {},
+      signal: new AbortController().signal,
+      maxRetries: 0,
+      onMessage: (d) => {
+        seen.push(d)
+      },
+      onError: (e) => {
+        fatal = e
+      },
+    })
+    expect(seen).toHaveLength(1)
+    expect(fatal).not.toBeNull()
+  })
+
   it('surfaces vendor screening refusals on handshake with attribution', async () => {
     const body = JSON.stringify({
       type: 'https://cacherelay.io/errors/vendor-screening-rejection',
@@ -941,5 +967,14 @@ describe('asError', () => {
   it('wraps non-error reasons into errors', () => {
     expect(asError('string-throw')).toEqual(new Error('string-throw'))
     expect(asError(null)).toEqual(new Error('null'))
+  })
+})
+
+describe('sseErrorMessage', () => {
+  it('reads direct, nested, and generic error payloads', () => {
+    expect(sseErrorMessage(JSON.stringify({ message: 'direct' }))).toBe('direct')
+    expect(sseErrorMessage(JSON.stringify({ error: { message: 'nested' } }))).toBe('nested')
+    expect(sseErrorMessage('not json')).toContain('guardrail')
+    expect(sseErrorMessage(JSON.stringify({ a: 1 }))).toContain('guardrail')
   })
 })
