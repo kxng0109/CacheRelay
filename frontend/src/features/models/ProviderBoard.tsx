@@ -103,40 +103,45 @@ export function ProviderBoard(): React.JSX.Element {
               </tr>
             </thead>
             <tbody>
-              {providers.data.providers.map((p) => {
-                const badge = validationBadge(p.validationStatus)
-                return (
-                  <tr key={p.name} className="border-t border-ink/10 dark:border-parchment/10">
-                    <td className="py-2 pr-3 font-mono text-[13px]" title={p.baseUrl ?? undefined}>
-                      {p.name}
-                    </td>
-                    <td
-                      className="py-2 pr-3 font-mono text-[13px]"
-                      title={
-                        p.embeddingSingleAsString ? 'Embeddings sent as single string' : undefined
-                      }
-                    >
-                      {p.type}
-                    </td>
-                    <td className="py-2 pr-3">
-                      <span className={`rounded px-2 py-1 text-[13px] tnum ${badge.classes}`}>
-                        {badge.label}
-                      </span>
-                    </td>
-                    <td className="py-2 pr-3 text-[13px] text-ink-soft dark:text-parchment-soft">
-                      {p.keyConfigured ? 'set' : 'unset'}
-                    </td>
-                    <td className="py-2 pr-3 font-mono text-[13px]">{p.circuitState}</td>
-                    <td
-                      className="py-2 pr-3 font-mono text-[13px] tnum"
-                      title={`connect ${String(p.connectTimeoutSeconds)}s, request ${String(p.requestTimeoutSeconds)}s`}
-                    >
-                      {p.connectTimeoutSeconds}s / {p.requestTimeoutSeconds}s
-                    </td>
-                    <td className="py-2 text-right text-[13px] tnum">{p.aliasReferences}</td>
-                  </tr>
-                )
-              })}
+              {[...providers.data.providers]
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map((p) => {
+                  const badge = validationBadge(p.validationStatus)
+                  return (
+                    <tr key={p.name} className="border-t border-ink/10 dark:border-parchment/10">
+                      <td
+                        className="py-2 pr-3 font-mono text-[13px]"
+                        title={p.baseUrl ?? undefined}
+                      >
+                        {p.name}
+                      </td>
+                      <td
+                        className="py-2 pr-3 font-mono text-[13px]"
+                        title={
+                          p.embeddingSingleAsString ? 'Embeddings sent as single string' : undefined
+                        }
+                      >
+                        {p.type}
+                      </td>
+                      <td className="py-2 pr-3">
+                        <span className={`rounded px-2 py-1 text-[13px] tnum ${badge.classes}`}>
+                          {badge.label}
+                        </span>
+                      </td>
+                      <td className="py-2 pr-3 text-[13px] text-ink-soft dark:text-parchment-soft">
+                        {p.keyConfigured ? 'set' : 'unset'}
+                      </td>
+                      <td className="py-2 pr-3 font-mono text-[13px]">{p.circuitState}</td>
+                      <td
+                        className="py-2 pr-3 font-mono text-[13px] tnum"
+                        title={`connect ${String(p.connectTimeoutSeconds)}s, request ${String(p.requestTimeoutSeconds)}s`}
+                      >
+                        {p.connectTimeoutSeconds}s / {p.requestTimeoutSeconds}s
+                      </td>
+                      <td className="py-2 text-right text-[13px] tnum">{p.aliasReferences}</td>
+                    </tr>
+                  )
+                })}
             </tbody>
           </table>
         </TableScroll>

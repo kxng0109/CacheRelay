@@ -348,8 +348,8 @@ describe('Layout', () => {
       http.get('*/v1/admin/mcp/approvals/pending', () =>
         HttpResponse.json({
           approvals: [
-            row('9f8e7d6c5b4a32109f8e7d6c5b4a32109'),
-            row('8f8e7d6c5b4a32109f8e7d6c5b4a32108'),
+            row('9f8e7d6c5b4a32109f8e7d6c5b4a3210'),
+            row('8f8e7d6c5b4a32108f8e7d6c5b4a3210'),
           ],
         }),
       ),
@@ -365,7 +365,7 @@ describe('Layout', () => {
       http.get('*/v1/admin/mcp/approvals/pending', () =>
         HttpResponse.json([
           {
-            tokenId: '9f8e7d6c5b4a32109f8e7d6c5b4a32109',
+            tokenId: '9f8e7d6c5b4a32109f8e7d6c5b4a3210',
             toolName: 't',
             serverName: 's',
             ownerId: 'o',

@@ -311,7 +311,7 @@ describe('SseStreamViewer', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/copy failed/i)
   })
 
-  it('appends non-chat payloads literally', async () => {
+  it('keeps unknown payloads but drops protocol shapes from the transcript', async () => {
     server.use(
       http.post('*/v1/chat/completions', () => {
         const stream = new ReadableStream<Uint8Array>({
@@ -321,6 +321,9 @@ describe('SseStreamViewer', () => {
               'data: {"foo":1}',
               'data: {"choices":[]}',
               'data: {"choices":[{}]}',
+              'data: {"choices":[{"delta":{"reasoning_content":"think"}}]}',
+              'data: {"choices":[{"delta":{"tool_calls":[{"index":0}]}}]}',
+              'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
               'data: {"choices":[{"message":{"content":"M"}}]}',
               'data: [DONE]',
             ].join('\n\n')
@@ -338,6 +341,9 @@ describe('SseStreamViewer', () => {
     const log = screen.getByRole('log')
     expect(log).toHaveTextContent('42')
     expect(log).toHaveTextContent('M')
+    expect(log).not.toHaveTextContent('reasoning_content')
+    expect(log).not.toHaveTextContent('tool_calls')
+    expect(log).not.toHaveTextContent('finish_reason')
   })
 
   it('truncates runaway transcripts with a visible stop notice', async () => {

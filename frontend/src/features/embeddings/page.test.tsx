@@ -56,7 +56,7 @@ describe('EmbeddingsPage', () => {
       }),
     )
     renderApp(<EmbeddingsPage />)
-    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/api key/i), 'gw-tttttttttttttttttttttttttttttttt')
     await pickModel(user)
     await user.type(screen.getByLabelText(/input text/i), 'hello world')
     await user.click(screen.getByRole('button', { name: /create embeddings/i }))
@@ -92,7 +92,7 @@ describe('EmbeddingsPage', () => {
     const user = userEvent.setup()
     server.use(catalog())
     renderApp(<EmbeddingsPage />)
-    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/api key/i), 'gw-tttttttttttttttttttttttttttttttt')
     await pickModel(user)
     await user.type(screen.getByLabelText(/input text/i), 'hello world')
     await user.clear(screen.getByLabelText(/api key/i))
@@ -112,13 +112,36 @@ describe('EmbeddingsPage', () => {
       ),
     )
     renderApp(<EmbeddingsPage />)
-    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/api key/i), 'gw-tttttttttttttttttttttttttttttttt')
     await pickModel(user)
     await user.type(screen.getByLabelText(/input text/i), 'hello world')
     await user.click(screen.getByRole('button', { name: /create embeddings/i }))
     const table = await screen.findByRole('table')
     expect(table).toHaveTextContent('text-embedding-3-small')
     expect(table).toHaveTextContent('● ok')
+  })
+
+  it('decodes base64 vectors and shows the effective model', async () => {
+    const user = userEvent.setup()
+    server.use(
+      catalog(),
+      http.post('*/v1/embeddings', () =>
+        HttpResponse.json({
+          data: [{ embedding: 'AAAAAAAAAAA=', index: 0 }],
+          model: 'upstream-model-override',
+        }),
+      ),
+    )
+    renderApp(<EmbeddingsPage />)
+    await user.type(screen.getByLabelText(/api key/i), 'gw-tttttttttttttttttttttttttttttttt')
+    await pickModel(user)
+    await user.type(screen.getByLabelText(/input text/i), 'hello world')
+    await user.click(screen.getByRole('button', { name: /create embeddings/i }))
+    const table = await screen.findByRole('table')
+    expect(table).toHaveTextContent('upstream-model-override')
+    const row = within(table).getByText('upstream-model-override').closest('tr')
+    expect(row).not.toBeNull()
+    expect(within(row as HTMLElement).getByText('2')).toBeInTheDocument()
   })
 
   it('sends embedding options and records token usage per run', async () => {
@@ -136,7 +159,7 @@ describe('EmbeddingsPage', () => {
       }),
     )
     renderApp(<EmbeddingsPage />)
-    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/api key/i), 'gw-tttttttttttttttttttttttttttttttt')
     await pickModel(user)
     await user.type(screen.getByLabelText(/input text/i), 'hello world')
     await user.clear(screen.getByLabelText(/dimensions/i))
@@ -162,7 +185,7 @@ describe('EmbeddingsPage', () => {
       }),
     )
     renderApp(<EmbeddingsPage />)
-    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/api key/i), 'gw-tttttttttttttttttttttttttttttttt')
     await pickModel(user)
     await user.type(screen.getByLabelText(/input text/i), 'hello world')
     await selectOption(user, /encoding format/i, 'base64')
@@ -214,7 +237,7 @@ describe('EmbeddingsPage', () => {
     const user = userEvent.setup()
     server.use(catalog())
     renderApp(<EmbeddingsPage />)
-    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/api key/i), 'gw-tttttttttttttttttttttttttttttttt')
     await pickModel(user)
     await waitFor(() => {
       expect(screen.getByLabelText(/dimensions/i)).toBeInTheDocument()
@@ -236,7 +259,7 @@ describe('EmbeddingsPage', () => {
       }),
     )
     renderApp(<EmbeddingsPage />)
-    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/api key/i), 'gw-tttttttttttttttttttttttttttttttt')
     await pickModel(user)
     await user.type(screen.getByLabelText(/input text/i), 'hello world')
     await user.type(screen.getByLabelText(/dimensions/i), 'abc')
@@ -258,12 +281,12 @@ describe('EmbeddingsPage', () => {
       ),
     )
     renderApp(<EmbeddingsPage />)
-    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/api key/i), 'gw-tttttttttttttttttttttttttttttttt')
     await pickModel(user)
     await user.type(screen.getByLabelText(/input text/i), 'hi')
     await user.click(screen.getByRole('button', { name: /create embeddings/i }))
     await waitFor(() => {
-      expect(screen.getByText(/model:text-embedding-3-small/i)).toBeInTheDocument()
+      expect(screen.getByText(/model:m/i)).toBeInTheDocument()
     })
     expect(screen.getByText(/vectors:1/i)).toBeInTheDocument()
   })
@@ -301,7 +324,7 @@ describe('EmbeddingsPage', () => {
       }),
     )
     renderApp(<EmbeddingsPage />)
-    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/api key/i), 'gw-tttttttttttttttttttttttttttttttt')
     await waitFor(() => {
       expect(screen.getByRole('combobox', { name: /model/i })).toHaveTextContent(/select a model/i)
     })
@@ -332,7 +355,7 @@ describe('EmbeddingsPage', () => {
       ),
     )
     renderApp(<EmbeddingsPage />)
-    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/api key/i), 'gw-tttttttttttttttttttttttttttttttt')
     await waitFor(() => {
       expect(screen.getByRole('combobox', { name: /model/i })).toHaveTextContent(/select a model/i)
     })
@@ -359,7 +382,7 @@ describe('EmbeddingsPage', () => {
       ),
     )
     renderApp(<EmbeddingsPage />)
-    await user.type(screen.getByLabelText(/api key/i), 'gw-bad')
+    await user.type(screen.getByLabelText(/api key/i), 'gw-tttttttttttttttttttttttttttttttt')
     await pickModel(user)
     await user.type(screen.getByLabelText(/input text/i), 'hello')
     await user.click(screen.getByRole('button', { name: /create embeddings/i }))
@@ -393,7 +416,7 @@ describe('EmbeddingsPage', () => {
       ),
     )
     renderApp(<EmbeddingsPage />)
-    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/api key/i), 'gw-tttttttttttttttttttttttttttttttt')
     await pickModel(user)
     await user.type(screen.getByLabelText(/input text/i), 'hello')
     await user.click(screen.getByRole('button', { name: /create embeddings/i }))
@@ -415,14 +438,12 @@ describe('EmbeddingsPage', () => {
       ),
     )
     renderApp(<EmbeddingsPage />)
-    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/api key/i), 'gw-tttttttttttttttttttttttttttttttt')
     await pickModel(user)
     await user.type(screen.getByLabelText(/input text/i), 'hello')
     await user.click(screen.getByRole('button', { name: /create embeddings/i }))
     const table = await screen.findByRole('table')
-    await user.click(
-      within(table).getByRole('button', { name: /inspect run text-embedding-3-small/i }),
-    )
+    await user.click(within(table).getByRole('button', { name: /inspect run m/i }))
     const inspector = await screen.findByRole('dialog', { name: /run inspector/i })
     expect(within(inspector).getByText(/screened · bedrock/i)).toBeInTheDocument()
   })
@@ -436,7 +457,7 @@ describe('EmbeddingsPage', () => {
       ),
     )
     renderApp(<EmbeddingsPage />)
-    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/api key/i), 'gw-tttttttttttttttttttttttttttttttt')
     await pickModel(user)
     await user.type(screen.getByLabelText(/input text/i), 'hello')
     await user.click(screen.getByRole('button', { name: /create embeddings/i }))
@@ -453,7 +474,7 @@ describe('EmbeddingsPage', () => {
     const user = userEvent.setup()
     server.use(catalog())
     renderApp(<EmbeddingsPage />)
-    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/api key/i), 'gw-tttttttttttttttttttttttttttttttt')
     await pickModel(user)
     await user.clear(screen.getByLabelText(/api key/i))
     await user.type(screen.getByLabelText(/input text/i), 'hello')
@@ -470,7 +491,7 @@ describe('EmbeddingsPage', () => {
       ),
     )
     renderApp(<EmbeddingsPage />)
-    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/api key/i), 'gw-tttttttttttttttttttttttttttttttt')
     await pickModel(user)
     await user.type(screen.getByLabelText(/input text/i), 'hi')
     await user.click(screen.getByRole('button', { name: /create embeddings/i }))
@@ -488,13 +509,13 @@ describe('EmbeddingsPage', () => {
       ),
     )
     renderApp(<EmbeddingsPage />)
-    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/api key/i), 'gw-tttttttttttttttttttttttttttttttt')
     await pickModel(user)
     await user.type(screen.getByLabelText(/input text/i), 'hi')
     await user.click(screen.getByRole('button', { name: /create embeddings/i }))
     const table = await screen.findByRole('table')
     const inspect = within(table).getByRole('button', {
-      name: /inspect run text-embedding-3-small/i,
+      name: /inspect run m/i,
     })
     await user.click(inspect)
     expect(screen.getByRole('dialog', { name: /run inspector/i })).toHaveTextContent('m')
@@ -514,13 +535,13 @@ describe('EmbeddingsPage', () => {
       ),
     )
     renderApp(<EmbeddingsPage />)
-    await user.type(screen.getByLabelText(/api key/i), 'gw-test')
+    await user.type(screen.getByLabelText(/api key/i), 'gw-tttttttttttttttttttttttttttttttt')
     await pickModel(user)
     await user.type(screen.getByLabelText(/input text/i), 'hi')
     await user.click(screen.getByRole('button', { name: /create embeddings/i }))
     const table = await screen.findByRole('table')
     within(table)
-      .getByRole('button', { name: /inspect run text-embedding-3-small/i })
+      .getByRole('button', { name: /inspect run m/i })
       .focus()
     await user.keyboard('{ }')
     expect(screen.getByRole('dialog', { name: /run inspector/i })).toHaveTextContent('m')

@@ -138,7 +138,7 @@ export function RunInspector({
         )}
         {detail?.cached === true ? (
           <span className="rounded-full border border-ink/15 px-2 py-0.5 font-mono text-xs dark:border-parchment/15">
-            Cached{detail.cacheTier === null ? '' : ` · ${detail.cacheTier}`}
+            Cached{detail.cacheTier == null ? '' : ` · ${detail.cacheTier}`}
           </span>
         ) : null}
         <span className="flex-1" />
@@ -167,7 +167,7 @@ export function RunInspector({
         <div className="rounded-lg border border-ink/10 p-2 dark:border-parchment/10">
           <dt className="font-mono text-xs text-ink-soft dark:text-parchment-soft">Cost</dt>
           <dd className="font-mono text-sm tnum">
-            {row.costUsdMicros === 0 ? 'free' : `${String(row.costUsdMicros)}µ$`}
+            {row.costUsdMicros === 0 ? 'free' : `$${detail?.costUsd ?? row.costUsd}`}
           </dd>
         </div>
         <div className="rounded-lg border border-ink/10 p-2 dark:border-parchment/10">
@@ -214,9 +214,11 @@ export function RunInspector({
             <div className="flex justify-between gap-3">
               <dt className="text-ink-soft dark:text-parchment-soft">Cached</dt>
               <dd className="tnum">
-                {detail.cached
-                  ? `yes${detail.cacheTier === null ? '' : ` · ${detail.cacheTier}`}`
-                  : 'no'}
+                {detail.cached === undefined
+                  ? 'unknown'
+                  : detail.cached
+                    ? `yes${detail.cacheTier == null ? '' : ` · ${detail.cacheTier}`}`
+                    : 'no'}
               </dd>
             </div>
             <div className="flex justify-between gap-3">
@@ -236,7 +238,7 @@ export function RunInspector({
           type="button"
           onClick={() => {
             writeCopy(
-              `request ${row.requestId} · model ${row.model} · cost ${String(row.costUsdMicros)}µ$ · ${row.createdAt}`,
+              `request ${row.requestId} · model ${row.model} · cost $${detail?.costUsd ?? row.costUsd} · ${row.createdAt}`,
               setCopied,
             )
           }}
@@ -248,7 +250,7 @@ export function RunInspector({
           type="button"
           onClick={() => {
             writeCopy(
-              `# Receipt ${row.requestId} · ${row.model}\n\n- Cost: ${String(row.costUsdMicros)} µ$\n- Created: ${row.createdAt}\n\n\`\`\`json\n${JSON.stringify(detail ?? row, null, 2)}\n\`\`\``,
+              `# Receipt ${row.requestId} · ${row.model}\n\n- Cost: $${detail?.costUsd ?? row.costUsd}\n- Created: ${row.createdAt}\n\n\`\`\`json\n${JSON.stringify(detail ?? row, null, 2)}\n\`\`\``,
               setMarkdownCopied,
             )
           }}

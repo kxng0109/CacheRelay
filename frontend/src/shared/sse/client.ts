@@ -80,6 +80,13 @@ export interface SseRequest {
 }
 
 /**
+ * Default silence ceiling before a stream is declared idle. Matches the
+ * gateway upstream idle watchdog (5 minutes): slow-reasoning runs stay
+ * open instead of being client-aborted mid-answer.
+ */
+export const DEFAULT_HEARTBEAT_MS = 300_000
+
+/**
  * Extracts the `data:` payload from one double-newline-delimited SSE frame.
  *
  * @param frame - Raw frame text without the trailing blank line.
@@ -100,6 +107,44 @@ export function parseSseFrame(frame: string): string | null {
 }
 
 /**
+ * Reads the SSE `event:` field of one frame. Returns empty string for
+ * default data frames. Error frames carry `event: error` with a JSON
+ * error payload in `data:` and must never reach the transcript.
+ *
+ * @param frame - Raw frame text without the trailing blank line.
+ * @returns The event name, or empty string when absent.
+ */
+export function parseSseEvent(frame: string): string {
+  for (const line of frame.split('\n')) {
+    if (line.startsWith('event:')) return line.slice(6).replace(/^ /, '').trim()
+  }
+  return ''
+}
+
+/**
+ * Extracts a human message from an SSE error frame payload.
+ *
+ * @param data - Raw `data:` payload of an `event: error` frame.
+ * @returns The embedded error message, or a generic guardrail text.
+ */
+export function sseErrorMessage(data: string): string {
+  try {
+    const parsed: unknown = JSON.parse(data)
+    if (typeof parsed === 'object' && parsed !== null) {
+      const record = parsed as Record<string, unknown>
+      const direct = record.message
+      if (typeof direct === 'string' && direct.length > 0) return direct
+      const nested = record.error as Record<string, unknown> | undefined
+      const nestedMessage = nested?.message
+      if (typeof nestedMessage === 'string' && nestedMessage.length > 0) return nestedMessage
+    }
+  } catch {
+    // Non-JSON error payload: fall through to the generic text.
+  }
+  return 'Stream stopped by a gateway guardrail.'
+}
+
+/**
  * Handshake rejection carrying the HTTP status for retry classification.
  * Only the transport raises it; callers distinguish deterministic denials
  * (400/401/403/404/422 — surface immediately) from transient ones
@@ -110,15 +155,19 @@ export function parseSseFrame(frame: string): string | null {
 export class SseHandshakeError extends Error {
   /** HTTP status that refused the stream. */
   readonly status: number
+  /** Server `Retry-After` seconds, or null when absent or unparsable. */
+  readonly retryAfter: number | null
 
   /**
    * @param status - Refusing HTTP status.
    * @param message - Refusal text, or null for the status-only generic.
+   * @param retryAfter - Server wait seconds, or null when absent.
    */
-  constructor(status: number, message?: string) {
+  constructor(status: number, message?: string, retryAfter?: number | null) {
     super(message ?? `SSE handshake failed: HTTP ${String(status)}`)
     this.name = 'SseHandshakeError'
     this.status = status
+    this.retryAfter = retryAfter ?? null
   }
 }
 
@@ -126,11 +175,13 @@ export class SseHandshakeError extends Error {
  * Decides whether a refused handshake deserves a retry.
  *
  * @param status - Refusing HTTP status.
- * @returns True for 408/429/5xx (transient); false for other 4xx
+ * @returns True for 408/409/429/5xx (transient); false for other 4xx
  * (deterministic — retrying hammers the gateway for ~31 s with no hope).
+ * A 409 means an identical request is in flight: retry once with the same
+ * idempotency key after the server `Retry-After` wait.
  */
 export function isRetryableHandshakeStatus(status: number): boolean {
-  return status === 408 || status === 429 || status >= 500
+  return status === 408 || status === 409 || status === 429 || status >= 500
 }
 
 /**
@@ -212,8 +263,10 @@ export function createIdempotencyKey(): string {
  */
 export async function openSseStream(req: SseRequest & SseCallbacks): Promise<void> {
   const maxRetries = req.maxRetries ?? 5
-  const heartbeatMs = req.heartbeatMs ?? 30_000
+  const heartbeatMs = req.heartbeatMs ?? DEFAULT_HEARTBEAT_MS
   const idempotencyKey = req.idempotencyKey ?? createIdempotencyKey()
+  const headers = { ...req.headers }
+  headers['X-Request-Id'] ??= createIdempotencyKey()
   let attempt = 0
   let malformed = 0
   let delivered = 0
@@ -231,14 +284,16 @@ export async function openSseStream(req: SseRequest & SseCallbacks): Promise<voi
     const armWatchdog = (): void => {
       clearTimeout(watchdog)
       watchdog = setTimeout(() => {
-        void reader?.cancel(new Error('SSE heartbeat timeout'))
+        void reader?.cancel(
+          new Error(`Upstream idle timeout: no bytes for ${String(heartbeatMs)} ms.`),
+        )
       }, heartbeatMs)
     }
 
     try {
       const res = await fetch(req.url, {
         method: req.method ?? 'POST',
-        headers: { ...req.headers, Accept: SSE_CONTENT_TYPE, 'Idempotency-Key': idempotencyKey },
+        headers: { ...headers, Accept: SSE_CONTENT_TYPE, 'Idempotency-Key': idempotencyKey },
         ...(req.body === undefined ? {} : { body: JSON.stringify(req.body) }),
         signal: req.signal,
       })
@@ -251,11 +306,23 @@ export async function openSseStream(req: SseRequest & SseCallbacks): Promise<voi
         // display source. Empty or unreadable bodies keep the status-only
         // generic.
         const text = (await res.text().catch(() => '')).slice(0, 8_192)
+        const retryAfterRaw = res.headers.get('Retry-After')
+        const retryAfterNum = retryAfterRaw === null ? NaN : Number(retryAfterRaw)
+        const retryAfter =
+          Number.isFinite(retryAfterNum) && retryAfterNum >= 0 ? retryAfterNum : null
+        const replayMessage =
+          res.status === 409
+            ? 'Duplicate request in flight. Wait 1 second, then retry with the same idempotency key.'
+            : res.status === 422 && /idempotency/i.test(text)
+              ? 'Idempotency key already used with a different request. Mint a fresh key instead of resending.'
+              : null
         throw new SseHandshakeError(
           res.status,
-          text.length === 0
-            ? undefined
-            : safeErrorMessage(res.status, text, res.headers.get(VERDICT_HEADER)),
+          replayMessage ??
+            (text.length === 0
+              ? undefined
+              : safeErrorMessage(res.status, text, res.headers.get(VERDICT_HEADER))),
+          retryAfter,
         )
       }
       if (res.headers.get('content-type')?.startsWith(SSE_CONTENT_TYPE) !== true) {
@@ -303,10 +370,20 @@ export async function openSseStream(req: SseRequest & SseCallbacks): Promise<voi
               malformed += 1
               req.onMalformed?.(malformed)
             } else {
+              const event = parseSseEvent(frame)
               const data = parseSseFrame(frame)
               if (data === null) {
                 malformed += 1
                 req.onMalformed?.(malformed)
+              } else if (event === 'error') {
+                const error = new Error(sseErrorMessage(data))
+                if (delivered > 0) {
+                  if (req.onIncomplete !== undefined) req.onIncomplete(error, delivered)
+                  else req.onError?.(error)
+                } else {
+                  req.onError?.(error)
+                }
+                return
               } else if (data === SSE_DONE) {
                 req.onDone?.()
                 return
@@ -342,8 +419,21 @@ export async function openSseStream(req: SseRequest & SseCallbacks): Promise<voi
         req.onError?.(error)
         return
       }
+      if (
+        error instanceof SseHandshakeError &&
+        error.status === 500 &&
+        /guardrail/i.test(error.message)
+      ) {
+        req.onError?.(error)
+        return
+      }
       if (attempt < maxRetries) {
-        const delay = backoffDelay(attempt)
+        const backoff = backoffDelay(attempt)
+        const serverWait =
+          error instanceof SseHandshakeError && error.retryAfter !== null
+            ? error.retryAfter * 1000
+            : 0
+        const delay = Math.max(backoff, serverWait)
         attempt += 1
         req.onRetry?.(attempt)
         try {

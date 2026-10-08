@@ -23,6 +23,12 @@ function listOk() {
 }
 
 describe('NotificationsPage', () => {
+  it('states the detection cadence in the header', () => {
+    renderApp(<NotificationsPage />, { adminSession: true })
+    expect(screen.getByText(/every 60 seconds/i)).toBeInTheDocument()
+    expect(screen.getByText(/about 90 seconds/i)).toBeInTheDocument()
+  })
+
   it('lists subscriptions for a scope and deletes with confirm', async () => {
     const user = userEvent.setup()
     server.use(

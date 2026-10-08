@@ -6,8 +6,15 @@ import { useShallow } from 'zustand/react/shallow'
 import * as z from 'zod/v4'
 import { GatewayClient } from '../../shared/api/client.js'
 import { VERDICT_HEADER, isStreamingEnabled } from '../../shared/api/client.js'
-import { parseVerdictHeader, toErrorMessage } from '../../shared/api/client.js'
+import {
+  cacheStatusOf,
+  isWellFormedGatewayKey,
+  parseRateLimit,
+  parseVerdictHeader,
+  toErrorMessage,
+} from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
+import { useRateLimitStore } from '../../shared/ratelimit/store.js'
 import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
 import { KeySourcePicker, type KeySource } from '../../shared/components/KeySourcePicker.js'
 import { RunDetailPanel } from './RunDetailPanel.js'
@@ -91,6 +98,19 @@ export function PlaygroundPage(): React.JSX.Element {
    */
   const [staticVerdict, setStaticVerdict] = useState<string | null>(null)
   /**
+   * Operational headers from the static call. Mirrors the streaming
+   * `onHeaders` capture so cached completions never render as live.
+   */
+  const [staticProvenance, setStaticProvenance] = useState<{
+    cacheTier: string | null
+    similarity: string | null
+    age: string | null
+    provider: string | null
+    tried: string | null
+    receipt: string | null
+    replayed: boolean
+  } | null>(null)
+  /**
    * Final stream facts from the viewer. Null while streaming or before the
    * first run; the detail panel shows em dashes until it lands.
    */
@@ -169,6 +189,13 @@ export function PlaygroundPage(): React.JSX.Element {
       setError('key', { type: 'manual', message: 'API key is required' })
       return
     }
+    if (!accountMode && !isWellFormedGatewayKey(pastedKey)) {
+      setError('key', {
+        type: 'manual',
+        message: 'Key looks truncated. Gateway keys are gw- plus 32 characters.',
+      })
+      return
+    }
     if (!accountMode) setGatewayKey(pastedKey)
     setSubmitted(d)
     setSubmittedActAsKey(accountMode ? ownedKeyId : null)
@@ -180,6 +207,7 @@ export function PlaygroundPage(): React.JSX.Element {
     setStaticError(null)
     setStaticLatencyMs(null)
     setStaticVerdict(null)
+    setStaticProvenance(null)
     setStreamSummary(null)
     if (!streaming) {
       const started = performance.now()
@@ -202,7 +230,17 @@ export function PlaygroundPage(): React.JSX.Element {
           {
             ...(accountMode ? { actAsKey: ownedKeyId } : { ignoreSession: true }),
             onHeaders: (headers) => {
+              useRateLimitStore.getState().setSnapshot(parseRateLimit(headers, null))
               setStaticVerdict(parseVerdictHeader(headers.get(VERDICT_HEADER)))
+              setStaticProvenance({
+                cacheTier: cacheStatusOf(headers),
+                similarity: headers.get('X-CacheRelay-Similarity-Score'),
+                age: headers.get('Age'),
+                provider: headers.get('X-CacheRelay-Provider'),
+                tried: headers.get('X-CacheRelay-Tried'),
+                receipt: headers.get('X-CacheRelay-Audit-Receipt'),
+                replayed: headers.get('Idempotent-Replayed') === 'true',
+              })
             },
           },
         )
@@ -333,6 +371,9 @@ export function PlaygroundPage(): React.JSX.Element {
                   <label htmlFor="pg-key" className="mb-1 block text-[13px] font-medium">
                     API key (memory only, never stored)
                   </label>
+                  <p className="mb-1 font-mono text-xs text-ink-soft dark:text-parchment-soft">
+                    Shape: gw- plus 32 characters.
+                  </p>
                   <input
                     id="pg-key"
                     type="password"
@@ -567,6 +608,17 @@ export function PlaygroundPage(): React.JSX.Element {
                           ...(staticError !== null || staticVerdict === null
                             ? {}
                             : { verdict: staticVerdict }),
+                          ...(staticProvenance === null
+                            ? {}
+                            : {
+                                cacheTier: staticProvenance.cacheTier,
+                                similarity: staticProvenance.similarity,
+                                age: staticProvenance.age,
+                                provider: staticProvenance.provider,
+                                tried: staticProvenance.tried,
+                                receipt: staticProvenance.receipt,
+                                replayed: staticProvenance.replayed,
+                              }),
                         }
                   }
                 />

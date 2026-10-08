@@ -175,7 +175,7 @@ describe('authMe', () => {
 })
 
 describe('dashboardRetry', () => {
-  it('backs off on 429 only, at most twice', () => {
+  it('backs off on 429 only, once', () => {
     const limited = new ApiError({
       message: 'limited',
       status: 429,
@@ -186,7 +186,7 @@ describe('dashboardRetry', () => {
       code: null,
     })
     expect(dashboardRetry(0, limited)).toBe(true)
-    expect(dashboardRetry(1, limited)).toBe(true)
+    expect(dashboardRetry(1, limited)).toBe(false)
     expect(dashboardRetry(2, limited)).toBe(false)
     expect(dashboardRetry(0, new Error('nope'))).toBe(false)
     expect(

@@ -17,8 +17,9 @@ let refreshFlight: Promise<Session | null> | null = null
  * @returns Safe message naming the status.
  */
 async function errorMessage(res: Response, fallback: string): Promise<string> {
-  if (res.status === 401) return 'Invalid credentials.'
-  if (res.status === 429) return 'Too many attempts. Try again later.'
+  // Lockouts answer the same generic 401 as bad passwords
+  // (anti-enumeration): 429 never names a lockout distinctly.
+  if (res.status === 401 || res.status === 429) return 'Invalid credentials.'
   const text = await res.text().catch(() => '')
   if (text.length > 0 && text.length < 500) {
     try {
@@ -48,7 +49,15 @@ function toSession(body: unknown, username: string): Session | null {
   const record = body as Record<string, unknown>
   if (typeof record.accessToken !== 'string' || record.accessToken.length === 0) return null
   if (typeof record.admin !== 'boolean') return null
-  return { accessToken: record.accessToken, admin: record.admin, username }
+  const lifetime = record.expiresInSeconds
+  return {
+    accessToken: record.accessToken,
+    admin: record.admin,
+    username,
+    ...(typeof lifetime === 'number' && Number.isFinite(lifetime) && lifetime > 0
+      ? { expiresInSeconds: lifetime }
+      : {}),
+  }
 }
 
 /**
@@ -80,9 +89,10 @@ export async function login(username: string, password: string): Promise<Session
 /**
  * Redeems a single-use invite into an account and logs it in immediately.
  *
- * @remarks 404 and 410 resolve to one identical message so invite validity
- * cannot be probed (no user enumeration). The token leaves the URL after
- * submit (replace navigation by the caller).
+ * @remarks 404 resolves to the identical invalid message so invite
+ * validity cannot be probed (no user enumeration). The gateway never
+ * answers 410 here, so no 410 branch exists. The token leaves the URL
+ * after submit (replace navigation by the caller).
  *
  * @param token - Opaque invite token.
  * @param username - Desired login name (trimmed by the caller-facing form).
@@ -101,7 +111,7 @@ export async function redeemInvite(
     credentials: 'include',
     body: JSON.stringify({ token, username, password }),
   })
-  if (res.status === 404 || res.status === 410) {
+  if (res.status === 404) {
     throw new Error('Invite invalid or already used.')
   }
   if (!res.ok) throw new Error(await errorMessage(res, 'Redemption failed'))
@@ -109,6 +119,29 @@ export async function redeemInvite(
   if (session === null) throw new Error('Redemption failed (HTTP 201).')
   useAuthStore.getState().setSession(session)
   return session
+}
+
+/**
+ * Resolves the display username for a cold-booted session. Refresh
+ * responses carry no name; `GET /v1/auth/me` repairs it so the restored
+ * session never fabricates a blank identity.
+ *
+ * @param token - Fresh access token for the identity read.
+ * @returns The login name, or null when unreadable.
+ */
+async function fetchUsername(token: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${resolveApiBase()}/v1/auth/me`, {
+      headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) return null
+    const body: unknown = await res.json().catch(() => null)
+    if (typeof body !== 'object' || body === null) return null
+    const username = (body as Record<string, unknown>).username
+    return typeof username === 'string' && username.length > 0 ? username : null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -141,8 +174,20 @@ export function refreshSession(): Promise<Session | null> {
       const prev = useAuthStore.getState().session
       // Same shape gate as login/redeem: a non-boolean `admin` (or a
       // missing token) clears instead of entering memory half-trusted.
-      // The previous username is kept, never fabricated.
-      const session = toSession(body, prev?.username ?? '')
+      // The previous username is kept when present; a cold boot repairs
+      // it from the identity endpoint instead of fabricating blank.
+      const kept = prev?.username ?? ''
+      const bearer =
+        typeof body === 'object' && body !== null
+          ? (body as Record<string, unknown>).accessToken
+          : null
+      const name =
+        kept.length > 0
+          ? kept
+          : typeof bearer === 'string' && bearer.length > 0
+            ? ((await fetchUsername(bearer)) ?? '')
+            : ''
+      const session = toSession(body, name)
       if (session === null) {
         useAuthStore.getState().setSession(null)
         return null
@@ -160,23 +205,49 @@ export function refreshSession(): Promise<Session | null> {
 }
 
 /**
+ * Computes the proactive refresh delay from the server-reported token
+ * lifetime. Refresh lands one minute before expiry; short lifetimes
+ * floor at one minute and absurd values cap at ten.
+ *
+ * @param expiresInSeconds - Server lifetime, or null when unreported.
+ * @returns Milliseconds until the next refresh tick.
+ */
+export function heartbeatDelayMs(expiresInSeconds: number | null | undefined): number {
+  if (
+    expiresInSeconds === null ||
+    expiresInSeconds === undefined ||
+    !Number.isFinite(expiresInSeconds)
+  ) {
+    return 4 * 60 * 1000
+  }
+  return Math.min(Math.max((expiresInSeconds - 60) * 1000, 60_000), 10 * 60 * 1000)
+}
+
+/**
  * Starts proactive session renewal while the app is open.
  *
- * @remarks Access tokens live 5 minutes for admins; refreshing every 4
- * keeps sessions alive without a user-visible expiry blip. Skips ticks
- * with no session. The caller owns cleanup (Layout effect).
+ * @remarks Each tick reschedules from the live session lifetime (10
+ * minute standard, 5 minute admin): refresh lands about a minute
+ * before expiry without a user-visible blip. Skips ticks with no
+ * session. The caller owns cleanup (Layout effect).
  *
- * @returns Stop function clearing the interval.
+ * @returns Stop function clearing the pending tick.
  */
 export function startSessionHeartbeat(): () => void {
-  const id = setInterval(
-    () => {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let stopped = false
+  const tick = (): void => {
+    if (stopped) return
+    const lifetime = useAuthStore.getState().session?.expiresInSeconds
+    timer = setTimeout(() => {
       if (useAuthStore.getState().session !== null) void refreshSession()
-    },
-    4 * 60 * 1000,
-  )
+      tick()
+    }, heartbeatDelayMs(lifetime))
+  }
+  tick()
   return () => {
-    clearInterval(id)
+    stopped = true
+    clearTimeout(timer)
   }
 }
 

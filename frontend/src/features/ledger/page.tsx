@@ -1,8 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { GatewayClient } from '../../shared/api/client.js'
+import { AdminUnavailable, isStealth404 } from '../../shared/components/AdminUnavailable.js'
 import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
 import { TableScroll } from '../../shared/components/TableScroll.js'
+import { validateWindow } from '../usage/window.js'
 import {
   formatCount,
   formatDurationMs,
@@ -12,7 +14,7 @@ import {
 } from '../../shared/utils/format.js'
 import { RunInspector } from './RunInspector.js'
 
-const PAGE_SIZE = 25
+const PAGE_SIZE = 20
 
 /**
  * Billed totals plus the paginated audit log.
@@ -33,6 +35,7 @@ function LedgerBoard(): React.JSX.Element {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [sort, setSort] = useState('createdAt')
+  const [windowError, setWindowError] = useState<string | null>(null)
   const [applied, setApplied] = useState<{
     ownerId?: string
     provider?: string
@@ -83,9 +86,13 @@ function LedgerBoard(): React.JSX.Element {
             Loading summary…
           </p>
         ) : summary.error instanceof Error ? (
-          <p role="alert" className="text-sm text-danger dark:text-danger-soft">
-            {summary.error.message}
-          </p>
+          isStealth404(summary.error) ? (
+            <AdminUnavailable path="/v1/admin/ledger/summary" status={404} />
+          ) : (
+            <p role="alert" className="text-sm text-danger dark:text-danger-soft">
+              {summary.error.message}
+            </p>
+          )
         ) : summary.data === undefined ? null : (
           <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
@@ -113,9 +120,13 @@ function LedgerBoard(): React.JSX.Element {
             Loading audit log…
           </p>
         ) : logs.error instanceof Error ? (
-          <p role="alert" className="text-sm text-danger dark:text-danger-soft">
-            {logs.error.message}
-          </p>
+          isStealth404(logs.error) ? (
+            <AdminUnavailable path="/v1/admin/ledger/entries" status={404} />
+          ) : (
+            <p role="alert" className="text-sm text-danger dark:text-danger-soft">
+              {logs.error.message}
+            </p>
+          )
         ) : logs.data === undefined || entries.length === 0 ? (
           <EmptyTrio
             title="No entries yet"
@@ -209,13 +220,19 @@ function LedgerBoard(): React.JSX.Element {
               <button
                 type="button"
                 onClick={() => {
+                  const window = validateWindow(from.trim(), to.trim())
+                  if (window.error !== null) {
+                    setWindowError(window.error)
+                    return
+                  }
+                  setWindowError(null)
                   setPage(0)
                   setApplied({
                     ...(ownerId.trim().length > 0 ? { ownerId: ownerId.trim() } : {}),
                     ...(provider.trim().length > 0 ? { provider: provider.trim() } : {}),
                     ...(model.trim().length > 0 ? { model: model.trim() } : {}),
-                    ...(from.trim().length > 0 ? { from: from.trim() } : {}),
-                    ...(to.trim().length > 0 ? { to: to.trim() } : {}),
+                    ...(window.fromIso === undefined ? {} : { from: window.fromIso }),
+                    ...(window.toIso === undefined ? {} : { to: window.toIso }),
                     ...(sort.trim().length > 0 ? { sort: sort.trim() } : {}),
                   })
                 }}
@@ -224,6 +241,11 @@ function LedgerBoard(): React.JSX.Element {
                 Apply server filters
               </button>
             </div>
+            {windowError === null ? null : (
+              <p role="alert" className="text-sm text-danger dark:text-danger-soft">
+                {windowError}
+              </p>
+            )}
             <div className="flex flex-wrap items-center gap-2">
               <label htmlFor="ledger-filter" className="sr-only">
                 Filter audit log by request id or model

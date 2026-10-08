@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { server } from '../../test/setup.js'
 import { useAuthStore } from './store.js'
 import {
+  heartbeatDelayMs,
   login,
   logout,
   isTestSeedPath,
@@ -31,7 +32,12 @@ describe('login', () => {
       ),
     )
     const session = await login('operator', 'correct horse battery staple')
-    expect(session).toEqual({ accessToken: 'jwt-1', admin: true, username: 'operator' })
+    expect(session).toEqual({
+      accessToken: 'jwt-1',
+      admin: true,
+      username: 'operator',
+      expiresInSeconds: 300,
+    })
     expect(useAuthStore.getState().session).toEqual(session)
   })
 
@@ -41,9 +47,9 @@ describe('login', () => {
     expect(useAuthStore.getState().session).toBeNull()
   })
 
-  it('names lockouts distinctly from bad passwords', async () => {
+  it('answers lockouts with the same generic message as bad passwords', async () => {
     server.use(http.post('*/v1/auth/login', () => new HttpResponse('x', { status: 429 })))
-    await expect(login('operator', 'nope')).rejects.toThrow(/try again later/i)
+    await expect(login('operator', 'nope')).rejects.toThrow(/invalid credentials/i)
   })
 
   it('rejects malformed success bodies', async () => {
@@ -121,9 +127,13 @@ describe('redeemInvite', () => {
     await expect(redeemInvite('bad', 'op', 'correct horse battery staple')).rejects.toThrow(
       /invalid or already used/i,
     )
+    expect(useAuthStore.getState().session).toBeNull()
+  })
+
+  it('leaves unexpected redeem statuses on the generic path', async () => {
     server.use(http.post('*/v1/auth/redeem', () => new HttpResponse('x', { status: 410 })))
     await expect(redeemInvite('old', 'op', 'correct horse battery staple')).rejects.toThrow(
-      /invalid or already used/i,
+      /HTTP 410/,
     )
     expect(useAuthStore.getState().session).toBeNull()
   })
@@ -183,7 +193,12 @@ describe('refreshSession', () => {
         HttpResponse.json({ accessToken: 'jwt-new', expiresInSeconds: 300, admin: false }),
       ),
     )
-    expect(await refreshSession()).toEqual({ accessToken: 'jwt-new', admin: false, username: 'op' })
+    expect(await refreshSession()).toEqual({
+      accessToken: 'jwt-new',
+      admin: false,
+      username: 'op',
+      expiresInSeconds: 300,
+    })
   })
 
   it('clears the session when rotation fails', async () => {
@@ -198,6 +213,50 @@ describe('refreshSession', () => {
     server.use(http.post('*/v1/auth/refresh', () => HttpResponse.error()))
     expect(await refreshSession()).toBeNull()
     expect(useAuthStore.getState().session).toBeNull()
+  })
+
+  it('repairs a blank cold-boot username from the identity endpoint', async () => {
+    server.use(
+      http.post('*/v1/auth/refresh', () =>
+        HttpResponse.json({ accessToken: 'jwt-new', expiresInSeconds: 300, admin: false }),
+      ),
+      http.get('*/v1/auth/me', () =>
+        HttpResponse.json({ userId: 'u-1', username: 'operator', admin: false }),
+      ),
+    )
+    expect(await refreshSession()).toEqual({
+      accessToken: 'jwt-new',
+      admin: false,
+      username: 'operator',
+      expiresInSeconds: 300,
+    })
+  })
+
+  it('keeps a blank username when the identity read fails', async () => {
+    server.use(
+      http.post('*/v1/auth/refresh', () =>
+        HttpResponse.json({ accessToken: 'jwt-new', expiresInSeconds: 300, admin: false }),
+      ),
+      http.get('*/v1/auth/me', () => new HttpResponse('x', { status: 401 })),
+    )
+    expect(await refreshSession()).toEqual({
+      accessToken: 'jwt-new',
+      admin: false,
+      username: '',
+      expiresInSeconds: 300,
+    })
+  })
+})
+
+describe('heartbeatDelayMs', () => {
+  it('schedules from the server lifetime with floor and cap', () => {
+    expect(heartbeatDelayMs(300)).toBe(240_000)
+    expect(heartbeatDelayMs(600)).toBe(540_000)
+    expect(heartbeatDelayMs(30)).toBe(60_000)
+    expect(heartbeatDelayMs(3600)).toBe(600_000)
+    expect(heartbeatDelayMs(null)).toBe(240_000)
+    expect(heartbeatDelayMs(undefined)).toBe(240_000)
+    expect(heartbeatDelayMs(Number.NaN)).toBe(240_000)
   })
 })
 
@@ -233,9 +292,12 @@ describe('restoreSession', () => {
       http.post('*/v1/auth/refresh', () =>
         HttpResponse.json({ accessToken: 'jwt-5', expiresInSeconds: 300, admin: true }),
       ),
+      http.get('*/v1/auth/me', () =>
+        HttpResponse.json({ userId: 'u-5', username: 'boss', admin: true }),
+      ),
     )
     await restoreSession()
-    expect(useAuthStore.getState().session?.username).toBe('')
+    expect(useAuthStore.getState().session?.username).toBe('boss')
   })
 })
 

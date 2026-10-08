@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { GatewayClient, keyFingerprint } from '../../shared/api/client.js'
+import { hitlSuspensionOf, type HitlSuspension } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
@@ -38,11 +39,13 @@ function permissionBadges(
 function ToolInvoker({ toolName, token }: { toolName: string; token: string }): React.JSX.Element {
   const [argsText, setArgsText] = useState('{}')
   const [result, setResult] = useState<string | null>(null)
+  const [suspension, setSuspension] = useState<HitlSuspension | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   const invoke = (): void => {
     setResult(null)
+    setSuspension(null)
     setProblem(null)
     let args: Record<string, unknown>
     try {
@@ -61,6 +64,11 @@ function ToolInvoker({ toolName, token }: { toolName: string; token: string }): 
     void client
       .mcpCall(toolName, args, { ignoreSession: true })
       .then((out) => {
+        const parked = hitlSuspensionOf(out)
+        if (parked !== null) {
+          setSuspension(parked)
+          return
+        }
         setResult(JSON.stringify(out, null, 2))
       })
       .catch((e: unknown) => {
@@ -99,6 +107,20 @@ function ToolInvoker({ toolName, token }: { toolName: string; token: string }): 
         <pre className="max-h-64 overflow-auto rounded-md border border-ink/10 p-2 font-mono text-xs whitespace-pre-wrap dark:border-parchment/10">
           {result}
         </pre>
+      )}
+      {suspension === null ? null : (
+        <div
+          role="status"
+          className="space-y-1 rounded-md border border-ink/15 bg-cream p-3 text-[13px] dark:border-parchment/15 dark:bg-transparent"
+        >
+          <p className="font-medium">Approval pending — nothing executed yet.</p>
+          <p className="text-ink-soft dark:text-parchment-soft">{suspension.message}</p>
+          {suspension.tokenId === null ? null : (
+            <p className="font-mono text-xs">
+              Approval token: {suspension.tokenId}. Review it in Approvals, then invoke again.
+            </p>
+          )}
+        </div>
       )}
       {problem === null ? null : (
         <p role="alert" className="text-[13px] text-danger dark:text-danger-soft">

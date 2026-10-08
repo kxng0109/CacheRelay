@@ -6,7 +6,7 @@ import { useShallow } from 'zustand/react/shallow'
 import * as z from 'zod/v4'
 import { GatewayClient } from '../../shared/api/client.js'
 import { VERDICT_HEADER, parseVerdictHeader } from '../../shared/api/client.js'
-import { toErrorMessage } from '../../shared/api/client.js'
+import { isWellFormedGatewayKey, toErrorMessage } from '../../shared/api/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { ModelSelect } from '../../shared/models/ModelSelect.js'
 import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
@@ -30,6 +30,24 @@ type FormData = z.input<typeof schema>
 
 /** Sanctioned sample: fills the input box only, never fabricates vectors. */
 const SAMPLE_INPUT = 'CacheRelay routes every request through admission, cache, and router stages.'
+
+/**
+ * Counts vector dimensions for float or base64 embeddings. Base64 carries
+ * little-endian IEEE-754 float32 values, 4 bytes per dimension per spec.
+ *
+ * @param embedding - Float array or base64 string from the gateway.
+ * @returns Dimension count, or 0 when undecodable.
+ */
+export function embeddingDims(embedding: unknown): number {
+  if (Array.isArray(embedding)) return embedding.length
+  if (typeof embedding !== 'string') return 0
+  try {
+    const binary = atob(embedding)
+    return Math.floor(binary.length / 4)
+  } catch {
+    return 0
+  }
+}
 
 interface UsageRecord {
   id: number
@@ -158,6 +176,13 @@ export function EmbeddingsPage(): React.JSX.Element {
       setFieldError('key', { type: 'manual', message: 'API key is required' })
       return
     }
+    if (!accountMode && !isWellFormedGatewayKey(pastedKey)) {
+      setFieldError('key', {
+        type: 'manual',
+        message: 'Key looks truncated. Gateway keys are gw- plus 32 characters.',
+      })
+      return
+    }
     if (!accountMode) setGatewayKey(pastedKey)
     setError(null)
     let verdict: string | null = null
@@ -186,16 +211,17 @@ export function EmbeddingsPage(): React.JSX.Element {
         headersOpts,
       )
       const first = out.data[0]
-      setLastModel(d.model)
+      const effectiveModel = out.model
+      setLastModel(effectiveModel)
       setRuns((prev) =>
         [
           {
             id: Date.now(),
             at: new Date().toISOString(),
-            model: d.model,
+            model: effectiveModel,
             chars: d.input.length,
             vecs: out.data.length,
-            dims: first === undefined ? 0 : first.embedding.length,
+            dims: first === undefined ? 0 : embeddingDims(first.embedding),
             tokens: out.usage?.total_tokens ?? null,
             status: 'ok' as const,
             error: null,
@@ -338,6 +364,9 @@ export function EmbeddingsPage(): React.JSX.Element {
                   <label htmlFor="emb-key" className="mb-1 block text-[13px] font-medium">
                     API key (memory only, never stored)
                   </label>
+                  <p className="mb-1 font-mono text-xs text-ink-soft dark:text-parchment-soft">
+                    Shape: gw- plus 32 characters.
+                  </p>
                   <input
                     id="emb-key"
                     type="password"

@@ -82,12 +82,14 @@ function extractPiece(data: string): string {
     const parsed: unknown = JSON.parse(data)
     if (typeof parsed === 'object' && parsed !== null) {
       const choices = (parsed as Record<string, unknown>).choices
-      if (Array.isArray(choices) && choices.length > 0) {
+      if (Array.isArray(choices)) {
+        if (choices.length === 0) return ''
         const first = choices[0] as Record<string, unknown>
         const delta = first.delta as Record<string, unknown> | undefined
         const message = first.message as Record<string, unknown> | undefined
         const content = delta?.content ?? message?.content
         if (typeof content === 'string') return content
+        return ''
       }
     }
     return data

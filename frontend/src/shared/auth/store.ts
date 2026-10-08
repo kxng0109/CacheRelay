@@ -14,6 +14,13 @@ export interface Session {
   admin: boolean
   /** Login name for display. */
   username: string
+  /**
+   * Server-reported lifetime in seconds (`expiresInSeconds`). Present
+   * when the last login, redeem, or refresh carried it; drives the
+   * proactive refresh schedule. Absent sessions refresh on the safe
+   * 4 minute fallback.
+   */
+  expiresInSeconds?: number
 }
 
 /**

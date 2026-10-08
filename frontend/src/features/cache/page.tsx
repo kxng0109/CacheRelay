@@ -4,7 +4,8 @@ import { useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Plus } from 'lucide-react'
 import * as z from 'zod/v4'
-import { GatewayClient } from '../../shared/api/client.js'
+import { ApiError, GatewayClient } from '../../shared/api/client.js'
+import { AdminUnavailable, isStealth404 } from '../../shared/components/AdminUnavailable.js'
 import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
 import { Modal } from '../../shared/components/Modal.js'
@@ -90,6 +91,9 @@ function TierPanel(): React.JSX.Element {
     )
   }
   if (tiers.error instanceof Error) {
+    if (isStealth404(tiers.error)) {
+      return <AdminUnavailable path="/v1/admin/cache/tiers" status={404} />
+    }
     return (
       <p role="alert" className="text-sm text-danger dark:text-danger-soft">
         {tiers.error.message}
@@ -188,6 +192,7 @@ function BudgetInspector({
   const qc = useQueryClient()
   const [minute, setMinute] = useState(String(budget.minuteMicros))
   const [month, setMonth] = useState(String(budget.monthMicros))
+  const [webhook, setWebhook] = useState(budget.webhookUrl ?? '')
   const [confirming, setConfirming] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
@@ -203,16 +208,36 @@ function BudgetInspector({
     setProblem(null)
     setStatus(null)
     const client = new GatewayClient()
+    const trimmedWebhook = webhook.trim()
     void client
       .updateBudget(budget.id, {
         minuteMicros: Number(minute),
         monthMicros: Number(month),
+        webhookUrl: trimmedWebhook.length === 0 ? null : trimmedWebhook,
       })
       .then(() => {
         setStatus('Budget updated.')
         return qc.invalidateQueries({ queryKey: ['budgets'] })
       })
       .catch((e: unknown) => {
+        if (e instanceof ApiError && e.status === 409) {
+          void client
+            .listBudgets()
+            .then((out) => {
+              const fresh = out.budgets.find((b) => b.id === budget.id) ?? null
+              if (fresh !== null) {
+                setMinute(String(fresh.minuteMicros))
+                setMonth(String(fresh.monthMicros))
+                setWebhook(fresh.webhookUrl ?? '')
+              }
+              return qc.invalidateQueries({ queryKey: ['budgets'] })
+            })
+            .catch(() => undefined)
+          setProblem(
+            'Conflict: budget changed concurrently. Latest caps reloaded below. Re-apply your change, then save.',
+          )
+          return
+        }
         setProblem(toErrorMessage(e, 'Budget update failed.'))
       })
   }
@@ -256,6 +281,9 @@ function BudgetInspector({
           </dd>
         </div>
       </dl>
+      <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
+        Zero spent means no traffic yet. Zero cap means uncapped.
+      </p>
       {balance.error instanceof Error ? (
         <p role="alert" className="text-[13px] text-danger dark:text-danger-soft">
           {balance.error.message}
@@ -294,6 +322,24 @@ function BudgetInspector({
               setMonth(e.target.value)
             }}
             className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 text-sm tnum dark:border-parchment/15"
+          />
+        </div>
+        <div>
+          <label
+            htmlFor={`budget-edit-webhook-${budget.id}`}
+            className="mb-1 block text-[13px] font-medium"
+          >
+            Webhook URL (blank clears it)
+          </label>
+          <input
+            id={`budget-edit-webhook-${budget.id}`}
+            value={webhook}
+            autoComplete="off"
+            onChange={(e) => {
+              setWebhook(e.target.value)
+            }}
+            placeholder="https://ops.example.com/hook"
+            className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
           />
         </div>
       </div>
@@ -406,16 +452,29 @@ function HoldLookup(): React.JSX.Element {
           Hold expired or unknown.
         </p>
       ) : (
-        <dl className="space-y-2 text-[13px]">
-          <div className="flex justify-between gap-3">
-            <dt className="text-ink-soft dark:text-parchment-soft">State</dt>
-            <dd className="font-mono">{hold.data.state}</dd>
-          </div>
-          <div className="flex justify-between gap-3">
-            <dt className="text-ink-soft dark:text-parchment-soft">Held</dt>
-            <dd className="tnum">{formatMicros(hold.data.heldMicros)}</dd>
-          </div>
-        </dl>
+        <>
+          <dl className="space-y-2 text-[13px]">
+            <div className="flex justify-between gap-3">
+              <dt className="text-ink-soft dark:text-parchment-soft">State</dt>
+              <dd className="font-mono">{hold.data.state}</dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-ink-soft dark:text-parchment-soft">Held</dt>
+              <dd className="tnum">{formatMicros(hold.data.heldMicros)}</dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-ink-soft dark:text-parchment-soft">Settled</dt>
+              <dd className="tnum">
+                {hold.data.settledMicros === null
+                  ? 'pending'
+                  : formatMicros(hold.data.settledMicros)}
+              </dd>
+            </div>
+          </dl>
+          <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
+            Held is a pre-settle estimate. Final cost lands in the ledger.
+          </p>
+        </>
       )}
     </div>
   )
@@ -591,14 +650,23 @@ function CacheBoard(): React.JSX.Element {
           {notice}
         </p>
       )}
+      {notice?.startsWith('Cache purged') === true ? (
+        <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
+          Tier stats may lag while tiers converge.
+        </p>
+      ) : null}
       {stats.isPending ? (
         <p role="status" className="text-sm">
           Loading cache config…
         </p>
       ) : stats.error instanceof Error ? (
-        <p role="alert" className="text-sm text-danger dark:text-danger-soft">
-          {stats.error.message}
-        </p>
+        isStealth404(stats.error) ? (
+          <AdminUnavailable path="/v1/admin/cache/stats" status={404} />
+        ) : (
+          <p role="alert" className="text-sm text-danger dark:text-danger-soft">
+            {stats.error.message}
+          </p>
+        )
       ) : stats.data === undefined ? null : (
         <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="min-h-19 rounded-lg border border-ink/10 bg-cream p-3 dark:border-parchment/10 dark:bg-transparent">
@@ -609,7 +677,7 @@ function CacheBoard(): React.JSX.Element {
               {stats.data.defaultScope === 'GLOBAL'
                 ? 'entries shared by all tenants'
                 : stats.data.defaultScope === 'USER'
-                  ? 'entries isolated per user'
+                  ? 'requested per user, served per tenant'
                   : 'entries isolated per tenant'}{' '}
               · server config.
             </dd>
@@ -701,9 +769,13 @@ function CacheBoard(): React.JSX.Element {
           Loading budgets…
         </p>
       ) : budgets.error instanceof Error ? (
-        <p role="alert" className="text-sm text-danger dark:text-danger-soft">
-          {budgets.error.message}
-        </p>
+        isStealth404(budgets.error) ? (
+          <AdminUnavailable path="/v1/admin/budgets" status={404} />
+        ) : (
+          <p role="alert" className="text-sm text-danger dark:text-danger-soft">
+            {budgets.error.message}
+          </p>
+        )
       ) : budgets.data === undefined || budgets.data.budgets.length === 0 ? (
         <EmptyTrio
           title="No budgets yet"

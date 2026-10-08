@@ -75,6 +75,22 @@ describe('ApprovalsPage', () => {
     })
   })
 
+  it('renders admin unavailable on stealth 404', async () => {
+    server.use(
+      http.get('*/v1/admin/mcp/approvals/pending', () => new HttpResponse('x', { status: 404 })),
+    )
+    renderApp(<ApprovalsPage />, { adminSession: true })
+    expect(await screen.findByText(/admin unavailable/i)).toBeInTheDocument()
+  })
+
+  it('states the approval lifetime windows', async () => {
+    server.use(
+      http.get('*/v1/admin/mcp/approvals/pending', () => HttpResponse.json({ approvals: [] })),
+    )
+    renderApp(<ApprovalsPage />, { adminSession: true })
+    expect(await screen.findByText(/approvals hold 5 minutes/i)).toBeInTheDocument()
+  })
+
   it('approves a pending tool call with the server receipt', async () => {
     const user = userEvent.setup()
     let calls = 1
@@ -149,6 +165,19 @@ describe('ApprovalsPage', () => {
     renderBoard()
     await user.click(await screen.findByRole('button', { name: /inspect args/i }))
     expect(await screen.findByText(/no args returned/i)).toBeInTheDocument()
+  })
+
+  it('warns against approving undecryptable args', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/admin/mcp/approvals/pending', () => HttpResponse.json(PENDING)),
+      http.get('*/v1/admin/mcp/approvals/:id', () =>
+        HttpResponse.json({ tokenId: TOKEN, toolName: 'send-email', args: '***undecryptable***' }),
+      ),
+    )
+    renderBoard()
+    await user.click(await screen.findByRole('button', { name: /inspect args/i }))
+    expect(await screen.findByText(/out-of-band verification/i)).toBeInTheDocument()
   })
 
   it('rejects a pending tool call', async () => {

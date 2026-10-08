@@ -128,9 +128,65 @@ describe('LedgerPage', () => {
     })
     expect(seen).toContain('provider=openai')
     expect(seen).toContain('model=gpt-4o')
-    expect(seen).toContain('from=2026-09-01')
-    expect(seen).toContain('to=2026-09-26')
+    expect(seen).toContain('from=2026-09-01T00%3A00%3A00Z')
+    expect(seen).toContain('to=2026-09-26T23%3A59%3A59Z')
     expect(seen).toContain('sort=costUsdMicros')
+  })
+
+  it('rejects reversed windows before fetching', async () => {
+    const user = userEvent.setup()
+    let seen = 'unfetched'
+    server.use(
+      summary({ totalRequests: 1, totalCostUsdMicros: 12, averageDurationMs: 3 }),
+      http.get('*/v1/admin/ledger/entries', ({ request }) => {
+        seen = request.url
+        return HttpResponse.json(pageOf(['r1'], false))
+      }),
+    )
+    renderApp(<LedgerPage />, { adminSession: true })
+    await screen.findByRole('table')
+    await user.type(screen.getByLabelText(/server filter window start/i), '2026-09-26')
+    await user.type(screen.getByLabelText(/server filter window end/i), '2026-09-01')
+    await user.click(screen.getByRole('button', { name: /apply server filters/i }))
+    expect(await screen.findByText(/cannot be after/i)).toBeInTheDocument()
+    expect(seen).not.toContain('from=')
+  })
+
+  it('rejects oversize windows before fetching', async () => {
+    const user = userEvent.setup()
+    let seen = 'unfetched'
+    server.use(
+      summary({ totalRequests: 1, totalCostUsdMicros: 12, averageDurationMs: 3 }),
+      http.get('*/v1/admin/ledger/entries', ({ request }) => {
+        seen = request.url
+        return HttpResponse.json(pageOf(['r1'], false))
+      }),
+    )
+    renderApp(<LedgerPage />, { adminSession: true })
+    await screen.findByRole('table')
+    await user.type(screen.getByLabelText(/server filter window start/i), '2026-01-01')
+    await user.type(screen.getByLabelText(/server filter window end/i), '2026-09-24')
+    await user.click(screen.getByRole('button', { name: /apply server filters/i }))
+    expect(await screen.findByText(/wider than/i)).toBeInTheDocument()
+    expect(seen).not.toContain('from=')
+  })
+
+  it('rejects malformed window dates before fetching', async () => {
+    const user = userEvent.setup()
+    let seen = 'unfetched'
+    server.use(
+      summary({ totalRequests: 1, totalCostUsdMicros: 12, averageDurationMs: 3 }),
+      http.get('*/v1/admin/ledger/entries', ({ request }) => {
+        seen = request.url
+        return HttpResponse.json(pageOf(['r1'], false))
+      }),
+    )
+    renderApp(<LedgerPage />, { adminSession: true })
+    await screen.findByRole('table')
+    await user.type(screen.getByLabelText(/server filter window start/i), 'oops')
+    await user.click(screen.getByRole('button', { name: /apply server filters/i }))
+    expect(await screen.findByText(/YYYY-MM-DD/i)).toBeInTheDocument()
+    expect(seen).not.toContain('from=')
   })
 
   it('applies empty server filters as an unscoped page', async () => {

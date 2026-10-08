@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   Sun,
   SunMoon,
+  User,
   UserCog,
   Users,
   Zap,
@@ -272,6 +273,7 @@ export function Layout(): React.JSX.Element {
       items: [
         { to: '/', label: 'Overview', icon: LayoutDashboard, audience: 'session' },
         { to: '/usage', label: 'Usage', icon: Gauge, audience: 'session' },
+        { to: '/account', label: 'Account', icon: User, audience: 'session' },
       ],
     },
     {

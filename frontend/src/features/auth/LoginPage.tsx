@@ -20,9 +20,10 @@ type FormData = z.infer<typeof schema>
  *
  * @remarks Public route. The username is trimmed (identifiers are
  * canonicalized server-side); the password is never trimmed, stored,
- * logged, or rendered. Wrong credentials and lockouts surface distinct
- * honest messages. A validated `?next=` returns the session to the screen
- * that bounced it here; anything off-shape falls back to `/`.
+ * logged, or rendered. Wrong credentials and lockouts share one generic
+ * message (the backend deliberately refuses to distinguish them). A
+ * validated `?next=` returns the session to the screen that bounced it
+ * here; anything off-shape falls back to `/`.
  *
  * @returns The login screen.
  */

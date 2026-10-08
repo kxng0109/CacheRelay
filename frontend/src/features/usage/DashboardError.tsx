@@ -39,7 +39,8 @@ export function DashboardError({ error, onRetry }: DashboardErrorProps): React.J
       ) : null}
       {status === 429 ? (
         <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
-          Slow down. Too many dashboard views. Backing off client side. Retry shortly.
+          Slow down. Too many dashboard views. One automatic retry follows. If it persists, wait a
+          minute and retry.
         </p>
       ) : null}
       <button type="button" onClick={onRetry} className="mt-2 text-sm underline">

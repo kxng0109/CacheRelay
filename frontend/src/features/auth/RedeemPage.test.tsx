@@ -1,6 +1,7 @@
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
+import { useLocation } from 'react-router'
 import { describe, expect, it, vi } from 'vitest'
 import { server } from '../../test/setup.js'
 import { renderApp } from '../../test/utils.js'
@@ -31,7 +32,7 @@ describe('RedeemPage', () => {
 
   it('answers unknown and consumed invites identically', async () => {
     const user = userEvent.setup()
-    server.use(http.post('*/v1/auth/redeem', () => new HttpResponse('x', { status: 410 })))
+    server.use(http.post('*/v1/auth/redeem', () => new HttpResponse('x', { status: 404 })))
     renderApp(<RedeemPage />, { route: '/redeem?token=old' })
     await user.type(screen.getByLabelText(/username/i), 'operator')
     await user.type(screen.getByLabelText(/^password \(12/i), 'correct horse battery staple')
@@ -41,6 +42,46 @@ describe('RedeemPage', () => {
       expect(screen.getByRole('alert')).toHaveTextContent(/invalid or already used/i)
     })
     expect(useAuthStore.getState().session).toBeNull()
+  })
+
+  it('leaves unexpected statuses off the invite message path', async () => {
+    const user = userEvent.setup()
+    server.use(http.post('*/v1/auth/redeem', () => new HttpResponse('x', { status: 410 })))
+    renderApp(<RedeemPage />, { route: '/redeem?token=old' })
+    await user.type(screen.getByLabelText(/username/i), 'operator')
+    await user.type(screen.getByLabelText(/^password \(12/i), 'correct horse battery staple')
+    await user.type(screen.getByLabelText(/confirm password/i), 'correct horse battery staple')
+    await user.click(screen.getByRole('button', { name: /create account/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/HTTP 410/)
+    })
+    expect(useAuthStore.getState().session).toBeNull()
+  })
+
+  it('scrubs the token from the URL on failed submit', async () => {
+    const user = userEvent.setup()
+    server.use(http.post('*/v1/auth/redeem', () => new HttpResponse('x', { status: 404 })))
+    function Probe() {
+      const location = useLocation()
+      return <p data-testid="location-search">{location.search}</p>
+    }
+    renderApp(
+      <>
+        <RedeemPage />
+        <Probe />
+      </>,
+      { route: '/redeem?token=old' },
+    )
+    expect(screen.getByTestId('location-search')).toHaveTextContent('token=old')
+    await user.type(screen.getByLabelText(/username/i), 'operator')
+    await user.type(screen.getByLabelText(/^password \(12/i), 'correct horse battery staple')
+    await user.type(screen.getByLabelText(/confirm password/i), 'correct horse battery staple')
+    await user.click(screen.getByRole('button', { name: /create account/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/invalid or already used/i)
+    })
+    expect(screen.getByLabelText(/invite token/i)).toHaveValue('old')
+    expect(screen.getByTestId('location-search')).not.toHaveTextContent('old')
   })
 
   it('blocks mismatched passwords client-side', async () => {

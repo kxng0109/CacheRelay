@@ -36,6 +36,7 @@ describe('LoginPage', () => {
         accessToken: 'jwt-1',
         admin: true,
         username: 'operator',
+        expiresInSeconds: 300,
       })
     })
   })

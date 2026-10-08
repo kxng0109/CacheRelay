@@ -72,6 +72,29 @@ describe('SummaryBoard', () => {
     expect(screen.getAllByText('openai').length).toBeGreaterThan(0)
   })
 
+  it('renders the owner breakdown when present', () => {
+    renderApp(
+      <SummaryBoard
+        view={viewOf({
+          byOwner: [
+            {
+              ownerId: 'tenant-corp',
+              totalRequests: 7,
+              totalPromptTokens: 700,
+              totalCompletionTokens: 300,
+              totalTokens: 1000,
+              totalCostUsdMicros: 1500,
+              totalCostUsd: '0.001500',
+              averageDurationMs: 42.5,
+            },
+          ],
+        })}
+      />,
+    )
+    expect(screen.getByText('tenant-corp')).toBeInTheDocument()
+    expect(screen.getAllByTitle('0.001500').length).toBeGreaterThanOrEqual(2)
+  })
+
   it('renders the empty trio instead of an error on empty windows', () => {
     renderApp(<SummaryBoard view={viewOf({ totalRequests: 0, averageDurationMs: 0 })} />)
     expect(screen.getByText(/no usage in range/i)).toBeInTheDocument()

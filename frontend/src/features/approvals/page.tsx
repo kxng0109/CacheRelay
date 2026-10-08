@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { GatewayClient } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
+import { AdminUnavailable, isStealth404 } from '../../shared/components/AdminUnavailable.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { useToastStore } from '../../shared/toast/store.js'
 import { formatShortDate } from '../../shared/utils/format.js'
@@ -70,14 +71,21 @@ function ApprovalsBoard(): React.JSX.Element {
 
   return (
     <div className="space-y-4">
+      <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
+        Approvals hold 5 minutes. Rejections stand for 24 hours and repeat rejects stay silent.
+      </p>
       {pending.isPending ? (
         <p role="status" className="text-sm">
           Loading pending approvals…
         </p>
       ) : pending.error instanceof Error ? (
-        <p role="alert" className="text-sm text-danger dark:text-danger-soft">
-          {pending.error.message}
-        </p>
+        isStealth404(pending.error) ? (
+          <AdminUnavailable path="/v1/admin/mcp/approvals/pending" status={404} />
+        ) : (
+          <p role="alert" className="text-sm text-danger dark:text-danger-soft">
+            {pending.error.message}
+          </p>
+        )
       ) : pending.data === undefined || pending.data.approvals.length === 0 ? (
         <p className="text-sm text-ink-soft dark:text-parchment-soft">
           Queue is empty. Gated tool calls will appear here for review.
@@ -199,9 +207,17 @@ function ApprovalArgs({ tokenId }: { tokenId: string }): React.JSX.Element {
       </p>
     )
   }
+  const sealed = JSON.stringify(detail.data ?? null).includes('***undecryptable***')
   return (
-    <pre className="overflow-x-auto rounded-md bg-ink/4 p-3 font-mono text-xs whitespace-pre-wrap dark:bg-parchment/6">
-      {JSON.stringify(detail.data ?? 'No args returned.', null, 2)}
-    </pre>
+    <>
+      {sealed ? (
+        <p role="alert" className="text-[13px] text-danger dark:text-danger-soft">
+          Args are undecryptable. Do not approve without out-of-band verification.
+        </p>
+      ) : null}
+      <pre className="overflow-x-auto rounded-md bg-ink/4 p-3 font-mono text-xs whitespace-pre-wrap dark:bg-parchment/6">
+        {JSON.stringify(detail.data ?? 'No args returned.', null, 2)}
+      </pre>
+    </>
   )
 }

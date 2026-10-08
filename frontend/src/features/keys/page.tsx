@@ -6,12 +6,33 @@ import * as z from 'zod/v4'
 import { GatewayClient } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 import type { ApiKeyCreated } from '../../shared/api/types.js'
+import { AdminUnavailable, isStealth404 } from '../../shared/components/AdminUnavailable.js'
 import { EmptyTrio } from '../../shared/components/EmptyTrio.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
 import { Modal } from '../../shared/components/Modal.js'
 import { Select } from '../../shared/components/Select.js'
 import { TableScroll } from '../../shared/components/TableScroll.js'
 import { formatCount, formatShortDate } from '../../shared/utils/format.js'
+
+const globList = z
+  .string()
+  .refine(
+    (v) =>
+      v
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0).length <= 64,
+    { message: 'At most 64 entries' },
+  )
+  .refine(
+    (v) =>
+      v
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+        .every((s) => s.length <= 256),
+    { message: 'At most 256 characters per entry' },
+  )
 
 const schema = z.object({
   ownerId: z.string().min(1, 'Owner is required'),
@@ -20,9 +41,57 @@ const schema = z.object({
   rpmLimit: z.number().min(0).max(100_000),
   tpmLimit: z.number().min(0).max(10_000_000),
   models: z.string(),
+  providers: globList,
+  tools: globList,
+  deniedTools: globList,
+  resources: globList,
+  deniedResources: globList,
+  prompts: globList,
+  deniedPrompts: globList,
+  agents: globList,
+  deniedAgents: globList,
+  injectionBlock: z.boolean(),
+  cacheScopes: z.string(),
 })
 
 type FormData = z.infer<typeof schema>
+
+type GlobFieldName =
+  | 'providers'
+  | 'tools'
+  | 'deniedTools'
+  | 'resources'
+  | 'deniedResources'
+  | 'prompts'
+  | 'deniedPrompts'
+  | 'agents'
+  | 'deniedAgents'
+
+/** Policy glob inputs: label plus allow/deny hint. Empty means server default. */
+const GLOB_FIELDS: readonly { name: GlobFieldName; label: string }[] = [
+  { name: 'providers', label: 'Providers (comma-separated, empty means all)' },
+  { name: 'tools', label: 'Allowed tools (empty means all)' },
+  { name: 'deniedTools', label: 'Denied tools (deny wins)' },
+  { name: 'resources', label: 'Allowed resources (empty means all)' },
+  { name: 'deniedResources', label: 'Denied resources (deny wins)' },
+  { name: 'prompts', label: 'Allowed prompts (empty means all)' },
+  { name: 'deniedPrompts', label: 'Denied prompts (deny wins)' },
+  { name: 'agents', label: 'Allowed agents (empty means all)' },
+  { name: 'deniedAgents', label: 'Denied agents (deny wins)' },
+]
+
+/**
+ * Splits a comma-separated glob input into trimmed non-empty entries.
+ *
+ * @param value - Raw field text.
+ * @returns Clean entries.
+ */
+function splitGlobs(value: string): string[] {
+  return value
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+}
 
 /**
  * Copies text to the clipboard, reporting success honestly.
@@ -88,6 +157,35 @@ function KeyModelPicker({
 }
 
 /**
+ * One allow/deny glob pair in the key inspector. Empty allow reads as
+ * all allowed; empty deny reads as none denied. Absent rows (legacy or
+ * drifted) read as server default, never fabricated.
+ *
+ * @param props - Label plus optional allow and deny lists.
+ * @returns The policy row.
+ */
+function PolicyRow({
+  label,
+  allow,
+  deny,
+}: {
+  label: string
+  allow?: string[] | undefined
+  deny?: string[] | undefined
+}): React.JSX.Element {
+  return (
+    <div className="flex justify-between gap-3">
+      <dt className="text-ink-soft dark:text-parchment-soft">{label}</dt>
+      <dd>
+        {allow === undefined && deny === undefined
+          ? 'server default'
+          : `${allow === undefined || allow.length === 0 ? 'all' : allow.join(', ')} / deny: ${deny === undefined || deny.length === 0 ? 'none' : deny.join(', ')}`}
+      </dd>
+    </div>
+  )
+}
+
+/**
  * Account picker for the owner field. Lists inventory usernames and
  * writes the chosen UUID into the form; manual UUID entry keeps
  * working when the inventory is unreachable or the account is new.
@@ -143,19 +241,23 @@ function KeysBoard(): React.JSX.Element {
   const [created, setCreated] = useState<ApiKeyCreated | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
+  const [ownerFilter, setOwnerFilter] = useState('')
   const [creating, setCreating] = useState(false)
   const createOpener = useRef<HTMLElement | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [confirming, setConfirming] = useState<string | null>(null)
   const [confirmingRevoke, setConfirmingRevoke] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
+  const [transferId, setTransferId] = useState('')
   /** Key ids tombstoned in this session. The list endpoint exposes no
    * revoked flag, so a successful revoke marks the row terminal locally. */
   const [revokedIds, setRevokedIds] = useState<ReadonlySet<string>>(new Set())
 
+  const ownerScope = ownerFilter.trim()
   const keys = useQuery({
-    queryKey: ['keys'],
-    queryFn: ({ signal }) => new GatewayClient().listKeys({ signal }),
+    queryKey: ['keys', ownerScope],
+    queryFn: ({ signal }) =>
+      new GatewayClient().listKeys({ signal, ownerId: ownerScope || undefined }),
   })
 
   const {
@@ -169,7 +271,25 @@ function KeysBoard(): React.JSX.Element {
   } = useForm<FormData>({
     resolver: zodResolver(schema),
     mode: 'onSubmit',
-    defaultValues: { ownerId: '', ownerUserId: '', name: '', models: '', rpmLimit: 0, tpmLimit: 0 },
+    defaultValues: {
+      ownerId: '',
+      ownerUserId: '',
+      name: '',
+      models: '',
+      providers: '',
+      tools: '',
+      deniedTools: '',
+      resources: '',
+      deniedResources: '',
+      prompts: '',
+      deniedPrompts: '',
+      agents: '',
+      deniedAgents: '',
+      injectionBlock: true,
+      cacheScopes: '',
+      rpmLimit: 0,
+      tpmLimit: 0,
+    },
   })
   const modelsValue = useWatch({ control, name: 'models' })
 
@@ -177,16 +297,25 @@ function KeysBoard(): React.JSX.Element {
     setError(null)
     setCreated(null)
     try {
+      const scopes = splitGlobs(d.cacheScopes)
       const out = await new GatewayClient().createKey({
         ownerId: d.ownerId,
         ownerUserId: d.ownerUserId,
         name: d.name,
         rpmLimit: d.rpmLimit,
         tpmLimit: d.tpmLimit,
-        allowedModels: d.models
-          .split(',')
-          .map((m) => m.trim())
-          .filter((m) => m.length > 0),
+        allowedModels: splitGlobs(d.models),
+        allowedProviders: splitGlobs(d.providers),
+        allowedTools: splitGlobs(d.tools),
+        deniedTools: splitGlobs(d.deniedTools),
+        allowedResources: splitGlobs(d.resources),
+        deniedResources: splitGlobs(d.deniedResources),
+        allowedPrompts: splitGlobs(d.prompts),
+        deniedPrompts: splitGlobs(d.deniedPrompts),
+        allowedAgents: splitGlobs(d.agents),
+        deniedAgents: splitGlobs(d.deniedAgents),
+        injectionBlock: d.injectionBlock,
+        ...(scopes.length === 0 ? {} : { allowedCacheScopes: scopes }),
       })
       setCreated(out)
       reset()
@@ -243,13 +372,35 @@ function KeysBoard(): React.JSX.Element {
     }
   }
 
+  const onTransfer = async (keyId: string): Promise<void> => {
+    setError(null)
+    const ownerUserId = transferId.trim()
+    if (ownerUserId.length === 0) {
+      setError('Enter the receiving account UUID first.')
+      return
+    }
+    try {
+      await new GatewayClient().patchKey(keyId, { ownerUserId })
+      setTransferId('')
+      await qc.invalidateQueries({ queryKey: ['keys'] })
+    } catch (e) {
+      setError(toErrorMessage(e, 'Ownership transfer failed.'))
+    }
+  }
+
   const onCopy = (target: string, text: string): void => {
     void copyText(text).then((ok) => {
       if (ok) setCopied(target)
     })
   }
 
-  const rows = keys.data?.keys ?? []
+  const rows = [...(keys.data?.keys ?? [])].sort((a, b) => {
+    const ta = Date.parse(a.createdAt)
+    const tb = Date.parse(b.createdAt)
+    if (Number.isNaN(ta)) return 1
+    if (Number.isNaN(tb)) return -1
+    return tb - ta
+  })
   const query = filter.trim().toLowerCase()
   const visible = rows.filter(
     (k) =>
@@ -282,6 +433,19 @@ function KeysBoard(): React.JSX.Element {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="flex-1" />
+          <label htmlFor="key-owner-filter" className="sr-only">
+            Filter by owner
+          </label>
+          <input
+            id="key-owner-filter"
+            type="search"
+            value={ownerFilter}
+            placeholder="Owner"
+            onChange={(e) => {
+              setOwnerFilter(e.target.value)
+            }}
+            className="w-44 rounded-md border border-ink/15 bg-transparent px-3 py-2 text-[13px] dark:border-parchment/15"
+          />
           <label htmlFor="key-filter" className="sr-only">
             Filter keys
           </label>
@@ -477,6 +641,50 @@ function KeysBoard(): React.JSX.Element {
                   </p>
                 )}
               </div>
+              {GLOB_FIELDS.map((f) => (
+                <div key={f.name}>
+                  <label htmlFor={`key-${f.name}`} className="mb-1 block text-[13px] font-medium">
+                    {f.label}
+                  </label>
+                  <input
+                    id={`key-${f.name}`}
+                    {...register(f.name)}
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="empty means server default"
+                    className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
+                  />
+                  {errors[f.name] === undefined ? null : (
+                    <p role="alert" className="mt-1 text-[13px] text-danger dark:text-danger-soft">
+                      {errors[f.name]?.message}
+                    </p>
+                  )}
+                </div>
+              ))}
+              <div>
+                <label htmlFor="key-cache-scopes" className="mb-1 block text-[13px] font-medium">
+                  Cache scopes (comma-separated, empty means TENANT-only)
+                </label>
+                <input
+                  id="key-cache-scopes"
+                  {...register('cacheScopes')}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="TENANT"
+                  className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  id="key-injection-block"
+                  type="checkbox"
+                  {...register('injectionBlock')}
+                  className="accent-ember"
+                />
+                <label htmlFor="key-injection-block" className="text-[13px] font-medium">
+                  Block on prompt injection (unchecked warns only)
+                </label>
+              </div>
               <div className="flex justify-end gap-2 sm:col-span-2">
                 <button
                   type="button"
@@ -501,9 +709,13 @@ function KeysBoard(): React.JSX.Element {
             Loading keys…
           </p>
         ) : keys.error instanceof Error ? (
-          <p role="alert" className="text-sm text-danger dark:text-danger-soft">
-            {keys.error.message}
-          </p>
+          isStealth404(keys.error) ? (
+            <AdminUnavailable path="/v1/admin/keys" status={404} />
+          ) : (
+            <p role="alert" className="text-sm text-danger dark:text-danger-soft">
+              {keys.error.message}
+            </p>
+          )
         ) : keys.data === undefined || visible.length === 0 ? (
           rows.length === 0 ? (
             <EmptyTrio
@@ -670,6 +882,45 @@ function KeysBoard(): React.JSX.Element {
                     : inspected.allowedProviders.join(', ')}
                 </dd>
               </div>
+              <PolicyRow
+                label="Tools"
+                allow={inspected.allowedTools}
+                deny={inspected.deniedTools}
+              />
+              <PolicyRow
+                label="Resources"
+                allow={inspected.allowedResources}
+                deny={inspected.deniedResources}
+              />
+              <PolicyRow
+                label="Prompts"
+                allow={inspected.allowedPrompts}
+                deny={inspected.deniedPrompts}
+              />
+              <PolicyRow
+                label="Agents"
+                allow={inspected.allowedAgents}
+                deny={inspected.deniedAgents}
+              />
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink-soft dark:text-parchment-soft">Injection</dt>
+                <dd>
+                  {inspected.injectionBlock === false
+                    ? 'warn only'
+                    : inspected.injectionBlock === true
+                      ? 'block'
+                      : 'server default (block)'}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink-soft dark:text-parchment-soft">Cache scopes</dt>
+                <dd>
+                  {inspected.allowedCacheScopes === undefined ||
+                  inspected.allowedCacheScopes.length === 0
+                    ? 'TENANT-only (server default)'
+                    : inspected.allowedCacheScopes.join(', ')}
+                </dd>
+              </div>
               <div className="flex justify-between gap-3">
                 <dt className="text-ink-soft dark:text-parchment-soft">State</dt>
                 <dd>
@@ -706,6 +957,38 @@ function KeysBoard(): React.JSX.Element {
                 {inspected.enabled ? 'Disable key' : 'Enable key'}
               </button>
             )}
+            <div className="flex gap-2">
+              <div className="min-w-0 flex-1">
+                <label
+                  htmlFor={`transfer-${inspected.keyId}`}
+                  className="mb-1 block text-[13px] font-medium"
+                >
+                  Transfer ownership (account UUID, atomic)
+                </label>
+                <input
+                  id={`transfer-${inspected.keyId}`}
+                  value={transferId}
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(e) => {
+                    setTransferId(e.target.value)
+                  }}
+                  placeholder="123e4567-e89b-12d3-a456-426614174000"
+                  className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
+                />
+              </div>
+              <div className="flex items-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void onTransfer(inspected.keyId)
+                  }}
+                  className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+                >
+                  Transfer
+                </button>
+              </div>
+            </div>
             <button
               type="button"
               onClick={() => {

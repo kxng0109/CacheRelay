@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  DEFAULT_HEARTBEAT_MS,
   asError,
   backoffDelay,
   createIdempotencyKey,
@@ -106,6 +107,36 @@ describe('openSseStream', () => {
     })
     expect(seen).toHaveLength(1)
     expect(done).toBe(true)
+  })
+
+  it('routes error frames to incomplete and never to transcript', async () => {
+    const body =
+      'data: {"choices":[{"delta":{"content":"hi"}}]}\n\nevent: error\ndata: {"error":{"message":"Stream terminated by CacheRelay guardrail","type":"guardrail_violation","code":"content_filter"}}\n\n'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => sseResponse(body)),
+    )
+    const seen: string[] = []
+    let incomplete: Error | null = null
+    let fatal: Error | null = null
+    await openSseStream({
+      url: 'http://x/stream',
+      headers: {},
+      body: { model: 'm' },
+      signal: new AbortController().signal,
+      maxRetries: 0,
+      onMessage: (d) => {
+        seen.push(d)
+      },
+      onIncomplete: (e) => {
+        incomplete = e
+      },
+      onError: (e) => {
+        fatal = e
+      },
+    })
+    expect(seen).toHaveLength(1)
+    expect((incomplete as unknown as Error | null) ?? fatal).not.toBeNull()
   })
 
   it('reports handshake response headers once the stream is accepted', async () => {
@@ -335,6 +366,10 @@ describe('openSseStream', () => {
     expect(done).toBe(true)
   }, 10_000)
 
+  it('defaults the idle ceiling to the gateway five minute watchdog', () => {
+    expect(DEFAULT_HEARTBEAT_MS).toBe(300_000)
+  })
+
   it('settles silently when pre-aborted without an error callback', async () => {
     const fetchMock = vi.fn(() => Promise.resolve(new Response('boom', { status: 500 })))
     vi.stubGlobal('fetch', fetchMock)
@@ -438,9 +473,48 @@ describe('openSseStream', () => {
     for (const status of [400, 401, 403, 404, 422]) {
       expect(isRetryableHandshakeStatus(status)).toBe(false)
     }
-    for (const status of [408, 429, 500, 502, 503]) {
+    for (const status of [408, 409, 429, 500, 502, 503]) {
       expect(isRetryableHandshakeStatus(status)).toBe(true)
     }
+  })
+
+  it('retries 409 with the same idempotency key after the server wait', async () => {
+    const keys: (string | null)[] = []
+    let calls = 0
+    const fetchMock = vi.fn((_url: string, init: RequestInit) => {
+      calls += 1
+      const headers = new Headers(init.headers)
+      keys.push(headers.get('Idempotency-Key'))
+      if (calls === 1) {
+        return Promise.resolve(
+          new Response('identical request in flight', {
+            status: 409,
+            headers: { 'Retry-After': '1' },
+          }),
+        )
+      }
+      return sseResponse('data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: [DONE]\n\n')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const seen: string[] = []
+    let done = false
+    await openSseStream({
+      url: 'http://x/stream',
+      headers: {},
+      signal: new AbortController().signal,
+      maxRetries: 5,
+      onMessage: (d) => {
+        seen.push(d)
+      },
+      onDone: () => {
+        done = true
+      },
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(keys[0]).not.toBeNull()
+    expect(keys[1]).toBe(keys[0])
+    expect(seen).toHaveLength(1)
+    expect(done).toBe(true)
   })
 
   it('surfaces deterministic 400 denials without retry', async () => {
@@ -483,6 +557,84 @@ describe('openSseStream', () => {
     })
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(message).toContain('HTTP 422')
+  })
+
+  it('names replay states on handshake refusals', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response('{"error":{"message":"identical request in flight"}}', { status: 409 }),
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    let inFlight = ''
+    await openSseStream({
+      url: 'http://x/stream',
+      headers: {},
+      signal: new AbortController().signal,
+      maxRetries: 0,
+      onMessage: () => {
+        throw new Error('must not receive messages')
+      },
+      onError: (e) => {
+        inFlight = e.message
+      },
+    })
+    expect(inFlight).toContain('same idempotency key')
+    const mismatchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          '{"error":{"message":"idempotency key already used with a different request"}}',
+          {
+            status: 422,
+          },
+        ),
+      ),
+    )
+    vi.stubGlobal('fetch', mismatchMock)
+    let mismatch = ''
+    await openSseStream({
+      url: 'http://x/stream',
+      headers: {},
+      signal: new AbortController().signal,
+      maxRetries: 0,
+      onMessage: () => {
+        throw new Error('must not receive messages')
+      },
+      onError: (e) => {
+        mismatch = e.message
+      },
+    })
+    expect(mismatch).toContain('fresh key')
+  })
+
+  it('surfaces screening outages once without retry', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            title: 'Guardrail evaluation failure',
+            detail: 'Guardrail evaluation failed; request denied.',
+          }),
+          { status: 500 },
+        ),
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    let message = ''
+    await openSseStream({
+      url: 'http://x/stream',
+      headers: {},
+      signal: new AbortController().signal,
+      maxRetries: 5,
+      onMessage: () => {
+        throw new Error('must not receive messages')
+      },
+      onError: (e) => {
+        message = e.message
+      },
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(message).toContain('Guardrail evaluation failed')
   })
 
   it('surfaces vendor screening refusals on handshake with attribution', async () => {

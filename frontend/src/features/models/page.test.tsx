@@ -93,6 +93,52 @@ describe('ModelsPage', () => {
     }
   })
 
+  it('lists aliases alphabetically regardless of wire order', async () => {
+    server.use(listOk())
+    renderApp(<ModelsPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await waitFor(() => {
+      expect(table.textContent).toContain('db-fast')
+    })
+    const text = table.textContent
+    expect(text.indexOf('db-fast')).toBeLessThan(text.indexOf('file-gpt'))
+  })
+
+  it('renders admin unavailable on stealth 404', async () => {
+    server.use(http.get('*/v1/admin/models', () => new HttpResponse('x', { status: 404 })))
+    renderApp(<ModelsPage />, { adminSession: true })
+    expect(await screen.findByText(/admin unavailable/i)).toBeInTheDocument()
+  })
+
+  it('normalizes uppercase source values to the read only gates', async () => {
+    server.use(
+      http.get('*/v1/admin/models', () =>
+        HttpResponse.json({
+          models: [
+            {
+              name: 'file-gpt',
+              chain: [{ providerName: 'openai', modelOverride: null }],
+              strategy: 'SEQUENTIAL',
+              source: 'FILE',
+            },
+            {
+              name: 'db-fast',
+              chain: [{ providerName: 'openai', modelOverride: null }],
+              strategy: 'SEQUENTIAL',
+              source: 'DATABASE',
+            },
+          ],
+        }),
+      ),
+    )
+    renderApp(<ModelsPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    expect(table).toHaveTextContent('file-gpt')
+    expect(
+      screen.getByText(/2 aliases · 1 file bound \(read only\) · 1 database-managed/i),
+    ).toBeInTheDocument()
+  })
+
   it('creates an alias and announces the outcome', async () => {
     const user = userEvent.setup()
     server.use(

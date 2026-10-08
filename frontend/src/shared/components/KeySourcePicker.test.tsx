@@ -85,6 +85,17 @@ describe('KeySourcePicker', () => {
     expect(alert.innerHTML).not.toContain('text-danger')
   })
 
+  it('names expired sessions, never key faults, on 401', async () => {
+    server.use(
+      http.get('*/v1/me/keys', () => new HttpResponse('x', { status: 401 })),
+      http.post('*/v1/auth/refresh', () => new HttpResponse('x', { status: 401 })),
+    )
+    renderApp(<Harness />, { nonAdminSession: true })
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/session expired/i)
+    expect(alert).not.toHaveTextContent(/api key/i)
+  })
+
   it('names empty inventories with guidance', async () => {
     server.use(http.get('*/v1/me/keys', () => HttpResponse.json([])))
     renderApp(<Harness />, { nonAdminSession: true })

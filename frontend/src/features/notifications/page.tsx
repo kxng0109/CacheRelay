@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { GatewayClient } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
+import { AdminUnavailable, isStealth404 } from '../../shared/components/AdminUnavailable.js'
 import { Select } from '../../shared/components/Select.js'
 import { TableScroll } from '../../shared/components/TableScroll.js'
 
@@ -143,9 +144,13 @@ function NotificationsBoard(): React.JSX.Element {
           Loading subscriptions…
         </p>
       ) : query.error instanceof Error ? (
-        <p role="alert" className="text-sm text-danger dark:text-danger-soft">
-          {query.error.message}
-        </p>
+        isStealth404(query.error) ? (
+          <AdminUnavailable path="/v1/admin/notifications" status={404} />
+        ) : (
+          <p role="alert" className="text-sm text-danger dark:text-danger-soft">
+            {query.error.message}
+          </p>
+        )
       ) : rows.length === 0 ? (
         <p className="text-sm text-ink-soft dark:text-parchment-soft">
           No subscriptions for scope “{appliedScope}”.
@@ -264,6 +269,9 @@ function NotificationsBoard(): React.JSX.Element {
                 ]}
                 onChange={setSeverity}
               />
+              <p className="mt-1 text-xs text-ink-soft dark:text-parchment-soft">
+                Warning gets every alert. Critical gets critical alerts only.
+              </p>
             </div>
             <div>
               <label htmlFor="notif-secret" className="mb-1 block text-[13px] font-medium">
@@ -386,6 +394,8 @@ export function NotificationsPage(): React.JSX.Element {
         <h1 className="font-display text-3xl font-medium tracking-tight">Notifications</h1>
         <p className="text-sm text-ink-soft dark:text-parchment-soft">
           Alert subscriptions per scope. Secrets are referenced by environment name, never stored.
+          Detection runs every 60 seconds with dispatch every 30 seconds. Expect about 90 seconds
+          from trip to glass.
         </p>
       </div>
       <NotificationsBoard />

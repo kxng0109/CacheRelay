@@ -1,10 +1,22 @@
 import { Link } from 'react-router'
+import { ApiError } from '../api/client.js'
 
 interface AdminUnavailableProps {
   /** Request path that answered not-found (rendered as mono text). */
   path: string
   /** HTTP status observed (expected 404 stealth). */
   status?: number
+}
+
+/**
+ * Detects admin stealth denial: any 404 on an expected admin path means
+ * no access or no route. The server deliberately makes both identical.
+ *
+ * @param error - Caught query error of unknown shape.
+ * @returns True for `ApiError` 404s, false otherwise.
+ */
+export function isStealth404(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404
 }
 
 /**

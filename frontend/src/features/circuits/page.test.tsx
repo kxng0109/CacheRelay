@@ -68,6 +68,46 @@ describe('CircuitsPage', () => {
     expect(screen.getByRole('table').closest('.overflow-x-auto')).not.toBeNull()
   })
 
+  it('lists providers alphabetically regardless of wire order', async () => {
+    server.use(
+      http.get('*/v1/admin/circuits', () =>
+        HttpResponse.json([
+          {
+            provider: 'zeta',
+            state: 'CLOSED',
+            failures: 0,
+            cooldownMsRemaining: 0,
+            halfOpenProbe: false,
+          },
+          {
+            provider: 'alpha',
+            state: 'CLOSED',
+            failures: 0,
+            cooldownMsRemaining: 0,
+            halfOpenProbe: false,
+          },
+        ]),
+      ),
+      providers(['zeta', 'alpha']),
+    )
+    renderBoard()
+    const table = await screen.findByRole('table')
+    await waitFor(() => {
+      expect(table.textContent).toContain('alpha')
+    })
+    const text = table.textContent
+    expect(text.indexOf('alpha')).toBeLessThan(text.indexOf('zeta'))
+  })
+
+  it('renders admin unavailable on stealth 404', async () => {
+    server.use(
+      http.get('*/v1/admin/circuits', () => new HttpResponse('x', { status: 404 })),
+      providers(['openai']),
+    )
+    renderBoard()
+    expect(await screen.findByText(/admin unavailable/i)).toBeInTheDocument()
+  })
+
   it('renders inherited state names as unknown instead of mislabeling', async () => {
     server.use(
       http.get('*/v1/admin/circuits', () =>

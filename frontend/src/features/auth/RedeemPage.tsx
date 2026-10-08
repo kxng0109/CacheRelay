@@ -28,7 +28,7 @@ type FormData = z.infer<typeof schema> & { confirm: string }
  */
 export function RedeemPage(): React.JSX.Element {
   const navigate = useNavigate()
-  const [params] = useSearchParams()
+  const [params, setParams] = useSearchParams()
   const [error, setError] = useState<string | null>(null)
 
   const {
@@ -48,6 +48,10 @@ export function RedeemPage(): React.JSX.Element {
 
   const onSubmit = async (d: FormData & { confirm: string }): Promise<void> => {
     setError(null)
+    // The single-use token leaves the URL before the request resolves:
+    // failed redemptions must not linger in history or referrers. The
+    // form field keeps its value; only the address bar is scrubbed.
+    setParams({}, { replace: true })
     try {
       await redeemInvite(d.token.trim(), d.username.trim(), d.password)
       await navigate('/', { replace: true })

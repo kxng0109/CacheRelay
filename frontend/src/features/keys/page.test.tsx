@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
@@ -57,6 +57,12 @@ describe('KeysPage', () => {
     })
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('renders admin unavailable on stealth 404 instead of retry copy', async () => {
+    server.use(http.get('*/v1/admin/keys', () => new HttpResponse('x', { status: 404 })))
+    renderApp(<KeysPage />, { adminSession: true })
+    expect(await screen.findByText(/admin unavailable/i)).toBeInTheDocument()
   })
 
   it('renders unlimited for zero limits', async () => {
@@ -238,6 +244,65 @@ describe('KeysPage', () => {
       expect(screen.getByText('gw-secret-once')).toBeInTheDocument()
     })
     expect(screen.getByText(/never shown again/i)).toBeInTheDocument()
+  })
+
+  it('sends policy fields on create', async () => {
+    const user = userEvent.setup()
+    let body: unknown = null
+    server.use(
+      http.get('*/v1/admin/keys', () => HttpResponse.json([])),
+      http.post('*/v1/admin/keys', async ({ request }) => {
+        body = await request.json()
+        return HttpResponse.json({ ...KEYS[0], key: 'gw-secret-once' }, { status: 201 })
+      }),
+    )
+    renderApp(<KeysPage />, { adminSession: true })
+    const dialogTriggers = await screen.findAllByRole('button', { name: /^new key$/i })
+    const dialogTrigger = dialogTriggers[0]
+    if (dialogTrigger === undefined) throw new Error('New key trigger not found')
+    await user.click(dialogTrigger)
+    await user.type(screen.getByLabelText(/^owner$/i), 'tenant-corp')
+    await user.type(
+      screen.getByLabelText(/owner account uuid/i),
+      '123e4567-e89b-12d3-a456-426614174000',
+    )
+    await user.type(screen.getByLabelText(/^name$/i), 'ci-key')
+    await user.type(screen.getByLabelText(/providers \(comma-separated/i), 'openai')
+    await user.type(screen.getByLabelText(/denied tools/i), 'x__rm')
+    await user.click(screen.getByLabelText(/block on prompt injection/i))
+    await user.click(screen.getByRole('button', { name: /create key/i }))
+    await waitFor(() => {
+      expect(screen.getByText('gw-secret-once')).toBeInTheDocument()
+    })
+    expect(body).toMatchObject({
+      allowedProviders: ['openai'],
+      deniedTools: ['x__rm'],
+      injectionBlock: false,
+    })
+  })
+
+  it('transfers ownership through the atomic route', async () => {
+    const user = userEvent.setup()
+    let body: unknown = null
+    server.use(
+      http.get('*/v1/admin/keys', () => HttpResponse.json(KEYS)),
+      http.patch('*/v1/admin/keys/:id', async ({ request }) => {
+        body = await request.json()
+        return HttpResponse.json({ ...KEYS[0], ownerUserId: 'new-owner' })
+      }),
+    )
+    renderApp(<KeysPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByRole('button', { name: /inspect key ci-key/i }))
+    const inspector = await screen.findByRole('dialog', { name: /key inspector/i })
+    await user.type(
+      within(inspector).getByLabelText(/transfer ownership/i),
+      '123e4567-e89b-12d3-a456-426614174000',
+    )
+    await user.click(within(inspector).getByRole('button', { name: /^transfer$/i }))
+    await waitFor(() => {
+      expect(body).toMatchObject({ ownerUserId: '123e4567-e89b-12d3-a456-426614174000' })
+    })
   })
 
   it('validates the form before submitting', async () => {
@@ -478,6 +543,62 @@ describe('KeysPage', () => {
     })
     await user.type(screen.getByLabelText(/filter keys/i), 'zzz-no-key')
     expect(screen.getByText(/no keys match this filter/i)).toBeInTheDocument()
+  })
+
+  it('scopes the list by owner through the server filter', async () => {
+    const user = userEvent.setup()
+    let seenUrl = ''
+    server.use(
+      http.get('*/v1/admin/keys', ({ request }) => {
+        seenUrl = request.url
+        return HttpResponse.json([])
+      }),
+    )
+    renderApp(<KeysPage />, { adminSession: true })
+    await screen.findByText(/no keys yet/i)
+    await user.type(screen.getByLabelText(/filter by owner/i), 'tenant-corp')
+    await waitFor(() => {
+      expect(seenUrl).toContain('ownerId=tenant-corp')
+    })
+  })
+
+  it('lists newest keys first regardless of wire order', async () => {
+    server.use(
+      http.get('*/v1/admin/keys', () =>
+        HttpResponse.json([
+          { ...KEYS[0], keyId: 'k-old', name: 'old-key', createdAt: '2026-01-01T00:00:00Z' },
+          { ...KEYS[0], keyId: 'k-new', name: 'new-key', createdAt: '2026-09-01T00:00:00Z' },
+        ]),
+      ),
+    )
+    renderApp(<KeysPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await waitFor(() => {
+      expect(table.textContent).toContain('new-key')
+    })
+    const text = table.textContent
+    expect(text.indexOf('new-key')).toBeLessThan(text.indexOf('old-key'))
+  })
+
+  it('rejects glob entries past 256 characters', async () => {
+    const user = userEvent.setup()
+    server.use(http.get('*/v1/admin/keys', () => HttpResponse.json([])))
+    renderApp(<KeysPage />, { adminSession: true })
+    const triggers = await screen.findAllByRole('button', { name: /^new key$/i })
+    const trigger = triggers[0]
+    if (trigger === undefined) throw new Error('New key trigger not found')
+    await user.click(trigger)
+    await user.type(screen.getByLabelText(/^owner$/i), 'tenant-corp')
+    await user.type(
+      screen.getByLabelText(/owner account uuid/i),
+      '123e4567-e89b-12d3-a456-426614174000',
+    )
+    await user.type(screen.getByLabelText(/^name$/i), 'big-glob')
+    fireEvent.change(screen.getByLabelText(/providers \(comma-separated/i), {
+      target: { value: 'x'.repeat(257) },
+    })
+    await user.click(screen.getByRole('button', { name: /create key/i }))
+    expect(await screen.findByText(/256 characters/i)).toBeInTheDocument()
   })
 
   it('deselects a row on second click', async () => {

@@ -145,7 +145,7 @@ function InvitesBoard(): React.JSX.Element {
           <p className="font-mono text-[13px] wrap-break-word">{link}</p>
           <p className="text-[13px] text-ink-soft dark:text-parchment-soft">
             {emailed ? 'Mailed to the address above.' : 'Link only — no mail sent.'} Copy it now;
-            redeeming consumes the token.
+            redeeming consumes the token. Links expire 48 hours after minting.
           </p>
           <button
             type="button"
@@ -179,7 +179,8 @@ export function InvitesPage(): React.JSX.Element {
         </p>
         <h1 className="font-display text-3xl font-medium tracking-tight">Invites</h1>
         <p className="text-sm text-ink-soft dark:text-parchment-soft">
-          Mint single-use onboarding links. Tokens are consumed on redeem.
+          Mint single-use onboarding links. Tokens are consumed on redeem. Links expire 48 hours
+          after minting.
         </p>
       </div>
       <InvitesBoard />

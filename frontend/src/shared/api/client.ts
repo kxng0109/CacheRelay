@@ -5,6 +5,7 @@ import type {
   BudgetBalance,
   BudgetHold,
   BudgetRecord,
+  BudgetSnapshot,
   CachePurge,
   CacheStats,
   CacheTiers,
@@ -17,6 +18,7 @@ import type {
   HitlApproval,
   HitlDecision,
   InviteReceipt,
+  KeyPolicy,
   LedgerLogEntry,
   LedgerReceipt,
   LedgerSummary,
@@ -125,6 +127,7 @@ export class ApiError extends Error {
   readonly status: number
   readonly requestId: string | null
   readonly rateLimit: RateLimitSnapshot
+  readonly budget: BudgetSnapshot | null
   readonly cacheStatus: string | null
   readonly debugId: string | null
   /** Gateway `error.code` (for example `RPM_EXCEEDED`), or null when absent. */
@@ -135,6 +138,7 @@ export class ApiError extends Error {
     status: number
     requestId: string | null
     rateLimit: RateLimitSnapshot
+    budget?: BudgetSnapshot | null
     cacheStatus: string | null
     debugId: string | null
     code: string | null
@@ -144,10 +148,39 @@ export class ApiError extends Error {
     this.status = args.status
     this.requestId = args.requestId
     this.rateLimit = args.rateLimit
+    this.budget = args.budget ?? null
     this.cacheStatus = args.cacheStatus
     this.debugId = args.debugId
     this.code = args.code
   }
+}
+
+/**
+ * Parses a decimal header value under the specified gateway grammar.
+ * Hex (`0x10`), exponents (`1e3`), and padded values (` 5 `) never
+ * coerce — only plain decimal strings parse.
+ *
+ * @param v - Raw header value, or null when absent.
+ * @returns The number, or null when absent, `unlimited`, or off-grammar.
+ */
+function decimalOrNull(v: string | null): number | null {
+  if (v === null || v === 'unlimited') return null
+  if (!/^\d+(\.\d+)?$/.test(v)) return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+/**
+ * Parses an integer header value (`Retry-After`, epoch resets, micros).
+ *
+ * @param v - Raw header value, or null when absent.
+ * @returns The integer, or null when absent or off-grammar.
+ */
+function intOrNull(v: string | null): number | null {
+  if (v === null) return null
+  if (!/^\d+$/.test(v)) return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
 }
 
 /**
@@ -161,15 +194,10 @@ function parseDimension(
   headers: Headers,
   dimension: RateLimitDimension,
 ): { limit: number | null; remaining: number | null; reset: number | null } {
-  const num = (v: string | null): number | null => {
-    if (v === null || v === 'unlimited') return null
-    const n = Number(v)
-    return Number.isFinite(n) ? n : null
-  }
   return {
-    limit: num(headers.get(`X-RateLimit-Limit-${dimension}`)),
-    remaining: num(headers.get(`X-RateLimit-Remaining-${dimension}`)),
-    reset: num(headers.get(`X-RateLimit-Reset-${dimension}`)),
+    limit: decimalOrNull(headers.get(`X-RateLimit-Limit-${dimension}`)),
+    remaining: decimalOrNull(headers.get(`X-RateLimit-Remaining-${dimension}`)),
+    reset: intOrNull(headers.get(`X-RateLimit-Reset-${dimension}`)),
   }
 }
 
@@ -221,11 +249,6 @@ export function selectPrimaryDimension(
  * @returns Parsed rate-limit snapshot (nulls when absent).
  */
 export function parseRateLimit(headers: Headers, code: string | null = null): RateLimitSnapshot {
-  const num = (v: string | null): number | null => {
-    if (v === null || v === 'unlimited') return null
-    const n = Number(v)
-    return Number.isFinite(n) ? n : null
-  }
   const rpm = parseDimension(headers, 'RPM')
   const tpm = parseDimension(headers, 'TPM')
   const dimension = selectPrimaryDimension(rpm, tpm, code)
@@ -235,8 +258,49 @@ export function parseRateLimit(headers: Headers, code: string | null = null): Ra
     limit: primary.limit,
     remaining: primary.remaining,
     reset: primary.reset,
-    retryAfter: num(headers.get('Retry-After')),
+    retryAfter: intOrNull(headers.get('Retry-After')),
   }
+}
+
+/**
+ * Reads the gateway budget header family from a response.
+ *
+ * @remarks
+ * Backend truth: denials set `X-Budget-Remaining` (`0`),
+ * `X-Budget-Reset` (epoch seconds), `X-Budget-Level`, and
+ * `X-Budget-Window`. Successes with a hold set `X-Budget-Held-Micros`
+ * (pre-settle estimate, never final cost) and `X-Budget-Subject`.
+ * Absent headers read as null. No success-path remaining is ever set.
+ *
+ * @param headers - Response headers to inspect.
+ * @returns Parsed budget snapshot (nulls when absent).
+ */
+export function parseBudget(headers: Headers): BudgetSnapshot {
+  const text = (v: string | null): string | null => {
+    if (v === null) return null
+    const t = v.trim()
+    return t.length > 0 && t.length <= 64 ? t : null
+  }
+  return {
+    remaining: intOrNull(headers.get('X-Budget-Remaining')),
+    reset: intOrNull(headers.get('X-Budget-Reset')),
+    level: text(headers.get('X-Budget-Level')),
+    window: text(headers.get('X-Budget-Window')),
+    heldMicros: intOrNull(headers.get('X-Budget-Held-Micros')),
+    subject: text(headers.get('X-Budget-Subject')),
+  }
+}
+
+/**
+ * Reads cache provenance from response headers. The wire header is
+ * `X-Cache` (`HIT (L0-Memory)` / `HIT (L1-Exact)` / `HIT (L2-Semantic)`);
+ * a legacy `X-Cache-Status` alias is accepted as fallback, never preferred.
+ *
+ * @param headers - Response headers to inspect.
+ * @returns The tier string, or null when absent.
+ */
+export function cacheStatusOf(headers: Headers): string | null {
+  return headers.get('X-Cache') ?? headers.get('X-Cache-Status')
 }
 
 /**
@@ -276,6 +340,25 @@ export function parseGatewayErrorCode(body: string): string | null {
 export const VERDICT_HEADER = 'X-CacheRelay-Vendor-Verdict'
 
 /**
+ * Default MCP protocol version. Sent explicitly so the gateway never
+ * resolves an ambiguous default. Matches the documented default
+ * `2026-07-28` which requires `params._meta` on every call.
+ */
+export const MCP_PROTOCOL_VERSION = '2026-07-28'
+
+/**
+ * Builds the required `params._meta` object for the default protocol.
+ *
+ * @returns Meta with namespaced protocol version plus empty capabilities.
+ */
+export function mcpMeta(): Record<string, unknown> {
+  return {
+    'io.modelcontextprotocol/protocolVersion': MCP_PROTOCOL_VERSION,
+    'io.modelcontextprotocol/clientCapabilities': {},
+  }
+}
+
+/**
  * Reads an opaque vendor verdict token from a header value.
  *
  * @param value - Raw header value, or null when absent.
@@ -309,10 +392,12 @@ export function splitVerdict(token: string | null): { vendor: string; reason: st
  * Composes a vendor-screening refusal from an RFC 9457 problem body.
  *
  * @remarks
- * Backend truth (spec: vendor screening, opt-in): ENFORCE denials answer
- * 422 with constant `type` (`…/vendor-screening-rejection`), human
- * `title` + `detail`, and `vendor`/`reason` attribution — pass through,
- * do not compose. Mapping prefers the verdict header; display prefers
+ * Backend truth (spec: guardrails): ENFORCE denials answer 422 with an
+ * exact `type` URI. Vendor denials carry human `title` + `detail` plus
+ * `vendor`/`reason` attribution — pass through, do not compose.
+ * Credential denials add `rule_id`, `masked_token`, `json_path`
+ * (fingerprints never render); injection denials add `category`,
+ * `risk_score`, `matched_pattern`. Mapping prefers the verdict header; display prefers
  * the body. Attribution is display-only (never logic) and drops when
  * absent or oversized. Anything else returns null so every other 422 —
  * and every 500, including vendor *failure* bodies without the screening
@@ -330,7 +415,14 @@ function screeningRefusal(
 ): string | null {
   if (status !== 422) return null
   const type = record.type
-  const typed = typeof type === 'string' && type.endsWith('/vendor-screening-rejection')
+  if (type === 'https://cacherelay.io/errors/credential-leakage-detected') {
+    return guardrailRefusal(record, credentialDetails(record))
+  }
+  if (type === 'https://cacherelay.io/errors/prompt-injection-detected') {
+    return guardrailRefusal(record, injectionDetails(record))
+  }
+  const typed =
+    typeof type === 'string' && type === 'https://cacherelay.io/errors/vendor-screening-rejection'
   if (!typed && headerVerdict === null) return null
   const title = record.title
   const detail = record.detail
@@ -351,6 +443,74 @@ function screeningRefusal(
   if (headerVerdict !== null)
     return `${String(text)} Screened by ${headerVerdict.vendor} (${headerVerdict.reason}).`
   return String(text)
+}
+
+/**
+ * Reads one bounded string extension field from a problem body.
+ *
+ * @param record - Decoded problem body.
+ * @param key - Extension field name.
+ * @param max - Maximum accepted length.
+ * @returns The field value, or null when absent or oversized.
+ */
+function extensionField(record: Record<string, unknown>, key: string, max: number): string | null {
+  const value = record[key]
+  if (typeof value !== 'string' || value.length === 0 || value.length > max) return null
+  return value
+}
+
+/**
+ * Composes the base `title: detail` text of a guardrail denial.
+ *
+ * @param record - Decoded problem body.
+ * @param suffix - Extension detail, or null when none rendered.
+ * @returns The composed refusal, or null when title and detail are absent.
+ */
+function guardrailRefusal(record: Record<string, unknown>, suffix: string | null): string | null {
+  const title = record.title
+  const detail = record.detail
+  const hasTitle = typeof title === 'string' && title.length > 0
+  const hasDetail = typeof detail === 'string' && detail.length > 0
+  if (!hasTitle && !hasDetail) return null
+  const text = hasTitle && hasDetail ? `${title}: ${detail}` : hasTitle ? title : detail
+  return suffix === null ? String(text) : `${String(text)} ${suffix}`
+}
+
+/**
+ * Formats credential-leakage extension fields. The fingerprint never
+ * renders: it is an identifier, not a locator.
+ *
+ * @param record - Decoded problem body.
+ * @returns The suffix, or null when no field rendered.
+ */
+function credentialDetails(record: Record<string, unknown>): string | null {
+  const parts: string[] = []
+  const rule = extensionField(record, 'rule_id', 64)
+  if (rule !== null) parts.push(`Rule ${rule}`)
+  const path = extensionField(record, 'json_path', 256)
+  if (path !== null) parts.push(`at ${path}`)
+  const token = extensionField(record, 'masked_token', 64)
+  if (token !== null) parts.push(`(token ${token})`)
+  return parts.length === 0 ? null : `${parts.join(' ')}.`
+}
+
+/**
+ * Formats prompt-injection extension fields.
+ *
+ * @param record - Decoded problem body.
+ * @returns The suffix, or null when no field rendered.
+ */
+function injectionDetails(record: Record<string, unknown>): string | null {
+  const parts: string[] = []
+  const category = extensionField(record, 'category', 64)
+  if (category !== null) parts.push(`Category ${category}`)
+  const risk = record.risk_score
+  if (typeof risk === 'number' && Number.isFinite(risk) && risk >= 0 && risk <= 1) {
+    parts.push(`risk ${risk.toFixed(2)}`)
+  }
+  const pattern = extensionField(record, 'matched_pattern', 256)
+  if (pattern !== null) parts.push(`Matched ${pattern}`)
+  return parts.length === 0 ? null : `${parts.join(', ')}.`
 }
 
 /**
@@ -389,6 +549,10 @@ export function safeErrorMessage(status: number, body: string, verdict?: string 
           }
           const message = errorRecord.message
           if (typeof message === 'string' && message.length > 0) {
+            if (status === 429 && /budget exhausted/i.test(message)) return message
+            if (status === 503 && errorRecord.code === 'DATA_SOVEREIGNTY_VIOLATION') {
+              return 'No in-region provider is available. Policy block, not an outage.'
+            }
             if (status === 429) return 'Rate limit reached. Wait for the reset window, then retry.'
             if (status === 503) return 'Gateway is temporarily unavailable. Retry shortly.'
             return message
@@ -439,6 +603,17 @@ export interface RequestOptions {
    */
   actAsKey?: string
   /**
+   * Optional `A2A-Version` pin (`Major.Minor`) for agent calls. Omitted
+   * lets the gateway fall back to the agent pin.
+   */
+  a2aVersion?: string
+  /**
+   * Idempotency key for the logical run. Generated per call when absent
+   * and reused by the caller across retries, so a retried static
+   * completion replays byte-identically instead of billing twice.
+   */
+  idempotencyKey?: string
+  /**
    * Ignore the in-memory session and send the constructor token verbatim.
    * Gateway endpoints (`/v1/chat`, `/v1/embeddings`, `/v1/models`) need
    * this for pasted-key flows: the session JWT is not a virtual key, so
@@ -479,6 +654,32 @@ export function setHeadersReporter(
 }
 
 /**
+ * Checks the pasted virtual-key shape without sending it. Gateway keys
+ * are `gw-` plus exactly 32 `[A-Za-z0-9_-]` chars (35 total). Anything
+ * else fails closed server-side; the form names truncation early so a
+ * half-paste never reads as a revocation.
+ *
+ * @param key - Trimmed pasted key candidate.
+ * @returns True for well-formed `gw-` keys.
+ */
+export function isWellFormedGatewayKey(key: string): boolean {
+  return /^gw-[A-Za-z0-9_-]{32}$/.test(key)
+}
+
+/**
+ * Mints one correlation id per request for admin audit attribution.
+ * The gateway reads `X-Request-ID` for audit correlation; every
+ * frontend-initiated request carries one.
+ *
+ * @returns A unique opaque id for the request.
+ */
+export function createRequestId(): string {
+  const g = globalThis as { crypto?: { randomUUID?: () => string } }
+  if (typeof g.crypto?.randomUUID === 'function') return g.crypto.randomUUID()
+  return `${Date.now().toString(36)}-${Math.floor(Math.random() * 0xffffff).toString(36)}`
+}
+
+/**
  * Session-owned paths: 401s here mean the access token died (expiry or
  * revocation), never a bad gateway key. Public paths keep their errors
  * untouched so gateway-key problems are never misread as session loss.
@@ -488,6 +689,7 @@ export function setHeadersReporter(
  */
 function isSessionRoute(path: string): boolean {
   if (path.startsWith('/v1/admin/')) return true
+  if (path.startsWith('/v1/me/')) return true
   if (path.startsWith('/v1/auth/') && !path.startsWith('/v1/auth/login')) return true
   return false
 }
@@ -538,12 +740,17 @@ async function sendGatewayRequest(
     if (res.status === 401 && useAuthStore.getState().session !== null && isSessionRoute(path)) {
       await refreshSession()
     }
+    const baseMessage = safeErrorMessage(res.status, text, res.headers.get(VERDICT_HEADER))
     throw new ApiError({
-      message: safeErrorMessage(res.status, text, res.headers.get(VERDICT_HEADER)),
+      message:
+        res.status === 401 && isSessionRoute(path)
+          ? 'Session expired. Sign in again to continue.'
+          : baseMessage,
       status: res.status,
       requestId: res.headers.get('X-Request-Id'),
       rateLimit: parseRateLimit(res.headers, code),
-      cacheStatus: res.headers.get('X-Cache-Status'),
+      budget: parseBudget(res.headers),
+      cacheStatus: cacheStatusOf(res.headers),
       debugId: res.headers.get('X-Request-Debug'),
       code,
     })
@@ -686,6 +893,17 @@ const apiKeyRowSchema = z.object({
   // Legacy rows may omit these entirely; absence reads as unresolvable.
   ownerUserId: z.string().nullable().default(null),
   ownerUsername: z.string().nullable().default(null),
+  // Policy sets shipped later; absence reads as server default.
+  allowedTools: z.array(z.string()).optional(),
+  deniedTools: z.array(z.string()).optional(),
+  allowedResources: z.array(z.string()).optional(),
+  deniedResources: z.array(z.string()).optional(),
+  allowedPrompts: z.array(z.string()).optional(),
+  deniedPrompts: z.array(z.string()).optional(),
+  allowedAgents: z.array(z.string()).optional(),
+  deniedAgents: z.array(z.string()).optional(),
+  injectionBlock: z.boolean().nullable().optional(),
+  allowedCacheScopes: z.array(z.string()).optional(),
 })
 
 const ownerSummaryRowSchema = z.object({
@@ -784,6 +1002,7 @@ const EMPTY_LEDGER_PAGE: PageResponse<LedgerLogEntry> = {
 }
 
 const ledgerReceiptSchema = z.object({
+  id: z.string(),
   requestId: z.string(),
   ownerId: z.string(),
   provider: z.string(),
@@ -792,9 +1011,10 @@ const ledgerReceiptSchema = z.object({
   completionTokens: z.number().nullable(),
   totalTokens: z.number(),
   costUsdMicros: z.number(),
+  costUsd: z.string(),
   durationMs: z.number(),
-  cached: z.boolean(),
-  cacheTier: z.string().nullable(),
+  cached: z.boolean().optional(),
+  cacheTier: z.string().nullable().optional(),
   createdAt: z.string(),
 })
 
@@ -810,7 +1030,7 @@ const budgetRowSchema = z.object({
 })
 
 const hitlRowSchema = z.object({
-  tokenId: z.string(),
+  tokenId: z.string().regex(/^[0-9a-f]{32}$/),
   toolName: z.string(),
   serverName: z.string(),
   ownerId: z.string(),
@@ -902,6 +1122,24 @@ const apiKeyCreatedSchema = z.object({
   keyPrefix: z.string(),
   ownerId: z.string(),
   name: z.string(),
+  rpmLimit: z.number().optional(),
+  tpmLimit: z.number().optional(),
+  allowedModels: z.array(z.string()).optional(),
+  allowedProviders: z.array(z.string()).optional(),
+  enabled: z.boolean().optional(),
+  createdAt: z.string().optional(),
+  ownerUserId: z.string().nullable().optional(),
+  ownerUsername: z.string().nullable().optional(),
+  allowedTools: z.array(z.string()).optional(),
+  deniedTools: z.array(z.string()).optional(),
+  allowedResources: z.array(z.string()).optional(),
+  deniedResources: z.array(z.string()).optional(),
+  allowedPrompts: z.array(z.string()).optional(),
+  deniedPrompts: z.array(z.string()).optional(),
+  allowedAgents: z.array(z.string()).optional(),
+  deniedAgents: z.array(z.string()).optional(),
+  injectionBlock: z.boolean().nullable().optional(),
+  allowedCacheScopes: z.array(z.string()).optional(),
 })
 
 const providerChainStepSchema = z.object({
@@ -1100,6 +1338,7 @@ export class GatewayClient {
     if (actAsKey !== undefined && actAsKey.length > 0) {
       h['X-Act-As-Key'] = actAsKey
     }
+    h['X-Request-Id'] ??= createRequestId()
     return h
   }
 
@@ -1140,7 +1379,10 @@ export class GatewayClient {
       {
         method: 'POST',
         headers: this.headers(
-          { 'Content-Type': 'application/json' },
+          {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': opts?.idempotencyKey ?? createRequestId(),
+          },
           opts?.actAsKey,
           opts?.ignoreSession,
         ),
@@ -1168,7 +1410,10 @@ export class GatewayClient {
       {
         method: 'POST',
         headers: this.headers(
-          { 'Content-Type': 'application/json' },
+          {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': opts?.idempotencyKey ?? createRequestId(),
+          },
           opts?.actAsKey,
           opts?.ignoreSession,
         ),
@@ -1252,7 +1497,12 @@ export class GatewayClient {
         body: JSON.stringify({ keyId }),
       },
       opts,
-    )
+    ).catch((error: unknown) => {
+      if (error instanceof ApiError && error.status === 404) {
+        throw new Error('Key not found: unknown or foreign key.')
+      }
+      throw error
+    })
   }
 
   /**
@@ -1268,7 +1518,12 @@ export class GatewayClient {
       `/v1/me/keys/${encodeURIComponent(hashHex)}/revoke`,
       { method: 'POST', headers: this.headers() },
       opts,
-    )
+    ).catch((error: unknown) => {
+      if (error instanceof ApiError && error.status === 404) {
+        throw new Error('Key not found: unknown or foreign key.')
+      }
+      throw error
+    })
   }
 
   /**
@@ -1288,7 +1543,15 @@ export class GatewayClient {
       opts,
     )
     // A drifted gateway must degrade to an empty board, never throw.
-    return { models: Array.isArray(body.models) ? body.models : [] }
+    // `source` normalizes case-insensitively: the contract spells
+    // `FILE`/`DATABASE` while the board gates on `file`/`database`.
+    if (!Array.isArray(body.models)) return { models: [] }
+    return {
+      models: body.models.map((m) => {
+        const source = typeof m.source === 'string' ? m.source.toLowerCase() : m.source
+        return source === 'file' || source === 'database' ? { ...m, source } : m
+      }),
+    }
   }
 
   /**
@@ -1660,18 +1923,54 @@ export class GatewayClient {
   /**
    * Lists virtual API keys (metadata only, never plaintext).
    *
-   * @param opts - Optional request options (abort signal, headers listener).
+   * @param opts - Optional owner filter, abort signal, headers listener.
    * @returns Key metadata records.
    */
-  async listKeys(opts?: RequestOptions): Promise<{ keys: ApiKeyRecord[] }> {
+  async listKeys(
+    opts?: RequestOptions & { ownerId?: string | undefined },
+  ): Promise<{ keys: ApiKeyRecord[] }> {
+    const owner = opts?.ownerId?.trim()
+    const path =
+      owner !== undefined && owner.length > 0
+        ? `/v1/admin/keys?ownerId=${encodeURIComponent(owner)}`
+        : '/v1/admin/keys'
     const body: unknown = await this.request<unknown>(
-      '/v1/admin/keys',
+      path,
       {
         headers: this.headers(),
       },
       opts,
     )
     return { keys: rowsOrEmpty(apiKeyRowSchema, body, 'keys') }
+  }
+
+  /**
+   * Reads one key by hash (metadata only, never plaintext).
+   *
+   * @remarks Backend truth: `GET /v1/admin/keys/{hashHex}` answers 200,
+   * empty-body 404 when unknown, and 400 for malformed hashes (rejected
+   * client-side before sending).
+   *
+   * @param hashHex - 64 lowercase hex key hash.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns The key record, or null when unknown.
+   * @throws Error synchronously when the hash is malformed (never sent).
+   */
+  async getKey(hashHex: string, opts?: RequestOptions): Promise<ApiKeyRecord | null> {
+    GatewayClient.assertKeyHash(hashHex, 'Key read')
+    try {
+      const raw: unknown = await this.request<unknown>(
+        `/v1/admin/keys/${encodeURIComponent(hashHex)}`,
+        {
+          headers: this.headers(),
+        },
+        opts,
+      )
+      return valueOrThrow(apiKeyRowSchema, raw, 'keys-read', 'Key read')
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return null
+      throw error
+    }
   }
 
   /**
@@ -1694,7 +1993,7 @@ export class GatewayClient {
       rpmLimit: number
       tpmLimit: number
       allowedModels: string[]
-    },
+    } & KeyPolicy,
     opts?: RequestOptions,
   ): Promise<ApiKeyCreated> {
     const raw: unknown = await this.request<unknown>(
@@ -1731,6 +2030,35 @@ export class GatewayClient {
       opts,
     )
     return valueOrThrow(apiKeyRowSchema, raw, 'keys-update', 'Key update')
+  }
+
+  /**
+   * Patches ownership and policy of a key. Reversible except revoke.
+   *
+   * @remarks Backend truth: `ownerUserId != null` routes to the atomic
+   * patch path, otherwise the legacy update path. Only set fields
+   * travel; the response is the updated metadata.
+   *
+   * @param id - Key hash hex.
+   * @param patch - Owner and policy fields to replace.
+   * @param opts - Optional request options (abort signal, headers listener).
+   * @returns Updated metadata.
+   */
+  async patchKey(
+    id: string,
+    patch: { ownerUserId?: string } & KeyPolicy,
+    opts?: RequestOptions,
+  ): Promise<ApiKeyRecord> {
+    const raw: unknown = await this.request<unknown>(
+      `/v1/admin/keys/${encodeURIComponent(id)}`,
+      {
+        method: 'PATCH',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(patch),
+      },
+      opts,
+    )
+    return valueOrThrow(apiKeyRowSchema, raw, 'keys-patch', 'Key patch')
   }
 
   /**
@@ -2157,11 +2485,20 @@ export class GatewayClient {
     const init: RequestInit = {
       method: 'POST',
       headers: this.headers(
-        { 'Content-Type': 'application/json' },
+        {
+          'Content-Type': 'application/json',
+          'MCP-Protocol-Version': MCP_PROTOCOL_VERSION,
+          'Mcp-Method': 'tools/list',
+        },
         opts?.actAsKey,
         opts?.ignoreSession,
       ),
-      body: JSON.stringify({ jsonrpc: '2.0', id: 'tools-list', method: 'tools/list' }),
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'tools-list',
+        method: 'tools/list',
+        params: { _meta: mcpMeta() },
+      }),
     }
     if (opts?.signal !== undefined) init.signal = opts.signal
     let res: Response
@@ -2177,14 +2514,27 @@ export class GatewayClient {
       ;(opts?.onHeaders ?? headersReporter)?.(res.headers, null)
       return { suspended: true as const, status: res.status }
     }
+    if (res.status === 202) {
+      // Notification-style ack: accepted with no content. No pipeline ran,
+      // so there is no catalog to render and no error to report.
+      ;(opts?.onHeaders ?? headersReporter)?.(res.headers, null)
+      return { tools: [] }
+    }
     if (!res.ok) {
       const text = await res.text().catch(() => '')
+      if (res.status === 404) {
+        const envelope = rpcEnvelopeError(text)
+        if (envelope !== null) {
+          throw new Error(mcpErrorMessage(envelope.code, envelope.message))
+        }
+      }
       throw new ApiError({
         message: safeErrorMessage(res.status, text),
         status: res.status,
         requestId: res.headers.get('X-Request-Id'),
         rateLimit: parseRateLimit(res.headers),
-        cacheStatus: res.headers.get('X-Cache-Status'),
+        budget: parseBudget(res.headers),
+        cacheStatus: cacheStatusOf(res.headers),
         debugId: res.headers.get('X-Request-Debug'),
         code: parseGatewayErrorCode(text),
       })
@@ -2194,12 +2544,10 @@ export class GatewayClient {
     if (typeof body !== 'object' || body === null) return { tools: [] }
     const envelope = body as Record<string, unknown>
     if (typeof envelope.error === 'object' && envelope.error !== null) {
-      const message = (envelope.error as Record<string, unknown>).message
-      throw new Error(
-        typeof message === 'string' && message.length > 0
-          ? `MCP catalog error: ${message}`
-          : 'MCP catalog error.',
-      )
+      const errRecord = envelope.error as Record<string, unknown>
+      const code = typeof errRecord.code === 'number' ? errRecord.code : -32603
+      const message = typeof errRecord.message === 'string' ? errRecord.message : null
+      throw new Error(mcpErrorMessage(code, message))
     }
     const result = envelope.result
     if (typeof result !== 'object' || result === null) return { tools: [] }
@@ -2245,7 +2593,11 @@ export class GatewayClient {
     const init: RequestInit = {
       method: 'POST',
       headers: this.headers(
-        { 'Content-Type': 'application/json' },
+        {
+          'Content-Type': 'application/json',
+          'MCP-Protocol-Version': MCP_PROTOCOL_VERSION,
+          'Mcp-Method': 'tools/call',
+        },
         opts?.actAsKey,
         opts?.ignoreSession,
       ),
@@ -2253,7 +2605,7 @@ export class GatewayClient {
         jsonrpc: '2.0',
         id: `call-${String(Date.now())}`,
         method: 'tools/call',
-        params: { name: toolName, arguments: args },
+        params: { name: toolName, arguments: args, _meta: mcpMeta() },
       }),
     }
     if (opts?.signal !== undefined) init.signal = opts.signal
@@ -2266,14 +2618,27 @@ export class GatewayClient {
         cause: error,
       })
     }
+    if (res.status === 202) {
+      // Notification-style ack: accepted with no content. The call ran no
+      // pipeline, so there is no result to render and no error to report.
+      ;(opts?.onHeaders ?? headersReporter)?.(res.headers, null)
+      return null
+    }
     if (!res.ok) {
       const text = await res.text().catch(() => '')
+      if (res.status === 404) {
+        const envelope = rpcEnvelopeError(text)
+        if (envelope !== null) {
+          throw new Error(mcpErrorMessage(envelope.code, envelope.message))
+        }
+      }
       throw new ApiError({
         message: safeErrorMessage(res.status, text),
         status: res.status,
         requestId: res.headers.get('X-Request-Id'),
         rateLimit: parseRateLimit(res.headers),
-        cacheStatus: res.headers.get('X-Cache-Status'),
+        budget: parseBudget(res.headers),
+        cacheStatus: cacheStatusOf(res.headers),
         debugId: res.headers.get('X-Request-Debug'),
         code: parseGatewayErrorCode(text),
       })
@@ -2349,7 +2714,12 @@ export class GatewayClient {
       {
         method: 'POST',
         headers: this.headers(
-          { 'Content-Type': 'application/json' },
+          {
+            'Content-Type': 'application/json',
+            ...(opts?.a2aVersion === undefined || opts.a2aVersion.length === 0
+              ? {}
+              : { 'A2A-Version': opts.a2aVersion }),
+          },
           opts?.actAsKey,
           opts?.ignoreSession,
         ),
@@ -2366,6 +2736,46 @@ export class GatewayClient {
       throw new Error(mcpErrorMessage(code, message))
     }
     return envelope.result ?? null
+  }
+
+  /**
+   * Builds a streaming `message/stream` relay request for SSE delivery.
+   *
+   * @remarks Backend truth (`A2aProxyController`): `message/stream`
+   * relays upstream SSE byte-for-byte (`text/event-stream`, each `data:`
+   * frame a complete JSON-RPC response). No terminal marker is ever
+   * sent: a clean close means complete, a mid-stream failure means
+   * truncation. The page drives `openSseStream` with this shape so URLs,
+   * versions, and auth stay in one place.
+   *
+   * @param agent - Agent identifier.
+   * @param params - Method params (must be JSON-serializable).
+   * @param version - Optional `A2A-Version` pin (`Major.Minor`); omitted
+   * lets the gateway fall back to the agent pin.
+   * @returns URL, headers, and body for the SSE POST.
+   */
+  a2aStreamRequest(
+    agent: string,
+    params: Record<string, unknown>,
+    version?: string,
+  ): { url: string; headers: Record<string, string>; body: unknown } {
+    return {
+      url: `${this.base}/v1/a2a/${encodeURIComponent(agent)}`,
+      headers: this.headers(
+        {
+          'Content-Type': 'application/json',
+          ...(version === undefined || version.length === 0 ? {} : { 'A2A-Version': version }),
+        },
+        undefined,
+        true,
+      ),
+      body: {
+        jsonrpc: '2.0',
+        id: `a2a-${String(Date.now())}`,
+        method: 'message/stream',
+        params,
+      },
+    }
   }
 
   /**
@@ -2986,6 +3396,29 @@ export class GatewayClient {
 }
 
 /**
+ * Reads a JSON-RPC error from a response body without throwing.
+ *
+ * @param text - Raw response text (may be empty or non-JSON).
+ * @returns Code plus message, or null when no envelope error is present.
+ */
+export function rpcEnvelopeError(text: string): { code: number; message: string | null } | null {
+  if (text.length === 0) return null
+  try {
+    const parsed: unknown = JSON.parse(text)
+    if (typeof parsed !== 'object' || parsed === null) return null
+    const error = (parsed as Record<string, unknown>).error
+    if (typeof error !== 'object' || error === null) return null
+    const record = error as Record<string, unknown>
+    return {
+      code: typeof record.code === 'number' ? record.code : -32603,
+      message: typeof record.message === 'string' ? record.message : null,
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
  * Maps a JSON-RPC error code to a human diagnosis. Unknown codes render
  * with their numeric value, never a generic blob.
  *
@@ -3012,8 +3445,57 @@ export function mcpErrorMessage(code: number, message: string | null): string {
       return `Missing capability${detail}. The server lacks a required feature.`
     case -32022:
       return `Unsupported protocol version${detail}. Negotiate a listed version.`
+    case -32009:
+      return `Version not supported${detail}. Renegotiate the agent version.`
+    case -32001:
+      return `Unknown SSE session${detail}. Re-establish the stream.`
     default:
       return `Tool error (${String(code)})${detail}.`
+  }
+}
+
+/**
+ * Pending human approval parked by the gateway for a privileged tool.
+ */
+export interface HitlSuspension {
+  /** Opaque resumption token to present on retry (never logged). */
+  resumptionToken: string
+  /** Approval token id parsed from the approval URL, or null. */
+  tokenId: string | null
+  /** Approval URL for the admin queue, or null when absent. */
+  approvalUrl: string | null
+  /** Human message from the suspension payload. */
+  message: string
+}
+
+/**
+ * Detects a HITL suspension inside a `tools/call` result. Suspensions
+ * carry `resultType: "input_required"` with a resumption token — they
+ * are pending approvals, never successful tool output.
+ *
+ * @param result - Decoded `result` of the JSON-RPC envelope.
+ * @returns Suspension facts, or null for ordinary results.
+ */
+export function hitlSuspensionOf(result: unknown): HitlSuspension | null {
+  if (typeof result !== 'object' || result === null) return null
+  const record = result as Record<string, unknown>
+  if (record.resultType !== 'input_required') return null
+  const token = record.requestState
+  if (typeof token !== 'string' || token.length === 0) return null
+  const inputRequests = record.inputRequests as Record<string, unknown> | undefined
+  const approval = inputRequests?.human_approval as Record<string, unknown> | undefined
+  const params = approval?.params as Record<string, unknown> | undefined
+  const url = typeof params?.url === 'string' ? params.url : null
+  const message =
+    typeof params?.message === 'string' && params.message.length > 0
+      ? params.message
+      : 'Execution of this tool requires administrator approval.'
+  const match = url === null ? null : /([0-9a-f]{32})\s*$/.exec(url)
+  return {
+    resumptionToken: token,
+    tokenId: match?.[1] ?? null,
+    approvalUrl: url,
+    message,
   }
 }
 
@@ -3021,7 +3503,7 @@ export function mcpErrorMessage(code: number, message: string | null): string {
  * Decides whether a failed dashboard-family query retries.
  *
  * @remarks Client-side backoff for headerless 429s: only rate-limit
- * rejections retry (at most twice); 400/401/404 surface immediately so
+ * rejections retry (once); 400/401/404 surface immediately so
  * narrow-the-window, session, and stealth states reach the UI instead of
  * spinning behind the user's back.
  *
@@ -3030,7 +3512,7 @@ export function mcpErrorMessage(code: number, message: string | null): string {
  * @returns True to retry with {@link dashboardRetryDelay}.
  */
 export function dashboardRetry(failureCount: number, error: unknown): boolean {
-  return error instanceof ApiError && error.status === 429 && failureCount < 2
+  return error instanceof ApiError && error.status === 429 && failureCount < 1
 }
 
 /**

@@ -94,4 +94,77 @@ describe('A2aPage', () => {
     await user.click(screen.getByRole('button', { name: /load card/i }))
     expect(await screen.findByText(/no description/i)).toBeInTheDocument()
   })
+
+  it('streams message frames and reports the count', async () => {
+    const user = userEvent.setup()
+    let version: string | null = null
+    server.use(
+      http.get('*/v1/a2a/:agent/card', () => HttpResponse.json(CARD)),
+      http.post('*/v1/a2a/:agent', ({ request }) => {
+        version = request.headers.get('A2A-Version')
+        const stream = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            ctrl.enqueue(
+              new TextEncoder().encode(
+                'data: {"jsonrpc":"2.0","id":1,"result":{"part":1}}\n\ndata: {"jsonrpc":"2.0","id":2,"result":{"part":2}}\n\n',
+              ),
+            )
+            ctrl.close()
+          },
+        })
+        return new HttpResponse(stream, { headers: { 'content-type': 'text/event-stream' } })
+      }),
+    )
+    renderApp(<A2aPage />, { gatewayKey: 'gw-test' })
+    await user.type(screen.getByLabelText(/agent/i), 'helper')
+    await user.click(screen.getByRole('button', { name: /load card/i }))
+    await screen.findByText('Helper')
+    await selectOption(user, /method/i, 'message/stream')
+    await user.type(screen.getByLabelText(/version pin/i), '0.3')
+    await user.click(screen.getByRole('button', { name: /send message/i }))
+    expect(await screen.findByText(/2 frames/)).toBeInTheDocument()
+    expect(version).toBe('0.3')
+  })
+
+  it('names stream truncation without waiting for a terminal frame', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/a2a/:agent/card', () => HttpResponse.json(CARD)),
+      http.post('*/v1/a2a/:agent', () => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            ctrl.enqueue(new TextEncoder().encode('data: {"jsonrpc":"2.0","id":1}\n\n'))
+            setTimeout(() => {
+              ctrl.error(new Error('socket reset'))
+            }, 50)
+          },
+        })
+        return new HttpResponse(stream, { headers: { 'content-type': 'text/event-stream' } })
+      }),
+    )
+    renderApp(<A2aPage />, { gatewayKey: 'gw-test' })
+    await user.type(screen.getByLabelText(/agent/i), 'helper')
+    await user.click(screen.getByRole('button', { name: /load card/i }))
+    await screen.findByText('Helper')
+    await selectOption(user, /method/i, 'message/stream')
+    await user.click(screen.getByRole('button', { name: /send message/i }))
+    expect(await screen.findByText(/truncated after 1 frames/i)).toBeInTheDocument()
+  })
+
+  it('names the throttle wait on 429 invokes', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('*/v1/a2a/:agent/card', () => HttpResponse.json(CARD)),
+      http.post(
+        '*/v1/a2a/:agent',
+        () => new HttpResponse('x', { status: 429, headers: { 'Retry-After': '7' } }),
+      ),
+    )
+    renderApp(<A2aPage />, { gatewayKey: 'gw-test' })
+    await user.type(screen.getByLabelText(/agent/i), 'helper')
+    await user.click(screen.getByRole('button', { name: /load card/i }))
+    await screen.findByText('Helper')
+    await user.click(screen.getByRole('button', { name: /send message/i }))
+    expect(await screen.findByText(/retry after 7s/i)).toBeInTheDocument()
+  })
 })

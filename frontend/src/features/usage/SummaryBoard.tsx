@@ -94,6 +94,44 @@ export function SummaryBoard({ view }: SummaryBoardProps): React.JSX.Element {
           <dd className="font-mono text-lg tnum">{formatDurationMs(summary.averageDurationMs)}</dd>
         </div>
       </dl>
+      {summary.byOwner.length === 0 ? null : (
+        <TableScroll>
+          <table className="w-full text-left text-sm">
+            <caption className="sr-only">Usage by owner</caption>
+            <thead>
+              <tr className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
+                <th scope="col" className="py-2 pr-3 font-medium">
+                  Owner
+                </th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">
+                  Requests
+                </th>
+                <th scope="col" className="py-2 text-right font-medium">
+                  Cost (µ$)
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.byOwner.map((row) => (
+                <tr key={row.ownerId} className="border-t border-ink/10 dark:border-parchment/10">
+                  <td className="max-w-44 truncate py-2 pr-3 text-[13px]" title={row.ownerId}>
+                    {row.ownerId}
+                  </td>
+                  <td className="py-2 pr-3 text-right font-mono text-[13px] tnum">
+                    {formatCount(row.totalRequests)}
+                  </td>
+                  <td
+                    className="py-2 text-right font-mono text-[13px] tnum"
+                    title={row.totalCostUsd}
+                  >
+                    {formatMicros(row.totalCostUsdMicros)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableScroll>
+      )}
       {summary.byModel.length === 0 ? null : (
         <TableScroll>
           <table className="w-full text-left text-sm">
@@ -126,7 +164,10 @@ export function SummaryBoard({ view }: SummaryBoardProps): React.JSX.Element {
                   <td className="py-2 pr-3 text-right font-mono text-[13px] tnum">
                     {formatCount(row.totalRequests)}
                   </td>
-                  <td className="py-2 text-right font-mono text-[13px] tnum">
+                  <td
+                    className="py-2 text-right font-mono text-[13px] tnum"
+                    title={row.totalCostUsd}
+                  >
                     {formatMicros(row.totalCostUsdMicros)}
                   </td>
                 </tr>
@@ -159,7 +200,10 @@ export function SummaryBoard({ view }: SummaryBoardProps): React.JSX.Element {
                   <td className="py-2 pr-3 text-right font-mono text-[13px] tnum">
                     {formatCount(row.totalRequests)}
                   </td>
-                  <td className="py-2 text-right font-mono text-[13px] tnum">
+                  <td
+                    className="py-2 text-right font-mono text-[13px] tnum"
+                    title={row.totalCostUsd}
+                  >
                     {formatMicros(row.totalCostUsdMicros)}
                   </td>
                 </tr>

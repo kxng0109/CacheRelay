@@ -72,6 +72,7 @@ function entries() {
 function receipt() {
   return http.get('*/v1/admin/ledger/entries/:id', () =>
     HttpResponse.json({
+      id: 'id-r9',
       requestId: 'r9',
       ownerId: 'tenant-corp',
       provider: 'openai',
@@ -80,9 +81,8 @@ function receipt() {
       completionTokens: 4,
       totalTokens: 12,
       costUsdMicros: 12,
+      costUsd: '0.000012',
       durationMs: 41,
-      cached: true,
-      cacheTier: 'L0-Memory',
       createdAt: '2026-09-21T00:00:00Z',
     }),
   )
@@ -101,6 +101,20 @@ describe('RunInspector', () => {
     await waitFor(() => {
       expect(within(inspector).getByText(/41ms/)).toBeInTheDocument()
     })
+  })
+
+  it('names unknown cache facts on receipts without them', async () => {
+    const user = userEvent.setup()
+    server.use(summary(), entries(), receipt())
+    renderApp(<LedgerPage />, { adminSession: true })
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByRole('button', { name: /inspect receipt r9/i }))
+    const inspector = await screen.findByRole('dialog')
+    await waitFor(() => {
+      expect(within(inspector).getByText(/41ms/)).toBeInTheDocument()
+    })
+    expect(within(inspector).getByText('unknown')).toBeInTheDocument()
+    expect(within(inspector).getByText('$0.000012')).toBeInTheDocument()
   })
 
   it('closes on Escape', async () => {
@@ -219,6 +233,7 @@ describe('RunInspector', () => {
       ),
       http.get('*/v1/admin/ledger/entries/:id', () =>
         HttpResponse.json({
+          id: 'id-r-free',
           requestId: 'r-free',
           ownerId: 'tenant-corp',
           provider: 'local',
@@ -227,6 +242,7 @@ describe('RunInspector', () => {
           completionTokens: null,
           totalTokens: 9,
           costUsdMicros: 0,
+          costUsd: '0.000000',
           durationMs: 12,
           cached: true,
           cacheTier: 'L0-Memory',
@@ -273,6 +289,7 @@ describe('RunInspector', () => {
       ),
       http.get('*/v1/admin/ledger/entries/:id', () =>
         HttpResponse.json({
+          id: 'id-r-odd',
           requestId: 'r-odd',
           ownerId: 'tenant-corp',
           provider: 'local',
@@ -281,6 +298,7 @@ describe('RunInspector', () => {
           completionTokens: 2,
           totalTokens: 3,
           costUsdMicros: 0,
+          costUsd: '0.000000',
           durationMs: 5,
           cached: false,
           cacheTier: null,
@@ -326,6 +344,7 @@ describe('RunInspector', () => {
       ),
       http.get('*/v1/admin/ledger/entries/:id', () =>
         HttpResponse.json({
+          id: 'id-r-live',
           requestId: 'r-live',
           ownerId: 'tenant-corp',
           provider: 'openai',
@@ -334,6 +353,7 @@ describe('RunInspector', () => {
           completionTokens: 10,
           totalTokens: 30,
           costUsdMicros: 50,
+          costUsd: '0.000050',
           durationMs: 200,
           cached: false,
           cacheTier: 'L0-Memory',
@@ -345,7 +365,7 @@ describe('RunInspector', () => {
     const table = await screen.findByRole('table')
     await user.click(within(table).getByRole('button', { name: /inspect receipt r-live/i }))
     const inspector = await screen.findByRole('dialog')
-    expect(within(inspector).getByText('50µ$')).toBeInTheDocument()
+    expect(within(inspector).getByText('$0.000050')).toBeInTheDocument()
     expect(within(inspector).getByText('no')).toBeInTheDocument()
   })
 
@@ -367,6 +387,7 @@ describe('RunInspector', () => {
       entries(),
       http.get('*/v1/admin/ledger/entries/:id', () =>
         HttpResponse.json({
+          id: 'id-r9',
           requestId: 'r9',
           ownerId: 'tenant-corp',
           provider: 'openai',
@@ -375,6 +396,7 @@ describe('RunInspector', () => {
           completionTokens: 4,
           totalTokens: 12,
           costUsdMicros: 12,
+          costUsd: '0.000012',
           durationMs: 41,
           cached: true,
           cacheTier: null,

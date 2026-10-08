@@ -12,6 +12,11 @@ describe('InvitesPage', () => {
     expect(screen.getByRole('checkbox', { name: /admin invite/i })).toBeInTheDocument()
   })
 
+  it('states the link lifetime in the header', () => {
+    renderApp(<InvitesPage />, { adminSession: true })
+    expect(screen.getByText(/48 hours/i)).toBeInTheDocument()
+  })
+
   it('mints a link-only invite and reveals the link once', async () => {
     const user = userEvent.setup()
     server.use(

@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { GatewayClient, keyFingerprint } from '../../shared/api/client.js'
+import { ApiError, GatewayClient, keyFingerprint } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
+import { SseHandshakeError, openSseStream } from '../../shared/sse/client.js'
 import { useAuthStore } from '../../shared/auth/store.js'
 import { Select } from '../../shared/components/Select.js'
 import type { A2aAgentCard } from '../../shared/api/types.js'
@@ -28,10 +29,14 @@ export function A2aPage(): React.JSX.Element {
   const [cardError, setCardError] = useState<string | null>(null)
   const [cardBusy, setCardBusy] = useState(false)
   const [method, setMethod] = useState<string>('message/send')
+  const [version, setVersion] = useState('')
   const [paramsText, setParamsText] = useState('{}')
   const [result, setResult] = useState<string | null>(null)
+  const [frames, setFrames] = useState(0)
   const [problem, setProblem] = useState<string | null>(null)
   const [invokeBusy, setInvokeBusy] = useState(false)
+  const stopRef = useRef<AbortController | null>(null)
+  const userStoppedRef = useRef(false)
 
   const loadCard = (): void => {
     const name = agent.trim()
@@ -54,10 +59,27 @@ export function A2aPage(): React.JSX.Element {
       })
   }
 
+  const describeFailure = (e: unknown): string => {
+    const base = toErrorMessage(e, 'Agent invocation failed.')
+    const wait =
+      e instanceof ApiError
+        ? e.rateLimit.retryAfter
+        : e instanceof SseHandshakeError
+          ? e.retryAfter
+          : null
+    return wait === null ? base : `${base} (retry after ${String(wait)}s)`
+  }
+
+  const stopStream = (): void => {
+    userStoppedRef.current = true
+    stopRef.current?.abort()
+  }
+
   const invoke = (): void => {
     const name = (loadedAgent ?? agent).trim()
     if (name.length === 0 || gatewayKey === null) return
     setResult(null)
+    setFrames(0)
     setProblem(null)
     let params: Record<string, unknown>
     try {
@@ -71,15 +93,64 @@ export function A2aPage(): React.JSX.Element {
       setProblem('Params must be valid JSON.')
       return
     }
+    const pin = version.trim()
     setInvokeBusy(true)
+    if (method === 'message/stream') {
+      const ctrl = new AbortController()
+      stopRef.current = ctrl
+      userStoppedRef.current = false
+      const client = new GatewayClient({ token: gatewayKey })
+      const req = client.a2aStreamRequest(name, params, pin.length === 0 ? undefined : pin)
+      const collected: unknown[] = []
+      void openSseStream({
+        url: req.url,
+        method: 'POST',
+        headers: req.headers,
+        body: req.body,
+        signal: ctrl.signal,
+        maxRetries: 2,
+        onMessage: (data) => {
+          try {
+            collected.push(JSON.parse(data) as unknown)
+          } catch {
+            collected.push(data)
+          }
+          setFrames(collected.length)
+        },
+        onDone: () => {
+          setResult(JSON.stringify(collected, null, 2))
+          setInvokeBusy(false)
+        },
+        onIncomplete: (e, delivered) => {
+          setProblem(
+            `Stream truncated after ${String(delivered)} frames. Kept what arrived — retry starts a new run. (${e.message})`,
+          )
+          setInvokeBusy(false)
+        },
+        onError: (e) => {
+          if (userStoppedRef.current) {
+            setInvokeBusy(false)
+            return
+          }
+          setProblem(describeFailure(e))
+          setInvokeBusy(false)
+        },
+      })
+      return
+    }
     const client = new GatewayClient({ token: gatewayKey })
     void client
-      .a2aInvoke(name, method, params, { ignoreSession: true })
+      .a2aInvoke(
+        name,
+        method,
+        params,
+        pin.length === 0 ? { ignoreSession: true } : { ignoreSession: true, a2aVersion: pin },
+      )
       .then((out) => {
         setResult(JSON.stringify(out, null, 2))
       })
       .catch((e: unknown) => {
-        setProblem(toErrorMessage(e, 'Agent invocation failed.'))
+        setProblem(describeFailure(e))
       })
       .finally(() => {
         setInvokeBusy(false)
@@ -143,7 +214,7 @@ export function A2aPage(): React.JSX.Element {
               <p className="font-mono text-xs text-ink-soft dark:text-parchment-soft">
                 {card.protocolVersion} · {card.url}
               </p>
-              <div className="grid gap-2 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)_auto]">
+              <div className="grid gap-2 sm:grid-cols-[minmax(0,10rem)_minmax(0,8rem)_minmax(0,1fr)_auto]">
                 <div>
                   <Select
                     id="a2a-method"
@@ -151,6 +222,21 @@ export function A2aPage(): React.JSX.Element {
                     value={method}
                     options={METHODS.map((m) => ({ value: m, label: m }))}
                     onChange={setMethod}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="a2a-version" className="mb-1 block text-[13px] font-medium">
+                    Version pin (optional)
+                  </label>
+                  <input
+                    id="a2a-version"
+                    value={version}
+                    autoComplete="off"
+                    onChange={(e) => {
+                      setVersion(e.target.value)
+                    }}
+                    placeholder="0.3"
+                    className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-sm dark:border-parchment/15"
                   />
                 </div>
                 <div>
@@ -167,7 +253,7 @@ export function A2aPage(): React.JSX.Element {
                     className="w-full rounded-md border border-ink/15 bg-transparent px-3 py-2 font-mono text-xs dark:border-parchment/15"
                   />
                 </div>
-                <div className="flex items-end">
+                <div className="flex items-end gap-2">
                   <button
                     type="button"
                     disabled={invokeBusy}
@@ -176,8 +262,25 @@ export function A2aPage(): React.JSX.Element {
                   >
                     Send message
                   </button>
+                  {invokeBusy && method === 'message/stream' ? (
+                    <button
+                      type="button"
+                      onClick={stopStream}
+                      className="rounded-md border border-ink/15 px-3 py-2 text-[13px] dark:border-parchment/15"
+                    >
+                      Stop
+                    </button>
+                  ) : null}
                 </div>
               </div>
+              {method === 'message/stream' && (invokeBusy || frames > 0) ? (
+                <p
+                  role="status"
+                  className="font-mono text-xs text-ink-soft tnum dark:text-parchment-soft"
+                >
+                  {frames} frames{invokeBusy ? ' — streaming…' : ''}
+                </p>
+              ) : null}
               {result === null ? null : (
                 <pre className="max-h-64 overflow-auto rounded-md border border-ink/10 p-2 font-mono text-xs whitespace-pre-wrap dark:border-parchment/10">
                   {result}

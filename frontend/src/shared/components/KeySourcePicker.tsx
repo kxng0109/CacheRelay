@@ -53,6 +53,18 @@ export function KeySourcePicker({
     retry: false,
   })
   const keys: OwnedKey[] = useMemo(() => owned.data?.keys ?? [], [owned.data])
+  /**
+   * Latched expiry: a failed refresh clears the session (replay revokes
+   * the family), which would unmount this picker before the query error
+   * can render. Deriving from the settled query (no state, no effect)
+   * keeps the notice visible. Fresh guests never fetched, so they still
+   * render nothing.
+   */
+  const expired =
+    session === null &&
+    owned.isFetched &&
+    owned.error instanceof Error &&
+    /Session expired/i.test(owned.error.message)
 
   useEffect(() => {
     if (source !== 'account' || selectedKeyId !== '' || keys.length === 0) return
@@ -60,7 +72,18 @@ export function KeySourcePicker({
     if (first !== undefined) onSelectKeyId(first.keyId)
   }, [source, selectedKeyId, keys, onSelectKeyId])
 
-  if (session === null) return null
+  if (session === null) {
+    if (!expired) return null
+    const message =
+      owned.error instanceof Error
+        ? owned.error.message
+        : 'Session expired. Sign in again to continue.'
+    return (
+      <p role="alert" className="text-[13px] text-ink-soft dark:text-parchment-soft">
+        Owned keys unavailable ({message}). Paste a key instead.
+      </p>
+    )
+  }
   const groupId = `${idPrefix}-key-source`
   return (
     <div className="space-y-2">

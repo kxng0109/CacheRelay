@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { GatewayClient, resolveApiBase } from '../../shared/api/client.js'
+import { AdminUnavailable, isStealth404 } from '../../shared/components/AdminUnavailable.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
 import { TableScroll } from '../../shared/components/TableScroll.js'
 import { toErrorMessage } from '../../shared/api/client.js'
@@ -113,7 +114,8 @@ function CircuitsBoard(): React.JSX.Element {
     (providers.data?.providers ?? []).filter((p) => p.keyConfigured).map((p) => p.name),
   )
   const queryText = filter.trim().toLowerCase()
-  const visible = circuits.filter((c) => {
+  const ordered = [...circuits].sort((a, b) => a.provider.localeCompare(b.provider))
+  const visible = ordered.filter((c) => {
     // Configured scope hides providers without keys. While the provider
     // list is still loading the board fails open to the full list so rows
     // never flash away on first paint.
@@ -221,9 +223,13 @@ function CircuitsBoard(): React.JSX.Element {
           </p>
         ) : null}
         {query.error instanceof Error ? (
-          <p role="alert" className="text-sm text-danger dark:text-danger-soft">
-            {query.error.message}
-          </p>
+          isStealth404(query.error) ? (
+            <AdminUnavailable path="/v1/admin/circuits" status={404} />
+          ) : (
+            <p role="alert" className="text-sm text-danger dark:text-danger-soft">
+              {query.error.message}
+            </p>
+          )
         ) : null}
         {!query.isPending && !(query.error instanceof Error) && visible.length === 0 ? (
           <p className="text-sm text-ink-soft dark:text-parchment-soft">
@@ -393,7 +399,9 @@ function McpCircuits(): React.JSX.Element {
     }
   }
 
-  const circuits = query.data?.circuits ?? []
+  const circuits = [...(query.data?.circuits ?? [])].sort((a, b) =>
+    a.provider.localeCompare(b.provider),
+  )
   return (
     <section aria-label="MCP circuits" className="space-y-2">
       <h2 className="font-display text-xl font-medium tracking-tight">MCP circuits</h2>
@@ -407,9 +415,13 @@ function McpCircuits(): React.JSX.Element {
           Loading MCP circuits…
         </p>
       ) : query.error instanceof Error ? (
-        <p role="alert" className="text-sm text-danger dark:text-danger-soft">
-          {query.error.message}
-        </p>
+        isStealth404(query.error) ? (
+          <AdminUnavailable path="/v1/admin/mcp/circuits" status={404} />
+        ) : (
+          <p role="alert" className="text-sm text-danger dark:text-danger-soft">
+            {query.error.message}
+          </p>
+        )
       ) : circuits.length === 0 ? (
         <p className="text-sm text-ink-soft dark:text-parchment-soft">No MCP servers reported.</p>
       ) : (

@@ -3,6 +3,7 @@ import { useRef, useState } from 'react'
 import { GatewayClient } from '../../shared/api/client.js'
 import { toErrorMessage } from '../../shared/api/client.js'
 import type { ModelAliasRecord, ProviderChainStep, ProviderStatus } from '../../shared/api/types.js'
+import { AdminUnavailable, isStealth404 } from '../../shared/components/AdminUnavailable.js'
 import { InspectorShell } from '../../shared/components/InspectorShell.js'
 import { Modal } from '../../shared/components/Modal.js'
 import { Select } from '../../shared/components/Select.js'
@@ -385,7 +386,7 @@ function ModelsBoard(): React.JSX.Element {
     void qc.invalidateQueries({ queryKey: ['providers'] })
   }
 
-  const aliases = query.data?.models ?? []
+  const aliases = [...(query.data?.models ?? [])].sort((a, b) => a.name.localeCompare(b.name))
   const queryText = filter.trim().toLowerCase()
   const visible =
     queryText.length === 0
@@ -622,9 +623,13 @@ function ModelsBoard(): React.JSX.Element {
             Loading aliases…
           </p>
         ) : query.error instanceof Error ? (
-          <p role="alert" className="text-sm text-danger dark:text-danger-soft">
-            {query.error.message}
-          </p>
+          isStealth404(query.error) ? (
+            <AdminUnavailable path="/v1/admin/models" status={404} />
+          ) : (
+            <p role="alert" className="text-sm text-danger dark:text-danger-soft">
+              {query.error.message}
+            </p>
+          )
         ) : visible.length === 0 ? (
           <p className="text-sm text-ink-soft dark:text-parchment-soft">
             {aliases.length === 0

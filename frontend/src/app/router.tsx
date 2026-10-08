@@ -55,6 +55,9 @@ const LoginPage = lazy(() =>
 const UsagePage = lazy(() =>
   import('../features/usage/page.js').then((m) => ({ default: m.UsagePage })),
 )
+const AccountPage = lazy(() =>
+  import('../features/account/page.js').then((m) => ({ default: m.AccountPage })),
+)
 const TeamsPage = lazy(() =>
   import('../features/teams/page.js').then((m) => ({ default: m.TeamsPage })),
 )
@@ -158,6 +161,7 @@ export const router = createBrowserRouter([
       { index: true, element: authed(<OverviewPage />) },
       { path: 'playground', element: suspend(<PlaygroundPage />) },
       { path: 'usage', element: authed(<UsagePage />) },
+      { path: 'account', element: authed(<AccountPage />) },
       { path: 'teams', element: authed(<TeamsPage />) },
       { path: 'login', element: guest(<LoginPage />) },
       { path: 'redeem', element: guest(<RedeemPage />) },

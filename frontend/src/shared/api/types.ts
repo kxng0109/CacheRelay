@@ -56,7 +56,7 @@ export interface EmbeddingRequest {
 }
 
 export interface EmbeddingData {
-  embedding: number[]
+  embedding: number[] | string
   index: number
 }
 
@@ -77,13 +77,14 @@ export interface ProblemDetail {
   status: number
   detail: string
   instance: string
+  timestamp: string
 }
 
 export interface GatewayErrorBody {
   error: {
     message: string
-    type: string
-    code: string | null
+    type?: string
+    code?: string | null
   }
 }
 
@@ -103,6 +104,25 @@ export interface RateLimitSnapshot {
   remaining: number | null
   reset: number | null
   retryAfter: number | null
+}
+
+/**
+ * Budget headers the gateway emits on spend paths.
+ *
+ * @remarks
+ * Denials carry `X-Budget-Remaining` (`0`), `X-Budget-Reset` (epoch
+ * seconds), `X-Budget-Level` (`KEY`, `TEAM`, `ORG`), and
+ * `X-Budget-Window` (`MINUTE`, `MONTH`). Successes with a hold carry
+ * `X-Budget-Held-Micros` (pre-settle estimate, not final cost) and
+ * `X-Budget-Subject`. All fields are null when the headers are absent.
+ */
+export interface BudgetSnapshot {
+  remaining: number | null
+  reset: number | null
+  level: string | null
+  window: string | null
+  heldMicros: number | null
+  subject: string | null
 }
 
 /**
@@ -196,6 +216,28 @@ export interface CachePurge {
   evictedKeys: number
 }
 
+/**
+ * Allow/deny glob sets plus flags governing one virtual key. Mirrors the
+ * backend `CreateKeyRequest` policy fields: capped at 64 entries of 256
+ * chars each, deny wins, empty allow means all allowed. Every field is
+ * optional at the transport boundary; absent means server default
+ * (TENANT-only scopes, injection block on).
+ */
+export interface KeyPolicy {
+  allowedProviders?: string[] | undefined
+  allowedTools?: string[] | undefined
+  deniedTools?: string[] | undefined
+  allowedResources?: string[] | undefined
+  deniedResources?: string[] | undefined
+  allowedPrompts?: string[] | undefined
+  deniedPrompts?: string[] | undefined
+  allowedAgents?: string[] | undefined
+  deniedAgents?: string[] | undefined
+  /** Null means block (default); false warns only. */
+  injectionBlock?: boolean | null | undefined
+  allowedCacheScopes?: string[] | undefined
+}
+
 export interface ApiKeyRecord {
   keyId: string
   keyPrefix: string
@@ -211,6 +253,16 @@ export interface ApiKeyRecord {
   ownerUserId: string | null
   /** Owning account login name; null when unresolvable. */
   ownerUsername: string | null
+  allowedTools?: string[] | undefined
+  deniedTools?: string[] | undefined
+  allowedResources?: string[] | undefined
+  deniedResources?: string[] | undefined
+  allowedPrompts?: string[] | undefined
+  deniedPrompts?: string[] | undefined
+  allowedAgents?: string[] | undefined
+  deniedAgents?: string[] | undefined
+  injectionBlock?: boolean | null | undefined
+  allowedCacheScopes?: string[] | undefined
 }
 
 export interface ApiKeyCreated {
@@ -220,6 +272,24 @@ export interface ApiKeyCreated {
   keyPrefix: string
   ownerId: string
   name: string
+  rpmLimit?: number | undefined
+  tpmLimit?: number | undefined
+  allowedModels?: string[] | undefined
+  allowedProviders?: string[] | undefined
+  enabled?: boolean | undefined
+  createdAt?: string | undefined
+  ownerUserId?: string | null | undefined
+  ownerUsername?: string | null | undefined
+  allowedTools?: string[] | undefined
+  deniedTools?: string[] | undefined
+  allowedResources?: string[] | undefined
+  deniedResources?: string[] | undefined
+  allowedPrompts?: string[] | undefined
+  deniedPrompts?: string[] | undefined
+  allowedAgents?: string[] | undefined
+  deniedAgents?: string[] | undefined
+  injectionBlock?: boolean | null | undefined
+  allowedCacheScopes?: string[] | undefined
 }
 
 /**
@@ -382,10 +452,12 @@ export interface LedgerLogEntry {
 /**
  * Full receipt for one billed request.
  *
- * @remarks Mirrors the twelve-field server receipt. Optional fields stay
- * `null`-able: older rows predate token accounting.
+ * @remarks Mirrors the twelve-field server receipt (`LedgerEntryResponse`).
+ * Cache facts are optional: only deployments returning them populate the
+ * row, and the inspector renders `unknown` otherwise.
  */
 export interface LedgerReceipt {
+  id: string
   requestId: string
   ownerId: string
   provider: string
@@ -394,9 +466,11 @@ export interface LedgerReceipt {
   completionTokens: number | null
   totalTokens: number
   costUsdMicros: number
+  /** Exact decimal string (`"0.000012"`); displayed verbatim, never divided. */
+  costUsd: string
   durationMs: number
-  cached: boolean
-  cacheTier: string | null
+  cached?: boolean | undefined
+  cacheTier?: string | null | undefined
   createdAt: string
 }
 

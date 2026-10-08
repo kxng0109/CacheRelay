@@ -2,9 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ApiError,
   GatewayClient,
+  hitlSuspensionOf,
   isStreamingEnabled,
+  isWellFormedGatewayKey,
   keyFingerprint,
   mcpErrorMessage,
+  parseBudget,
   parseGatewayErrorCode,
   parseRateLimit,
   parseVerdictHeader,
@@ -75,7 +78,7 @@ describe('wire drift', () => {
 
   it('reads the spec-shaped approvals envelope with server identity', async () => {
     const row = {
-      tokenId: '9f8e7d6c5b4a3210',
+      tokenId: '9f8e7d6c5b4a32109f8e7d6c5b4a3210',
       toolName: 'postgres__run_query',
       serverName: 'postgres',
       ownerId: 'tenant-corp',
@@ -83,7 +86,7 @@ describe('wire drift', () => {
       createdAt: '2026-09-01T12:00:00Z',
       expiresAt: '2026-09-01T12:05:00Z',
     }
-    stubJson({ approvals: [row, { nope: true }] })
+    stubJson({ approvals: [row, { nope: true }, { ...row, tokenId: 'short' }] })
     await expect(new GatewayClient().hitlPending()).resolves.toEqual({ approvals: [row] })
   })
 
@@ -127,6 +130,43 @@ describe('wire drift', () => {
     expect(drifted).toEqual(['keys'])
   })
 
+  it('filters keys by owner and reads one key by hash', async () => {
+    const seen: string[] = []
+    const row = {
+      keyId: 'a'.repeat(64),
+      keyPrefix: 'gw-',
+      ownerId: 'tenant-corp',
+      name: 'ci-key',
+      rpmLimit: 60,
+      tpmLimit: 100000,
+      allowedModels: ['gpt-4o-mini'],
+      allowedProviders: [],
+      enabled: true,
+      createdAt: '2026-09-17T00:00:00Z',
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        seen.push(url)
+        if (url.includes('/v1/admin/keys/')) {
+          return Promise.resolve(new Response(JSON.stringify(row), { status: 200 }))
+        }
+        return Promise.resolve(new Response(JSON.stringify([row]), { status: 200 }))
+      }),
+    )
+    await new GatewayClient({ base: '', token: 'gw-test' }).listKeys({ ownerId: 'tenant-corp' })
+    expect(seen[0]).toContain('ownerId=tenant-corp')
+    const found = await new GatewayClient({ base: '', token: 'gw-test' }).getKey('a'.repeat(64))
+    expect(found?.name).toBe('ci-key')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('x', { status: 404 }))),
+    )
+    await expect(
+      new GatewayClient({ base: '', token: 'gw-test' }).getKey('b'.repeat(64)),
+    ).resolves.toBeNull()
+    await expect(new GatewayClient({ base: '', token: 'gw-test' }).getKey('nope')).rejects.toThrow()
+  })
   it('searches the admin model catalog with defaults, clamping, and drift safety', async () => {
     const seen: string[] = []
     vi.stubGlobal(
@@ -599,6 +639,81 @@ describe('wire drift', () => {
   })
 })
 
+describe('key policy transport', () => {
+  const row = {
+    keyId: 'a'.repeat(64),
+    keyPrefix: 'gw-',
+    ownerId: 'tenant-corp',
+    name: 'ci-key',
+    rpmLimit: 60,
+    tpmLimit: 100000,
+    allowedModels: ['gpt-4o-mini'],
+    allowedProviders: ['openai'],
+    allowedTools: ['pg__q'],
+    deniedTools: [],
+    allowedResources: [],
+    deniedResources: [],
+    allowedPrompts: [],
+    deniedPrompts: [],
+    allowedAgents: [],
+    deniedAgents: [],
+    injectionBlock: true,
+    allowedCacheScopes: ['TENANT'],
+    enabled: true,
+    createdAt: '2026-09-17T00:00:00Z',
+    ownerUserId: '123e4567-e89b-12d3-a456-426614174000',
+    ownerUsername: 'op',
+  }
+
+  it('sends policy fields on create and parses full rows', async () => {
+    let body: unknown = null
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init: RequestInit) => {
+        body = JSON.parse((init.body ?? '{}') as string) as unknown
+        return Promise.resolve(
+          new Response(JSON.stringify({ ...row, key: 'gw-plaintext' }), { status: 201 }),
+        )
+      }),
+    )
+    const out = await new GatewayClient({ base: '', token: 'gw-test' }).createKey({
+      ownerId: 'tenant-corp',
+      ownerUserId: '123e4567-e89b-12d3-a456-426614174000',
+      name: 'ci-key',
+      rpmLimit: 60,
+      tpmLimit: 100000,
+      allowedModels: ['gpt-4o-mini'],
+      allowedProviders: ['openai'],
+      deniedTools: ['x__rm'],
+      injectionBlock: false,
+      allowedCacheScopes: ['TENANT'],
+    })
+    expect(body).toMatchObject({
+      allowedProviders: ['openai'],
+      deniedTools: ['x__rm'],
+      injectionBlock: false,
+      allowedCacheScopes: ['TENANT'],
+    })
+    expect(out).toMatchObject({ allowedProviders: ['openai'], key: 'gw-plaintext' })
+  })
+
+  it('patches ownership through the atomic route', async () => {
+    let body: unknown = null
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init: RequestInit) => {
+        body = JSON.parse((init.body ?? '{}') as string) as unknown
+        return Promise.resolve(new Response(JSON.stringify(row), { status: 200 }))
+      }),
+    )
+    const out = await new GatewayClient({ base: '', token: 'gw-test' }).patchKey('a'.repeat(64), {
+      ownerUserId: '123e4567-e89b-12d3-a456-426614174000',
+    })
+    expect(body).toMatchObject({ ownerUserId: '123e4567-e89b-12d3-a456-426614174000' })
+    expect(out.ownerUserId).toBe('123e4567-e89b-12d3-a456-426614174000')
+  })
+})
+
 describe('keyFingerprint', () => {
   it('is stable per credential and distinct across credentials', () => {
     expect(keyFingerprint('gw-alpha')).toBe(keyFingerprint('gw-alpha'))
@@ -683,6 +798,22 @@ describe('parseRateLimit', () => {
       'X-RateLimit-Remaining-TPM': '50000',
     })
     expect(parseRateLimit(h).dimension).toBe('RPM')
+  })
+
+  it('rejects non-decimal header shapes instead of coercing them', () => {
+    const h = new Headers({
+      'X-RateLimit-Limit-RPM': '0x10',
+      'X-RateLimit-Remaining-RPM': '1e3',
+      'X-RateLimit-Reset-RPM': '0x5',
+      'Retry-After': '1.5',
+    })
+    expect(parseRateLimit(h)).toEqual({
+      dimension: null,
+      limit: null,
+      remaining: null,
+      reset: null,
+      retryAfter: null,
+    })
   })
 
   it('lets the backend-named 429 code override the header math', () => {
@@ -794,6 +925,139 @@ describe('safeErrorMessage', () => {
     expect(safeErrorMessage(429, '')).toContain('Rate limit')
   })
 
+  it('preserves budget exhaustion detail on 429', () => {
+    const body = JSON.stringify({ error: { message: 'budget exhausted (KEY MINUTE)' } })
+    expect(safeErrorMessage(429, body)).toBe('budget exhausted (KEY MINUTE)')
+  })
+
+  it('names data sovereignty blocks distinctly on 503', () => {
+    const body = JSON.stringify({
+      error: {
+        message: 'Request cannot be served within the required data residency zone.',
+        code: 'DATA_SOVEREIGNTY_VIOLATION',
+      },
+    })
+    expect(safeErrorMessage(503, body)).toContain('Policy block')
+  })
+
+  it('reads the budget header family', () => {
+    const headers = new Headers({
+      'X-Budget-Remaining': '0',
+      'X-Budget-Reset': '1772540000',
+      'X-Budget-Level': 'KEY',
+      'X-Budget-Window': 'MINUTE',
+      'X-Budget-Held-Micros': '1200',
+      'X-Budget-Subject': 'load',
+    })
+    expect(parseBudget(headers)).toEqual({
+      remaining: 0,
+      reset: 1772540000,
+      level: 'KEY',
+      window: 'MINUTE',
+      heldMicros: 1200,
+      subject: 'load',
+    })
+    expect(parseBudget(new Headers())).toEqual({
+      remaining: null,
+      reset: null,
+      level: null,
+      window: null,
+      heldMicros: null,
+      subject: null,
+    })
+  })
+
+  it('carries budget denial headers on ApiError', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: { message: 'budget exhausted (KEY MINUTE)' } }), {
+            status: 429,
+            headers: {
+              'X-Budget-Remaining': '0',
+              'X-Budget-Reset': '1772540000',
+              'X-Budget-Level': 'KEY',
+              'X-Budget-Window': 'MINUTE',
+            },
+          }),
+        ),
+      ),
+    )
+    const err = await new GatewayClient({ base: '', token: 'gw-test' })
+      .mcpCall('a__b', {})
+      .catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    const apiErr = err as ApiError
+    expect(apiErr.message).toBe('budget exhausted (KEY MINUTE)')
+    expect(apiErr.budget).toMatchObject({ remaining: 0, level: 'KEY', window: 'MINUTE' })
+  })
+
+  it('prefers X-Cache for provenance with legacy fallback', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolve(
+              new Response('x', {
+                status: 403,
+                headers: { 'X-Cache': 'HIT (L1-Exact)' },
+              }),
+            )
+          }),
+      ),
+    )
+    const hit = await new GatewayClient({ base: '', token: 'gw-test' })
+      .mcpCall('a__b', {})
+      .catch((e: unknown) => e)
+    expect((hit as ApiError).cacheStatus).toBe('HIT (L1-Exact)')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolve(new Response('x', { status: 403 }))
+          }),
+      ),
+    )
+    const miss = await new GatewayClient({ base: '', token: 'gw-test' })
+      .mcpCall('a__b', {})
+      .catch((e: unknown) => e)
+    expect((miss as ApiError).cacheStatus).toBeNull()
+  })
+
+  it('mints a unique request id per call', async () => {
+    const seen: (string | null)[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init: RequestInit) => {
+        seen.push(new Headers(init.headers).get('X-Request-Id'))
+        return Promise.resolve(
+          new Response(JSON.stringify({ data: [] }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+        )
+      }),
+    )
+    const client = new GatewayClient({ base: '', token: 'gw-test' })
+    await client.models()
+    await client.models()
+    expect(seen).toHaveLength(2)
+    expect(seen[0]).not.toBeNull()
+    expect(seen[1]).not.toBeNull()
+    expect(seen[0]).not.toBe(seen[1])
+  })
+
+  it('gates pasted keys on the gateway shape', () => {
+    expect(isWellFormedGatewayKey(`gw-${'a'.repeat(32)}`)).toBe(true)
+    expect(isWellFormedGatewayKey(`gw-${'a'.repeat(31)}`)).toBe(false)
+    expect(isWellFormedGatewayKey('gw-short')).toBe(false)
+    expect(isWellFormedGatewayKey('')).toBe(false)
+    expect(isWellFormedGatewayKey('Bearer token')).toBe(false)
+  })
+
   it('maps default-deny 403 to a policy message', () => {
     const body = JSON.stringify({
       type: 'https://cacherelay.io/problems/forbidden',
@@ -883,6 +1147,54 @@ describe('safeErrorMessage', () => {
       instance: '/v1/chat/completions',
     })
     expect(safeErrorMessage(422, body)).toBe('Field xyz is malformed.')
+  })
+
+  it('names credential leaks with rule and location', () => {
+    const body = JSON.stringify({
+      type: 'https://cacherelay.io/errors/credential-leakage-detected',
+      title: 'Unprocessable Content - Secret or Credential Detected',
+      status: 422,
+      detail: 'Request body contains an active secret or credential.',
+      instance: '/v1/chat/completions',
+      rule_id: 'github-classic-pat',
+      masked_token: 'ghp_abc*****',
+      token_fingerprint: 'deadbeef',
+      json_path: '/messages/0/content',
+    })
+    const message = safeErrorMessage(422, body)
+    expect(message).toContain('github-classic-pat')
+    expect(message).toContain('/messages/0/content')
+    expect(message).not.toContain('deadbeef')
+  })
+
+  it('names prompt injections with category and risk', () => {
+    const body = JSON.stringify({
+      type: 'https://cacherelay.io/errors/prompt-injection-detected',
+      title: 'Unprocessable Content - Prompt Injection Detected',
+      status: 422,
+      detail: 'The prompt contains adversarial patterns.',
+      instance: '/v1/chat/completions',
+      category: 'INSTRUCTION_OVERRIDE',
+      matched_pattern: 'Ignore all previous instructions',
+      risk_score: 0.95,
+    })
+    const message = safeErrorMessage(422, body)
+    expect(message).toContain('INSTRUCTION_OVERRIDE')
+    expect(message).toContain('0.95')
+    expect(message).toContain('Ignore all previous instructions')
+  })
+
+  it('rejects lookalike vendor type suffixes from other origins', () => {
+    const body = JSON.stringify({
+      type: 'https://evil.example.com/errors/vendor-screening-rejection',
+      title: 'Blocked',
+      status: 422,
+      detail: 'Nope.',
+      instance: '/v1/chat/completions',
+      vendor: 'x',
+      reason: 'y',
+    })
+    expect(safeErrorMessage(422, body)).toBe('Nope.')
   })
 
   it('never renders vendor attribution on 500 guardrail failures', () => {
@@ -1189,6 +1501,33 @@ describe('GatewayClient transport', () => {
     expect((sent as Record<string, unknown>).stream).toBe(false)
   })
 
+  it('mints idempotency keys for static calls and reuses caller keys', async () => {
+    const seen: (string | null)[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init: RequestInit) => {
+        seen.push(new Headers(init.headers).get('Idempotency-Key'))
+        return Promise.resolve(
+          new Response(JSON.stringify({ choices: [], model: 'm' }), { status: 200 }),
+        )
+      }),
+    )
+    const client = new GatewayClient({ base: '', token: 'gw-test' })
+    await client.chat({ model: 'm', messages: [{ role: 'user', content: 'hi' }] })
+    await client.chat(
+      { model: 'm', messages: [{ role: 'user', content: 'hi' }] },
+      { idempotencyKey: 'retry-key' },
+    )
+    await client.chat(
+      { model: 'm', messages: [{ role: 'user', content: 'hi' }] },
+      { idempotencyKey: 'retry-key' },
+    )
+    expect(seen).toHaveLength(3)
+    expect(seen[0]).not.toBeNull()
+    expect(seen[1]).toBe('retry-key')
+    expect(seen[2]).toBe('retry-key')
+  })
+
   it('passes extended chat and embedding fields through to the wire', async () => {
     let chatBody: unknown = null
     let embBody: unknown = null
@@ -1476,6 +1815,45 @@ describe('GatewayClient transport', () => {
     }
   })
 
+  it('attempts refresh on self-service 401 before surfacing', async () => {
+    useAuthStore.getState().setSession({ accessToken: 'stale-jwt', admin: false, username: 'op' })
+    let refreshCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (typeof url === 'string' && url.endsWith('/v1/auth/refresh')) {
+          refreshCalls += 1
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ accessToken: 'fresh-jwt', expiresInSeconds: 600, admin: false }),
+              { status: 200 },
+            ),
+          )
+        }
+        return Promise.resolve(new Response('x', { status: 401 }))
+      }),
+    )
+    try {
+      await new GatewayClient({ base: '', token: '' }).myKeys().catch((e: unknown) => e)
+      expect(refreshCalls).toBe(1)
+    } finally {
+      useAuthStore.getState().clear()
+    }
+  })
+
+  it('names session expiry on session routes and key faults elsewhere', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('x', { status: 401 }))),
+    )
+    const meErr = await new GatewayClient({ base: '', token: '' }).myKeys().catch((e: unknown) => e)
+    expect((meErr as ApiError).message).toContain('Sign in')
+    const chatErr = await new GatewayClient({ base: '', token: 'gw-test' })
+      .chat({ model: 'm', messages: [] })
+      .catch((e: unknown) => e)
+    expect((chatErr as ApiError).message).toContain('API key')
+  })
+
   it('degrades to an empty board when the models envelope drifts', async () => {
     vi.stubGlobal(
       'fetch',
@@ -1609,8 +1987,32 @@ describe('GatewayClient transport', () => {
     expect(mcpErrorMessage(-32020, null)).toContain('Header mismatch')
     expect(mcpErrorMessage(-32021, 'cap')).toContain('Missing capability')
     expect(mcpErrorMessage(-32022, null)).toContain('Unsupported protocol version')
+    expect(mcpErrorMessage(-32009, 'v2')).toContain('Version not supported')
+    expect(mcpErrorMessage(-32001, null)).toContain('Unknown SSE session')
     expect(mcpErrorMessage(-32099, 'weird')).toContain('-32099')
     expect(mcpErrorMessage(-32099, null)).toContain('Tool error')
+  })
+
+  it('detects HITL suspensions and ignores ordinary results', () => {
+    const parked = hitlSuspensionOf({
+      resultType: 'input_required',
+      requestState: 'opaque-token',
+      inputRequests: {
+        human_approval: {
+          method: 'elicitation/create',
+          params: {
+            mode: 'url',
+            url: '/v1/admin/mcp/approvals/9f8e7d6c5b4a32109f8e7d6c5b4a3210',
+            message: 'Execution of privileged tool requires administrator approval.',
+          },
+        },
+      },
+    })
+    expect(parked?.tokenId).toBe('9f8e7d6c5b4a32109f8e7d6c5b4a3210')
+    expect(parked?.resumptionToken).toBe('opaque-token')
+    expect(hitlSuspensionOf({ resultType: 'complete', rows: [1] })).toBeNull()
+    expect(hitlSuspensionOf({ resultType: 'input_required' })).toBeNull()
+    expect(hitlSuspensionOf(null)).toBeNull()
   })
 
   it('reads A2A agent cards and relays JSON-RPC with method gating', async () => {
@@ -1652,6 +2054,44 @@ describe('GatewayClient transport', () => {
     await expect(
       new GatewayClient({ base: '', token: 'gw-test' }).a2aInvoke('helper', 'bogus/method', {}),
     ).rejects.toThrow(/unknown A2A method/i)
+  })
+
+  it('builds stream requests with optional version pins', () => {
+    const plain = new GatewayClient({ base: '', token: 'gw-test' }).a2aStreamRequest('helper', {
+      text: 'hi',
+    })
+    expect(plain.url).toBe('/v1/a2a/helper')
+    expect(plain.headers['A2A-Version']).toBeUndefined()
+    const body = plain.body as Record<string, unknown>
+    expect(body.method).toBe('message/stream')
+    const pinned = new GatewayClient({ base: '', token: 'gw-test' }).a2aStreamRequest(
+      'helper',
+      { text: 'hi' },
+      '0.3',
+    )
+    expect(pinned.headers['A2A-Version']).toBe('0.3')
+  })
+
+  it('sends the version pin on unary invokes when set', async () => {
+    let headers: Record<string, string> = {}
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init: RequestInit) => {
+        headers = { ...(init.headers as Record<string, string>) }
+        return Promise.resolve(
+          new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { done: true } }), {
+            status: 200,
+          }),
+        )
+      }),
+    )
+    await new GatewayClient({ base: '', token: 'gw-test' }).a2aInvoke(
+      'helper',
+      'message/send',
+      { text: 'hi' },
+      { a2aVersion: '0.3' },
+    )
+    expect(headers['A2A-Version']).toBe('0.3')
   })
 
   it('probes alert webhooks and reports the receipt count', async () => {
@@ -1898,6 +2338,86 @@ describe('GatewayClient transport', () => {
     expect(out).toEqual({ tools: [] })
   })
 
+  it('sends protocol version and meta on MCP calls', async () => {
+    let listInit: RequestInit | null = null
+    let callInit: RequestInit | null = null
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init: RequestInit) => {
+        if (url.endsWith('/v1/mcp') && listInit === null) {
+          listInit = init
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ jsonrpc: '2.0', id: 'tools-list', result: { tools: [] } }),
+              {
+                status: 200,
+              },
+            ),
+          )
+        }
+        callInit = init
+        return Promise.resolve(
+          new Response(JSON.stringify({ jsonrpc: '2.0', id: 'x', result: { ok: true } }), {
+            status: 200,
+          }),
+        )
+      }),
+    )
+    const client = new GatewayClient({ base: '', token: 'gw-test' })
+    await client.mcpTools()
+    await client.mcpCall('a__b', { q: 1 })
+    const listHeaders = (listInit as unknown as RequestInit).headers as Record<string, string>
+    const callBody = JSON.parse(
+      ((callInit as unknown as RequestInit).body ?? '{}') as string,
+    ) as Record<string, unknown>
+    const listBody = JSON.parse(
+      ((listInit as unknown as RequestInit).body ?? '{}') as string,
+    ) as Record<string, unknown>
+    expect(listHeaders['MCP-Protocol-Version']).toBe('2026-07-28')
+    expect(listHeaders['Mcp-Method']).toBe('tools/list')
+    const listMeta = ((listBody.params ?? {}) as Record<string, unknown>)._meta as Record<
+      string,
+      unknown
+    >
+    expect(listMeta['io.modelcontextprotocol/protocolVersion']).toBe('2026-07-28')
+    expect(typeof listMeta['io.modelcontextprotocol/clientCapabilities']).toBe('object')
+    const callParams = (callBody.params ?? {}) as Record<string, unknown>
+    const callMeta = callParams._meta as Record<string, unknown>
+    expect(callMeta['io.modelcontextprotocol/protocolVersion']).toBe('2026-07-28')
+    expect(callParams.name).toBe('a__b')
+  })
+
+  it('maps modern 404 envelopes before HTTP generics', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: 'call-1',
+              error: { code: -32601, message: 'Method not found: frobnicate' },
+            }),
+            { status: 404 },
+          ),
+        ),
+      ),
+    )
+    await expect(
+      new GatewayClient({ base: '', token: 'gw-test' }).mcpCall('a__b', {}),
+    ).rejects.toThrow(/method not found/i)
+  })
+
+  it('acks notification-style 202s without error text', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response(null, { status: 202 }))),
+    )
+    await expect(
+      new GatewayClient({ base: '', token: 'gw-test' }).mcpCall('a__b', {}),
+    ).resolves.toBeNull()
+  })
+
   it('rethrows aborts from the catalog fetch', async () => {
     vi.stubGlobal(
       'fetch',
@@ -1987,7 +2507,7 @@ describe('GatewayClient transport', () => {
     const err = await new GatewayClient({ base: '', token: 'gw-test' })
       .mcpTools()
       .catch((e: unknown) => e)
-    expect((err as Error).message).toBe('MCP catalog error.')
+    expect((err as Error).message).toContain('Tool failed')
   })
 })
 
