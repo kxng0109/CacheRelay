@@ -167,6 +167,8 @@ public class SecurityConfig {
 						.requestMatchers(
 								"/",
 								"/index.html",
+								"/favicon.svg",
+								"/favicon.ico",
 								"/assets/**",
 								"/error",
 								SpaFallbackController.SPA_PATH_PATTERN
