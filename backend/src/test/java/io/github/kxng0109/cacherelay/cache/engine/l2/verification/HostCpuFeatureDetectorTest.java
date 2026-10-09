@@ -131,12 +131,19 @@ class HostCpuFeatureDetectorTest {
 		String result = HostCpuFeatureDetector.runSysctl("hw.model");
 		assertThat(result).isNotNull();
 
-		// Process returning exit code 0 and output
-		String echoOut = HostCpuFeatureDetector.runSysctlProcess(new ProcessBuilder("cmd.exe", "/c", "echo 1"));
+		// Process returning exit code 0 and output (cross-platform)
+		boolean isWindows = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win");
+		ProcessBuilder pb = isWindows
+				? new ProcessBuilder("cmd.exe", "/c", "echo 1")
+				: new ProcessBuilder("echo", "1");
+		String echoOut = HostCpuFeatureDetector.runSysctlProcess(pb);
 		assertThat(echoOut).isEqualTo("1");
 
-		// Process returning non-zero exit code
-		String exitFailOut = HostCpuFeatureDetector.runSysctlProcess(new ProcessBuilder("cmd.exe", "/c", "exit 1"));
+		// Process returning non-zero exit code (cross-platform)
+		ProcessBuilder failPb = isWindows
+				? new ProcessBuilder("cmd.exe", "/c", "exit 1")
+				: new ProcessBuilder("sh", "-c", "exit 1");
+		String exitFailOut = HostCpuFeatureDetector.runSysctlProcess(failPb);
 		assertThat(exitFailOut).isEmpty();
 
 		// Invalid binary throwing exception

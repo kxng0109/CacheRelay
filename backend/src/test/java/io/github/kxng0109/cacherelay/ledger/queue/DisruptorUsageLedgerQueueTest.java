@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
@@ -217,6 +218,10 @@ class DisruptorUsageLedgerQueueTest {
 		SimpleMeterRegistry registry = new SimpleMeterRegistry();
 		saturated.setMeterRegistry(registry);
 		producerSequenceOf(saturated).set(1024L);
+
+		// Prevent background spiller thread from starting and asynchronously draining while buffer is filled
+		spillerRunningOf(saturated).set(true);
+
 		ArrayBlockingQueue<TokenUsageEvent> spill = spillBufferOf(saturated);
 		for (int i = 0; i < DisruptorUsageLedgerQueue.SPILL_BUFFER_CAPACITY; i++) {
 			assertThat(spill.offer(createEvent("fill"))).isTrue();
@@ -343,5 +348,11 @@ class DisruptorUsageLedgerQueueTest {
 		Field field = DisruptorUsageLedgerQueue.class.getDeclaredField("spillerThread");
 		field.setAccessible(true);
 		return (Thread) field.get(queue);
+	}
+
+	private static AtomicBoolean spillerRunningOf(DisruptorUsageLedgerQueue queue) throws Exception {
+		Field field = DisruptorUsageLedgerQueue.class.getDeclaredField("spillerRunning");
+		field.setAccessible(true);
+		return (AtomicBoolean) field.get(queue);
 	}
 }
