@@ -69,8 +69,9 @@ RUN groupadd --system --gid 10001 cacherelay && \
 
 WORKDIR /app
 
-# Copy application artifact with non-root ownership
+# Copy application artifact and model artifacts with non-root ownership
 COPY --from=builder --chown=cacherelay:cacherelay /workspace/target/CacheRelay-*.jar /app/cacherelay.jar
+COPY --chown=cacherelay:cacherelay backend/models/ /app/models/
 
 USER cacherelay:cacherelay
 

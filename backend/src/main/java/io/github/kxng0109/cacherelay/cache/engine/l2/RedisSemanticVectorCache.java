@@ -5,6 +5,7 @@ import io.github.kxng0109.cacherelay.cache.contracts.CacheEntry;
 import io.github.kxng0109.cacherelay.cache.contracts.CacheKeys;
 import io.github.kxng0109.cacherelay.cache.contracts.CompoundCacheKey;
 import io.github.kxng0109.cacherelay.cache.engine.CacheGuardrails;
+import io.github.kxng0109.cacherelay.cache.engine.l2.verification.OnnxSemanticVerifier;
 import io.github.kxng0109.cacherelay.proxy.embeddings.EmbeddingService;
 import io.github.kxng0109.cacherelay.proxy.embeddings.OnnxLocalEmbedder;
 import io.github.kxng0109.cacherelay.proxy.embeddings.VectorEncodingUtils;
@@ -48,6 +49,7 @@ public class RedisSemanticVectorCache {
 	private final CacheRelayCacheProperties properties;
 
 	private volatile @Nullable OnnxLocalEmbedder onnxLocalEmbedder;
+	private volatile @Nullable OnnxSemanticVerifier onnxSemanticVerifier;
 
 	/**
 	 * Wires the opt-in in-process ONNX embedder when the
@@ -59,6 +61,18 @@ public class RedisSemanticVectorCache {
 	@Autowired(required = false)
 	public void setOnnxLocalEmbedder(@Nullable OnnxLocalEmbedder onnxLocalEmbedder) {
 		this.onnxLocalEmbedder = onnxLocalEmbedder;
+	}
+
+	/**
+	 * Wires the opt-in 2nd-stage ONNX semantic verifier when configured and enabled.
+	 * Optional on purpose: unit-constructed caches and default deployments rely on the
+	 * Stage 1 deterministic fast-filter.
+	 *
+	 * @param onnxSemanticVerifier the ONNX semantic verifier, if enabled
+	 */
+	@Autowired(required = false)
+	public void setOnnxSemanticVerifier(@Nullable OnnxSemanticVerifier onnxSemanticVerifier) {
+		this.onnxSemanticVerifier = onnxSemanticVerifier;
 	}
 
 	/**
@@ -268,6 +282,7 @@ public class RedisSemanticVectorCache {
 		log.debug("L2 semantic candidate above threshold: score={}, threshold={}, gap={}", score, threshold, gap);
 
 		String cachedPrompt = bestMatch.fields().getOrDefault("prompt_text", "");
+		// Stage 1: Deterministic Fast-Filter
 		boolean passed = guardrails.validateSemanticMatch(
 				key.promptText(),
 				cachedPrompt,
@@ -282,6 +297,19 @@ public class RedisSemanticVectorCache {
 					cachedPrompt
 			);
 			return null;
+		}
+
+		// Stage 2: ONNX Semantic Verifier (if enabled)
+		if (onnxSemanticVerifier != null && onnxSemanticVerifier.isEnabled()) {
+			boolean verified = onnxSemanticVerifier.verify(key.promptText(), cachedPrompt);
+			if (!verified) {
+				log.debug(
+						"L2 semantic candidate failed ONNX verification: incoming='{}', cached='{}'",
+						key.promptText(),
+						cachedPrompt
+				);
+				return null;
+			}
 		}
 
 		return mapToCacheEntry(bestMatch, score, key);

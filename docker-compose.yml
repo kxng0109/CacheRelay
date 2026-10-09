@@ -208,7 +208,7 @@ services:
     # degrade, never break requests (verified healthy + probes green).
     read_only: true
     tmpfs:
-      - /tmp
+      - /tmp:exec
     # Writable spillway: the ledger dead-letter path (logs/ledger-deadletter.log
     # by default) must survive read-only rootfs; tmpfs /tmp is for extraction only.
     volumes:
@@ -324,6 +324,10 @@ services:
       # like any other request; default local-embed works on the local Ollama stack.
       # Set to text-embedding-3-small (or any alias) for a different model.
       GATEWAY_CACHE_SEMANTIC_EMBEDDING_MODEL: ${GATEWAY_CACHE_SEMANTIC_EMBEDDING_MODEL:-local-embed}
+      GATEWAY_CACHE_SEMANTIC_ONNX_VERIFIER_ENABLED: ${GATEWAY_CACHE_SEMANTIC_ONNX_VERIFIER_ENABLED:-true}
+      GATEWAY_CACHE_SEMANTIC_ONNX_VERIFIER_MODEL_PATH: ${GATEWAY_CACHE_SEMANTIC_ONNX_VERIFIER_MODEL_PATH:-/app/models/verifier}
+      GATEWAY_CACHE_SEMANTIC_ONNX_VERIFIER_TOKENIZER_PATH: ${GATEWAY_CACHE_SEMANTIC_ONNX_VERIFIER_TOKENIZER_PATH:-/app/models/verifier}
+      GATEWAY_CACHE_SEMANTIC_ONNX_VERIFIER_THRESHOLD: ${GATEWAY_CACHE_SEMANTIC_ONNX_VERIFIER_THRESHOLD:-0.75}
       TOMCAT_MAX_CONNECTIONS: ${TOMCAT_MAX_CONNECTIONS:-}
       TOMCAT_ACCEPT_COUNT: ${TOMCAT_ACCEPT_COUNT:-}
       # Capacity profile (floor|standard|high): floor-tuned values are

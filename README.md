@@ -566,6 +566,11 @@ All configuration lives in `backend/src/main/resources/application.yml`. The mos
   embedder (`enabled` default false, `model-path`, `tokenizer-path`, `intra-op-threads` default 2,
   `max-tokens` default 2048). Local scores sit ~0.03 cosine below Ollama GGUF — re-index and
   recalibrate the similarity threshold (0.77 local ⇔ 0.80 Ollama) before enabling on a populated index.
+- `gateway.cache.semantic.onnx-verifier.*` controls the 2nd-stage L2 semantic verification pipeline:
+  `enabled` (default false), `model-path`, `tokenizer-path`, `threshold` (default 0.90), `max-concurrency` (default 4),
+  `tier` (`AUTO`, `ACCELERATED_INT8`, `BASELINE_FP32`). Dynamic dual-model execution leverages zero-dependency host CPU
+  ISA detection (`HostCpuFeatureDetector`: Linux `avx512_vnni`/`avx_vnni`/`asimddp`/`i8mm`, macOS `FEAT_DotProd`/`FEAT_I8MM`,
+  Windows baseline) with bounded concurrency semaphore bulkhead fail-closed protection.
 - `gateway.redis.cache.host/port` points the cache tier at its dedicated evictable Redis
   (`REDIS_CACHE_HOST`/`REDIS_CACHE_PORT`, default `localhost:6380`); accounting stays on `spring.data.redis.*`.
 - `gateway.provider-jurisdictions` maps provider names to regulatory jurisdictions
@@ -875,9 +880,16 @@ CacheRelay provides an enterprise-grade, high-throughput (2,000+ concurrent user
 - **Multi-Turn Prefix Partitioning**: Employs hybrid prefix-exact hashing ($H_{\text{prefix}}$) over prior
   turns $[0..N-2]$
   and dense vector embedding on the active user turn $[N-1]$, preventing context drift and infinite replay loops.
-- **Anti-Hallucination Guardrails**:
-    - **Polarity Guard**: Rejects intent reversals (`enable` vs `disable`, `true` vs `false`).
-    - **Entity Guard**: Rejects conflicting named entities and numbers (`Apple` vs `Microsoft`, `42` vs `100`).
+- **Two-Stage Anti-Hallucination & Semantic Verification Pipeline**:
+    - **Stage 1 (Deterministic Fast-Filter, ~0.01 ms)**:
+        - **Polarity & Antonyms**: Rejects intent reversals and opposing states via a precompiled whole-word WordNet-aligned dictionary (`safe/dangerous`, `buy/sell`, `allow/deny`, `legal/illegal`, `enable/disable`, `true/false`, etc.).
+        - **Contraction Normalization**: Pre-processes English contractions (`can't` &rarr; `can not`, `won't` &rarr; `will not`, `isn't` &rarr; `is not`) eliminating regex word-boundary evasion.
+        - **Entity Guard**: Slot-aligned contradiction detection supporting both capitalized proper nouns and lowercase tech entities (`aws`, `azure`, `docker`, `k8s`, `redis`, `postgres`), closing uncased evasion vectors.
+        - **Number Parity**: Strict atomic multiset matching ensuring exact numerical constant equality (`42` vs `100`, `42.5` vs `42.6`).
+    - **Stage 2 (In-Process Neural Cross-Encoder Verifier, ~1.0 ms)**:
+        - **Hardware ISA Detection**: `HostCpuFeatureDetector` probes host CPU capabilities at boot (Linux `/proc/cpuinfo`, macOS `sysctl`, Windows fallback) to dynamically select the optimal model tier: `ACCELERATED_INT8` (AVX-512 VNNI, Apple Silicon DotProd, Snapdragon I8MM) or `BASELINE_FP32` (standard AVX2 / ARM NEON).
+        - **Sub-Millisecond Execution**: Runs single-threaded (`intra_op_num_threads=1`, `allow_spinning=0`, `ORT_SEQUENTIAL`) executing in ~0.8–1.2 ms on 1 thread without starving the 2 vCPU gateway budget.
+        - **Fail-Closed Bulkhead**: Bounded concurrency Semaphore bulkhead (default 4 permits) that fails closed to a cache miss on traffic surges to prevent CPU exhaustion.
     - **Temperature Gating**: Requests with $T > 0.1$ bypass caching to preserve requested stochastic creativity; requests without a temperature bypass the L2 semantic tier both ways (no read, no store).
 - **Synthetic Streaming SSE Replay**: Automatically reconstitutes cached completions into valid OpenAI SSE chunk
   sequences with Time-To-First-Token (**TTFT**) in **$< 5\text{ms}$**.
@@ -1018,8 +1030,8 @@ migration that *seeds data rows* must join the truncation exclusion list next to
 - OpenAPI 3.1 & documentation tests in `config`: `OpenApiConfigTest` covering global specification metadata, security
   scheme registrations (`BearerAuth`, `AdminKeyAuth`, `AdminBearerAuth`), and GroupedOpenApi partitions.
 - Multi-tier semantic caching tests in `cache`: `CacheKeyGeneratorTest`, `CacheGuardrailsTest`,
-  `CacheGuardrailsAdversarialTest`, `TemperatureIsolationTest`,
-  `RedisSemanticVectorCacheTest`, `RediSearchVectorClientTest`, `InMemoryExactCacheTest`,
+  `CacheGuardrailsAdversarialTest`, `HostCpuFeatureDetectorTest`, `OnnxSemanticVerifierTest`, `LiveOnnxModelBenchmarkTest`,
+  `TemperatureIsolationTest`, `RedisSemanticVectorCacheTest`, `RediSearchVectorClientTest`, `InMemoryExactCacheTest`,
   `RedisExactCacheTest`, `SingleFlightManagerTest`, `CachedStreamReconstitutionTest`,
   `CachePolicyEngineTest`, `CacheRelayCacheServiceTest`, `AdminCacheControllerTest`, `CacheContractsTest`,
   `CacheRelayCachePropertiesTest`, `CacheFullCoverageTest`, and `SemanticCacheIntegrationTest` covering L0 in-memory caching,

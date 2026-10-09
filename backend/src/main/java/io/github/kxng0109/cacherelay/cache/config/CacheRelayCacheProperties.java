@@ -1,8 +1,10 @@
 package io.github.kxng0109.cacherelay.cache.config;
 
 import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
+import io.github.kxng0109.cacherelay.cache.engine.l2.verification.CpuAccelerationTier;
 import lombok.Getter;
 import lombok.Setter;
+import org.jspecify.annotations.Nullable;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.time.Duration;
@@ -113,5 +115,44 @@ public class CacheRelayCacheProperties {
 		 * Temperature floor. Requests with temperature higher than this bypass semantic cache.
 		 */
 		private double temperatureFloor = 0.1;
+
+		/**
+		 * Configuration for the 2nd-stage ONNX cross-encoder semantic verifier.
+		 */
+		private OnnxVerifierProperties onnxVerifier = new OnnxVerifierProperties();
+	}
+
+	@Getter
+	@Setter
+	public static class OnnxVerifierProperties {
+		/**
+		 * Whether 2nd-stage ONNX semantic verification is enabled.
+		 */
+		private boolean enabled = false;
+
+		/**
+		 * Path to the ONNX cross-encoder model file or directory.
+		 */
+		private @Nullable String modelPath;
+
+		/**
+		 * Path to the Hugging Face tokenizer.json file or directory.
+		 */
+		private @Nullable String tokenizerPath;
+
+		/**
+		 * Probability threshold for semantic equivalence (0.00 - 1.00).
+		 */
+		private double threshold = 0.90;
+
+		/**
+		 * Maximum concurrent ONNX inference sessions before bulkhead fails closed.
+		 */
+		private int maxConcurrency = 4;
+
+		/**
+		 * Target CPU acceleration tier (AUTO, ACCELERATED_INT8, BASELINE_FP32).
+		 */
+		private CpuAccelerationTier tier = CpuAccelerationTier.AUTO;
 	}
 }

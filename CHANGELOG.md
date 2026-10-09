@@ -7,10 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [1.9.0] - 2026-10-09
 
 ### Added
 
+- **2nd-Stage L2 Semantic Cache Verification Pipeline:**
+  - `HostCpuFeatureDetector`: zero-dependency CPU ISA detection detecting Linux `/proc/cpuinfo` flags (`avx512_vnni`, `avx_vnni`, `asimddp`, `i8mm`), macOS sysctl (`hw.optional.arm.FEAT_DotProd`, `FEAT_I8MM`), and Windows fallback returning `CpuAccelerationTier` (`ACCELERATED_INT8`, `BASELINE_FP32`).
+  - Enhanced Deterministic Fast-Filter (`CacheGuardrails`): English contraction normalization ("can't" -> "can not", "won't" -> "will not", etc.) eliminating word boundary regex bugs; case-insensitive entity extraction with slot alignment fixing lowercase evasion ("deploy docker on aws" vs "azure"); WordNet-aligned polarity/antonym dictionary with whole-word boundary matching; and atomic number parity check.
+  - `OnnxSemanticVerifier`: 2nd-stage ONNX cross-encoder verifier with single-threaded execution (`intra_op_num_threads=1`, `inter_op_num_threads=1`, `ORT_SEQUENTIAL`, `session.intra_op.allow_spinning=0`, `ALL_OPT`), bounded concurrency Semaphore bulkhead (default 4 permits) failing closed on saturation to prevent 2 vCPU starvation, DJL HuggingFaceTokenizer dual-string encoding, 2-way Softmax calculation over output logits, and similarity threshold gate (default 0.75-0.90).
+  - Pre-packaged and benchmarked custom physical models (`model.onnx`, `model_int8.onnx`, `tokenizer.json`) achieving ~1.0 ms single-thread latency on modern CPUs.
+  - Wired Stage 1 deterministic fast-filter and Stage 2 ONNX verifier into `RedisSemanticVectorCache`.
+  - Configurable via `gateway.cache.semantic.onnx-verifier.*` in `CacheRelayCacheProperties`.
 - **SSO teams, IdP-driven (Phase 2a):** org/team/membership domain (V20) with per-registration
   claim mappings (`GATEWAY_SSO_TEAMS_REGISTRATIONS_*`): exact/prefix patterns with `:LEAD`/`:MEMBER`
   roles (exact beats prefix, longest wins, first wins ties), tenant allowlists failing closed, admin

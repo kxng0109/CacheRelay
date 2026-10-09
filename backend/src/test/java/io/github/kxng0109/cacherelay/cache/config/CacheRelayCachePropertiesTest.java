@@ -1,6 +1,7 @@
 package io.github.kxng0109.cacherelay.cache.config;
 
 import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
+import io.github.kxng0109.cacherelay.cache.engine.l2.verification.CpuAccelerationTier;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -43,6 +44,16 @@ class CacheRelayCachePropertiesTest {
 		semantic.setPolarityGuardEnabled(false);
 		semantic.setEntityGuardEnabled(false);
 		semantic.setTemperatureFloor(0.2);
+
+		CacheRelayCacheProperties.OnnxVerifierProperties onnxVerifier = new CacheRelayCacheProperties.OnnxVerifierProperties();
+		onnxVerifier.setEnabled(true);
+		onnxVerifier.setModelPath("/models/model.onnx");
+		onnxVerifier.setTokenizerPath("/models/tokenizer.json");
+		onnxVerifier.setThreshold(0.95);
+		onnxVerifier.setMaxConcurrency(8);
+		onnxVerifier.setTier(CpuAccelerationTier.ACCELERATED_INT8);
+		semantic.setOnnxVerifier(onnxVerifier);
+
 		props.setSemantic(semantic);
 
 		assertThat(props.getSemantic().isEnabled()).isFalse();
@@ -52,15 +63,30 @@ class CacheRelayCachePropertiesTest {
 		assertThat(props.getSemantic().isPolarityGuardEnabled()).isFalse();
 		assertThat(props.getSemantic().isEntityGuardEnabled()).isFalse();
 		assertThat(props.getSemantic().getTemperatureFloor()).isEqualTo(0.2);
+
+		assertThat(props.getSemantic().getOnnxVerifier().isEnabled()).isTrue();
+		assertThat(props.getSemantic().getOnnxVerifier().getModelPath()).isEqualTo("/models/model.onnx");
+		assertThat(props.getSemantic().getOnnxVerifier().getTokenizerPath()).isEqualTo("/models/tokenizer.json");
+		assertThat(props.getSemantic().getOnnxVerifier().getThreshold()).isEqualTo(0.95);
+		assertThat(props.getSemantic().getOnnxVerifier().getMaxConcurrency()).isEqualTo(8);
+		assertThat(props.getSemantic().getOnnxVerifier().getTier()).isEqualTo(CpuAccelerationTier.ACCELERATED_INT8);
 	}
 
 	@Test
-	@DisplayName("semantic cache defaults carry the calibrated similarity threshold")
+	@DisplayName("semantic cache defaults carry the calibrated similarity threshold and onnx verifier defaults")
 	void semanticDefaults() {
 		CacheRelayCacheProperties props = new CacheRelayCacheProperties();
 
 		assertThat(props.getSemantic().getSimilarityThreshold()).isEqualTo(0.80);
 		assertThat(props.getSemantic().isPolarityGuardEnabled()).isTrue();
 		assertThat(props.getSemantic().isEntityGuardEnabled()).isTrue();
+
+		CacheRelayCacheProperties.OnnxVerifierProperties onnxVerifier = props.getSemantic().getOnnxVerifier();
+		assertThat(onnxVerifier.isEnabled()).isFalse();
+		assertThat(onnxVerifier.getModelPath()).isNull();
+		assertThat(onnxVerifier.getTokenizerPath()).isNull();
+		assertThat(onnxVerifier.getThreshold()).isEqualTo(0.90);
+		assertThat(onnxVerifier.getMaxConcurrency()).isEqualTo(4);
+		assertThat(onnxVerifier.getTier()).isEqualTo(CpuAccelerationTier.AUTO);
 	}
 }

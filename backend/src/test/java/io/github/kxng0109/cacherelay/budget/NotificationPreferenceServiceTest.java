@@ -112,7 +112,7 @@ class NotificationPreferenceServiceTest {
 		NotificationPreferenceService service =
 				new NotificationPreferenceService(repository, new SsrfValidator());
 
-		assertThatThrownBy(() -> service.create("KEY:hex", "teams", "https://example.com/hook", null, null))
+		assertThatThrownBy(() -> service.create("KEY:hex", "email", "alerts@example.com", null, null))
 				.isInstanceOf(ResponseStatusException.class)
 				.hasMessageContaining("409");
 	}

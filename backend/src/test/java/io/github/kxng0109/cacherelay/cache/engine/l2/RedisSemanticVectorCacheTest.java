@@ -5,6 +5,7 @@ import io.github.kxng0109.cacherelay.cache.contracts.CacheEntry;
 import io.github.kxng0109.cacherelay.cache.contracts.CacheScope;
 import io.github.kxng0109.cacherelay.cache.contracts.CompoundCacheKey;
 import io.github.kxng0109.cacherelay.cache.engine.CacheGuardrails;
+import io.github.kxng0109.cacherelay.cache.engine.l2.verification.OnnxSemanticVerifier;
 import io.github.kxng0109.cacherelay.proxy.embeddings.EmbeddingService;
 import io.github.kxng0109.cacherelay.proxy.embeddings.OnnxLocalEmbedder;
 import io.github.kxng0109.cacherelay.proxy.embeddings.VectorEncodingUtils;
@@ -92,6 +93,76 @@ class RedisSemanticVectorCacheTest {
 		assertThat(entry.promptText()).isEqualTo("I forgot my password");
 		assertThat(entry.similarityScore()).isBetween(0.949f, 0.951f);
 		assertThat(entry.promptTokens()).isEqualTo(10);
+	}
+
+	@Test
+	@DisplayName("findSemanticMatch succeeds when Stage 2 ONNX verifier passes")
+	void findSemanticMatchSucceedsWhenOnnxVerifierPasses() {
+		CompoundCacheKey key = new CompoundCacheKey(
+				"tenant1", CacheScope.TENANT, "gpt-4o", "exactHash", "", "", "How to reset password"
+		);
+
+		EmbeddingResponse mockEmbedding = new EmbeddingResponse(
+				"list", List.of(EmbeddingData.of(0, new float[]{0.1f, 0.2f})), "text-embedding-3-small", null
+		);
+		when(embeddingService.processEmbedding(any(), eq("tenant1"))).thenReturn(mockEmbedding);
+
+		VectorSearchResult match = new VectorSearchResult(
+				"cacherelay:cache:doc:tenant1:doc1",
+				0.05,
+				Map.of(
+						"prompt_text", "I forgot my password",
+						"response_json", "{\"content\":\"Click reset password\"}",
+						"prompt_tokens", "10",
+						"completion_tokens", "20",
+						"total_tokens", "30"
+				)
+		);
+		when(vectorClient.searchKnn(anyString(), anyString(), any(), eq(2))).thenReturn(List.of(match));
+
+		OnnxSemanticVerifier verifier = mock(OnnxSemanticVerifier.class);
+		when(verifier.isEnabled()).thenReturn(true);
+		when(verifier.verify("How to reset password", "I forgot my password")).thenReturn(true);
+		cache.setOnnxSemanticVerifier(verifier);
+
+		CacheEntry entry = cache.findSemanticMatch(key, 0.0);
+		assertThat(entry).isNotNull();
+		verify(verifier).verify("How to reset password", "I forgot my password");
+	}
+
+	@Test
+	@DisplayName("findSemanticMatch returns null when Stage 2 ONNX verifier rejects")
+	void findSemanticMatchRejectsWhenOnnxVerifierFails() {
+		CompoundCacheKey key = new CompoundCacheKey(
+				"tenant1", CacheScope.TENANT, "gpt-4o", "exactHash", "", "", "How to reset password"
+		);
+
+		EmbeddingResponse mockEmbedding = new EmbeddingResponse(
+				"list", List.of(EmbeddingData.of(0, new float[]{0.1f, 0.2f})), "text-embedding-3-small", null
+		);
+		when(embeddingService.processEmbedding(any(), eq("tenant1"))).thenReturn(mockEmbedding);
+
+		VectorSearchResult match = new VectorSearchResult(
+				"cacherelay:cache:doc:tenant1:doc1",
+				0.05,
+				Map.of(
+						"prompt_text", "I forgot my password",
+						"response_json", "{\"content\":\"Click reset password\"}",
+						"prompt_tokens", "10",
+						"completion_tokens", "20",
+						"total_tokens", "30"
+				)
+		);
+		when(vectorClient.searchKnn(anyString(), anyString(), any(), eq(2))).thenReturn(List.of(match));
+
+		OnnxSemanticVerifier verifier = mock(OnnxSemanticVerifier.class);
+		when(verifier.isEnabled()).thenReturn(true);
+		when(verifier.verify("How to reset password", "I forgot my password")).thenReturn(false);
+		cache.setOnnxSemanticVerifier(verifier);
+
+		CacheEntry entry = cache.findSemanticMatch(key, 0.0);
+		assertThat(entry).isNull();
+		verify(verifier).verify("How to reset password", "I forgot my password");
 	}
 
 	@Test

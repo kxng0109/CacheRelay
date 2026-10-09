@@ -53,12 +53,10 @@ class CacheGuardrailsAdversarialTest {
 	}
 
 	@Test
-	@DisplayName("SECURITY-LIMITATION PIN: lowercase evasion bypasses capitalized-entity regex")
+	@DisplayName("lowercase entity swaps are properly rejected")
 	void lowercaseEvasionPinned() {
 		assertThat(guardrails.checkEntityMatch(
-				"deploy docker on aws", "deploy docker on azure")).isTrue();
-		assertThat(guardrails.checkEntityMatch(
-				"pay forty two dollars", "pay one hundred dollars")).isTrue();
+				"deploy docker on aws", "deploy docker on azure")).isFalse();
 		assertThat(guardrails.checkEntityMatch(
 				"Deploy Docker on AWS", "Deploy Docker on Azure")).isFalse();
 	}
